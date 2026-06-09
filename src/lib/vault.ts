@@ -26,6 +26,23 @@ export function readVault(vault: string): Promise<VaultNote[]> {
   return invoke<VaultNote[]>("read_vault", { vault });
 }
 
+/** Start (or restart) watching the vault for on-disk changes. */
+export function startWatching(vault: string): Promise<void> {
+  return invoke<void>("start_watching", { vault });
+}
+
+/** A note reported changed by the watcher: absolute path + vault-relative path. */
+export interface ChangedNote {
+  path: string;
+  rel: string;
+}
+
+/** Display name (file stem) from a vault-relative path. */
+export function nameFromRel(rel: string): string {
+  const base = rel.split(/[/\\]/).pop() ?? rel;
+  return base.replace(/\.md$/i, "");
+}
+
 export function readNote(vault: string, path: string): Promise<string> {
   return invoke<string>("read_note", { vault, path });
 }

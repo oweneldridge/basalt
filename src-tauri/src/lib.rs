@@ -6,20 +6,25 @@
 // IO lives here in Rust rather than being exposed to the webview, so the
 // frontend can only touch the filesystem through these explicit commands, and
 // every path is validated to live inside the open vault.
+//
+// Paths are matched between read_vault and the filesystem watcher by VAULT-
+// RELATIVE path (not absolute), because macOS FSEvents reports firmlink/symlink-
+// resolved absolute paths (e.g. /System/Volumes/Data/...) that won't string-
+// match the dialog-derived absolute path. The relative path is stable.
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
+use notify::{RecursiveMode, Watcher};
 use serde::Serialize;
+use tauri::{AppHandle, Emitter, State};
 
 /// A single Markdown note discovered within a vault.
 #[derive(Serialize, Clone)]
 struct NoteEntry {
-    /// Absolute path on disk.
     path: String,
-    /// Path relative to the vault root (used for display / wikilink resolution).
     rel: String,
-    /// File stem without extension (the wikilink-able name).
     name: String,
 }
 
@@ -33,6 +38,17 @@ struct VaultNote {
     content: String,
 }
 
+/// A changed note reported by the watcher: absolute path (for reading) plus the
+/// vault-relative path (the stable key the frontend matches on).
+#[derive(Serialize, Clone)]
+struct ChangedNote {
+    path: String,
+    rel: String,
+}
+
+/// Holds the live vault watcher so it isn't dropped (which would stop watching).
+struct WatcherState(Mutex<Option<notify::RecommendedWatcher>>);
+
 /// Directories we never descend into. `.obsidian` keeps Basalt and Obsidian
 /// able to share a vault without fighting over config.
 fn is_ignored_dir(name: &str) -> bool {
@@ -45,7 +61,6 @@ fn is_reserved_name(stem: &str) -> bool {
     if matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
         return true;
     }
-    // COM1-9 and LPT1-9
     let bytes = upper.as_bytes();
     if upper.len() == 4 && (upper.starts_with("COM") || upper.starts_with("LPT")) {
         let d = bytes[3];
@@ -54,9 +69,30 @@ fn is_reserved_name(stem: &str) -> bool {
     false
 }
 
-/// Resolve `path` and confirm it lives inside `vault`. Existing files are
-/// canonicalized directly; for not-yet-existing files (new notes) we canonicalize
-/// the parent directory and rejoin the name. Returns the resolved absolute path.
+/// The canonicalized vault root (symlinks/firmlinks resolved), or the raw path
+/// if canonicalization fails (e.g. it doesn't exist).
+fn canonical_root(vault: &str) -> PathBuf {
+    fs::canonicalize(vault).unwrap_or_else(|_| PathBuf::from(vault))
+}
+
+/// Compute `p` relative to the vault `root`, tolerating macOS firmlink prefixes
+/// that FSEvents may prepend to the watched path.
+fn rel_under(root: &Path, p: &Path) -> Option<String> {
+    if let Ok(r) = p.strip_prefix(root) {
+        return Some(r.to_string_lossy().to_string());
+    }
+    let ps = p.to_string_lossy();
+    for prefix in ["/System/Volumes/Data", "/private"] {
+        if let Some(rest) = ps.strip_prefix(prefix) {
+            if let Ok(r) = Path::new(rest).strip_prefix(root) {
+                return Some(r.to_string_lossy().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Resolve `path` and confirm it lives inside `vault`.
 fn ensure_in_vault(vault: &str, path: &str) -> Result<PathBuf, String> {
     let root = fs::canonicalize(vault).map_err(|e| format!("vault: {e}"))?;
     let target = PathBuf::from(path);
@@ -83,7 +119,6 @@ fn collect_md(dir: &Path, root: &Path, out: &mut Vec<NoteEntry>) {
         let Ok(ft) = entry.file_type() else {
             continue;
         };
-        // Never follow symlinks — a dir symlink to an ancestor would loop forever.
         if ft.is_symlink() {
             continue;
         }
@@ -130,8 +165,6 @@ fn collect_vault(dir: &Path, root: &Path, out: &mut Vec<VaultNote>) {
                 collect_vault(&path, root, out);
             }
         } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
-            // Lossily decode non-UTF8 (preserving links) rather than blanking the
-            // note; skip on a hard IO error rather than inserting empty content.
             let content = match fs::read(&path) {
                 Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                 Err(_) => continue,
@@ -158,7 +191,7 @@ fn collect_vault(dir: &Path, root: &Path, out: &mut Vec<VaultNote>) {
 /// List every Markdown note in a vault, sorted by relative path.
 #[tauri::command]
 fn list_notes(vault: String) -> Vec<NoteEntry> {
-    let root = PathBuf::from(&vault);
+    let root = canonical_root(&vault);
     let mut out = Vec::new();
     collect_md(&root, &root, &mut out);
     out.sort_by(|a, b| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()));
@@ -169,7 +202,7 @@ fn list_notes(vault: String) -> Vec<NoteEntry> {
 /// frontend link/metadata index (backlinks, unlinked mentions, graph).
 #[tauri::command]
 fn read_vault(vault: String) -> Vec<VaultNote> {
-    let root = PathBuf::from(&vault);
+    let root = canonical_root(&vault);
     let mut out = Vec::new();
     collect_vault(&root, &root, &mut out);
     out.sort_by(|a, b| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()));
@@ -194,8 +227,7 @@ fn write_note(vault: String, path: String, content: String) -> Result<(), String
     fs::write(&resolved, content).map_err(|e| format!("write {}: {e}", resolved.display()))
 }
 
-/// Create a new empty note `<vault>/<name>.md`, returning its absolute path.
-/// Fails if a note with that name already exists or the name is invalid.
+/// Create a new empty note `<vault>/<name>.md`, returning its canonical path.
 #[tauri::command]
 fn create_note(vault: String, name: String) -> Result<String, String> {
     let safe: String = name
@@ -212,13 +244,61 @@ fn create_note(vault: String, name: String) -> Result<String, String> {
     if safe.len() > 200 {
         return Err("note name is too long".into());
     }
-    let mut path = PathBuf::from(&vault);
+    let mut path = canonical_root(&vault);
     path.push(format!("{safe}.md"));
     if path.exists() {
         return Err(format!("note already exists: {safe}"));
     }
     fs::write(&path, "").map_err(|e| format!("create {}: {e}", path.display()))?;
-    Ok(path.to_string_lossy().to_string())
+    let canonical = fs::canonicalize(&path).unwrap_or(path);
+    Ok(canonical.to_string_lossy().to_string())
+}
+
+/// Watch the vault directory recursively and emit a `vault-changed` event (with
+/// the changed notes' absolute + vault-relative paths) whenever files change on
+/// disk — so Basalt can live-reload when Obsidian or a sync client edits the same
+/// vault. Replaces (and stops) any previous watcher.
+#[tauri::command]
+fn start_watching(vault: String, app: AppHandle, state: State<WatcherState>) -> Result<(), String> {
+    let root = fs::canonicalize(&vault).map_err(|e| e.to_string())?;
+    // Stop the previous watcher BEFORE starting the new one.
+    {
+        let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+        *guard = None;
+    }
+    let handle = app.clone();
+    let root_for_closure = root.clone();
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        let Ok(event) = res else {
+            return;
+        };
+        let changed: Vec<ChangedNote> = event
+            .paths
+            .iter()
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
+            .filter(|p| {
+                !p.components().any(|c| {
+                    let s = c.as_os_str().to_string_lossy();
+                    s == ".obsidian" || s == ".git" || s == ".trash"
+                })
+            })
+            .filter_map(|p| {
+                rel_under(&root_for_closure, p).map(|rel| ChangedNote {
+                    path: p.to_string_lossy().to_string(),
+                    rel,
+                })
+            })
+            .collect();
+        if !changed.is_empty() {
+            let _ = handle.emit("vault-changed", changed);
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    watcher
+        .watch(&root, RecursiveMode::Recursive)
+        .map_err(|e| e.to_string())?;
+    *state.0.lock().map_err(|e| e.to_string())? = Some(watcher);
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -226,12 +306,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(WatcherState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             list_notes,
             read_vault,
             read_note,
             write_note,
-            create_note
+            create_note,
+            start_watching
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

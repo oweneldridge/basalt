@@ -199,6 +199,29 @@ button.primary:hover {
   color: var(--text-faint);
   font-size: 0.8rem;
 }
+.conflict {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+}
+.conflict-label {
+  color: var(--code);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.badge-btn {
+  background: rgba(224, 164, 114, 0.14);
+  color: var(--code);
+  border: 1px solid rgba(224, 164, 114, 0.4);
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.badge-btn:hover {
+  background: rgba(224, 164, 114, 0.24);
+}
 
 .editor-host {
   flex: 1;

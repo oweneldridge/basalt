@@ -1,6 +1,6 @@
 // Assembles the CodeMirror 6 extension stack. New editor-wide features are
 // wired in here.
-import { EditorState } from "@codemirror/state";
+import { Annotation, EditorState } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import {
   EditorView,
@@ -22,6 +22,10 @@ import { livePreview } from "./livePreview";
 import { tables } from "./tables";
 import { frontmatter } from "./frontmatter";
 import { wikilinks } from "./wikilink";
+
+// Marks a transaction as an external-content reconcile (a live-reload from disk)
+// so the change listener doesn't treat it as a user edit and trigger a save-back.
+export const externalReload = Annotation.define<boolean>();
 
 export interface EditorCallbacks {
   /** Provides current note names for wikilink autocomplete. */
@@ -76,7 +80,10 @@ export function createEditorState(doc: string, cb: EditorCallbacks): EditorState
       ...completionKeymap,
     ]),
     EditorView.updateListener.of((update) => {
-      if (update.docChanged) cb.onChange(update.state.doc.toString());
+      if (!update.docChanged) return;
+      // Ignore reconciles (external reloads) — only user edits should autosave.
+      if (update.transactions.some((t) => t.annotation(externalReload))) return;
+      cb.onChange(update.state.doc.toString());
     }),
   ];
   return EditorState.create({ doc, selection: { anchor: initialCursor(doc) }, extensions });
