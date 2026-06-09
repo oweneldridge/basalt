@@ -12,13 +12,15 @@ export const basaltTheme: Extension = EditorView.theme(
       height: "100%",
       fontSize: "16px",
     },
+    // NOTE: never set max-width/margin on .cm-content — it desyncs CodeMirror's
+    // click→position mapping (posAtCoords). And keep horizontal padding here at 0,
+    // or the selection/active-line background bleeds into it. Reading-column width
+    // and side gutters live on the editor host instead (see styles.css).
     ".cm-content": {
       caretColor: "var(--accent)",
       fontFamily: "var(--font-text)",
       lineHeight: "1.6",
       padding: "16px 0 40vh 0",
-      maxWidth: "780px",
-      margin: "0 auto",
     },
     ".cm-scroller": { overflow: "auto" },
     "&.cm-focused": { outline: "none" },
@@ -27,7 +29,11 @@ export const basaltTheme: Extension = EditorView.theme(
       backgroundColor: "var(--selection)",
     },
     ".cm-activeLine": { backgroundColor: "transparent" },
-    ".cm-line": { padding: "0 2px" },
+    // Reading column at the LINE level (not .cm-content) so the scroller stays
+    // full-width (scrollbar flush with the panel) and click mapping is unaffected
+    // (CM's content origin still fills the editor). Left-aligned with a left
+    // gutter; padding (not margin) keeps the selection from bleeding into it.
+    ".cm-line": { padding: "0 2px 0 48px", maxWidth: "868px" },
     // Wikilinks
     ".cm-wikilink": {
       color: "var(--accent)",
@@ -51,8 +57,8 @@ export const basaltTheme: Extension = EditorView.theme(
     // List bullets + task checkboxes
     ".cm-list-bullet": { color: "var(--text-muted)" },
     ".cm-task-checkbox": { marginRight: "6px", verticalAlign: "middle", cursor: "pointer" },
-    // Rendered tables
-    ".cm-md-table-wrap": { overflowX: "auto", margin: "10px 0" },
+    // Rendered tables — align with the text gutter (50px ≈ .cm-line 48 + 2 pad)
+    ".cm-md-table-wrap": { overflowX: "auto", margin: "10px 0 10px 50px", maxWidth: "820px" },
     ".cm-md-table": { borderCollapse: "collapse", fontSize: "0.95em" },
     ".cm-md-table th, .cm-md-table td": {
       border: "1px solid var(--border)",
@@ -65,7 +71,8 @@ export const basaltTheme: Extension = EditorView.theme(
       border: "1px solid var(--border)",
       borderRadius: "8px",
       padding: "4px 4px",
-      margin: "4px 0 18px",
+      margin: "4px 0 18px 50px",
+      maxWidth: "820px",
       background: "rgba(255,255,255,0.015)",
     },
     ".cm-properties-empty": { color: "var(--text-faint)", padding: "8px 10px", fontSize: "0.85em" },
