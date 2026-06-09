@@ -149,6 +149,11 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (name === "Table" || name === "FencedCode" || name === "CodeBlock") {
           return false;
         }
+        // Don't descend into images (deferred — render raw for now) or reference
+        // definitions, so their URL children aren't mis-marked by the URL branch.
+        if (name === "Image" || name === "LinkReference") {
+          return false;
+        }
 
         const parents = PARENT_TOUCH_MARKS[name];
         if (parents) {
@@ -205,6 +210,31 @@ function buildDecorations(view: EditorView): DecorationSet {
             Decoration.replace({ widget: new LinkWidget(parsed.text, parsed.href) }),
           );
           return false; // don't also process the LinkMark children
+        }
+
+        // Angle autolink <https://…>: conceal the <> and render a clickable link.
+        if (name === "Autolink") {
+          if (touches(node.from, node.to)) return false;
+          let url = doc.sliceString(node.from, node.to);
+          if (url.startsWith("<") && url.endsWith(">")) url = url.slice(1, -1);
+          builder.add(node.from, node.to, Decoration.replace({ widget: new LinkWidget(url, url) }));
+          return false;
+        }
+
+        // Bare URL / email (GFM): no syntax to hide — just style it clickable.
+        // URL children of Link/Image/Autolink/LinkReference aren't reached (those
+        // branches return false).
+        if (name === "URL") {
+          if (touches(node.from, node.to)) return;
+          const url = doc.sliceString(node.from, node.to);
+          const isEmail = !/^[a-z][a-z0-9+.-]*:/i.test(url) && url.includes("@");
+          const href = isEmail ? `mailto:${url}` : url;
+          builder.add(
+            node.from,
+            node.to,
+            Decoration.mark({ class: "cm-md-link", attributes: { "data-href": href } }),
+          );
+          return;
         }
 
         return;

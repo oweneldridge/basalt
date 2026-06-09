@@ -17,6 +17,19 @@ export function isInExcludedRegion(state: EditorState, pos: number): boolean {
   return false;
 }
 
+const LINKISH = new Set(["Link", "Image", "URL", "Autolink", "LinkReference"]);
+
+/** True if `pos` is inside a link/image/url node — used so tag scanning doesn't
+ * chip a `#anchor` in a link destination or `#word` in link text. */
+export function isInLinkContext(state: EditorState, pos: number): boolean {
+  let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1);
+  while (node) {
+    if (LINKISH.has(node.name)) return true;
+    node = node.parent;
+  }
+  return false;
+}
+
 /**
  * Range of a leading YAML frontmatter block (`---` on line 1 to its closing
  * `---`/`...`), or null. Lezer Markdown doesn't model frontmatter, so we detect

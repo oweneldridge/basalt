@@ -22,6 +22,9 @@ import { livePreview } from "./livePreview";
 import { tables } from "./tables";
 import { frontmatter } from "./frontmatter";
 import { codeBlocks } from "./codeBlocks";
+import { callouts } from "./callouts";
+import { highlight } from "./highlight";
+import { tags } from "./tags";
 import { wikilinks } from "./wikilink";
 
 // Marks a transaction as an external-content reconcile (a live-reload from disk)
@@ -72,6 +75,9 @@ export function createEditorState(doc: string, cb: EditorCallbacks): EditorState
     frontmatter,
     tables,
     codeBlocks,
+    callouts,
+    highlight,
+    tags,
     livePreview({ onOpenUrl: cb.onOpenUrl }),
     wikilinks({ getNotes: cb.getNotes, onOpen: cb.onOpenWikilink }),
     keymap.of([

@@ -18,6 +18,20 @@ export function normalizeName(s: string): string {
   return s.normalize("NFC").trim().toLowerCase();
 }
 
+/** Obsidian `==highlight==`. Group 1 = inner text. Forbids `=`/newline inside
+ * (single-pass, no catastrophic backtracking). Fresh instance per call. */
+export function highlightRegex(): RegExp {
+  return /==([^=\n]+)==/g;
+}
+
+/** Tags `#tag` / `#nested/tag`. A zero-width lookbehind keeps `#` from matching
+ * after a word char, `/`, or another `#` (so a heading `# `, mid-word `a#b`, a
+ * URL `/#frag`, and `#a#b`'s second tag all behave). Group 1 = `#tag`, group 2 =
+ * bare name. */
+export function tagRegex(): RegExp {
+  return /(?<![\w/#])(#([A-Za-z0-9_][\w-]*(?:\/[A-Za-z0-9_][\w-]*)*))/g;
+}
+
 /**
  * Reduce a raw wikilink target to the bare note name it resolves to:
  * strip a `#heading`, a `^block` ref, and any `folder/` path prefix.
