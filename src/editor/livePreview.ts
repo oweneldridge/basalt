@@ -70,6 +70,17 @@ class CheckboxWidget extends WidgetType {
   }
 }
 
+class HrWidget extends WidgetType {
+  eq(): boolean {
+    return true;
+  }
+  toDOM(): HTMLElement {
+    const hr = document.createElement("span");
+    hr.className = "cm-hr";
+    return hr;
+  }
+}
+
 class LinkWidget extends WidgetType {
   constructor(
     readonly text: string,
@@ -175,6 +186,12 @@ function buildDecorations(view: EditorView): DecorationSet {
           if (lineTouched(node.from)) return;
           const checked = /\[[xX]\]/.test(doc.sliceString(node.from, node.to));
           builder.add(node.from, node.to, Decoration.replace({ widget: new CheckboxWidget(checked) }));
+          return;
+        }
+
+        if (name === "HorizontalRule") {
+          if (lineTouched(node.from)) return; // editing: show raw ---
+          builder.add(node.from, node.to, Decoration.replace({ widget: new HrWidget() }));
           return;
         }
 
