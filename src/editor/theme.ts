@@ -57,6 +57,21 @@ export const basaltTheme: Extension = EditorView.theme(
     // List bullets + task checkboxes
     ".cm-list-bullet": { color: "var(--text-muted)" },
     ".cm-task-checkbox": { marginRight: "6px", verticalAlign: "middle", cursor: "pointer" },
+    // Horizontal rule (---)
+    ".cm-hr": {
+      display: "inline-block",
+      width: "100%",
+      borderTop: "1px solid var(--border)",
+      verticalAlign: "middle",
+    },
+    // Fenced/indented code blocks
+    ".cm-code-line": {
+      fontFamily: "var(--font-mono)",
+      fontSize: "0.88em",
+      background: "var(--bg-elev)",
+    },
+    ".cm-code-first": { borderRadius: "6px 6px 0 0", paddingTop: "6px" },
+    ".cm-code-last": { borderRadius: "0 0 6px 6px", paddingBottom: "6px" },
     // Rendered tables — align with the text gutter (50px ≈ .cm-line 48 + 2 pad)
     ".cm-md-table-wrap": { overflowX: "auto", margin: "10px 0 10px 50px", maxWidth: "820px" },
     ".cm-md-table": { borderCollapse: "collapse", fontSize: "0.95em" },
