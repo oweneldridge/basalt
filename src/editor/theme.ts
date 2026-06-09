@@ -72,6 +72,40 @@ export const basaltTheme: Extension = EditorView.theme(
     },
     ".cm-code-first": { borderRadius: "6px 6px 0 0", paddingTop: "6px" },
     ".cm-code-last": { borderRadius: "0 0 6px 6px", paddingBottom: "6px" },
+    // ==highlight==
+    ".cm-highlight": {
+      background: "var(--highlight)",
+      borderRadius: "3px",
+      padding: "0 1px",
+    },
+    // #tags
+    ".cm-tag": {
+      color: "var(--accent)",
+      background: "rgba(169, 139, 224, 0.14)",
+      borderRadius: "8px",
+      padding: "1px 7px",
+      fontSize: "0.86em",
+    },
+    // Blockquotes + callouts
+    ".cm-blockquote": {
+      borderLeft: "3px solid var(--border)",
+      paddingLeft: "12px",
+      color: "var(--text-muted)",
+    },
+    ".cm-callout": {
+      borderLeft: "3px solid var(--cg)",
+      background: "var(--cgbg)",
+      paddingTop: "1px",
+      paddingBottom: "1px",
+      paddingLeft: "12px",
+    },
+    ".cm-callout-title": { fontWeight: "700", color: "var(--cg)" },
+    ".cm-callout-blue": { "--cg": "#7aa2f7", "--cgbg": "rgba(122,162,247,0.08)" },
+    ".cm-callout-green": { "--cg": "#9ece6a", "--cgbg": "rgba(158,206,106,0.08)" },
+    ".cm-callout-orange": { "--cg": "#e0af68", "--cgbg": "rgba(224,175,104,0.08)" },
+    ".cm-callout-red": { "--cg": "#f7768e", "--cgbg": "rgba(247,118,142,0.08)" },
+    ".cm-callout-purple": { "--cg": "#bb9af7", "--cgbg": "rgba(187,154,247,0.08)" },
+    ".cm-callout-gray": { "--cg": "#8a8c90", "--cgbg": "rgba(138,140,144,0.07)" },
     // Rendered tables — align with the text gutter (50px ≈ .cm-line 48 + 2 pad)
     ".cm-md-table-wrap": { overflowX: "auto", margin: "10px 0 10px 50px", maxWidth: "820px" },
     ".cm-md-table": { borderCollapse: "collapse", fontSize: "0.95em" },
