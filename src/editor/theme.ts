@@ -60,6 +60,38 @@ export const basaltTheme: Extension = EditorView.theme(
       textAlign: "left",
     },
     ".cm-md-table th": { background: "var(--bg-elev)", fontWeight: "700" },
+    // Frontmatter "Properties" view
+    ".cm-properties": {
+      border: "1px solid var(--border)",
+      borderRadius: "8px",
+      padding: "4px 4px",
+      margin: "4px 0 18px",
+      background: "rgba(255,255,255,0.015)",
+    },
+    ".cm-properties-empty": { color: "var(--text-faint)", padding: "8px 10px", fontSize: "0.85em" },
+    ".cm-prop-row": {
+      display: "grid",
+      gridTemplateColumns: "minmax(90px, 160px) 1fr",
+      gap: "10px",
+      alignItems: "start",
+      padding: "4px 8px",
+    },
+    ".cm-prop-key": {
+      color: "var(--text-muted)",
+      fontSize: "0.85em",
+      fontWeight: "600",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+    },
+    ".cm-prop-values": { fontSize: "0.9em", display: "flex", flexWrap: "wrap", gap: "5px" },
+    ".cm-prop-pill": {
+      background: "var(--bg-elev)",
+      border: "1px solid var(--border)",
+      borderRadius: "10px",
+      padding: "1px 9px",
+      fontSize: "0.85em",
+      color: "var(--accent)",
+    },
   },
   { dark: true },
 );

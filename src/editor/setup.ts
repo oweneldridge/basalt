@@ -20,6 +20,7 @@ import { GFM } from "@lezer/markdown";
 import { basaltTheme, basaltHighlight } from "./theme";
 import { livePreview } from "./livePreview";
 import { tables } from "./tables";
+import { frontmatter } from "./frontmatter";
 import { wikilinks } from "./wikilink";
 
 export interface EditorCallbacks {
@@ -31,6 +32,22 @@ export interface EditorCallbacks {
   onOpenUrl: (url: string) => void;
   /** Fired (on every edit) with the full document text. */
   onChange: (doc: string) => void;
+}
+
+// Where the caret should start when a note opens: just past the frontmatter, so
+// the Properties view renders instead of the raw YAML being revealed for editing.
+function initialCursor(doc: string): number {
+  const lines = doc.split("\n");
+  if (lines.length < 2 || lines[0].trim() !== "---") return 0;
+  let offset = lines[0].length + 1; // start of line 1
+  for (let i = 1; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t === "---" || t === "...") {
+      return Math.min(offset + lines[i].length + 1, doc.length);
+    }
+    offset += lines[i].length + 1;
+  }
+  return 0;
 }
 
 export function createEditorState(doc: string, cb: EditorCallbacks): EditorState {
@@ -47,6 +64,7 @@ export function createEditorState(doc: string, cb: EditorCallbacks): EditorState
     markdown({ base: markdownLanguage, codeLanguages: languages, extensions: GFM }),
     basaltHighlight,
     basaltTheme,
+    frontmatter,
     tables,
     livePreview({ onOpenUrl: cb.onOpenUrl }),
     wikilinks({ getNotes: cb.getNotes, onOpen: cb.onOpenWikilink }),
@@ -61,5 +79,5 @@ export function createEditorState(doc: string, cb: EditorCallbacks): EditorState
       if (update.docChanged) cb.onChange(update.state.doc.toString());
     }),
   ];
-  return EditorState.create({ doc, extensions });
+  return EditorState.create({ doc, selection: { anchor: initialCursor(doc) }, extensions });
 }

@@ -11,6 +11,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { parseMarkdownLink } from "../lib/markdown";
+import { frontmatterRange } from "./regions";
 
 export interface LivePreviewOptions {
   /** Open an external URL (a clicked Markdown link). */
@@ -119,6 +120,9 @@ function buildDecorations(view: EditorView): DecorationSet {
     const line = doc.lineAt(pos);
     return touches(line.from, line.to);
   };
+  // Frontmatter is rendered by frontmatter.ts; don't apply Markdown decorations
+  // (e.g. bullets to YAML `- list` lines) inside it.
+  const fm = frontmatterRange(state);
 
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
@@ -126,6 +130,10 @@ function buildDecorations(view: EditorView): DecorationSet {
       to,
       enter: (node) => {
         const name = node.name;
+        // Skip nodes that lie ENTIRELY within the frontmatter. Must test
+        // `node.to <= fm.to`, not `node.from < fm.to` — the root Document node
+        // starts at 0, so the latter would abort the whole walk.
+        if (fm && node.to <= fm.to) return false;
         // Tables (tables.ts) and code blocks are handled/left alone elsewhere.
         if (name === "Table" || name === "FencedCode" || name === "CodeBlock") {
           return false;
