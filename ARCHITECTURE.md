@@ -6,7 +6,7 @@ This document exists so that **someone who is not the original author can unders
 
 1. **The vault is the source of truth.** Basalt holds no canonical state that isn't derivable from the files on disk. Everything else (the link index, search, the graph) is a *cache* that can be rebuilt from the vault at any time. This is what makes the data impossible to lock in.
 2. **Markdown stays canonical.** Like Obsidian (and unlike Notion), the document model is the raw Markdown text, not a rich-text tree. Live Preview is a *rendering* over that text, never a replacement for it. This guarantees lossless round-tripping with any other Markdown tool.
-3. **The filesystem boundary is narrow.** All file IO is in Rust (`src-tauri`). The webview never gets raw filesystem capabilities — it can only call the explicit `list_notes` / `read_note` / `write_note` / `create_note` commands. Smaller attack surface, easier to audit.
+3. **The filesystem boundary is narrow.** All file IO is in Rust (`src-tauri`). The webview never gets raw filesystem capabilities — it can only call the explicit vault commands (`open_vault` / `read_vault` / `read_note` / `write_note` / `create_note` / `read_image` / `start_watching`), every path is validated against the canonical vault root held in Rust managed state, and all writes are atomic (temp + fsync + rename). Smaller attack surface, easier to audit.
 4. **Small and conventional over clever.** Boring, well-known tools (React, CodeMirror, Tauri) maximize the contributor pool. Resist dependencies and abstractions that only the author understands.
 
 ## Layout
@@ -14,7 +14,7 @@ This document exists so that **someone who is not the original author can unders
 ```
 basalt/
 ├── src-tauri/                 # Rust backend (the only thing that touches the filesystem)
-│   ├── src/lib.rs             # vault commands: list_notes, read_note, write_note, create_note
+│   ├── src/lib.rs             # vault commands (managed root): open_vault, read_vault, read_note, write_note, create_note, read_image, start_watching
 │   ├── Cargo.toml
 │   ├── tauri.conf.json        # window, bundle, identifier
 │   └── capabilities/          # Tauri permission grants (dialog, opener, core)
@@ -38,7 +38,7 @@ basalt/
 ## Subsystems
 
 ### Vault layer (`src-tauri/src/lib.rs`, `src/lib/vault.ts`)
-A vault is a folder. `list_notes` walks it recursively, skips dotfolders (`.obsidian`, `.git`, `.trash`), and returns `{ path, rel, name }` per `.md` file. Notes are read/written on demand. **Planned:** a filesystem watcher so external edits (including Obsidian's) reflect live, and incremental index updates.
+A vault is a folder. `open_vault` canonicalizes and stores the root in managed state; `read_vault` walks it recursively (skipping dotfolders like `.obsidian`, `.git`, `.trash`), returning every note with content for the index. A `notify` watcher emits `vault-changed` (per-note) and `vault-rescan` (directory-level) events so external edits — including Obsidian's — reflect live, with content-based suppression of Basalt's own write echoes.
 
 ### Editor (`src/editor/`)
 CodeMirror 6, chosen because it is *literally* Obsidian's editor engine — the only way to match Live Preview behavior exactly.
@@ -58,21 +58,13 @@ The single biggest strategic decision. Obsidian's moat is **~4,500 community plu
 
 ## Roadmap
 
-| Phase | Deliverable | State |
-|------|-------------|-------|
-| 0 | Tauri 2 + CM6; open vault; Live Preview (common elements); wikilink decoration + click | **in progress** |
-| 1 | File tree, quick switcher, full-text search, autosave, Source/Reading modes, frontmatter | planned |
-| 2 | Link/metadata index → backlinks, unlinked mentions, tags, block refs, transclusion | planned |
-| 3 | Graph (global + local), Properties UI, daily notes, templates, command palette, themes | planned |
-| 4 | JSON Canvas whiteboard; Bases-style table/card views over YAML | planned |
-| 5 | Basalt plugin API + reimplemented must-have workflows | planned |
-
-Sync, Publish, and native mobile are explicitly out of scope for the foreseeable future: each is a separate product. Users who need sync today can pair the vault with Syncthing, git, or iCloud/Dropbox — the open-format advantage means that just works.
+Moved to [ROADMAP.md](./ROADMAP.md) (phases 0–2.5 shipped; 2.6+ planned). Sync,
+Publish, and native mobile remain explicitly out of scope: each is a separate
+product. Users who need sync today can pair the vault with Syncthing, git, or
+iCloud/Dropbox — the open-format advantage means that just works.
 
 ## Known limitations (tracked)
 
-Surfaced by the Phase 2 review; deliberately deferred, not forgotten:
-
-- **Folder-name collisions.** Links and backlinks resolve by bare note name, so two notes with the same basename in different folders (e.g. `work/Index` and `personal/Index`) are conflated. Phase 2.5 will resolve each link to a concrete note *path* (Obsidian-style shortest-unique-path) and key the index by path.
-- **No live reload of external edits.** Editing a note in Obsidian (or another app) while Basalt is open won't refresh until you reopen the vault. Needs a filesystem watcher (planned with Phase 2.5); re-opening the *currently* open note is a deliberate no-op until then.
-- **Move/rename leaves stale index entries.** The index is path-keyed; a future move/rename feature must call `removeNote(oldPath)` before `setNote(newNote)`. No move feature exists yet, so this is a latent contract, not an active bug.
+- **A replaced image shows stale until restart.** The image cache keys on path and the watcher only signals `.md` and directory changes; an asset overwritten mid-session keeps its cached bytes. Broaden the watcher or key on mtime (with Phase 2.8 attachments).
+- **Oversized notes (>5 MB) are listed without content**, so their outgoing links aren't indexed; the editor still opens them via `read_note`.
+- **Frontmatter wikilinks aren't indexed as links** (the prose mask skips YAML). Obsidian indexes Properties links; revisit with Properties editing (Phase 3).
