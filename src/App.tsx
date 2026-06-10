@@ -133,6 +133,7 @@ export default function App() {
   }, [bumpStructure]);
 
   const rememberSelfWrite = useCallback((rel: string, content: string) => {
+    selfWrites.current.delete(rel); // re-insert so eviction order is least-recent
     selfWrites.current.set(rel, content);
     if (selfWrites.current.size > SELF_WRITES_MAX) {
       const oldest = selfWrites.current.keys().next().value;
@@ -263,13 +264,12 @@ export default function App() {
       );
 
       // Drop echoes of our own writes: disk content equals what we last wrote.
-      const results = reads.filter((r) => {
-        if (r.ok && selfWrites.current.get(r.rel) === r.content) {
-          selfWrites.current.delete(r.rel);
-          return false;
-        }
-        return true;
-      });
+      // Do NOT consume the entry on match — one save can produce several event
+      // bursts (our rename + iCloud's own touches), and every echo must match.
+      // The entry is replaced by the next save or evicted by the size cap.
+      const results = reads.filter(
+        (r) => !(r.ok && selfWrites.current.get(r.rel) === r.content),
+      );
       if (results.length === 0) return;
 
       for (const r of results) {
@@ -304,6 +304,9 @@ export default function App() {
       if (!activeRel || !activePath) return;
       const open = results.find((r) => r.rel === activeRel);
       if (!open) return;
+      // A content-identical "change" (mtime touch, sync-client noise) is a
+      // no-op — it must never raise a conflict, even while the user is typing.
+      if (open.ok && open.content === prevByRel.get(activeRel)) return;
       const dirty = pending.current?.path === activePath;
       if (!open.ok) {
         if (dirty) setChangedOnDisk(true);
@@ -314,7 +317,6 @@ export default function App() {
         setChangedOnDisk(true);
         return;
       }
-      if (open.content === prevByRel.get(activeRel)) return;
       if (pending.current?.path === activePath) {
         setChangedOnDisk(true);
         return;

@@ -520,3 +520,49 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn atomic_write_roundtrip_tmp() {
+        let dir = std::env::temp_dir().join(format!("basalt-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("note.md");
+        atomic_write(&f, b"hello").expect("atomic_write failed");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "hello");
+        atomic_write(&f, b"replaced").expect("overwrite failed");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "replaced");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Set BASALT_TEST_VAULT to a real vault path to exercise these on a
+    /// cloud-synced filesystem (they skip when unset).
+    fn test_vault() -> Option<PathBuf> {
+        std::env::var("BASALT_TEST_VAULT").ok().map(PathBuf::from).filter(|p| p.is_dir())
+    }
+
+    #[test]
+    fn atomic_write_on_real_vault() {
+        let Some(vault) = test_vault() else { return };
+        let root = fs::canonicalize(&vault).expect("canonicalize vault");
+        let test = root.join(".basalt-write-test.md");
+        let resolved = ensure_in_vault(&root, &test.to_string_lossy()).expect("ensure_in_vault failed");
+        atomic_write(&resolved, b"test").expect("atomic_write on icloud failed");
+        assert_eq!(fs::read_to_string(&resolved).unwrap(), "test");
+        fs::remove_file(&resolved).unwrap();
+    }
+
+    #[test]
+    fn ensure_in_vault_existing_note_real_vault() {
+        let Some(vault) = test_vault() else { return };
+        let root = fs::canonicalize(&vault).unwrap();
+        // find any real .md note and validate it the way write_note would
+        let mut notes = Vec::new();
+        collect_vault(&root, &root, &mut notes);
+        if let Some(n) = notes.first() {
+            ensure_in_vault(&root, &n.path).expect("existing note failed containment");
+        }
+    }
+}
