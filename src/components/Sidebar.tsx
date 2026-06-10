@@ -1,24 +1,75 @@
-import { useMemo, useState } from "react";
-import type { Note } from "../lib/vault";
+import { useEffect, useMemo, useState } from "react";
+import type { VaultNote } from "../lib/vault";
+import { ancestorFolders, buildTree, type TreeNode } from "../lib/tree";
 
 interface Props {
-  notes: Note[];
+  notes: VaultNote[];
   activePath: string | null;
   vaultName: string | null;
-  onOpen: (note: Note) => void;
+  onOpen: (path: string) => void;
   onNewNote: () => void;
 }
 
 export function Sidebar({ notes, activePath, vaultName, onOpen, onNewNote }: Props) {
   const [filter, setFilter] = useState("");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const tree = useMemo(() => buildTree(notes), [notes]);
+
+  // Reset expansion when the vault changes.
+  useEffect(() => {
+    setExpanded(new Set());
+  }, [vaultName]);
+
+  // Auto-expand the folders leading to the active note so it's visible.
+  useEffect(() => {
+    if (!activePath) return;
+    const note = notes.find((n) => n.path === activePath);
+    if (!note) return;
+    const anc = ancestorFolders(note.rel);
+    if (anc.length === 0) return;
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const a of anc) {
+        if (!next.has(a)) {
+          next.add(a);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [activePath, notes]);
+
+  const toggle = (path: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return notes;
+    if (!q) return null;
     return notes.filter(
       (n) => n.name.toLowerCase().includes(q) || n.rel.toLowerCase().includes(q),
     );
   }, [notes, filter]);
+
+  // Flatten the visible (expanded) tree to rows.
+  const rows = useMemo(() => {
+    if (filtered) return [];
+    const out: { node: TreeNode; depth: number }[] = [];
+    const walk = (nodes: TreeNode[], depth: number) => {
+      for (const node of nodes) {
+        out.push({ node, depth });
+        if (node.type === "folder" && expanded.has(node.path)) walk(node.children, depth + 1);
+      }
+    };
+    walk(tree, 0);
+    return out;
+  }, [tree, expanded, filtered]);
 
   return (
     <aside className="sidebar">
@@ -37,17 +88,45 @@ export function Sidebar({ notes, activePath, vaultName, onOpen, onNewNote }: Pro
         onChange={(e) => setFilter(e.currentTarget.value)}
       />
       <div className="note-list">
-        {filtered.map((n) => (
-          <button
-            key={n.path}
-            className={`note-item${n.path === activePath ? " active" : ""}`}
-            onClick={() => onOpen(n)}
-            title={n.rel}
-          >
-            {n.name}
-          </button>
-        ))}
-        {filtered.length === 0 && <div className="empty">No notes</div>}
+        {filtered ? (
+          <>
+            {filtered.map((n) => (
+              <button
+                key={n.path}
+                className={`note-item${n.path === activePath ? " active" : ""}`}
+                onClick={() => onOpen(n.path)}
+                title={n.rel}
+              >
+                {n.name}
+              </button>
+            ))}
+            {filtered.length === 0 && <div className="empty">No notes</div>}
+          </>
+        ) : (
+          rows.map(({ node, depth }) =>
+            node.type === "folder" ? (
+              <button
+                key={`d:${node.path}`}
+                className="tree-row folder"
+                style={{ paddingLeft: 8 + depth * 14 }}
+                onClick={() => toggle(node.path)}
+              >
+                <span className={`chevron${expanded.has(node.path) ? " open" : ""}`}>▸</span>
+                <span className="tree-name">{node.name}</span>
+              </button>
+            ) : (
+              <button
+                key={`f:${node.path}`}
+                className={`tree-row file${node.path === activePath ? " active" : ""}`}
+                style={{ paddingLeft: 22 + depth * 14 }}
+                onClick={() => onOpen(node.path)}
+                title={node.name}
+              >
+                <span className="tree-name">{node.name}</span>
+              </button>
+            ),
+          )
+        )}
       </div>
     </aside>
   );

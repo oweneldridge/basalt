@@ -484,7 +484,7 @@ export default function App() {
         notes={notes}
         activePath={active?.path ?? null}
         vaultName={basename(vault)}
-        onOpen={(n) => openNoteByPath(n.path)}
+        onOpen={(path) => openNoteByPath(path)}
         onNewNote={handleNewNote}
       />
       <main className="main">
