@@ -25,6 +25,7 @@ import { codeBlocks } from "./codeBlocks";
 import { callouts } from "./callouts";
 import { highlight } from "./highlight";
 import { tags } from "./tags";
+import { embeds } from "./embeds";
 import { wikilinks } from "./wikilink";
 
 // Marks a transaction as an external-content reconcile (a live-reload from disk)
@@ -34,10 +35,12 @@ export const externalReload = Annotation.define<boolean>();
 export interface EditorCallbacks {
   /** Provides current note names for wikilink autocomplete. */
   getNotes: () => string[];
-  /** Open the target of a clicked wikilink. */
+  /** Open the target of a clicked wikilink / note embed. */
   onOpenWikilink: (target: string) => void;
   /** Open an external URL from a clicked Markdown link. */
   onOpenUrl: (url: string) => void;
+  /** Resolve an image reference (relative to the active note) to a URL. */
+  resolveImage: (target: string) => Promise<string | null>;
   /** Fired (on every edit) with the full document text. */
   onChange: (doc: string) => void;
 }
@@ -78,7 +81,8 @@ export function createEditorState(doc: string, cb: EditorCallbacks): EditorState
     callouts,
     highlight,
     tags,
-    livePreview({ onOpenUrl: cb.onOpenUrl }),
+    embeds({ resolveImage: cb.resolveImage, onOpen: cb.onOpenWikilink }),
+    livePreview({ onOpenUrl: cb.onOpenUrl, resolveImage: cb.resolveImage }),
     wikilinks({ getNotes: cb.getNotes, onOpen: cb.onOpenWikilink }),
     keymap.of([
       ...closeBracketsKeymap,
