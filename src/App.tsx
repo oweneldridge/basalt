@@ -243,8 +243,11 @@ export default function App() {
     [flushPending, loadVault],
   );
 
-  // Restore the last vault on launch.
+  // Restore the last vault on launch (once — StrictMode double-mounts effects).
+  const restoredRef = useRef(false);
   useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
     const last = localStorage.getItem(LAST_VAULT_KEY);
     if (last) {
       openVault(last).catch(() => localStorage.removeItem(LAST_VAULT_KEY));
@@ -317,21 +320,23 @@ export default function App() {
       if (!open) return;
       // A content-identical "change" (mtime touch, sync-client noise) is a
       // no-op — it must never raise a conflict, even while the user is typing.
-      if (open.ok && open.content === prevByRel.get(activeRel)) return;
+      if (open.ok && open.content === prevByRel.get(activeRel)) {
+        jsLog("reconcile: open note unchanged (no-op)");
+        return;
+      }
       const dirty = pending.current?.path === activePath;
       if (!open.ok) {
+        jsLog(`reconcile: open note deleted on disk (dirty=${dirty})`);
         if (dirty) setChangedOnDisk(true);
         else setActive(null);
         return;
       }
       if (dirty) {
+        jsLog("reconcile: open note changed while dirty -> conflict badge");
         setChangedOnDisk(true);
         return;
       }
-      if (pending.current?.path === activePath) {
-        setChangedOnDisk(true);
-        return;
-      }
+      jsLog("reconcile: reloading editor with external content");
       // Update content in-place (EditorPane reconciles, preserving the caret).
       setActive({ path: activePath, doc: open.content });
     },
@@ -363,11 +368,12 @@ export default function App() {
 
   // Listen for on-disk changes; debounce; then apply.
   useEffect(() => {
+    let cancelled = false;
     let unlistenChanged: (() => void) | undefined;
     let unlistenRescan: (() => void) | undefined;
     (async () => {
       try {
-        unlistenChanged = await listen<ChangedNote[]>("vault-changed", (event) => {
+        const u1 = await listen<ChangedNote[]>("vault-changed", (event) => {
           jsLog(`vault-changed: ${event.payload.length} note(s)`);
           for (const c of event.payload) changedBuf.current.set(c.rel, c.path);
           if (changedBuf.current.size === 0) return;
@@ -378,14 +384,24 @@ export default function App() {
             void processChanges(changes);
           }, 300);
         });
+        if (cancelled) {
+          u1();
+          return;
+        }
+        unlistenChanged = u1;
         jsLog("vault-changed listener registered");
-        unlistenRescan = await listen("vault-rescan", () => {
+        const u2 = await listen("vault-rescan", () => {
           jsLog("vault-rescan received");
           window.clearTimeout(rescanTimer.current);
           rescanTimer.current = window.setTimeout(() => {
             void handleRescan();
           }, 300);
         });
+        if (cancelled) {
+          u2();
+          return;
+        }
+        unlistenRescan = u2;
         jsLog("vault-rescan listener registered");
       } catch (e) {
         jsLog(`LISTENER REGISTRATION FAILED: ${e}`);
@@ -396,6 +412,7 @@ export default function App() {
       }
     })();
     return () => {
+      cancelled = true;
       unlistenChanged?.();
       unlistenRescan?.();
     };
