@@ -106,6 +106,27 @@ export const basaltTheme: Extension = EditorView.theme(
     ".cm-callout-red": { "--cg": "#f7768e", "--cgbg": "rgba(247,118,142,0.08)" },
     ".cm-callout-purple": { "--cg": "#bb9af7", "--cgbg": "rgba(187,154,247,0.08)" },
     ".cm-callout-gray": { "--cg": "#8a8c90", "--cgbg": "rgba(138,140,144,0.07)" },
+    // Images + embeds
+    ".cm-md-image": {
+      display: "block",
+      maxWidth: "100%",
+      borderRadius: "6px",
+      margin: "6px 0",
+    },
+    ".cm-md-image-missing": { color: "var(--text-faint)", fontSize: "0.9em" },
+    ".cm-embed-source": { color: "var(--accent)" },
+    ".cm-embed-note": {
+      display: "block",
+      border: "1px solid var(--border)",
+      borderLeft: "3px solid var(--accent)",
+      borderRadius: "6px",
+      padding: "8px 12px",
+      margin: "6px 0",
+      color: "var(--accent)",
+      cursor: "pointer",
+      background: "rgba(255,255,255,0.015)",
+    },
+    ".cm-embed-note:hover": { background: "var(--bg-elev)" },
     // Rendered tables — align with the text gutter (50px ≈ .cm-line 48 + 2 pad)
     ".cm-md-table-wrap": { overflowX: "auto", margin: "10px 0 10px 50px", maxWidth: "820px" },
     ".cm-md-table": { borderCollapse: "collapse", fontSize: "0.95em" },

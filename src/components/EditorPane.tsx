@@ -11,6 +11,7 @@ interface Props {
   getNotes: () => string[];
   onOpenWikilink: (target: string) => void;
   onOpenUrl: (url: string) => void;
+  resolveImage: (target: string) => Promise<string | null>;
   onChange: (doc: string) => void;
   /** 1-based line to scroll to / place the caret on (from search or backlinks). */
   scrollToLine?: number;
@@ -22,6 +23,7 @@ export function EditorPane({
   getNotes,
   onOpenWikilink,
   onOpenUrl,
+  resolveImage,
   onChange,
   scrollToLine,
 }: Props) {
@@ -29,8 +31,8 @@ export function EditorPane({
   const view = useRef<EditorView | null>(null);
   // Keep the latest callbacks in refs so the editor (rebuilt only per `path`)
   // always calls through to fresh closures without being torn down on every render.
-  const cbs = useRef({ getNotes, onOpenWikilink, onOpenUrl, onChange });
-  cbs.current = { getNotes, onOpenWikilink, onOpenUrl, onChange };
+  const cbs = useRef({ getNotes, onOpenWikilink, onOpenUrl, resolveImage, onChange });
+  cbs.current = { getNotes, onOpenWikilink, onOpenUrl, resolveImage, onChange };
 
   // Build the editor when the note (path) changes.
   useEffect(() => {
@@ -40,6 +42,7 @@ export function EditorPane({
         getNotes: () => cbs.current.getNotes(),
         onOpenWikilink: (t) => cbs.current.onOpenWikilink(t),
         onOpenUrl: (u) => cbs.current.onOpenUrl(u),
+        resolveImage: (t) => cbs.current.resolveImage(t),
         onChange: (d) => cbs.current.onChange(d),
       }),
       parent: host.current,

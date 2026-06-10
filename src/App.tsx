@@ -14,6 +14,7 @@ import {
   type VaultNote,
 } from "./lib/vault";
 import { VaultIndex } from "./lib/vaultIndex";
+import { clearImageCache, resolveImage } from "./lib/assets";
 import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { EditorPane } from "./components/EditorPane";
@@ -186,6 +187,7 @@ export default function App() {
   const openVault = useCallback(
     async (path: string) => {
       await flushPending();
+      clearImageCache();
       setVault(path);
       localStorage.setItem(LAST_VAULT_KEY, path);
       setActive(null);
@@ -392,6 +394,12 @@ export default function App() {
     });
   }, []);
 
+  const handleResolveImage = useCallback((target: string) => {
+    const v = vaultRef.current;
+    if (!v) return Promise.resolve(null);
+    return resolveImage(v, target, activeRelRef.current ?? "");
+  }, []);
+
   const handleOpenWikilink = useCallback(
     async (target: string) => {
       const resolved = index.current.resolve(target, activePathRef.current ?? "");
@@ -518,6 +526,7 @@ export default function App() {
             getNotes={getNotes}
             onOpenWikilink={handleOpenWikilink}
             onOpenUrl={handleOpenUrl}
+            resolveImage={handleResolveImage}
             onChange={handleChange}
           />
         ) : (

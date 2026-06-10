@@ -13,7 +13,7 @@
 // match the dialog-derived absolute path. The relative path is stable.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 use notify::{RecursiveMode, Watcher};
@@ -321,6 +321,117 @@ fn start_watching(vault: String, app: AppHandle, state: State<WatcherState>) -> 
     Ok(())
 }
 
+fn mime_for(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("svg") => "image/svg+xml",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("avif") => "image/avif",
+        Some("ico") => "image/x-icon",
+        _ => "application/octet-stream",
+    }
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(T[((n >> 18) & 63) as usize] as char);
+        out.push(T[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 { T[((n >> 6) & 63) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 2 { T[(n & 63) as usize] as char } else { '=' });
+    }
+    out
+}
+
+/// Recursively find the first file named `name` (case-insensitive) under `dir`.
+fn find_file(dir: &Path, name: &str, depth: usize) -> Option<PathBuf> {
+    if depth > 16 {
+        return None;
+    }
+    let entries = fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if ft.is_dir() {
+            if !is_ignored_dir(&entry.file_name().to_string_lossy()) {
+                if let Some(found) = find_file(&path, name, depth + 1) {
+                    return Some(found);
+                }
+            }
+        } else if entry.file_name().to_string_lossy().eq_ignore_ascii_case(name) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Resolve an image reference (relative to the note's folder, then the vault
+/// root, then a bare-name search) and return it as a base64 `data:` URL.
+#[tauri::command]
+fn read_image(vault: String, target: String, source_rel: String) -> Result<String, String> {
+    let t = target.trim();
+    if t.is_empty() {
+        return Err("empty image target".into());
+    }
+    // Reject absolute / traversal targets up front (no probing outside the vault).
+    let tp = Path::new(t);
+    if tp.is_absolute()
+        || tp
+            .components()
+            .any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
+    {
+        return Err("invalid image target".into());
+    }
+    let root = fs::canonicalize(&vault).map_err(|e| format!("vault: {e}"))?;
+
+    let mut found: Option<PathBuf> = None;
+    if let Some(folder) = Path::new(&source_rel).parent() {
+        let c = root.join(folder).join(t);
+        if c.is_file() {
+            found = Some(c);
+        }
+    }
+    if found.is_none() {
+        let c = root.join(t);
+        if c.is_file() {
+            found = Some(c);
+        }
+    }
+    // Bare-name search only for a separator-less target (don't walk for paths).
+    if found.is_none() && !t.contains('/') && !t.contains('\\') {
+        found = find_file(&root, t, 0);
+    }
+
+    let path = found.ok_or_else(|| format!("image not found: {t}"))?;
+    let canon = fs::canonicalize(&path).map_err(|e| e.to_string())?;
+    if !canon.starts_with(&root) {
+        return Err("path escapes vault".into());
+    }
+    // Check size before reading, so an oversized file isn't loaded into memory.
+    let meta = fs::metadata(&canon).map_err(|e| e.to_string())?;
+    if meta.len() > 25_000_000 {
+        return Err("image too large".into());
+    }
+    let bytes = fs::read(&canon).map_err(|e| format!("read {}: {e}", canon.display()))?;
+    Ok(format!("data:{};base64,{}", mime_for(&canon), base64_encode(&bytes)))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -333,7 +444,8 @@ pub fn run() {
             read_note,
             write_note,
             create_note,
-            start_watching
+            start_watching,
+            read_image
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -16,6 +16,60 @@ import { frontmatterRange } from "./regions";
 export interface LivePreviewOptions {
   /** Open an external URL (a clicked Markdown link). */
   onOpenUrl: (url: string) => void;
+  /** Resolve an image reference to a displayable URL (or null if missing). */
+  resolveImage: (target: string) => Promise<string | null>;
+}
+
+/** Parse an image alt that may carry Obsidian's `|width` or `|WxH`. */
+export function parseImageAlt(alt: string): { alt: string; width?: number } {
+  const pipe = alt.lastIndexOf("|");
+  if (pipe < 0) return { alt };
+  const size = alt.slice(pipe + 1).trim();
+  // `|123` or `|123x456` is a size (width); otherwise it's just dropped. Either
+  // way the pipe is stripped from the alt.
+  const width = /^\d+(x\d+)?$/.test(size) ? parseInt(size, 10) : undefined;
+  return { alt: alt.slice(0, pipe).trim(), width };
+}
+
+export class ImgWidget extends WidgetType {
+  constructor(
+    readonly alt: string,
+    readonly src: string,
+    readonly width: number | undefined,
+    readonly resolve: (target: string) => Promise<string | null>,
+  ) {
+    super();
+  }
+  eq(other: ImgWidget): boolean {
+    return other.src === this.src && other.alt === this.alt && other.width === this.width;
+  }
+  toDOM(): HTMLElement {
+    const img = document.createElement("img");
+    img.className = "cm-md-image";
+    img.alt = this.alt;
+    if (this.width) img.style.maxWidth = `${this.width}px`;
+    // Resolve async; retry once after the negative-cache TTL so an image
+    // referenced before it exists self-heals without a reload.
+    const load = (retry: boolean) => {
+      this.resolve(this.src).then((url) => {
+        if (url) img.src = url;
+        else if (retry) window.setTimeout(() => load(false), 4500);
+        else img.replaceWith(missingImage(this.alt || this.src));
+      });
+    };
+    load(true);
+    return img;
+  }
+  ignoreEvent(): boolean {
+    return false;
+  }
+}
+
+function missingImage(label: string): HTMLElement {
+  const span = document.createElement("span");
+  span.className = "cm-md-image-missing";
+  span.textContent = `🖼 ${label}`;
+  return span;
 }
 
 const CONCEAL = Decoration.replace({});
@@ -120,7 +174,10 @@ const PARENT_TOUCH_MARKS: Record<string, string[]> = {
   StrikethroughMark: ["Strikethrough"],
 };
 
-function buildDecorations(view: EditorView): DecorationSet {
+function buildDecorations(
+  view: EditorView,
+  resolveImage: (target: string) => Promise<string | null>,
+): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const { state } = view;
   const { doc } = state;
@@ -149,9 +206,22 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (name === "Table" || name === "FencedCode" || name === "CodeBlock") {
           return false;
         }
-        // Don't descend into images (deferred — render raw for now) or reference
-        // definitions, so their URL children aren't mis-marked by the URL branch.
-        if (name === "Image" || name === "LinkReference") {
+        // Reference definitions: leave raw (their URL must not be mis-marked).
+        if (name === "LinkReference") return false;
+
+        // Image: render an <img> (async-loaded), reveal raw when editing.
+        if (name === "Image") {
+          if (touches(node.from, node.to)) return false;
+          const raw = doc.sliceString(node.from, node.to);
+          if (raw.includes("![[")) return false; // embeds.ts owns embedded ![[…]]
+          const parsed = parseMarkdownLink(raw);
+          if (!parsed) return false;
+          const { alt, width } = parseImageAlt(parsed.text);
+          builder.add(
+            node.from,
+            node.to,
+            Decoration.replace({ widget: new ImgWidget(alt, parsed.href, width, resolveImage) }),
+          );
           return false;
         }
 
@@ -249,11 +319,11 @@ export function livePreview(opts: LivePreviewOptions): Extension {
     class {
       decorations: DecorationSet;
       constructor(view: EditorView) {
-        this.decorations = buildDecorations(view);
+        this.decorations = buildDecorations(view, opts.resolveImage);
       }
       update(update: ViewUpdate) {
         if (update.docChanged || update.selectionSet || update.viewportChanged) {
-          this.decorations = buildDecorations(update.view);
+          this.decorations = buildDecorations(update.view, opts.resolveImage);
         }
       }
     },

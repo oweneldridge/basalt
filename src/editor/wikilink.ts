@@ -69,6 +69,8 @@ function buildDecorations(view: EditorView): DecorationSet {
       // widget (tables.ts already renders their cells) — would corrupt source
       // or double-render.
       if (isInExcludedRegion(view.state, start)) continue;
+      // A `[[…]]` preceded by `!` is an embed — handled by embeds.ts.
+      if (view.state.doc.sliceString(start - 1, start) === "!") continue;
       const target = m[1].trim();
       const display = (m[2] ?? m[1]).trim();
       if (touches(start, end)) {
