@@ -11,7 +11,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { parseMarkdownLink } from "../lib/markdown";
-import { frontmatterRange } from "./regions";
+import { frontmatterRange, treeChanged } from "./regions";
 
 export interface LivePreviewOptions {
   /** Open an external URL (a clicked Markdown link). */
@@ -322,7 +322,7 @@ export function livePreview(opts: LivePreviewOptions): Extension {
         this.decorations = buildDecorations(view, opts.resolveImage);
       }
       update(update: ViewUpdate) {
-        if (update.docChanged || update.selectionSet || update.viewportChanged) {
+        if (update.docChanged || update.selectionSet || update.viewportChanged || treeChanged(update)) {
           this.decorations = buildDecorations(update.view, opts.resolveImage);
         }
       }

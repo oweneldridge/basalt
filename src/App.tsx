@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   createNote,
   nameFromRel,
+  openVaultBackend,
   pickVault,
   readNote,
   readVault,
@@ -27,8 +28,8 @@ import "./styles.css";
 
 const LAST_VAULT_KEY = "basalt.lastVault";
 const SAVE_DEBOUNCE_MS = 500;
-// How long after one of our own writes to ignore the resulting watcher events.
-const SELF_WRITE_TTL_MS = 4000;
+// Bound on the self-write suppression map (rel -> last written content).
+const SELF_WRITES_MAX = 128;
 
 interface ActiveNote {
   path: string;
@@ -44,12 +45,42 @@ function basename(p: string): string {
   return parts[parts.length - 1] ?? p;
 }
 
+/** Known non-Markdown attachment extension at the end of a link target. */
+function isAttachmentTarget(pathPart: string): boolean {
+  return /\.[a-z0-9]{1,8}$/i.test(pathPart) && !/\.md$/i.test(pathPart);
+}
+
+/** Resolve `./`/`../` segments in a creation target against the source folder.
+ * Returns a vault-relative folder-qualified name, or null if it escapes root. */
+function normalizeCreateTarget(target: string, sourceRel: string | null): string | null {
+  const segments = target.split(/[/\\]/);
+  if (!segments.some((s) => s === "." || s === "..")) return target;
+  const srcFolder = (sourceRel ?? "").split(/[/\\]/).slice(0, -1);
+  const stack = [...srcFolder];
+  for (const seg of segments) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      if (stack.length === 0) return null;
+      stack.pop();
+    } else {
+      stack.push(seg);
+    }
+  }
+  return stack.join("/");
+}
+
 export default function App() {
   const [vault, setVault] = useState<string | null>(null);
   const [notes, setNotes] = useState<VaultNote[]>([]);
   const [active, setActive] = useState<ActiveNote | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // indexVersion bumps on every index change (incl. local saves) — graph etc.
+  // structureVersion bumps only when OTHER notes change (external edits,
+  // rescans, reloads) — backlinks of the active note can't change on its own
+  // save, so the backlinks memo keys off this cheaper counter.
   const [indexVersion, setIndexVersion] = useState(0);
+  const [structureVersion, setStructureVersion] = useState(0);
   const [changedOnDisk, setChangedOnDisk] = useState(false);
   const [modal, setModal] = useState<ModalKind>(null);
   const [graphOpen, setGraphOpen] = useState(false);
@@ -68,13 +99,15 @@ export default function App() {
   changedOnDiskRef.current = changedOnDisk;
   const saveTimer = useRef<number | undefined>(undefined);
   const pending = useRef<{ path: string; doc: string } | null>(null);
-  // Vault-relative paths Basalt itself just wrote (rel -> timestamp), to ignore
-  // the watcher events our own saves trigger.
-  const selfWrites = useRef<Map<string, number>>(new Map());
+  // rel -> exact content Basalt last wrote there. The watcher echo of our own
+  // save is identified by CONTENT (not a time window), so a real external edit
+  // arriving right after a save is never silently swallowed.
+  const selfWrites = useRef<Map<string, string>>(new Map());
   // Accumulated external changes (rel -> absolute path), flushed after a debounce.
   const changedBuf = useRef<Map<string, string>>(new Map());
   const watchTimer = useRef<number | undefined>(undefined);
-  // Resolves once the vault-changed listener is active, so we never start the
+  const rescanTimer = useRef<number | undefined>(undefined);
+  // Resolves once the event listeners are active, so we never start the
   // watcher before we can hear it.
   const listenerReady = useRef<{ promise: Promise<void>; resolve: () => void } | null>(null);
   if (!listenerReady.current) {
@@ -86,41 +119,54 @@ export default function App() {
   }
 
   const bumpIndex = useCallback(() => setIndexVersion((v) => v + 1), []);
+  const bumpStructure = useCallback(() => {
+    setIndexVersion((v) => v + 1);
+    setStructureVersion((v) => v + 1);
+  }, []);
 
-  const loadVault = useCallback(
-    async (path: string) => {
-      const list = await readVault(path);
-      index.current.build(list);
-      setNotes(list);
-      bumpIndex();
-      return list;
-    },
-    [bumpIndex],
-  );
+  const loadVault = useCallback(async () => {
+    const list = await readVault();
+    index.current.build(list);
+    setNotes(list);
+    bumpStructure();
+    return list;
+  }, [bumpStructure]);
+
+  const rememberSelfWrite = useCallback((rel: string, content: string) => {
+    selfWrites.current.set(rel, content);
+    if (selfWrites.current.size > SELF_WRITES_MAX) {
+      const oldest = selfWrites.current.keys().next().value;
+      if (oldest !== undefined) selfWrites.current.delete(oldest);
+    }
+  }, []);
 
   const flushSave = useCallback(
     async (path: string, doc: string) => {
-      const v = vaultRef.current;
-      if (!v) return;
       setSaving(true);
       try {
-        await writeNote(v, path, doc);
+        await writeNote(path, doc);
+        setSaveError(null);
         const meta = notesRef.current.find((n) => n.path === path);
         if (meta) {
-          // Mark AFTER a successful write (a failed write leaves no stale
-          // suppression), keyed by the rel the watcher will report.
-          selfWrites.current.set(meta.rel, Date.now());
+          // Record AFTER a successful write (a failed write leaves no stale
+          // suppression), keyed by the rel + content the watcher will see.
+          rememberSelfWrite(meta.rel, doc);
           const updated: VaultNote = { ...meta, content: doc };
           index.current.setNote(updated);
           setNotes((prev) => prev.map((n) => (n.path === path ? updated : n)));
           bumpIndex();
         }
         if (path === activePathRef.current) setChangedOnDisk(false);
+      } catch (e) {
+        // Keep the edit pending (retried on the next change/flush) and say so —
+        // a failed write must never show "Saved".
+        pending.current = { path, doc };
+        setSaveError(String(e));
       } finally {
         setSaving(false);
       }
     },
-    [bumpIndex],
+    [bumpIndex, rememberSelfWrite],
   );
 
   const flushPending = useCallback(async () => {
@@ -157,44 +203,36 @@ export default function App() {
   const openNoteByPath = useCallback(
     async (path: string, line?: number) => {
       if (path === activePathRef.current) {
-        // Already open — just jump to the line if one was given.
         if (line !== undefined) {
           setActive((a) => (a && a.path === path && a.scrollToLine !== line ? { ...a, scrollToLine: line } : a));
         }
         return;
       }
       await flushPending();
-      const v = vaultRef.current;
-      if (!v) return;
-      const doc = await readNote(v, path);
+      const doc = await readNote(path);
       setChangedOnDisk(false);
       setActive({ path, doc, scrollToLine: line });
     },
     [flushPending],
   );
 
-  const loadAndWatch = useCallback(
-    async (path: string) => {
-      await loadVault(path);
-      await listenerReady.current?.promise; // ensure we can hear events first
-      startWatching(path).catch(() => {
-        /* watcher unavailable (e.g. plain vite dev) — degrade gracefully */
-      });
-    },
-    [loadVault],
-  );
-
   const openVault = useCallback(
     async (path: string) => {
       await flushPending();
       clearImageCache();
-      setVault(path);
-      localStorage.setItem(LAST_VAULT_KEY, path);
+      const root = await openVaultBackend(path); // canonical; sets managed state
+      setVault(root);
+      localStorage.setItem(LAST_VAULT_KEY, root);
       setActive(null);
       setChangedOnDisk(false);
-      await loadAndWatch(path);
+      selfWrites.current.clear();
+      await loadVault();
+      await listenerReady.current?.promise; // ensure we can hear events first
+      startWatching().catch(() => {
+        /* watcher unavailable — degrade gracefully */
+      });
     },
-    [flushPending, loadAndWatch],
+    [flushPending, loadVault],
   );
 
   // Restore the last vault on launch.
@@ -208,22 +246,31 @@ export default function App() {
   // Apply a batch of external (on-disk) changes, matched by vault-relative path.
   const processChanges = useCallback(
     async (changes: ChangedNote[]) => {
-      const v = vaultRef.current;
-      if (!v) return;
+      if (!vaultRef.current) return;
       const byRel = new Map(notesRef.current.map((n) => [n.rel, n]));
       const prevByRel = new Map(notesRef.current.map((n) => [n.rel, n.content]));
 
-      const results = await Promise.all(
+      const reads = await Promise.all(
         changes.map(async (c) => {
           const existing = byRel.get(c.rel);
           const absPath = existing?.path ?? c.path;
           try {
-            return { rel: c.rel, path: absPath, content: await readNote(v, absPath), ok: true as const };
+            return { rel: c.rel, path: absPath, content: await readNote(absPath), ok: true as const };
           } catch {
             return { rel: c.rel, path: absPath, content: "", ok: false as const };
           }
         }),
       );
+
+      // Drop echoes of our own writes: disk content equals what we last wrote.
+      const results = reads.filter((r) => {
+        if (r.ok && selfWrites.current.get(r.rel) === r.content) {
+          selfWrites.current.delete(r.rel);
+          return false;
+        }
+        return true;
+      });
+      if (results.length === 0) return;
 
       for (const r of results) {
         if (r.ok) {
@@ -249,7 +296,7 @@ export default function App() {
         }
         return next.sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase()));
       });
-      bumpIndex();
+      bumpStructure();
 
       // Reconcile the open note per the conflict policy.
       const activeRel = activeRelRef.current;
@@ -267,8 +314,6 @@ export default function App() {
         setChangedOnDisk(true);
         return;
       }
-      // Clean: skip if nothing really changed (e.g. our own leaked save), and
-      // re-check dirtiness in case the user just started typing.
       if (open.content === prevByRel.get(activeRel)) return;
       if (pending.current?.path === activePath) {
         setChangedOnDisk(true);
@@ -277,25 +322,40 @@ export default function App() {
       // Update content in-place (EditorPane reconciles, preserving the caret).
       setActive({ path: activePath, doc: open.content });
     },
-    [bumpIndex],
+    [bumpStructure],
   );
 
-  // Listen for on-disk changes; suppress our own writes; debounce; then apply.
+  // Full-index rescan (folder rename/delete — the watcher can't enumerate the
+  // affected notes, so reload everything and reconcile the open note).
+  const handleRescan = useCallback(async () => {
+    if (!vaultRef.current) return;
+    const activePath = activePathRef.current;
+    const prevContent = activePath
+      ? notesRef.current.find((n) => n.path === activePath)?.content
+      : undefined;
+    const list = await loadVault();
+    changedBuf.current.clear(); // the reload covered anything still buffered
+    if (!activePath) return;
+    const still = list.find((n) => n.path === activePath);
+    const dirty = pending.current?.path === activePath;
+    if (!still) {
+      if (dirty) setChangedOnDisk(true);
+      else setActive(null);
+      return;
+    }
+    if (!dirty && prevContent !== undefined && still.content !== prevContent) {
+      setActive({ path: activePath, doc: still.content });
+    }
+  }, [loadVault]);
+
+  // Listen for on-disk changes; debounce; then apply.
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let unlistenChanged: (() => void) | undefined;
+    let unlistenRescan: (() => void) | undefined;
     (async () => {
       try {
-        unlisten = await listen<ChangedNote[]>("vault-changed", (event) => {
-          const now = Date.now();
-          for (const [k, t] of selfWrites.current) {
-            if (now - t >= SELF_WRITE_TTL_MS) selfWrites.current.delete(k);
-          }
-          for (const c of event.payload) {
-            // Suppress (but keep the entry, so sibling burst events are also
-            // suppressed); expired entries were just pruned above.
-            if (selfWrites.current.has(c.rel)) continue;
-            changedBuf.current.set(c.rel, c.path);
-          }
+        unlistenChanged = await listen<ChangedNote[]>("vault-changed", (event) => {
+          for (const c of event.payload) changedBuf.current.set(c.rel, c.path);
           if (changedBuf.current.size === 0) return;
           window.clearTimeout(watchTimer.current);
           watchTimer.current = window.setTimeout(() => {
@@ -304,14 +364,23 @@ export default function App() {
             void processChanges(changes);
           }, 300);
         });
+        unlistenRescan = await listen("vault-rescan", () => {
+          window.clearTimeout(rescanTimer.current);
+          rescanTimer.current = window.setTimeout(() => {
+            void handleRescan();
+          }, 300);
+        });
       } catch {
         /* not running under Tauri */
       } finally {
         listenerReady.current?.resolve();
       }
     })();
-    return () => unlisten?.();
-  }, [processChanges]);
+    return () => {
+      unlistenChanged?.();
+      unlistenRescan?.();
+    };
+  }, [processChanges, handleRescan]);
 
   // Never lose a pending edit on focus loss or app close.
   useEffect(() => {
@@ -365,15 +434,14 @@ export default function App() {
 
   // Conflict resolution: take the on-disk version, discarding local edits.
   const handleReloadFromDisk = useCallback(async () => {
-    const v = vaultRef.current;
     const path = activePathRef.current;
-    if (!v || !path) return;
+    if (!path) return;
     window.clearTimeout(saveTimer.current);
     saveTimer.current = undefined;
     pending.current = null;
     setChangedOnDisk(false);
     try {
-      const doc = await readNote(v, path);
+      const doc = await readNote(path);
       setActive({ path, doc });
     } catch {
       setActive(null);
@@ -382,6 +450,15 @@ export default function App() {
 
   // Conflict resolution: keep local edits, overwriting the on-disk version.
   const handleKeepMine = useCallback(async () => {
+    // If the note vanished from the vault (deleted/moved externally), don't
+    // recreate it at a stale path from here.
+    const path = activePathRef.current;
+    if (path && !notesRef.current.some((n) => n.path === path)) {
+      setChangedOnDisk(false);
+      setActive(null);
+      pending.current = null;
+      return;
+    }
     setChangedOnDisk(false);
     await flushPending();
   }, [flushPending]);
@@ -395,10 +472,30 @@ export default function App() {
   }, []);
 
   const handleResolveImage = useCallback((target: string) => {
-    const v = vaultRef.current;
-    if (!v) return Promise.resolve(null);
-    return resolveImage(v, target, activeRelRef.current ?? "");
+    if (!vaultRef.current) return Promise.resolve(null);
+    return resolveImage(target, activeRelRef.current ?? "");
   }, []);
+
+  /** Create a note (folder-qualified ok) and open it, updating the index
+   * incrementally — no full-vault reload. */
+  const createAndOpen = useCallback(
+    async (name: string) => {
+      const root = vaultRef.current;
+      if (!root) return;
+      await flushPending();
+      const path = await createNote(name);
+      const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
+      const note: VaultNote = { path, rel, name: nameFromRel(rel), content: "" };
+      index.current.setNote(note);
+      setNotes((prev) =>
+        [...prev, note].sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
+      );
+      rememberSelfWrite(rel, "");
+      bumpStructure();
+      await openNoteByPath(path);
+    },
+    [flushPending, openNoteByPath, rememberSelfWrite, bumpStructure],
+  );
 
   const handleOpenWikilink = useCallback(
     async (target: string) => {
@@ -407,33 +504,32 @@ export default function App() {
         await openNoteByPath(resolved);
         return;
       }
-      const v = vaultRef.current;
-      if (!v) return;
+      const pathPart = targetPathPart(target);
+      // Never auto-create a junk "Report.pdf.md" for an attachment link.
+      if (!pathPart || isAttachmentTarget(pathPart)) return;
+      const name = normalizeCreateTarget(pathPart, activeRelRef.current);
+      if (!name) return; // relative target escaping the vault root
       try {
-        await flushPending();
-        // Preserve the folder for `[[sub/New]]` so the created note matches the link.
-        const path = await createNote(v, targetPathPart(target));
-        await loadVault(v);
-        await openNoteByPath(path);
-      } catch {
-        /* name collision or invalid name — ignore for now */
+        await createAndOpen(name);
+      } catch (e) {
+        setSaveError(`Couldn't create note: ${e}`);
       }
     },
-    [openNoteByPath, flushPending, loadVault],
+    [openNoteByPath, createAndOpen],
   );
 
   const handleNewNote = useCallback(async () => {
-    const v = vaultRef.current;
-    if (!v) return;
+    if (!vaultRef.current) return;
     const existing = new Set(notesRef.current.map((n) => normalizeName(n.name)));
     let name = "Untitled";
     let i = 1;
     while (existing.has(normalizeName(name))) name = `Untitled ${i++}`;
-    await flushPending();
-    const path = await createNote(v, name);
-    await loadVault(v);
-    await openNoteByPath(path);
-  }, [flushPending, loadVault, openNoteByPath]);
+    try {
+      await createAndOpen(name);
+    } catch (e) {
+      setSaveError(`Couldn't create note: ${e}`);
+    }
+  }, [createAndOpen]);
 
   const activeNote = useMemo(
     () => (active ? (notes.find((n) => n.path === active.path) ?? null) : null),
@@ -442,12 +538,13 @@ export default function App() {
   const activeName = activeNote?.name ?? null;
   activeRelRef.current = activeNote?.rel ?? null;
 
-  // Resolves each link occurrence to a concrete path. Recompute on save (indexVersion).
+  // Backlinks of the active note can only change when OTHER notes change, so
+  // this keys off structureVersion — a local autosave doesn't re-resolve the vault.
   const backlinks = useMemo(() => {
     if (!active) return [];
     return index.current.backlinksFor(active.path);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, indexVersion]);
+  }, [active, structureVersion]);
 
   // Expensive (full vault text scan). Recompute only when the active note
   // changes — not on every debounced save — to keep typing smooth.
@@ -457,12 +554,24 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeName, active]);
 
+  // Key the local graph on the active PATH (not the whole active object) so an
+  // autosave or caret move doesn't rebuild the simulation.
+  const graphKey = graphMode === "local" ? (active?.path ?? null) : null;
   const graphData = useMemo(() => {
     if (!graphOpen) return { nodes: [], links: [] };
-    if (graphMode === "local" && active) return index.current.localGraph(active.path, 1);
+    if (graphMode === "local" && graphKey) return index.current.localGraph(graphKey, 1);
     return index.current.graph();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphOpen, graphMode, active, indexVersion]);
+  }, [graphOpen, graphMode, graphKey, indexVersion]);
+
+  const handleOpenGraphNode = useCallback(
+    (path: string) => {
+      setGraphOpen(false);
+      void openNoteByPath(path);
+    },
+    [openNoteByPath],
+  );
+  const handleCloseGraph = useCallback(() => setGraphOpen(false), []);
 
   // Esc closes the graph overlay.
   useEffect(() => {
@@ -515,7 +624,9 @@ export default function App() {
             </span>
           )}
           <span className="spacer" />
-          <span className="status">{saving ? "Saving…" : active ? "Saved" : ""}</span>
+          <span className={saveError ? "status status-error" : "status"} title={saveError ?? ""}>
+            {saveError ? "⚠ Save failed — will retry" : saving ? "Saving…" : active ? "Saved" : ""}
+          </span>
         </div>
         {active ? (
           <EditorPane
@@ -585,11 +696,8 @@ export default function App() {
           activePath={active?.path ?? null}
           mode={graphMode}
           onSetMode={setGraphMode}
-          onOpenNode={(path) => {
-            setGraphOpen(false);
-            openNoteByPath(path);
-          }}
-          onClose={() => setGraphOpen(false)}
+          onOpenNode={handleOpenGraphNode}
+          onClose={handleCloseGraph}
         />
       )}
     </div>

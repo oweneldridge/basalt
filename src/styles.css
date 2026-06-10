@@ -244,6 +244,10 @@ button.primary:hover {
   color: var(--text-faint);
   font-size: 0.8rem;
 }
+.status-error {
+  color: #f7768e;
+  font-weight: 600;
+}
 .conflict {
   display: inline-flex;
   align-items: center;

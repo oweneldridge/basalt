@@ -21,12 +21,11 @@ export function clearImageCache(): void {
 }
 
 export async function resolveImage(
-  vault: string,
   target: string,
   sourceRel: string,
 ): Promise<string | null> {
   if (/^(https?:|data:)/i.test(target)) return target;
-  const key = `${vault} ${sourceRel} ${target}`;
+  const key = `${sourceRel} ${target}`;
   const hit = cache.get(key);
   if (hit) {
     if (hit.url !== null) return hit.url;
@@ -34,7 +33,7 @@ export async function resolveImage(
     cache.delete(key); // stale miss — re-attempt
   }
   try {
-    const url = await invoke<string>("read_image", { vault, target, sourceRel });
+    const url = await invoke<string>("read_image", { target, sourceRel });
     if (cache.size >= MAX_ENTRIES) {
       const oldest = cache.keys().next().value;
       if (oldest !== undefined) cache.delete(oldest);

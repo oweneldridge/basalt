@@ -3,8 +3,19 @@
 // the tree-walking ones about boundaries — and never decorate inside code or
 // inside a table block widget.
 import type { EditorState } from "@codemirror/state";
+import type { ViewUpdate } from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
 import { syntaxTree } from "@codemirror/language";
+
+/**
+ * True when the background parse advanced between updates. Decoration plugins
+ * must rebuild on this too — large documents parse incrementally, so a plugin
+ * that only watches docChanged/viewport leaves everything beyond the initial
+ * parse frontier undecorated (or wrongly decorated) until the next edit.
+ */
+export function treeChanged(update: ViewUpdate): boolean {
+  return syntaxTree(update.state) !== syntaxTree(update.startState);
+}
 
 const EXCLUDED = new Set(["Table", "FencedCode", "CodeBlock", "InlineCode"]);
 

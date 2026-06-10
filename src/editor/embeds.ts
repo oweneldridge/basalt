@@ -5,7 +5,7 @@ import { RangeSetBuilder } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
-import { isInExcludedRegion } from "./regions";
+import { isInExcludedRegion, treeChanged } from "./regions";
 import { ImgWidget } from "./livePreview";
 import { targetPathPart } from "../lib/markdown";
 
@@ -85,7 +85,7 @@ export function embeds(opts: EmbedOptions): Extension {
         this.decorations = build(view, opts);
       }
       update(update: ViewUpdate) {
-        if (update.docChanged || update.selectionSet || update.viewportChanged) {
+        if (update.docChanged || update.selectionSet || update.viewportChanged || treeChanged(update)) {
           this.decorations = build(update.view, opts);
         }
       }

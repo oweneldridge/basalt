@@ -2,9 +2,15 @@
 // (higher = better) if every query char appears in order, else null. Bonuses for
 // consecutive matches, word-boundary matches, and shorter targets.
 export function fuzzyScore(query: string, target: string): number | null {
-  const q = query.toLowerCase();
-  const t = target.toLowerCase();
+  const q = query.normalize("NFC").toLowerCase();
+  const t = target.normalize("NFC").toLowerCase();
   if (q.length === 0) return 0;
+  // Contiguous substring is always at least as good as any scattered match.
+  const sub = t.indexOf(q);
+  if (sub !== -1) {
+    let s = q.length * 4 + (sub === 0 || /[\s/\-_.]/.test(t[sub - 1]) ? 2 : 0);
+    return s - t.length * 0.01;
+  }
 
   let score = 0;
   let from = 0;
