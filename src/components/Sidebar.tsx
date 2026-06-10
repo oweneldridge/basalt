@@ -10,16 +10,41 @@ interface Props {
   onNewNote: () => void;
 }
 
+const expandKey = (vault: string | null) => `basalt.tree.expanded.${vault ?? ""}`;
+
+function loadExpanded(vault: string | null): Set<string> {
+  try {
+    const raw = localStorage.getItem(expandKey(vault));
+    if (raw) return new Set(JSON.parse(raw) as string[]);
+  } catch {
+    /* ignore */
+  }
+  return new Set();
+}
+
+function saveExpanded(vault: string | null, set: Set<string>): void {
+  try {
+    localStorage.setItem(expandKey(vault), JSON.stringify([...set]));
+  } catch {
+    /* ignore */
+  }
+}
+
 export function Sidebar({ notes, activePath, vaultName, onOpen, onNewNote }: Props) {
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const tree = useMemo(() => buildTree(notes), [notes]);
 
-  // Reset expansion when the vault changes.
+  // Load persisted expansion when the vault changes.
   useEffect(() => {
-    setExpanded(new Set());
+    setExpanded(loadExpanded(vaultName));
   }, [vaultName]);
+
+  // Persist expansion as it changes.
+  useEffect(() => {
+    if (vaultName) saveExpanded(vaultName, expanded);
+  }, [vaultName, expanded]);
 
   // Auto-expand the folders leading to the active note so it's visible.
   useEffect(() => {
