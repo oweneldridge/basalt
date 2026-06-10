@@ -12,9 +12,19 @@ interface Props {
   onOpenWikilink: (target: string) => void;
   onOpenUrl: (url: string) => void;
   onChange: (doc: string) => void;
+  /** 1-based line to scroll to / place the caret on (from search or backlinks). */
+  scrollToLine?: number;
 }
 
-export function EditorPane({ path, doc, getNotes, onOpenWikilink, onOpenUrl, onChange }: Props) {
+export function EditorPane({
+  path,
+  doc,
+  getNotes,
+  onOpenWikilink,
+  onOpenUrl,
+  onChange,
+  scrollToLine,
+}: Props) {
   const host = useRef<HTMLDivElement | null>(null);
   const view = useRef<EditorView | null>(null);
   // Keep the latest callbacks in refs so the editor (rebuilt only per `path`)
@@ -58,6 +68,19 @@ export function EditorPane({ path, doc, getNotes, onOpenWikilink, onOpenUrl, onC
       annotations: externalReload.of(true),
     });
   }, [doc]);
+
+  // Scroll to (and place the caret on) a target line — search hits, backlinks.
+  useEffect(() => {
+    const v = view.current;
+    if (!v || !scrollToLine) return;
+    const lineNo = Math.min(Math.max(1, scrollToLine), v.state.doc.lines);
+    const pos = v.state.doc.line(lineNo).from;
+    v.dispatch({
+      selection: EditorSelection.cursor(pos),
+      effects: EditorView.scrollIntoView(pos, { y: "center" }),
+    });
+    v.focus();
+  }, [scrollToLine, path]);
 
   return <div className="editor-host" ref={host} />;
 }

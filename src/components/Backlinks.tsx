@@ -4,10 +4,18 @@ interface Props {
   noteName: string | null;
   backlinks: Backlink[];
   unlinked: Backlink[];
-  onOpen: (path: string) => void;
+  onOpen: (path: string, line: number) => void;
 }
 
-function RefList({ items, onOpen, empty }: { items: Backlink[]; onOpen: (p: string) => void; empty: string }) {
+function RefList({
+  items,
+  onOpen,
+  empty,
+}: {
+  items: Backlink[];
+  onOpen: (p: string, line: number) => void;
+  empty: string;
+}) {
   if (items.length === 0) return <div className="empty">{empty}</div>;
   return (
     <>
@@ -15,7 +23,7 @@ function RefList({ items, onOpen, empty }: { items: Backlink[]; onOpen: (p: stri
         <button
           key={`${b.path}:${b.line}:${i}`}
           className="ref"
-          onClick={() => onOpen(b.path)}
+          onClick={() => onOpen(b.path, b.line)}
           title={`${b.name} · line ${b.line}`}
         >
           <span className="ref-name">{b.name}</span>
