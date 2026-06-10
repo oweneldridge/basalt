@@ -4,7 +4,7 @@
 
 Basalt reads and writes the *same plain-Markdown vault* you already use in Obsidian: a folder of `.md` files with `[[wikilinks]]`, YAML frontmatter, and an untouched `.obsidian/` config. You can run Basalt and Obsidian over the same vault and switch between them freely — your notes are just files.
 
-> **Status:** early — a working vault editor (open a vault, browse notes, edit with Live Preview, follow wikilinks). See the [roadmap](#roadmap). Not yet a daily driver.
+> **Status:** usable alpha — Live Preview editing, backlinks + unlinked mentions, graph view, quick switcher, full-text search, folder tree, images/embeds, and live-reload alongside Obsidian on the same vault. See the [roadmap](#roadmap).
 
 ## Why this exists
 
@@ -40,14 +40,7 @@ npm run tauri build    # produce a distributable bundle
 
 ## Roadmap
 
-Basalt is built in phases so that every phase is independently useful. See [ARCHITECTURE.md](./ARCHITECTURE.md#roadmap) for detail.
-
-- [x] **Phase 0 — Editor de-risk:** Tauri 2 + CodeMirror 6, open a vault, Live Preview for common elements, wikilink decoration + click-through.
-- [ ] **Phase 1 — MVP vault editor:** file tree, quick switcher, full-text search, autosave, Source/Reading modes, frontmatter awareness.
-- [ ] **Phase 2 — Link/metadata engine:** the index (links, headings, tags, embeds) powering backlinks, unlinked mentions, tag pane, block refs, transclusion.
-- [ ] **Phase 3 — Visual + structured:** force-directed graph (global + local), Properties UI, daily notes, templates, command palette, themes.
-- [ ] **Phase 4 — Canvas + Bases:** JSON Canvas whiteboard; table/card views over YAML.
-- [ ] **Phase 5 — Plugin API:** Basalt's own TypeScript extension API + reimplemented must-have workflows.
+Basalt is built in phases so each phase is independently useful — see [ROADMAP.md](./ROADMAP.md) for the full table (shipped: vault editor with Live Preview, backlinks + unlinked mentions, live-reload watcher, path-based link resolution, quick switcher + full-text search, graph view, folder tree, images/embeds, and the 2026-06 hardening pass with the first test suite).
 
 ## License
 
