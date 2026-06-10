@@ -260,10 +260,21 @@ async fn read_vault(state: State<'_, VaultState>) -> Result<Vec<VaultNote>, Stri
     Ok(out)
 }
 
+/// Log a frontend diagnostic message to the dev terminal.
+#[tauri::command]
+fn debug_log(msg: String) {
+    #[cfg(debug_assertions)]
+    eprintln!("[basalt-js] {msg}");
+    #[cfg(not(debug_assertions))]
+    let _ = msg;
+}
+
 /// Read a note's contents as UTF-8. Errors on non-UTF8 rather than lossily
 /// decoding, so that a later save can't silently re-encode and corrupt the file.
 #[tauri::command]
 fn read_note(path: String, state: State<VaultState>) -> Result<String, String> {
+    #[cfg(debug_assertions)]
+    eprintln!("[basalt] read_note {path}");
     let root = current_root(&state)?;
     let resolved = ensure_in_vault(&root, &path)?;
     fs::read_to_string(&resolved).map_err(|e| format!("read {}: {e}", resolved.display()))
@@ -525,7 +536,8 @@ pub fn run() {
             write_note,
             create_note,
             start_watching,
-            read_image
+            read_image,
+            debug_log
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
