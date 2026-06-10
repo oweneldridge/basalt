@@ -7,6 +7,7 @@ import type { Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
+import { treeChanged } from "./regions";
 
 const CALLOUT_RE = /^\s*>\s*\[!(\w+)\]([+-]?)/;
 
@@ -66,7 +67,7 @@ export const callouts: Extension = ViewPlugin.fromClass(
       this.decorations = build(view);
     }
     update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+      if (update.docChanged || update.selectionSet || update.viewportChanged || treeChanged(update)) {
         this.decorations = build(update.view);
       }
     }

@@ -6,7 +6,7 @@ import type { Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { highlightRegex } from "../lib/markdown";
-import { isInExcludedRegion } from "./regions";
+import { isInExcludedRegion, treeChanged } from "./regions";
 
 const MARK = Decoration.mark({ class: "cm-highlight" });
 const CONCEAL = Decoration.replace({});
@@ -46,7 +46,7 @@ export const highlight: Extension = ViewPlugin.fromClass(
       this.decorations = build(view);
     }
     update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+      if (update.docChanged || update.selectionSet || update.viewportChanged || treeChanged(update)) {
         this.decorations = build(update.view);
       }
     }

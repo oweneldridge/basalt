@@ -117,7 +117,9 @@ function touchedKey(ranges: { from: number; to: number }[], sel: EditorSelection
 const tableField = StateField.define<TableState>({
   create: (state) => computeTables(state),
   update: (value, tr) => {
-    if (tr.docChanged) return computeTables(tr.state);
+    if (tr.docChanged || syntaxTree(tr.state) !== syntaxTree(tr.startState)) {
+      return computeTables(tr.state);
+    }
     // On a pure selection change, only rebuild if a table's touched-state flipped
     // (cursor entered/left one) — otherwise the previous decorations still hold.
     if (tr.selection) {

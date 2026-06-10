@@ -6,7 +6,7 @@ import type { Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { tagRegex } from "../lib/markdown";
-import { isInExcludedRegion, isInLinkContext, frontmatterRange } from "./regions";
+import { isInExcludedRegion, isInLinkContext, frontmatterRange, treeChanged } from "./regions";
 
 const TAG = Decoration.mark({ class: "cm-tag" });
 
@@ -38,7 +38,8 @@ export const tags: Extension = ViewPlugin.fromClass(
       this.decorations = build(view);
     }
     update(update: ViewUpdate) {
-      if (update.docChanged || update.viewportChanged) this.decorations = build(update.view);
+      if (update.docChanged || update.viewportChanged || treeChanged(update))
+        this.decorations = build(update.view);
     }
   },
   { decorations: (v) => v.decorations },

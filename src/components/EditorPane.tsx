@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { EditorSelection } from "@codemirror/state";
+import { EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { createEditorState, externalReload } from "../editor/setup";
 
@@ -65,10 +65,12 @@ export function EditorPane({
     const current = v.state.doc.toString();
     if (current === doc) return;
     const head = Math.min(v.state.selection.main.head, doc.length);
+    // Keep the reconcile OUT of undo history: Cmd-Z must never resurrect
+    // pre-reload content (which would then autosave over the external edit).
     v.dispatch({
       changes: { from: 0, to: current.length, insert: doc },
       selection: EditorSelection.cursor(head),
-      annotations: externalReload.of(true),
+      annotations: [externalReload.of(true), Transaction.addToHistory.of(false)],
     });
   }, [doc]);
 

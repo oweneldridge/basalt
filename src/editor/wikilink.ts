@@ -19,7 +19,7 @@ import {
 } from "@codemirror/autocomplete";
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { wikilinkRegex } from "../lib/markdown";
-import { isInExcludedRegion } from "./regions";
+import { isInExcludedRegion, treeChanged } from "./regions";
 
 export interface WikilinkOptions {
   /** Current vault note names, for autocomplete. */
@@ -89,8 +89,14 @@ function wikilinkCompletions(getNotes: () => string[]) {
     if (!before) return null;
     // Don't pop up on a bare `[[` unless the user is actively there.
     if (before.from + 2 > context.pos) return null;
+    // closeBrackets auto-closes `[[` to `[[]]`, and completions may run inside
+    // an existing link — extend the replaced range over any closer already
+    // present so applying `Name]]` can't produce `[[Name]]]]`.
+    const after = context.state.sliceDoc(context.pos, context.pos + 2);
+    const closeLen = after === "]]" ? 2 : after.startsWith("]") ? 1 : 0;
     return {
       from: before.from + 2,
+      to: closeLen ? context.pos + closeLen : undefined,
       options: getNotes().map((name) => ({
         label: name,
         type: "text",
@@ -109,7 +115,7 @@ export function wikilinks(options: WikilinkOptions): Extension {
         this.decorations = buildDecorations(view);
       }
       update(update: ViewUpdate) {
-        if (update.docChanged || update.selectionSet || update.viewportChanged) {
+        if (update.docChanged || update.selectionSet || update.viewportChanged || treeChanged(update)) {
           this.decorations = buildDecorations(update.view);
         }
       }

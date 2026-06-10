@@ -35,6 +35,11 @@ export function GraphView({ data, activePath, mode, onSetMode, onOpenNode, onClo
   const activePathRef = useRef(activePath);
   activePathRef.current = activePath;
   const redrawRef = useRef<() => void>(() => {});
+  // Layout + viewport survive data rebuilds (autosave/watcher refresh): known
+  // nodes keep their positions (only new ids are randomized) and pan/zoom is
+  // never reset while the overlay stays open.
+  const posCache = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const transformRef = useRef<{ x: number; y: number; k: number } | null>(null);
 
   // Rebuild the simulation when the data (or mode) changes.
   useEffect(() => {
@@ -57,19 +62,30 @@ export function GraphView({ data, activePath, mode, onSetMode, onOpenNode, onClo
     };
     resize();
 
-    const nodes: GNode[] = data.nodes.map((n) => ({
-      id: n.id,
-      name: n.name,
-      x: (Math.random() - 0.5) * 300,
-      y: (Math.random() - 0.5) * 300,
-    }));
+    let newCount = 0;
+    const nodes: GNode[] = data.nodes.map((n) => {
+      const prev = posCache.current.get(n.id);
+      if (!prev) newCount++;
+      return {
+        id: n.id,
+        name: n.name,
+        x: prev?.x ?? (Math.random() - 0.5) * 300,
+        y: prev?.y ?? (Math.random() - 0.5) * 300,
+      };
+    });
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const links: GLink[] = data.links
       .filter((l) => byId.has(l.source) && byId.has(l.target))
       .map((l) => ({ source: l.source, target: l.target }));
 
-    const transform = { x: W / 2, y: H / 2, k: nodes.length > 400 ? 0.4 : 0.9 };
+    if (!transformRef.current) {
+      transformRef.current = { x: W / 2, y: H / 2, k: nodes.length > 400 ? 0.4 : 0.9 };
+    }
+    const transform = transformRef.current;
 
+    // Incremental refresh of a mostly-seeded layout barely needs to move;
+    // a fresh (or heavily changed) graph gets a full settle.
+    const fresh = newCount > nodes.length / 2;
     const sim = forceSimulation<GNode>(nodes)
       .force("charge", forceManyBody<GNode>().strength(-70))
       .force(
@@ -81,7 +97,7 @@ export function GraphView({ data, activePath, mode, onSetMode, onOpenNode, onClo
       )
       .force("center", forceCenter(0, 0))
       .force("collide", forceCollide<GNode>(9))
-      .alpha(1)
+      .alpha(fresh ? 1 : 0.15)
       .alphaDecay(0.03);
 
     let hover: GNode | null = null;
@@ -276,6 +292,13 @@ export function GraphView({ data, activePath, mode, onSetMode, onOpenNode, onClo
 
     return () => {
       sim.stop();
+      // Remember where everything settled so the next build (e.g. after an
+      // autosave refresh) continues from this layout instead of scrambling.
+      for (const n of nodes) {
+        if (n.x !== undefined && n.y !== undefined) {
+          posCache.current.set(n.id, { x: n.x, y: n.y });
+        }
+      }
       canvas.removeEventListener("mousedown", onDown);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);

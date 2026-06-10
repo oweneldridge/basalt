@@ -4,10 +4,58 @@
 /**
  * Returns a fresh global wikilink regex each call. Group 1 = target, group 2 =
  * optional alias. A new instance avoids shared `lastIndex` bugs between callers.
- * Matches `[[Target]]` and `[[Target|Alias]]`; target/alias forbid `[ ] |`.
+ * Matches `[[Target]]` and `[[Target|Alias]]`; target/alias forbid `[ ] |` and
+ * NEWLINES — a multiline match would emit a line-break-replacing decoration
+ * from a ViewPlugin, which is a CM6 RangeError crash.
  */
 export function wikilinkRegex(): RegExp {
-  return /\[\[([^[\]|]+)(?:\|([^[\]]+))?\]\]/g;
+  return /\[\[([^[\]|\n]+)(?:\|([^[\]\n]+))?\]\]/g;
+}
+
+/**
+ * Per-line "is this prose?" mask: false for YAML frontmatter lines and fenced
+ * code-block lines (CommonMark rules: fence closes only on the same marker
+ * char, at least the same run length, nothing else on the line). Shared by
+ * link extraction and unlinked-mention scanning so they can never disagree.
+ */
+export function proseMask(lines: string[]): boolean[] {
+  const mask = new Array<boolean>(lines.length).fill(true);
+  let i = 0;
+  // Leading frontmatter block.
+  if (lines.length > 1 && lines[0].trim() === "---") {
+    mask[0] = false;
+    let end = -1;
+    for (let j = 1; j < lines.length; j++) {
+      const t = lines[j].trim();
+      if (t === "---" || t === "...") {
+        end = j;
+        break;
+      }
+    }
+    if (end !== -1) {
+      for (let j = 1; j <= end; j++) mask[j] = false;
+      i = end + 1;
+    }
+  }
+  let fence: { char: string; len: number } | null = null;
+  for (; i < lines.length; i++) {
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[i]);
+    if (fence) {
+      mask[i] = false;
+      if (
+        m &&
+        m[1][0] === fence.char &&
+        m[1].length >= fence.len &&
+        m[2].trim() === ""
+      ) {
+        fence = null; // closing fence (itself non-prose)
+      }
+    } else if (m) {
+      mask[i] = false;
+      fence = { char: m[1][0], len: m[1].length };
+    }
+  }
+  return mask;
 }
 
 /**

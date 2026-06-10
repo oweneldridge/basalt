@@ -8,6 +8,7 @@ import type { Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
+import { treeChanged } from "./regions";
 
 const codeLine = Decoration.line({ class: "cm-code-line" });
 const codeFirst = Decoration.line({ class: "cm-code-line cm-code-first" });
@@ -39,7 +40,8 @@ export const codeBlocks: Extension = ViewPlugin.fromClass(
       this.decorations = build(view);
     }
     update(update: ViewUpdate) {
-      if (update.docChanged || update.viewportChanged) this.decorations = build(update.view);
+      if (update.docChanged || update.viewportChanged || treeChanged(update))
+        this.decorations = build(update.view);
     }
   },
   { decorations: (v) => v.decorations },
