@@ -365,6 +365,15 @@ fn start_watching(
         let Ok(event) = res else {
             return;
         };
+        // Pure metadata events (mtime/xattr/ownership) can't change content, and
+        // iCloud emits them constantly — skip them entirely or every cloud touch
+        // costs a read+compare (and a root-metadata touch a full vault rescan).
+        if matches!(
+            event.kind,
+            notify::EventKind::Modify(notify::event::ModifyKind::Metadata(_))
+        ) {
+            return;
+        }
         let mut changed: Vec<ChangedNote> = Vec::new();
         let mut rescan = false;
         for p in &event.paths {
