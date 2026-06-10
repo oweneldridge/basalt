@@ -29,7 +29,8 @@ import "./styles.css";
 
 const LAST_VAULT_KEY = "basalt.lastVault";
 
-// Diagnostic bridge: mirrors frontend events into the dev terminal.
+// Mirrors a frontend diagnostic into the dev terminal (used for failures that
+// must never be silently swallowed).
 function jsLog(msg: string): void {
   console.log("[basalt]", msg);
   invoke("debug_log", { msg }).catch(() => {});
@@ -280,11 +281,7 @@ export default function App() {
       const results = reads.filter(
         (r) => !(r.ok && selfWrites.current.get(r.rel) === r.content),
       );
-      if (results.length === 0) {
-        jsLog("processChanges: all echoes of our own writes, skipped");
-        return;
-      }
-      jsLog(`processChanges: applying ${results.length} external change(s)`);
+      if (results.length === 0) return;
 
       for (const r of results) {
         if (r.ok) {
@@ -320,23 +317,17 @@ export default function App() {
       if (!open) return;
       // A content-identical "change" (mtime touch, sync-client noise) is a
       // no-op — it must never raise a conflict, even while the user is typing.
-      if (open.ok && open.content === prevByRel.get(activeRel)) {
-        jsLog("reconcile: open note unchanged (no-op)");
-        return;
-      }
+      if (open.ok && open.content === prevByRel.get(activeRel)) return;
       const dirty = pending.current?.path === activePath;
       if (!open.ok) {
-        jsLog(`reconcile: open note deleted on disk (dirty=${dirty})`);
         if (dirty) setChangedOnDisk(true);
         else setActive(null);
         return;
       }
       if (dirty) {
-        jsLog("reconcile: open note changed while dirty -> conflict badge");
         setChangedOnDisk(true);
         return;
       }
-      jsLog("reconcile: reloading editor with external content");
       // Update content in-place (EditorPane reconciles, preserving the caret).
       setActive({ path: activePath, doc: open.content });
     },
@@ -374,7 +365,6 @@ export default function App() {
     (async () => {
       try {
         const u1 = await listen<ChangedNote[]>("vault-changed", (event) => {
-          jsLog(`vault-changed: ${event.payload.length} note(s)`);
           for (const c of event.payload) changedBuf.current.set(c.rel, c.path);
           if (changedBuf.current.size === 0) return;
           window.clearTimeout(watchTimer.current);
@@ -389,9 +379,7 @@ export default function App() {
           return;
         }
         unlistenChanged = u1;
-        jsLog("vault-changed listener registered");
         const u2 = await listen("vault-rescan", () => {
-          jsLog("vault-rescan received");
           window.clearTimeout(rescanTimer.current);
           rescanTimer.current = window.setTimeout(() => {
             void handleRescan();
@@ -402,7 +390,6 @@ export default function App() {
           return;
         }
         unlistenRescan = u2;
-        jsLog("vault-rescan listener registered");
       } catch (e) {
         jsLog(`LISTENER REGISTRATION FAILED: ${e}`);
         console.error("[basalt] listen failed", e);

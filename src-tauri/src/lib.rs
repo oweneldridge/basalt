@@ -273,8 +273,6 @@ fn debug_log(msg: String) {
 /// decoding, so that a later save can't silently re-encode and corrupt the file.
 #[tauri::command]
 fn read_note(path: String, state: State<VaultState>) -> Result<String, String> {
-    #[cfg(debug_assertions)]
-    eprintln!("[basalt] read_note {path}");
     let root = current_root(&state)?;
     let resolved = ensure_in_vault(&root, &path)?;
     fs::read_to_string(&resolved).map_err(|e| format!("read {}: {e}", resolved.display()))
@@ -394,14 +392,6 @@ fn start_watching(
                 rescan = true;
             }
         }
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[basalt] fs event kind={:?} paths={:?} -> changed={} rescan={}",
-            event.kind,
-            event.paths,
-            changed.len(),
-            rescan
-        );
         if !changed.is_empty() {
             let _ = handle.emit("vault-changed", changed);
         }
