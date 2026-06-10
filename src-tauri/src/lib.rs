@@ -227,27 +227,47 @@ fn write_note(vault: String, path: String, content: String) -> Result<(), String
     fs::write(&resolved, content).map_err(|e| format!("write {}: {e}", resolved.display()))
 }
 
-/// Create a new empty note `<vault>/<name>.md`, returning its canonical path.
+/// Create a new empty note, returning its canonical path. `name` may be folder-
+/// qualified (`sub/New`); parent folders are created. Each segment is sanitized
+/// and `..`/absolute segments are rejected, so the result stays inside the vault.
 #[tauri::command]
 fn create_note(vault: String, name: String) -> Result<String, String> {
-    let safe: String = name
-        .chars()
-        .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+    let segments: Vec<String> = name
+        .split(['/', '\\'])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
         .collect();
-    let safe = safe.trim();
-    if safe.is_empty() || safe == "." || safe == ".." {
+    if segments.is_empty() {
         return Err("invalid note name".into());
     }
-    if is_reserved_name(safe) {
-        return Err(format!("'{safe}' is a reserved name"));
-    }
-    if safe.len() > 200 {
-        return Err("note name is too long".into());
-    }
     let mut path = canonical_root(&vault);
-    path.push(format!("{safe}.md"));
+    let last = segments.len() - 1;
+    for (i, seg) in segments.iter().enumerate() {
+        let safe: String = seg
+            .chars()
+            .filter(|c| !matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+            .collect();
+        let safe = safe.trim();
+        if safe.is_empty() || safe == "." || safe == ".." {
+            return Err("invalid note name".into());
+        }
+        if is_reserved_name(safe) {
+            return Err(format!("'{safe}' is a reserved name"));
+        }
+        if safe.len() > 200 {
+            return Err("note name is too long".into());
+        }
+        if i == last {
+            path.push(format!("{safe}.md"));
+        } else {
+            path.push(safe);
+        }
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
     if path.exists() {
-        return Err(format!("note already exists: {safe}"));
+        return Err("note already exists".into());
     }
     fs::write(&path, "").map_err(|e| format!("create {}: {e}", path.display()))?;
     let canonical = fs::canonicalize(&path).unwrap_or(path);
