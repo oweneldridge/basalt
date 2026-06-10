@@ -374,6 +374,14 @@ fn start_watching(
                 rescan = true;
             }
         }
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "[basalt] fs event kind={:?} paths={:?} -> changed={} rescan={}",
+            event.kind,
+            event.paths,
+            changed.len(),
+            rescan
+        );
         if !changed.is_empty() {
             let _ = handle.emit("vault-changed", changed);
         }
@@ -386,6 +394,8 @@ fn start_watching(
         .watch(&root, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
     *watcher_state.0.lock().map_err(|e| e.to_string())? = Some(watcher);
+    #[cfg(debug_assertions)]
+    eprintln!("[basalt] watching {}", root.display());
     Ok(())
 }
 
