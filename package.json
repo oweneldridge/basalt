@@ -2,7 +2,7 @@
   "name": "basalt",
   "private": true,
   "version": "0.1.0",
-  "description": "An open-source, local-first Markdown knowledge base — vault-compatible with Obsidian, built to never be enshittified.",
+  "description": "An open-source, local-first Markdown knowledge base \u2014 vault-compatible with Obsidian, built to never be enshittified.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
@@ -10,34 +10,36 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-dialog": "^2",
-    "@tauri-apps/plugin-opener": "^2",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
+    "@codemirror/autocomplete": "^6.18.6",
+    "@codemirror/commands": "^6.8.1",
+    "@codemirror/lang-markdown": "^6.3.2",
+    "@codemirror/language": "^6.11.0",
+    "@codemirror/language-data": "^6.5.1",
+    "@codemirror/search": "^6.5.10",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.36.5",
-    "@codemirror/commands": "^6.8.1",
-    "@codemirror/language": "^6.11.0",
-    "@codemirror/autocomplete": "^6.18.6",
-    "@codemirror/search": "^6.5.10",
-    "@codemirror/lang-markdown": "^6.3.2",
-    "@codemirror/language-data": "^6.5.1",
     "@lezer/common": "^1.2.3",
     "@lezer/highlight": "^1.2.1",
     "@lezer/markdown": "^1.4.2",
-    "d3-force": "^3.0.0"
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "d3-force": "^3.0.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/d3-force": "^3.0.10",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
-    "@types/d3-force": "^3.0.10",
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
-    "@tauri-apps/cli": "^2"
+    "vitest": "^4.1.8"
   }
 }
