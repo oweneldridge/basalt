@@ -1,6 +1,6 @@
 // Assembles the CodeMirror 6 extension stack. New editor-wide features are
 // wired in here.
-import { Annotation, EditorState } from "@codemirror/state";
+import { Annotation, EditorSelection, EditorState } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import {
   EditorView,
@@ -9,13 +9,69 @@ import {
   rectangularSelection,
   highlightActiveLine,
 } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { indentOnInput, bracketMatching } from "@codemirror/language";
-import { closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentMore,
+  indentLess,
+  insertTab,
+} from "@codemirror/commands";
+import { indentOnInput, bracketMatching, indentUnit } from "@codemirror/language";
+import {
+  acceptCompletion,
+  closeBrackets,
+  closeBracketsKeymap,
+} from "@codemirror/autocomplete";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { GFM } from "@lezer/markdown";
+
+import { markdownKeys } from "./markdownKeys";
+
+// Context-aware Tab (Obsidian-like): accept an open completion; indent list
+// items and multi-line selections; otherwise insert a literal tab at the caret
+// (indentMore would indent the LINE, and a tab-indented paragraph is an
+// indented code block in Markdown).
+const LIST_LINE = /^\s*([-*+>]|\d+[.)])\s/;
+const smartTab = (view: EditorView): boolean => {
+  if (acceptCompletion(view)) return true;
+  const { state } = view;
+  const sel = state.selection.main;
+  const line = state.doc.lineAt(sel.from);
+  const multiline = !sel.empty && state.doc.lineAt(sel.to).number !== line.number;
+  if (multiline || LIST_LINE.test(line.text)) return indentMore(view);
+  return insertTab(view);
+};
+
+// Typing an emphasis marker over a NON-EMPTY selection wraps it. (Adding these
+// chars to closeBrackets instead would also auto-pair them at an empty caret,
+// turning a `* ` bullet into `* |*`.)
+const wrapSelectionOnType = EditorView.inputHandler.of((view, _from, _to, text) => {
+  if (text !== "*" && text !== "_" && text !== "`") return false;
+  if (view.state.selection.ranges.every((r) => r.empty)) return false;
+  const tr = view.state.changeByRange((range) => {
+    if (range.empty) {
+      return {
+        changes: { from: range.from, insert: text },
+        range: EditorSelection.cursor(range.from + 1),
+      };
+    }
+    const inverted = range.head < range.anchor;
+    const a = range.from + 1;
+    const b = range.to + 1;
+    return {
+      changes: [
+        { from: range.from, insert: text },
+        { from: range.to, insert: text },
+      ],
+      range: inverted ? EditorSelection.range(b, a) : EditorSelection.range(a, b),
+    };
+  });
+  view.dispatch(view.state.update(tr, { scrollIntoView: true, userEvent: "input.type" }));
+  return true;
+});
 
 import { basaltTheme, basaltHighlight } from "./theme";
 import { livePreview } from "./livePreview";
@@ -72,6 +128,17 @@ export function createEditorState(doc: string, cb: EditorCallbacks): EditorState
     bracketMatching(),
     closeBrackets(),
     EditorView.lineWrapping,
+    // Multi-cursor (Cmd-D via searchKeymap's selectNextOccurrence, Alt-drag).
+    EditorState.allowMultipleSelections.of(true),
+    // Obsidian-style tab indentation for nested lists.
+    indentUnit.of("\t"),
+    wrapSelectionOnType,
+    // Native spellcheck/autocorrect in the editor, like Obsidian.
+    EditorView.contentAttributes.of({
+      spellcheck: "true",
+      autocorrect: "on",
+      autocapitalize: "on",
+    }),
     markdown({ base: markdownLanguage, codeLanguages: languages, extensions: GFM }),
     basaltHighlight,
     basaltTheme,
@@ -84,12 +151,17 @@ export function createEditorState(doc: string, cb: EditorCallbacks): EditorState
     embeds({ resolveImage: cb.resolveImage, onOpen: cb.onOpenWikilink }),
     livePreview({ onOpenUrl: cb.onOpenUrl, resolveImage: cb.resolveImage }),
     wikilinks({ getNotes: cb.getNotes, onOpen: cb.onOpenWikilink }),
+    // Real key precedence (higher first): completionKeymap (Prec.highest, injected
+    // by autocompletion() in wikilink.ts) > markdownKeymap (Prec.high, injected by
+    // markdown() — Enter continues lists/quotes/tasks, Backspace eats markup) >
+    // this flat keymap.
     keymap.of([
       ...closeBracketsKeymap,
+      ...markdownKeys, // Mod-B/I/K formatting
+      { key: "Tab", run: smartTab, shift: indentLess },
       ...defaultKeymap,
       ...historyKeymap,
-      ...searchKeymap,
-      ...completionKeymap,
+      ...searchKeymap, // includes Mod-D select-next-occurrence (multi-cursor)
     ]),
     EditorView.updateListener.of((update) => {
       if (!update.docChanged) return;

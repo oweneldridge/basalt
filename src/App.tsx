@@ -46,7 +46,27 @@ interface ActiveNote {
   scrollToLine?: number;
 }
 
-type ModalKind = "switcher" | "search" | null;
+type ModalKind = "switcher" | "search" | "commands" | null;
+
+interface AppCommand {
+  id: string;
+  label: string;
+  hint?: string;
+  run: () => void;
+}
+
+const RECENT_MAX = 50;
+const recentKey = (vault: string) => `basalt.recent.${vault}`;
+
+function loadRecents(vault: string): string[] {
+  try {
+    const raw = localStorage.getItem(recentKey(vault));
+    if (raw) return JSON.parse(raw) as string[];
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
 
 function basename(p: string): string {
   const parts = p.split(/[/\\]/).filter(Boolean);
@@ -107,6 +127,8 @@ export default function App() {
   changedOnDiskRef.current = changedOnDisk;
   const saveTimer = useRef<number | undefined>(undefined);
   const pending = useRef<{ path: string; doc: string } | null>(null);
+  // Most-recently-opened rels (per vault) — orders the blank-query switcher.
+  const recents = useRef<string[]>([]);
   // rel -> exact content Basalt last wrote there. The watcher echo of our own
   // save is identified by CONTENT (not a time window), so a real external edit
   // arriving right after a save is never silently swallowed.
@@ -218,9 +240,27 @@ export default function App() {
         return;
       }
       await flushPending();
-      const doc = await readNote(path);
+      let doc: string;
+      try {
+        doc = await readNote(path);
+      } catch (e) {
+        setSaveError(`Couldn't open note: ${e}`);
+        return;
+      }
+      setSaveError(null);
       setChangedOnDisk(false);
       setActive({ path, doc, scrollToLine: line });
+      // Track recency for the quick switcher.
+      const rel = notesRef.current.find((n) => n.path === path)?.rel;
+      const v = vaultRef.current;
+      if (rel && v) {
+        recents.current = [rel, ...recents.current.filter((r) => r !== rel)].slice(0, RECENT_MAX);
+        try {
+          localStorage.setItem(recentKey(v), JSON.stringify(recents.current));
+        } catch {
+          /* ignore */
+        }
+      }
     },
     [flushPending],
   );
@@ -230,11 +270,16 @@ export default function App() {
       await flushPending();
       clearImageCache();
       const root = await openVaultBackend(path); // canonical; sets managed state
+      recents.current = loadRecents(root);
       setVault(root);
       localStorage.setItem(LAST_VAULT_KEY, root);
       setActive(null);
       setChangedOnDisk(false);
       selfWrites.current.clear();
+      // Empty the stale note list immediately — the old vault's entries must not
+      // be clickable while the new vault loads.
+      setNotes([]);
+      index.current.build([]);
       await loadVault();
       await listenerReady.current?.promise; // ensure we can hear events first
       startWatching().catch(() => {
@@ -435,8 +480,11 @@ export default function App() {
 
   // Quick switcher (Cmd/Ctrl-O) and vault search (Cmd/Ctrl-Shift-F).
   useEffect(() => {
+    const isMac = /Mac/.test(navigator.platform);
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || !vaultRef.current) return;
+      if (e.defaultPrevented) return; // CodeMirror already handled it (e.g. mac Ctrl-o)
+      const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+      if (!mod || !vaultRef.current) return;
       const k = e.key.toLowerCase();
       if (k === "o" && !e.shiftKey) {
         e.preventDefault();
@@ -444,6 +492,9 @@ export default function App() {
       } else if (k === "f" && e.shiftKey) {
         e.preventDefault();
         setModal("search");
+      } else if (k === "p" && !e.shiftKey) {
+        e.preventDefault(); // also suppresses the webview's print dialog
+        setModal("commands");
       }
     };
     window.addEventListener("keydown", onKey);
@@ -606,6 +657,47 @@ export default function App() {
     return () => window.removeEventListener("keydown", onEsc);
   }, [graphOpen]);
 
+  // Blank-query switcher shows recently opened notes first.
+  const switcherItems = useCallback(
+    (q: string) => {
+      const all = notesRef.current;
+      if (q.trim()) return fuzzyRank(q, all, (n) => [n.name, n.rel]);
+      const order = new Map(recents.current.map((rel, i) => [rel, i]));
+      return [...all].sort((a, b) => {
+        const ia = order.get(a.rel) ?? Infinity;
+        const ib = order.get(b.rel) ?? Infinity;
+        return ia - ib || a.rel.toLowerCase().localeCompare(b.rel.toLowerCase());
+      });
+    },
+    [],
+  );
+
+  const commands = useMemo<AppCommand[]>(
+    () => [
+      { id: "new-note", label: "New note", hint: "create an untitled note", run: () => void handleNewNote() },
+      { id: "open-note", label: "Open note…", hint: "quick switcher (⌘O)", run: () => setModal("switcher") },
+      { id: "search", label: "Search vault…", hint: "full-text search (⇧⌘F)", run: () => setModal("search") },
+      { id: "graph", label: "Open graph view", hint: "global link graph", run: () => setGraphOpen(true) },
+      {
+        id: "graph-local",
+        label: "Open local graph",
+        hint: "links around the current note",
+        run: () => {
+          setGraphMode("local");
+          setGraphOpen(true);
+        },
+      },
+      { id: "change-vault", label: "Change vault…", hint: "open a different folder", run: () => void handleOpenVault() },
+      {
+        id: "reload-note",
+        label: "Reload note from disk",
+        hint: "discard unsaved changes",
+        run: () => void handleReloadFromDisk(),
+      },
+    ],
+    [handleNewNote, handleOpenVault, handleReloadFromDisk],
+  );
+
   if (!vault) {
     return (
       <div className="welcome">
@@ -676,7 +768,7 @@ export default function App() {
       {modal === "switcher" && (
         <Palette<VaultNote>
           placeholder="Open note…"
-          getItems={(q) => fuzzyRank(q, notesRef.current, (n) => [n.name, n.rel])}
+          getItems={(q) => switcherItems(q)}
           itemKey={(n) => n.path}
           renderItem={(n) => (
             <>
@@ -711,6 +803,25 @@ export default function App() {
           }}
           onClose={() => setModal(null)}
           emptyText="Type to search"
+        />
+      )}
+      {modal === "commands" && (
+        <Palette<AppCommand>
+          placeholder="Run command…"
+          getItems={(q) => fuzzyRank(q, commands, (c) => [c.label])}
+          itemKey={(c) => c.id}
+          renderItem={(c) => (
+            <>
+              <span className="palette-name">{c.label}</span>
+              {c.hint && <span className="palette-sub">{c.hint}</span>}
+            </>
+          )}
+          onSelect={(c) => {
+            setModal(null);
+            c.run();
+          }}
+          onClose={() => setModal(null)}
+          emptyText="No matching command"
         />
       )}
       {graphOpen && (
