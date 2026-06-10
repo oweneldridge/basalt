@@ -357,6 +357,7 @@ export default function App() {
     (async () => {
       try {
         unlistenChanged = await listen<ChangedNote[]>("vault-changed", (event) => {
+          console.log("[basalt] vault-changed", event.payload);
           for (const c of event.payload) changedBuf.current.set(c.rel, c.path);
           if (changedBuf.current.size === 0) return;
           window.clearTimeout(watchTimer.current);
@@ -367,6 +368,7 @@ export default function App() {
           }, 300);
         });
         unlistenRescan = await listen("vault-rescan", () => {
+          console.log("[basalt] vault-rescan");
           window.clearTimeout(rescanTimer.current);
           rescanTimer.current = window.setTimeout(() => {
             void handleRescan();
