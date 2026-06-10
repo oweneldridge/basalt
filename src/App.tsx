@@ -18,6 +18,7 @@ import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { EditorPane } from "./components/EditorPane";
 import { Backlinks } from "./components/Backlinks";
+import { GraphView } from "./components/GraphView";
 import { Palette } from "./components/Palette";
 import { fuzzyRank } from "./lib/fuzzy";
 import { searchVault, type SearchHit } from "./lib/search";
@@ -50,6 +51,8 @@ export default function App() {
   const [indexVersion, setIndexVersion] = useState(0);
   const [changedOnDisk, setChangedOnDisk] = useState(false);
   const [modal, setModal] = useState<ModalKind>(null);
+  const [graphOpen, setGraphOpen] = useState(false);
+  const [graphMode, setGraphMode] = useState<"global" | "local">("global");
 
   const index = useRef(new VaultIndex());
   const vaultRef = useRef<string | null>(null);
@@ -446,6 +449,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeName, active]);
 
+  const graphData = useMemo(() => {
+    if (!graphOpen) return { nodes: [], links: [] };
+    if (graphMode === "local" && active) return index.current.localGraph(active.path, 1);
+    return index.current.graph();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphOpen, graphMode, active, indexVersion]);
+
+  // Esc closes the graph overlay.
+  useEffect(() => {
+    if (!graphOpen) return;
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setGraphOpen(false);
+    };
+    window.addEventListener("keydown", onEsc);
+    return () => window.removeEventListener("keydown", onEsc);
+  }, [graphOpen]);
+
   if (!vault) {
     return (
       <div className="welcome">
@@ -471,6 +491,9 @@ export default function App() {
         <div className="toolbar">
           <button className="link-btn" onClick={handleOpenVault}>
             Change vault…
+          </button>
+          <button className="link-btn" onClick={() => setGraphOpen(true)} title="Graph view">
+            Graph
           </button>
           {changedOnDisk && (
             <span className="conflict">
@@ -545,6 +568,19 @@ export default function App() {
           }}
           onClose={() => setModal(null)}
           emptyText="Type to search"
+        />
+      )}
+      {graphOpen && (
+        <GraphView
+          data={graphData}
+          activePath={active?.path ?? null}
+          mode={graphMode}
+          onSetMode={setGraphMode}
+          onOpenNode={(path) => {
+            setGraphOpen(false);
+            openNoteByPath(path);
+          }}
+          onClose={() => setGraphOpen(false)}
         />
       )}
     </div>

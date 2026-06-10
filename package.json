@@ -28,11 +28,13 @@
     "@codemirror/language-data": "^6.5.1",
     "@lezer/common": "^1.2.3",
     "@lezer/highlight": "^1.2.1",
-    "@lezer/markdown": "^1.4.2"
+    "@lezer/markdown": "^1.4.2",
+    "d3-force": "^3.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@types/d3-force": "^3.0.10",
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",

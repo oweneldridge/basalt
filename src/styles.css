@@ -305,6 +305,72 @@ button.primary:hover {
   text-overflow: ellipsis;
 }
 
+/* Graph view */
+.graph-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+}
+.graph-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 42px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.graph-modes {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-elev);
+  border-radius: 7px;
+  padding: 2px;
+}
+.graph-mode {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  padding: 3px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.graph-mode.active {
+  background: var(--accent);
+  color: #14121a;
+  font-weight: 600;
+}
+.graph-count {
+  color: var(--text-faint);
+  font-size: 0.8rem;
+  flex: 1;
+}
+.graph-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.graph-close:hover {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+.graph-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+.graph-canvas-wrap canvas {
+  display: block;
+}
+
 /* Quick switcher / search palette */
 .palette-overlay {
   position: fixed;
