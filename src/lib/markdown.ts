@@ -33,14 +33,20 @@ export function tagRegex(): RegExp {
 }
 
 /**
+ * Strip a `#heading` / `^block` ref from a raw wikilink target, KEEPING any
+ * `folder/` path. `"notes/Project#Goals"` → `"notes/Project"`.
+ */
+export function targetPathPart(raw: string): string {
+  return raw.split("#")[0].split("^")[0].trim();
+}
+
+/**
  * Reduce a raw wikilink target to the bare note name it resolves to:
  * strip a `#heading`, a `^block` ref, and any `folder/` path prefix.
  * `"notes/Project#Goals"` → `"Project"`.
  */
 export function targetNoteName(raw: string): string {
-  let s = raw.split("#")[0];
-  s = s.split("^")[0];
-  s = s.trim();
+  let s = targetPathPart(raw);
   const slash = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
   if (slash >= 0) s = s.slice(slash + 1);
   return s.trim();

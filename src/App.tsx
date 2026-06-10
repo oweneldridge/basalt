@@ -14,7 +14,7 @@ import {
   type VaultNote,
 } from "./lib/vault";
 import { VaultIndex } from "./lib/vaultIndex";
-import { normalizeName, targetNoteName } from "./lib/markdown";
+import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { EditorPane } from "./components/EditorPane";
 import { Backlinks } from "./components/Backlinks";
@@ -358,34 +358,26 @@ export default function App() {
     });
   }, []);
 
-  const resolveTarget = useCallback((rawTarget: string): VaultNote | undefined => {
-    const want = normalizeName(targetNoteName(rawTarget));
-    return notesRef.current.find(
-      (n) =>
-        normalizeName(n.name) === want ||
-        normalizeName(n.rel.replace(/\.md$/i, "")) === want,
-    );
-  }, []);
-
   const handleOpenWikilink = useCallback(
     async (target: string) => {
-      const existing = resolveTarget(target);
-      if (existing) {
-        await openNoteByPath(existing.path);
+      const resolved = index.current.resolve(target, activePathRef.current ?? "");
+      if (resolved) {
+        await openNoteByPath(resolved);
         return;
       }
       const v = vaultRef.current;
       if (!v) return;
       try {
         await flushPending();
-        const path = await createNote(v, targetNoteName(target));
+        // Preserve the folder for `[[sub/New]]` so the created note matches the link.
+        const path = await createNote(v, targetPathPart(target));
         await loadVault(v);
         await openNoteByPath(path);
       } catch {
         /* name collision or invalid name — ignore for now */
       }
     },
-    [resolveTarget, openNoteByPath, flushPending, loadVault],
+    [openNoteByPath, flushPending, loadVault],
   );
 
   const handleNewNote = useCallback(async () => {
@@ -408,12 +400,12 @@ export default function App() {
   const activeName = activeNote?.name ?? null;
   activeRelRef.current = activeNote?.rel ?? null;
 
-  // Cheap: scans the precomputed occurrence map. Recompute on save (indexVersion).
+  // Resolves each link occurrence to a concrete path. Recompute on save (indexVersion).
   const backlinks = useMemo(() => {
-    if (!activeName || !active) return [];
-    return index.current.backlinksFor(activeName, active.path);
+    if (!active) return [];
+    return index.current.backlinksFor(active.path);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeName, active, indexVersion]);
+  }, [active, indexVersion]);
 
   // Expensive (full vault text scan). Recompute only when the active note
   // changes — not on every debounced save — to keep typing smooth.
