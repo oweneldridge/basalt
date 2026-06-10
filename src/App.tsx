@@ -18,6 +18,9 @@ import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { EditorPane } from "./components/EditorPane";
 import { Backlinks } from "./components/Backlinks";
+import { Palette } from "./components/Palette";
+import { fuzzyRank } from "./lib/fuzzy";
+import { searchVault, type SearchHit } from "./lib/search";
 import "./styles.css";
 
 const LAST_VAULT_KEY = "basalt.lastVault";
@@ -28,7 +31,11 @@ const SELF_WRITE_TTL_MS = 4000;
 interface ActiveNote {
   path: string;
   doc: string;
+  /** 1-based line to scroll to on open (from search / backlinks). */
+  scrollToLine?: number;
 }
+
+type ModalKind = "switcher" | "search" | null;
 
 function basename(p: string): string {
   const parts = p.split(/[/\\]/).filter(Boolean);
@@ -42,6 +49,7 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [indexVersion, setIndexVersion] = useState(0);
   const [changedOnDisk, setChangedOnDisk] = useState(false);
+  const [modal, setModal] = useState<ModalKind>(null);
 
   const index = useRef(new VaultIndex());
   const vaultRef = useRef<string | null>(null);
@@ -143,14 +151,20 @@ export default function App() {
   );
 
   const openNoteByPath = useCallback(
-    async (path: string) => {
-      if (path === activePathRef.current) return;
+    async (path: string, line?: number) => {
+      if (path === activePathRef.current) {
+        // Already open — just jump to the line if one was given.
+        if (line !== undefined) {
+          setActive((a) => (a && a.path === path && a.scrollToLine !== line ? { ...a, scrollToLine: line } : a));
+        }
+        return;
+      }
       await flushPending();
       const v = vaultRef.current;
       if (!v) return;
       const doc = await readNote(v, path);
       setChangedOnDisk(false);
-      setActive({ path, doc });
+      setActive({ path, doc, scrollToLine: line });
     },
     [flushPending],
   );
@@ -322,6 +336,23 @@ export default function App() {
     };
   }, [flushPending]);
 
+  // Quick switcher (Cmd/Ctrl-O) and vault search (Cmd/Ctrl-Shift-F).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || !vaultRef.current) return;
+      const k = e.key.toLowerCase();
+      if (k === "o" && !e.shiftKey) {
+        e.preventDefault();
+        setModal("switcher");
+      } else if (k === "f" && e.shiftKey) {
+        e.preventDefault();
+        setModal("search");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const handleOpenVault = useCallback(async () => {
     const picked = await pickVault();
     if (picked) await openVault(picked);
@@ -460,6 +491,7 @@ export default function App() {
             key={active.path}
             path={active.path}
             doc={active.doc}
+            scrollToLine={active.scrollToLine}
             getNotes={getNotes}
             onOpenWikilink={handleOpenWikilink}
             onOpenUrl={handleOpenUrl}
@@ -473,8 +505,48 @@ export default function App() {
         noteName={activeName}
         backlinks={backlinks}
         unlinked={unlinked}
-        onOpen={(path) => openNoteByPath(path)}
+        onOpen={(path, line) => openNoteByPath(path, line)}
       />
+      {modal === "switcher" && (
+        <Palette<VaultNote>
+          placeholder="Open note…"
+          getItems={(q) => fuzzyRank(q, notesRef.current, (n) => [n.name, n.rel])}
+          itemKey={(n) => n.path}
+          renderItem={(n) => (
+            <>
+              <span className="palette-name">{n.name}</span>
+              <span className="palette-sub">{n.rel}</span>
+            </>
+          )}
+          onSelect={(n) => {
+            setModal(null);
+            openNoteByPath(n.path);
+          }}
+          onClose={() => setModal(null)}
+          emptyText="No notes"
+        />
+      )}
+      {modal === "search" && (
+        <Palette<SearchHit>
+          placeholder="Search vault…"
+          getItems={(q) => searchVault(notesRef.current, q)}
+          itemKey={(h, i) => `${h.path}:${h.line}:${i}`}
+          renderItem={(h) => (
+            <>
+              <span className="palette-name">
+                {h.name} <span className="palette-line">:{h.line}</span>
+              </span>
+              <span className="palette-sub">{h.lineText}</span>
+            </>
+          )}
+          onSelect={(h) => {
+            setModal(null);
+            openNoteByPath(h.path, h.line);
+          }}
+          onClose={() => setModal(null)}
+          emptyText="Type to search"
+        />
+      )}
     </div>
   );
 }
