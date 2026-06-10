@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -27,6 +28,12 @@ import { searchVault, type SearchHit } from "./lib/search";
 import "./styles.css";
 
 const LAST_VAULT_KEY = "basalt.lastVault";
+
+// Diagnostic bridge: mirrors frontend events into the dev terminal.
+function jsLog(msg: string): void {
+  console.log("[basalt]", msg);
+  invoke("debug_log", { msg }).catch(() => {});
+}
 const SAVE_DEBOUNCE_MS = 500;
 // Bound on the self-write suppression map (rel -> last written content).
 const SELF_WRITES_MAX = 128;
@@ -270,7 +277,11 @@ export default function App() {
       const results = reads.filter(
         (r) => !(r.ok && selfWrites.current.get(r.rel) === r.content),
       );
-      if (results.length === 0) return;
+      if (results.length === 0) {
+        jsLog("processChanges: all echoes of our own writes, skipped");
+        return;
+      }
+      jsLog(`processChanges: applying ${results.length} external change(s)`);
 
       for (const r of results) {
         if (r.ok) {
@@ -357,7 +368,7 @@ export default function App() {
     (async () => {
       try {
         unlistenChanged = await listen<ChangedNote[]>("vault-changed", (event) => {
-          console.log("[basalt] vault-changed", event.payload);
+          jsLog(`vault-changed: ${event.payload.length} note(s)`);
           for (const c of event.payload) changedBuf.current.set(c.rel, c.path);
           if (changedBuf.current.size === 0) return;
           window.clearTimeout(watchTimer.current);
@@ -367,15 +378,19 @@ export default function App() {
             void processChanges(changes);
           }, 300);
         });
+        jsLog("vault-changed listener registered");
         unlistenRescan = await listen("vault-rescan", () => {
-          console.log("[basalt] vault-rescan");
+          jsLog("vault-rescan received");
           window.clearTimeout(rescanTimer.current);
           rescanTimer.current = window.setTimeout(() => {
             void handleRescan();
           }, 300);
         });
-      } catch {
-        /* not running under Tauri */
+        jsLog("vault-rescan listener registered");
+      } catch (e) {
+        jsLog(`LISTENER REGISTRATION FAILED: ${e}`);
+        console.error("[basalt] listen failed", e);
+        setSaveError(`Event listeners failed: ${e}`);
       } finally {
         listenerReady.current?.resolve();
       }
