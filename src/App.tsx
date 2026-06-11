@@ -3,9 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   createNote,
+  deleteNote,
   nameFromRel,
+  renameNote,
   openVaultBackend,
   pickVault,
   readNote,
@@ -23,6 +26,8 @@ import { EditorPane } from "./components/EditorPane";
 import { Backlinks } from "./components/Backlinks";
 import { GraphView } from "./components/GraphView";
 import { Palette } from "./components/Palette";
+import { PromptModal } from "./components/PromptModal";
+import { linkTargetFor, rewriteLinks } from "./lib/rename";
 import { fuzzyRank } from "./lib/fuzzy";
 import { searchVault, type SearchHit } from "./lib/search";
 import "./styles.css";
@@ -113,6 +118,8 @@ export default function App() {
   const [modal, setModal] = useState<ModalKind>(null);
   const [graphOpen, setGraphOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<"global" | "local">("global");
+  const [fileMenu, setFileMenu] = useState<{ path: string; x: number; y: number } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{ path: string; rel: string } | null>(null);
 
   const index = useRef(new VaultIndex());
   const vaultRef = useRef<string | null>(null);
@@ -216,6 +223,13 @@ export default function App() {
     (doc: string) => {
       const path = activePathRef.current;
       if (!path) return;
+      // A failed save can leave another note's edit pending — flush it rather
+      // than silently overwriting it with this note's pending.
+      if (pending.current && pending.current.path !== path) {
+        const p = pending.current;
+        pending.current = null;
+        void flushSave(p.path, p.doc);
+      }
       pending.current = { path, doc };
       window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(() => {
@@ -332,6 +346,7 @@ export default function App() {
         if (r.ok) {
           index.current.setNote({ path: r.path, rel: r.rel, name: nameFromRel(r.rel), content: r.content });
         } else {
+          selfWrites.current.delete(r.rel); // gone from disk: suppression is stale
           const ex = byRel.get(r.rel);
           if (ex) index.current.removeNote(ex.path);
         }
@@ -657,6 +672,175 @@ export default function App() {
     return () => window.removeEventListener("keydown", onEsc);
   }, [graphOpen]);
 
+  /** Move a note to .trash (with confirmation) and drop it everywhere. */
+  const handleDeleteNote = useCallback(
+    async (path: string) => {
+      const note = notesRef.current.find((n) => n.path === path);
+      if (!note) return;
+      const ok = await confirm(`Move "${note.name}" to the vault trash?`, {
+        title: "Delete note",
+        kind: "warning",
+      });
+      if (!ok) return;
+      try {
+        if (pending.current?.path === path) {
+          window.clearTimeout(saveTimer.current);
+          pending.current = null; // never resurrect a deleted note via autosave
+        }
+        await deleteNote(path);
+        selfWrites.current.delete(note.rel); // a restored copy must not be swallowed
+        index.current.removeNote(path);
+        setNotes((prev) => prev.filter((n) => n.path !== path));
+        recents.current = recents.current.filter((r) => r !== note.rel);
+        if (activePathRef.current === path) {
+          setChangedOnDisk(false);
+          setActive(null);
+        }
+        bumpStructure();
+      } catch (e) {
+        setSaveError(`Couldn't delete: ${e}`);
+      }
+    },
+    [bumpStructure],
+  );
+
+  /** Rename/move a note and rewrite every link to it across the vault.
+   * Ordering matters (each step's rationale from the 2.7 review):
+   * 1. flush pending edits and ABORT if the flush failed;
+   * 2. freeze a pre-rename resolver (the live index is committed early);
+   * 3. fs rename, then commit the renamed note to index/notes IMMEDIATELY so a
+   *    mid-orchestration watcher flush can't corrupt state;
+   * 4. re-anchor the renamed note's OWN self/relative links;
+   * 5. rewrite each affected source READ FROM DISK (memory may lag external
+   *    edits; read_note also refuses non-UTF8 instead of corrupting it), with
+   *    per-source failure domains. */
+  const handleRenameNote = useCallback(
+    async (oldPath: string, newName: string) => {
+      const root = vaultRef.current;
+      if (!root) return;
+      try {
+        await flushPending();
+        if (pending.current) {
+          setSaveError("Couldn't rename: unsaved changes failed to save");
+          return;
+        }
+        const oldNote = notesRef.current.find((n) => n.path === oldPath);
+        if (!oldNote) return;
+        const wasActive = activePathRef.current === oldPath;
+
+        // Pre-rename resolution snapshot — mapTarget decisions must use the
+        // OLD vault shape even after the live index is updated below.
+        const preIndex = new VaultIndex();
+        preIndex.build(notesRef.current);
+        const preNotes = notesRef.current;
+
+        const newPath = await renameNote(oldPath, newName);
+        if (newPath === oldPath) return;
+        const newRel = newPath.startsWith(root)
+          ? newPath.slice(root.length).replace(/^[/\\]+/, "")
+          : newPath;
+        const newBase = nameFromRel(newRel);
+
+        // Link text Obsidian would write: bare name unless another note (not
+        // the renamed one) shares the new basename.
+        const taken = preNotes.some(
+          (n) => n.path !== oldPath && normalizeName(n.name) === normalizeName(newBase),
+        );
+        const newTarget = linkTargetFor(newRel.replace(/\.md$/i, ""), taken);
+
+        // The renamed note's own content, from disk (authoritative), with its
+        // self-links retargeted and position-dependent ./.. links re-anchored.
+        let renamedContent: string;
+        try {
+          renamedContent = await readNote(newPath);
+        } catch {
+          renamedContent = oldNote.content; // disk read failed; best effort
+        }
+        const ownMap = (raw: string): string | null => {
+          const dest = preIndex.resolve(raw, oldPath);
+          if (!dest) return null;
+          if (dest === oldPath) return newTarget; // self-link
+          const pathPart = targetPathPart(raw);
+          const relative = pathPart.split(/[/\\]/).some((seg) => seg === "." || seg === "..");
+          if (!relative) return null; // position-independent links still resolve
+          const destNote = preNotes.find((n) => n.path === dest);
+          if (!destNote) return null;
+          const destTaken = preNotes.some(
+            (n) => n.path !== dest && normalizeName(n.name) === normalizeName(destNote.name),
+          );
+          return linkTargetFor(destNote.rel.replace(/\.md$/i, ""), destTaken);
+        };
+        const ownRewritten = rewriteLinks(renamedContent, ownMap);
+        if (ownRewritten !== null) {
+          await writeNote(newPath, ownRewritten);
+          renamedContent = ownRewritten;
+        }
+
+        // COMMIT the renamed note before any other writes, so a watcher flush
+        // landing mid-orchestration sees consistent state.
+        selfWrites.current.delete(oldNote.rel);
+        rememberSelfWrite(newRel, renamedContent);
+        index.current.removeNote(oldPath);
+        const renamed: VaultNote = {
+          path: newPath,
+          rel: newRel,
+          name: newBase,
+          content: renamedContent,
+        };
+        index.current.setNote(renamed);
+        recents.current = recents.current.map((r) => (r === oldNote.rel ? newRel : r));
+        setNotes((prev) =>
+          prev
+            .map((n) => (n.path === oldPath ? renamed : n))
+            .sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
+        );
+        bumpStructure();
+        if (wasActive) setActive({ path: newPath, doc: renamedContent });
+
+        // Rewrite affected sources. Candidates are found via the in-memory
+        // snapshot (cheap), but each rewrite reads DISK content so a fresher
+        // external edit is never reverted.
+        const sourceMap = (notePath: string) => (raw: string) =>
+          preIndex.resolve(raw, notePath) === oldPath ? newTarget : null;
+        const updates: VaultNote[] = [];
+        const failures: string[] = [];
+        for (const note of preNotes) {
+          if (note.path === oldPath) continue;
+          if (rewriteLinks(note.content, sourceMap(note.path)) === null) continue; // unaffected
+          try {
+            const disk = await readNote(note.path);
+            const next = rewriteLinks(disk, sourceMap(note.path));
+            if (next === null) continue;
+            await writeNote(note.path, next);
+            const updated: VaultNote = { ...note, content: next };
+            rememberSelfWrite(note.rel, next);
+            index.current.setNote(updated);
+            updates.push(updated);
+          } catch (e) {
+            failures.push(note.rel);
+            console.error("[basalt] link rewrite failed", note.rel, e);
+          }
+        }
+        if (updates.length > 0) {
+          const byPath = new Map(updates.map((u) => [u.path, u]));
+          setNotes((prev) => prev.map((n) => byPath.get(n.path) ?? n));
+          bumpStructure();
+          const activeNow = activePathRef.current;
+          if (activeNow && byPath.has(activeNow)) {
+            // The open note had links rewritten — reconcile in place.
+            setActive({ path: activeNow, doc: byPath.get(activeNow)!.content });
+          }
+        }
+        setSaveError(
+          failures.length > 0 ? `Renamed, but link updates failed in: ${failures.join(", ")}` : null,
+        );
+      } catch (e) {
+        setSaveError(`Couldn't rename: ${e}`);
+      }
+    },
+    [flushPending, bumpStructure, rememberSelfWrite],
+  );
+
   // Blank-query switcher shows recently opened notes first.
   const switcherItems = useCallback(
     (q: string) => {
@@ -689,13 +873,32 @@ export default function App() {
       },
       { id: "change-vault", label: "Change vault…", hint: "open a different folder", run: () => void handleOpenVault() },
       {
+        id: "rename-note",
+        label: "Rename current note…",
+        hint: "moves it and rewrites links vault-wide",
+        run: () => {
+          const path = activePathRef.current;
+          const note = path ? notesRef.current.find((n) => n.path === path) : undefined;
+          if (note) setRenameTarget({ path: note.path, rel: note.rel });
+        },
+      },
+      {
+        id: "delete-note",
+        label: "Delete current note",
+        hint: "move to .trash",
+        run: () => {
+          const path = activePathRef.current;
+          if (path) void handleDeleteNote(path);
+        },
+      },
+      {
         id: "reload-note",
         label: "Reload note from disk",
         hint: "discard unsaved changes",
         run: () => void handleReloadFromDisk(),
       },
     ],
-    [handleNewNote, handleOpenVault, handleReloadFromDisk],
+    [handleNewNote, handleOpenVault, handleReloadFromDisk, handleDeleteNote],
   );
 
   if (!vault) {
@@ -718,6 +921,7 @@ export default function App() {
         vaultName={basename(vault)}
         onOpen={(path) => openNoteByPath(path)}
         onNewNote={handleNewNote}
+        onContextMenu={(path, x, y) => setFileMenu({ path, x, y })}
       />
       <main className="main">
         <div className="toolbar">
@@ -740,7 +944,7 @@ export default function App() {
           )}
           <span className="spacer" />
           <span className={saveError ? "status status-error" : "status"} title={saveError ?? ""}>
-            {saveError ? "⚠ Save failed — will retry" : saving ? "Saving…" : active ? "Saved" : ""}
+            {saveError ? `⚠ ${saveError}` : saving ? "Saving…" : active ? "Saved" : ""}
           </span>
         </div>
         {active ? (
@@ -822,6 +1026,53 @@ export default function App() {
           }}
           onClose={() => setModal(null)}
           emptyText="No matching command"
+        />
+      )}
+      {fileMenu && (
+        <div className="ctx-overlay" onMouseDown={() => setFileMenu(null)} onContextMenu={(e) => e.preventDefault()}>
+          <div
+            className="ctx-menu"
+            style={{ left: fileMenu.x, top: fileMenu.y }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const note = notesRef.current.find((n) => n.path === fileMenu.path);
+                setFileMenu(null);
+                if (note) setRenameTarget({ path: note.path, rel: note.rel });
+              }}
+            >
+              Rename…
+            </button>
+            <button
+              className="ctx-item danger"
+              onClick={() => {
+                const path = fileMenu.path;
+                setFileMenu(null);
+                void handleDeleteNote(path);
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+      {renameTarget && (
+        <PromptModal
+          title="Rename note (edit the folders to move it)"
+          defaultValue={renameTarget.rel.replace(/\.md$/i, "")}
+          confirmLabel="Rename"
+          onConfirm={(value) => {
+            const t = renameTarget;
+            setRenameTarget(null);
+            if (/[#^[\]|]/.test(value)) {
+              setSaveError("Note names cannot contain # ^ [ ] |");
+              return;
+            }
+            void handleRenameNote(t.path, value);
+          }}
+          onClose={() => setRenameTarget(null)}
         />
       )}
       {graphOpen && (

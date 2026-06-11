@@ -68,3 +68,5 @@ iCloud/Dropbox — the open-format advantage means that just works.
 - **A replaced image shows stale until restart.** The image cache keys on path and the watcher only signals `.md` and directory changes; an asset overwritten mid-session keeps its cached bytes. Broaden the watcher or key on mtime (with Phase 2.8 attachments).
 - **Oversized notes (>5 MB) are listed without content**, so their outgoing links aren't indexed; the editor still opens them via `read_note`.
 - **Frontmatter wikilinks aren't indexed as links** (the prose mask skips YAML). Obsidian indexes Properties links; revisit with Properties editing (Phase 3).
+- **Markdown-style links (`[text](Note.md)`) aren't indexed or rewritten on rename** — only wikilinks. Vaults configured with "Use [[Wikilinks]]: off" will see link rot on rename; planned alongside `.obsidian` interop (Phase 2.9).
+- **Renaming the open note remounts the editor** (undo history/scroll reset). Pending edits are flushed first, so nothing is lost.

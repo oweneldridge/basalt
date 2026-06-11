@@ -286,12 +286,9 @@ fn write_note(path: String, content: String, state: State<VaultState>) -> Result
     atomic_write(&resolved, content.as_bytes())
 }
 
-/// Create a new empty note, returning its canonical path. `name` may be folder-
-/// qualified (`sub/New`); parent folders are created. Each segment is sanitized
-/// and `..`/absolute/dot-leading segments are rejected.
-#[tauri::command]
-fn create_note(name: String, state: State<VaultState>) -> Result<String, String> {
-    let root = current_root(&state)?;
+/// Build `<root>/<name>.md` from a folder-qualified note name, sanitizing each
+/// segment and rejecting `..`/absolute/dot-leading/reserved segments.
+fn build_note_path(root: &Path, name: &str) -> Result<PathBuf, String> {
     let segments: Vec<String> = name
         .split(['/', '\\'])
         .map(|s| s.trim().to_string())
@@ -300,9 +297,14 @@ fn create_note(name: String, state: State<VaultState>) -> Result<String, String>
     if segments.is_empty() {
         return Err("invalid note name".into());
     }
-    let mut path = root.clone();
+    let mut path = root.to_path_buf();
     let last = segments.len() - 1;
     for (i, seg) in segments.iter().enumerate() {
+        // These characters are link syntax — a name containing them can't be
+        // round-tripped through [[wikilinks]], so reject rather than mangle.
+        if seg.chars().any(|c| matches!(c, '#' | '^' | '[' | ']' | '|')) {
+            return Err("note names cannot contain # ^ [ ] |".into());
+        }
         let safe: String = seg
             .chars()
             .filter(|c| !matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') && !c.is_control())
@@ -323,20 +325,114 @@ fn create_note(name: String, state: State<VaultState>) -> Result<String, String>
             path.push(safe);
         }
     }
+    Ok(path)
+}
+
+/// True if a file/symlink already occupies `path`.
+fn occupied(path: &Path) -> bool {
+    path.exists()
+        || fs::symlink_metadata(path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+}
+
+/// Create a new empty note, returning its canonical path. `name` may be folder-
+/// qualified (`sub/New`); parent folders are created.
+#[tauri::command]
+fn create_note(name: String, state: State<VaultState>) -> Result<String, String> {
+    let root = current_root(&state)?;
+    let path = build_note_path(&root, &name)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
-    if path.exists()
-        || fs::symlink_metadata(&path)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
-    {
+    if occupied(&path) {
         return Err("note already exists".into());
     }
     atomic_write(&path, b"")?;
     let canonical = fs::canonicalize(&path).map_err(|e| e.to_string())?;
     if !canonical.starts_with(&root) {
         let _ = fs::remove_file(&canonical);
+        return Err("path escapes vault".into());
+    }
+    Ok(canonical.to_string_lossy().to_string())
+}
+
+/// Move a note to `<vault>/.trash/` (Obsidian-compatible, recoverable). A name
+/// collision in the trash gets a timestamp suffix.
+#[tauri::command]
+fn delete_note(path: String, state: State<VaultState>) -> Result<(), String> {
+    let root = current_root(&state)?;
+    let resolved = ensure_in_vault(&root, &path)?;
+    if !resolved.is_file() {
+        return Err("not a file".into());
+    }
+    let trash = root.join(".trash");
+    fs::create_dir_all(&trash).map_err(|e| format!("trash: {e}"))?;
+    let name = resolved
+        .file_name()
+        .ok_or("invalid path")?
+        .to_string_lossy()
+        .to_string();
+    let mut dest = trash.join(&name);
+    if occupied(&dest) {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let stem = name.strip_suffix(".md").unwrap_or(&name);
+        dest = trash.join(format!("{stem} {nanos}.md"));
+    }
+    fs::rename(&resolved, &dest).map_err(|e| format!("trash move: {e}"))
+}
+
+/// Rename/move a note to a new folder-qualified name (no `.md`), creating
+/// parent folders. Refuses to overwrite. Returns the canonical new path.
+#[tauri::command]
+fn rename_note(path: String, new_name: String, state: State<VaultState>) -> Result<String, String> {
+    let root = current_root(&state)?;
+    let from = ensure_in_vault(&root, &path)?;
+    if !from.is_file() {
+        return Err("not a file".into());
+    }
+    let to = build_note_path(&root, &new_name)?;
+    if to == from {
+        return Ok(from.to_string_lossy().to_string());
+    }
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        // Validate the destination BEFORE moving (a symlinked subfolder would
+        // otherwise carry the note outside the vault).
+        let cparent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
+        if !cparent.starts_with(&root) {
+            return Err("path escapes vault".into());
+        }
+    }
+    // Case-only rename on a case-insensitive filesystem: `to` stats the SAME
+    // file, so occupied() would falsely refuse. Detect same-file and go through
+    // a dot-prefixed temp (ignored by the watcher) in two steps.
+    let same_file = fs::canonicalize(&to)
+        .ok()
+        .is_some_and(|c| fs::canonicalize(&from).ok() == Some(c));
+    if same_file {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp = from
+            .parent()
+            .ok_or("invalid path")?
+            .join(format!(".basalt-tmp-{nanos}-case.tmp"));
+        fs::rename(&from, &temp).map_err(|e| format!("rename: {e}"))?;
+        fs::rename(&temp, &to).map_err(|e| format!("rename: {e}"))?;
+    } else {
+        if occupied(&to) {
+            return Err("a note with that name already exists".into());
+        }
+        fs::rename(&from, &to).map_err(|e| format!("rename: {e}"))?;
+    }
+    let canonical = fs::canonicalize(&to).map_err(|e| e.to_string())?;
+    if !canonical.starts_with(&root) {
+        let _ = fs::rename(&canonical, &from); // undo
         return Err("path escapes vault".into());
     }
     Ok(canonical.to_string_lossy().to_string())
@@ -534,6 +630,8 @@ pub fn run() {
             read_note,
             write_note,
             create_note,
+            delete_note,
+            rename_note,
             start_watching,
             read_image,
             debug_log

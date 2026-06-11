@@ -501,6 +501,81 @@ button.primary:hover {
   font-size: 0.88rem;
 }
 
+/* File context menu */
+.ctx-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+}
+.ctx-menu {
+  position: fixed;
+  min-width: 160px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+  z-index: 121;
+}
+.ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 0.88rem;
+  padding: 6px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.ctx-item:hover {
+  background: var(--bg-sidebar);
+}
+.ctx-item.danger {
+  color: #f7768e;
+}
+
+/* Prompt modal (rename) */
+.prompt {
+  width: 90%;
+  max-width: 520px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.prompt-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+.prompt-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.95rem;
+  padding: 8px 10px;
+  outline: none;
+  font-family: inherit;
+}
+.prompt-input:focus {
+  border-color: var(--accent);
+}
+.prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.prompt-confirm {
+  padding: 5px 14px !important;
+  font-size: 0.85rem !important;
+}
+
 /* CodeMirror autocomplete popup */
 .cm-tooltip.cm-tooltip-autocomplete {
   background: var(--bg-elev);

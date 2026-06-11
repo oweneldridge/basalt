@@ -47,6 +47,16 @@ export function createNote(name: string): Promise<string> {
   return invoke<string>("create_note", { name });
 }
 
+/** Move a note to the vault's .trash/ (recoverable, Obsidian-compatible). */
+export function deleteNote(path: string): Promise<void> {
+  return invoke<void>("delete_note", { path });
+}
+
+/** Rename/move a note to a folder-qualified name (no .md); returns the new path. */
+export function renameNote(path: string, newName: string): Promise<string> {
+  return invoke<string>("rename_note", { path, newName });
+}
+
 /** Start (or restart) watching the open vault for on-disk changes. */
 export function startWatching(): Promise<void> {
   return invoke<void>("start_watching");
