@@ -89,18 +89,24 @@ function wikilinkCompletions(getNotes: () => string[]) {
     if (!before) return null;
     // Don't pop up on a bare `[[` unless the user is actively there.
     if (before.from + 2 > context.pos) return null;
-    // closeBrackets auto-closes `[[` to `[[]]`, and completions may run inside
-    // an existing link — extend the replaced range over any closer already
-    // present so applying `Name]]` can't produce `[[Name]]]]`.
-    const after = context.state.sliceDoc(context.pos, context.pos + 2);
-    const closeLen = after === "]]" ? 2 : after.startsWith("]") ? 1 : 0;
+    // NOTE: do NOT return a `to` past the cursor — CodeMirror silently rejects
+    // such results and the popup never shows. Any closer already present (from
+    // closeBrackets auto-closing `[[` to `[[]]`, or editing an existing link)
+    // is absorbed at APPLY time instead, so `Name]]` can't become `[[Name]]]]`.
     return {
       from: before.from + 2,
-      to: closeLen ? context.pos + closeLen : undefined,
       options: getNotes().map((name) => ({
         label: name,
         type: "text",
-        apply: `${name}]]`,
+        apply: (view, _completion, from, to) => {
+          const after = view.state.sliceDoc(to, to + 2);
+          const closeLen = after === "]]" ? 2 : after.startsWith("]") ? 1 : 0;
+          view.dispatch({
+            changes: { from, to: to + closeLen, insert: `${name}]]` },
+            selection: { anchor: from + name.length + 2 },
+            userEvent: "input.complete",
+          });
+        },
       })),
       filter: true,
     };
