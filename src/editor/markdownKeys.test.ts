@@ -8,16 +8,20 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { markdownKeys } from "./markdownKeys";
 
-const bold = markdownKeys.find((k) => k.key === "Mod-b")!.run!;
-const italic = markdownKeys.find((k) => k.key === "Mod-i")!.run!;
-const link = markdownKeys.find((k) => k.key === "Mod-k")!.run!;
+// KeyBinding.run is typed against a full EditorView, but these StateCommands
+// only touch { state, dispatch } — narrow the type for headless testing.
+type StateCmdLike = (target: {
+  state: EditorState;
+  dispatch: (tr: Transaction) => void;
+}) => boolean;
 
-function apply(
-  cmd: (target: { state: EditorState; dispatch: (tr: Transaction) => void }) => boolean,
-  doc: string,
-  anchor: number,
-  head = anchor,
-): string {
+const get = (key: string) =>
+  markdownKeys.find((k) => k.key === key)!.run as unknown as StateCmdLike;
+const bold = get("Mod-b");
+const italic = get("Mod-i");
+const link = get("Mod-k");
+
+function apply(cmd: StateCmdLike, doc: string, anchor: number, head = anchor): string {
   const state = EditorState.create({
     doc,
     selection: EditorSelection.single(anchor, head),

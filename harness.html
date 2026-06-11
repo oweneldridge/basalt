@@ -1,0 +1,14 @@
+<!doctype html>
+<!-- Editor test harness: mounts the real CodeMirror stack (no Tauri) so editor
+     behavior can be exercised in a plain browser / driven by Playwright.
+     Dev-only: http://localhost:1420/harness.html -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Basalt editor harness</title>
+  </head>
+  <body>
+    <div id="harness" style="height: 100vh"></div>
+    <script type="module" src="/src/harness.ts"></script>
+  </body>
+</html>
