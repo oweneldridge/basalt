@@ -8,6 +8,8 @@ interface Props {
   vaultName: string | null;
   onOpen: (path: string) => void;
   onNewNote: () => void;
+  /** Open the file context menu (Rename / Delete) for a note. */
+  onContextMenu: (path: string, x: number, y: number) => void;
 }
 
 const expandKey = (vault: string | null) => `basalt.tree.expanded.${vault ?? ""}`;
@@ -30,7 +32,7 @@ function saveExpanded(vault: string | null, set: Set<string>): void {
   }
 }
 
-export function Sidebar({ notes, activePath, vaultName, onOpen, onNewNote }: Props) {
+export function Sidebar({ notes, activePath, vaultName, onOpen, onNewNote, onContextMenu }: Props) {
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -120,6 +122,10 @@ export function Sidebar({ notes, activePath, vaultName, onOpen, onNewNote }: Pro
                 key={n.path}
                 className={`note-item${n.path === activePath ? " active" : ""}`}
                 onClick={() => onOpen(n.path)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  onContextMenu(n.path, e.clientX, e.clientY);
+                }}
                 title={n.rel}
               >
                 {n.name}
@@ -145,6 +151,10 @@ export function Sidebar({ notes, activePath, vaultName, onOpen, onNewNote }: Pro
                 className={`tree-row file${node.path === activePath ? " active" : ""}`}
                 style={{ paddingLeft: 22 + depth * 14 }}
                 onClick={() => onOpen(node.path)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  onContextMenu(node.path, e.clientX, e.clientY);
+                }}
                 title={node.name}
               >
                 <span className="tree-name">{node.name}</span>
