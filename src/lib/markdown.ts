@@ -101,10 +101,12 @@ export function targetNoteName(raw: string): string {
   return s.trim();
 }
 
-// Anchored `[text](url)` / `![alt](url)`. The URL allows one level of balanced
-// parens (so `(.../Foo_(bar))` isn't truncated) and an optional "title".
+// Anchored `[text](url)` / `![alt](url)`. The text allows one level of
+// balanced brackets (`[see [1]](url)`, image-in-link) and the URL one level of
+// balanced parens (so `(.../Foo_(bar))` isn't truncated), plus optional "title".
+// The bracket alternation is first-char-disjoint, so matching stays linear.
 const MD_LINK_RE =
-  /^!?\[([^\]]*)\]\(\s*(<[^>]+>|(?:[^()\s]|\([^()\s]*\))+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)$/;
+  /^!?\[((?:[^\][\n]|\[[^\][\n]*\])*)\]\(\s*(<[^>]+>|(?:[^()\s]|\([^()\s]*\))+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)$/;
 
 /**
  * Parse a single Markdown link/image. The one place link syntax is interpreted,
@@ -117,4 +119,41 @@ export function parseMarkdownLink(raw: string): { text: string; href: string } |
   let href = m[2];
   if (href.startsWith("<") && href.endsWith(">")) href = href.slice(1, -1);
   return { text: m[1], href };
+}
+
+/** Global scanner for inline markdown links/images. Same ReDoS-safe character
+ * classes as the anchored MD_LINK_RE; each match is re-parsed for parts. */
+export function mdLinkRegexGlobal(): RegExp {
+  return /!?\[(?:[^\][\n]|\[[^\][\n]*\])*?\]\((?:[^()\n]|\([^()\n]*\))*\)/g;
+}
+
+/**
+ * Interpret an href as an INTERNAL note link: relative, ending in `.md`
+ * (Obsidian always writes the extension for markdown-style note links).
+ * Returns the percent-decoded vault path and the raw `#fragment`, or null for
+ * external/anchor/non-md hrefs.
+ */
+export function internalMdHref(href: string): { path: string; fragment: string } | null {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//") || href.startsWith("#")) {
+    return null;
+  }
+  const hashAt = href.indexOf("#");
+  const fragment = hashAt >= 0 ? href.slice(hashAt) : "";
+  let path = hashAt >= 0 ? href.slice(0, hashAt) : href;
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    /* malformed escapes: keep raw */
+  }
+  if (!/\.md$/i.test(path)) return null;
+  return { path, fragment };
+}
+
+/** Percent-encode a vault path for a markdown href the way Obsidian does:
+ * spaces and parens encoded, slashes kept. */
+export function encodeMdPath(path: string): string {
+  return path
+    .split("/")
+    .map((seg) => encodeURIComponent(seg).replace(/\(/g, "%28").replace(/\)/g, "%29"))
+    .join("/");
 }

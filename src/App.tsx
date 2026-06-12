@@ -32,7 +32,7 @@ import { Backlinks } from "./components/Backlinks";
 import { GraphView } from "./components/GraphView";
 import { Palette } from "./components/Palette";
 import { PromptModal } from "./components/PromptModal";
-import { linkTargetFor, rewriteLinks } from "./lib/rename";
+import { linkTargetForFormat, rewriteLinks } from "./lib/rename";
 import { looksLikeAttachment, resolveAttachment } from "./lib/attachments";
 import { fillTemplate, formatMoment, UnsupportedTokenError } from "./lib/daily";
 import type { LinkFormat } from "./lib/rename";
@@ -929,12 +929,14 @@ export default function App() {
           : newPath;
         const newBase = nameFromRel(newRel);
 
-        // Link text Obsidian would write: bare name unless another note (not
-        // the renamed one) shares the new basename.
+        // Link text Obsidian would write, honoring the vault's newLinkFormat
+        // (shortest: bare name unless another note shares the new basename;
+        // relative: per-SOURCE `./`/`../` path; absolute: full vault path).
+        const fmt = getLinkFormat();
         const taken = preNotes.some(
           (n) => n.path !== oldPath && normalizeName(n.name) === normalizeName(newBase),
         );
-        const newTarget = linkTargetFor(newRel.replace(/\.md$/i, ""), taken);
+        const newRelNoExt = newRel.replace(/\.md$/i, "");
 
         // The renamed note's own content, from disk (authoritative), with its
         // self-links retargeted and position-dependent ./.. links re-anchored.
@@ -947,7 +949,9 @@ export default function App() {
         const ownMap = (raw: string): string | null => {
           const dest = preIndex.resolve(raw, oldPath);
           if (!dest) return null;
-          if (dest === oldPath) return newTarget; // self-link
+          if (dest === oldPath) {
+            return linkTargetForFormat(fmt, newRelNoExt, taken, newRel); // self-link
+          }
           const pathPart = targetPathPart(raw);
           const relative = pathPart.split(/[/\\]/).some((seg) => seg === "." || seg === "..");
           if (!relative) return null; // position-independent links still resolve
@@ -956,7 +960,7 @@ export default function App() {
           const destTaken = preNotes.some(
             (n) => n.path !== dest && normalizeName(n.name) === normalizeName(destNote.name),
           );
-          return linkTargetFor(destNote.rel.replace(/\.md$/i, ""), destTaken);
+          return linkTargetForFormat(fmt, destNote.rel.replace(/\.md$/i, ""), destTaken, newRel);
         };
         const ownRewritten = rewriteLinks(renamedContent, ownMap);
         if (ownRewritten !== null) {
@@ -987,17 +991,20 @@ export default function App() {
 
         // Rewrite affected sources. Candidates are found via the in-memory
         // snapshot (cheap), but each rewrite reads DISK content so a fresher
-        // external edit is never reverted.
-        const sourceMap = (notePath: string) => (raw: string) =>
-          preIndex.resolve(raw, notePath) === oldPath ? newTarget : null;
+        // external edit is never reverted. The replacement text is per-source:
+        // "relative" format needs the SOURCE note's folder.
+        const sourceMap = (notePath: string, noteRel: string) => (raw: string) =>
+          preIndex.resolve(raw, notePath) === oldPath
+            ? linkTargetForFormat(fmt, newRelNoExt, taken, noteRel)
+            : null;
         const updates: VaultNote[] = [];
         const failures: string[] = [];
         for (const note of preNotes) {
           if (note.path === oldPath) continue;
-          if (rewriteLinks(note.content, sourceMap(note.path)) === null) continue; // unaffected
+          if (rewriteLinks(note.content, sourceMap(note.path, note.rel)) === null) continue; // unaffected
           try {
             const disk = await readNote(note.path);
-            const next = rewriteLinks(disk, sourceMap(note.path));
+            const next = rewriteLinks(disk, sourceMap(note.path, note.rel));
             if (next === null) continue;
             await writeNote(note.path, next);
             const updated: VaultNote = { ...note, content: next };
@@ -1026,7 +1033,7 @@ export default function App() {
         setSaveError(`Couldn't rename: ${e}`);
       }
     },
-    [flushPending, bumpStructure, rememberSelfWrite],
+    [flushPending, bumpStructure, rememberSelfWrite, getLinkFormat],
   );
 
   // Blank-query switcher shows recently opened notes first.

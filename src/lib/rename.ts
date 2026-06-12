@@ -1,9 +1,65 @@
 // Vault-wide link rewriting for note rename/move. Pure logic (tested in
 // rename.test.ts); the App orchestrates: snapshot resolution, perform the
 // filesystem rename, then read-modify-write each affected source FROM DISK.
-import { proseMask, targetPathPart, wikilinkRegex } from "./markdown";
+import {
+  encodeMdPath,
+  internalMdHref,
+  mdLinkRegexGlobal,
+  proseMask,
+  targetPathPart,
+  wikilinkRegex,
+} from "./markdown";
 
 const INLINE_CODE_RE = /`[^`\n]*`/g;
+
+// Splits one markdown-link match into (prefix)(url-token)(title+close). Same
+// one-level-bracket text class as mdLinkRegexGlobal so the scanner and this
+// parser agree on every match. The three groups span the match exactly, which
+// the masked-offset splicing below relies on.
+const MD_PARTS =
+  /^(!?\[(?:[^\][\n]|\[[^\][\n]*\])*\]\(\s*)(<[^>]+>|(?:[^()\s]|\([^()\s]*\))+)((?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\))$/;
+
+/** Rewrite internal markdown-style links on a single (code-masked) line. */
+function rewriteMdLine(
+  original: string,
+  masked: string,
+  mapTarget: (rawTarget: string) => string | null,
+): string | null {
+  const re = mdLinkRegexGlobal();
+  let m: RegExpExecArray | null;
+  let out = "";
+  let last = 0;
+  let changed = false;
+  while ((m = re.exec(masked))) {
+    const parts = MD_PARTS.exec(m[0]);
+    if (!parts) continue;
+    let urlToken = parts[2];
+    const angled = urlToken.startsWith("<") && urlToken.endsWith(">");
+    const href = angled ? urlToken.slice(1, -1) : urlToken;
+    const internal = internalMdHref(href);
+    if (!internal) continue;
+    const newPathPart = mapTarget(internal.path + internal.fragment);
+    if (newPathPart === null) continue;
+    // A raw fragment with whitespace/parens is only valid inside <…>; keep the
+    // angle form there (raw path, the way angled hrefs are authored).
+    urlToken =
+      angled && /[\s()]/.test(internal.fragment)
+        ? `<${newPathPart}.md${internal.fragment}>`
+        : encodeMdPath(`${newPathPart}.md`) + internal.fragment;
+    // `parts` matched the code-MASKED copy: splice the prefix (link text) and
+    // tail (title + close) from `original` BY OFFSET — the mask is
+    // length-preserving — so inline code inside them survives on disk.
+    out +=
+      original.slice(last, m.index) +
+      original.slice(m.index, m.index + parts[1].length) +
+      urlToken +
+      original.slice(m.index + parts[1].length + parts[2].length, m.index + m[0].length);
+    last = m.index + m[0].length;
+    changed = true;
+  }
+  if (!changed) return null;
+  return out + original.slice(last);
+}
 
 /**
  * Rewrite every wikilink/embed in `content` whose target `mapTarget` maps to a
@@ -37,14 +93,38 @@ export function rewriteLinks(
       if (!pathPart) continue; // [[#heading]] self-ref
       const newPathPart = mapTarget(raw);
       if (newPathPart === null) continue;
-      const suffix = raw.slice(raw.indexOf(pathPart) + pathPart.length); // #heading / ^block
+      // m matched the code-MASKED copy; the suffix (#heading / ^block) and
+      // alias are re-emitted, so slice them from `original` BY OFFSET (the
+      // mask is length-preserving) — else inline code in them would be
+      // written back to disk as blanks. The target itself is safe: a
+      // code-masked target fails resolution and is skipped above.
+      const targetEnd = m.index + 2 + m[1].length;
+      const suffixStart =
+        m.index +
+        2 +
+        (m[1].length - m[1].trimStart().length) +
+        raw.indexOf(pathPart) +
+        pathPart.length;
+      const suffix = original.slice(suffixStart, targetEnd).trimEnd();
+      const aliasText =
+        alias !== undefined
+          ? original.slice(targetEnd + 1, m.index + m[0].length - 2)
+          : undefined;
       out +=
         original.slice(last, m.index) +
-        `[[${newPathPart}${suffix}${alias !== undefined ? `|${alias}` : ""}]]`;
+        `[[${newPathPart}${suffix}${aliasText !== undefined ? `|${aliasText}` : ""}]]`;
       last = m.index + m[0].length;
       changed = true;
     }
     if (last > 0) lines[i] = out + original.slice(last);
+    // Second pass: markdown-style internal links on the (possibly updated) line.
+    const current = lines[i];
+    const maskedNow = current.replace(INLINE_CODE_RE, (mm) => " ".repeat(mm.length));
+    const mdRewritten = rewriteMdLine(current, maskedNow, mapTarget);
+    if (mdRewritten !== null) {
+      lines[i] = mdRewritten;
+      changed = true;
+    }
   }
   return changed ? lines.join("\n") : null;
 }

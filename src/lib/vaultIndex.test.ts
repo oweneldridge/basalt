@@ -110,3 +110,82 @@ describe("VaultIndex link extraction", () => {
     expect(idx.backlinksFor("/v/T.md")).toHaveLength(0);
   });
 });
+
+describe("markdown-style link indexing (useMarkdownLinks vaults)", () => {
+  it("indexes [text](Note.md) links as backlinks, decoding %20 and stripping #fragments", () => {
+    const idx = indexOf([
+      note("My Note.md"),
+      note("S.md", "see [the note](My%20Note.md#Heading) here"),
+    ]);
+    const backs = idx.backlinksFor("/v/My Note.md");
+    expect(backs).toHaveLength(1);
+    expect(backs[0].line).toBe(1);
+  });
+  it("resolves relative md hrefs against the source folder", () => {
+    const idx = indexOf([
+      note("inbox/Todo.md"),
+      note("projects/S.md", "[todo](../inbox/Todo.md)"),
+    ]);
+    expect(idx.backlinksFor("/v/inbox/Todo.md")).toHaveLength(1);
+  });
+  it("ignores external, anchor-only, non-md, and code-span hrefs", () => {
+    const idx = indexOf([
+      note("T.md"),
+      note(
+        "S.md",
+        [
+          "[x](https://example.com/T.md)",
+          "[y](#section)",
+          "[z](image.png)",
+          "`[c](T.md)`",
+        ].join("\n"),
+      ),
+    ]);
+    expect(idx.backlinksFor("/v/T.md")).toHaveLength(0);
+  });
+  it("does not count linked text as an unlinked mention", () => {
+    const idx = indexOf([note("T.md"), note("S.md", "[T](T.md) only")]);
+    const notes = [note("T.md"), note("S.md", "[T](T.md) only")];
+    expect(idx.unlinkedMentionsFor("T", notes)).toHaveLength(0);
+  });
+  it("indexes md links whose text contains brackets or a nested image", () => {
+    const idx = indexOf([
+      note("T.md"),
+      note("S.md", ["[see [1]](T.md)", "[![alt](img.png)](T.md)"].join("\n")),
+    ]);
+    expect(idx.backlinksFor("/v/T.md")).toHaveLength(2);
+  });
+});
+
+describe("2.9b review regressions", () => {
+  it("'./Note.md' and bare 'Note' on one line stay distinct occurrences", () => {
+    // resolve() treats them differently (source-relative vs vault-wide
+    // root-most), so the per-line dedupe must not collapse them.
+    const notes = [
+      note("Note.md"),
+      note("sub/Note.md"),
+      note("sub/Src.md", "[a](Note.md) and [b](./Note.md)"),
+    ];
+    const idx = indexOf(notes);
+    expect(idx.backlinksFor("/v/Note.md")).toHaveLength(1); // bare → root-most
+    expect(idx.backlinksFor("/v/sub/Note.md")).toHaveLength(1); // ./ → source folder
+  });
+  it("resolves [[Foo.md]] to a note literally named 'Foo.md' (file Foo.md.md)", () => {
+    const idx = indexOf([note("Foo.md.md"), note("S.md")]); // note named "Foo.md"
+    expect(idx.resolve("Foo.md", "/v/S.md")).toBe("/v/Foo.md.md");
+  });
+  it("prefers the stripped name when both 'Foo' and 'Foo.md' notes exist", () => {
+    const idx = indexOf([note("Foo.md"), note("Foo.md.md"), note("S.md")]);
+    expect(idx.resolve("Foo.md", "/v/S.md")).toBe("/v/Foo.md");
+  });
+  it("mention scan blanks inline code BEFORE links (CommonMark precedence)", () => {
+    // The link-looking text straddles one backtick of a real code span; the
+    // 'y' inside it must not surface as a mention.
+    const notes = [note("y.md"), note("S.md", "x `y [a](b`c.md) z")];
+    const idx = indexOf(notes);
+    expect(idx.unlinkedMentionsFor("y", notes)).toHaveLength(0);
+    // …while a genuine prose mention still does.
+    const notes2 = [note("y.md"), note("S2.md", "plain y here")];
+    expect(indexOf(notes2).unlinkedMentionsFor("y", notes2)).toHaveLength(1);
+  });
+});
