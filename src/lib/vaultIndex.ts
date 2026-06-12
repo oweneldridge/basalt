@@ -223,7 +223,7 @@ export class VaultIndex {
       for (const o of occs) {
         const target = this.resolve(o.rawTarget, sourcePath);
         if (!target || target === sourcePath) continue;
-        const key = `${sourcePath} ${target}`;
+        const key = `${sourcePath}\u0000${target}`;
         if (seen.has(key)) continue;
         seen.add(key);
         links.push({ source: sourcePath, target });

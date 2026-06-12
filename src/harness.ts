@@ -24,7 +24,13 @@ const urls: string[] = [];
 
 function makeState(doc: string) {
   return createEditorState(doc, {
-    getNotes: () => ["Alpha Note", "Beta Note", "Getting Started Guide"],
+    getNotes: () => [
+      { name: "Alpha Note", rel: "Alpha Note.md" },
+      { name: "Beta Note", rel: "Beta Note.md" },
+      { name: "Getting Started Guide", rel: "guides/Getting Started Guide.md" },
+    ],
+    getLinkFormat: () => "shortest" as const,
+    getActiveRel: () => null,
     onOpenWikilink: (t) => opened.push(t),
     onOpenUrl: (u) => urls.push(u),
     resolveImage: () => Promise.resolve(null),

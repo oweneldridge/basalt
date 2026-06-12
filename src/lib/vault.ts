@@ -79,6 +79,20 @@ export function writeAttachment(
   return invoke<Attachment>("write_attachment", { name, dataB64, sourceRel });
 }
 
+/** Read-only view of the Obsidian settings Basalt honors. */
+export interface ObsidianConfig {
+  newLinkFormat?: string | null;
+  useMarkdownLinks?: boolean | null;
+  attachmentFolderPath?: string | null;
+  dailyNotesFolder?: string | null;
+  dailyNotesFormat?: string | null;
+  dailyNotesTemplate?: string | null;
+}
+
+export function readObsidianConfig(): Promise<ObsidianConfig> {
+  return invoke<ObsidianConfig>("read_obsidian_config");
+}
+
 /** Start (or restart) watching the open vault for on-disk changes. */
 export function startWatching(): Promise<void> {
   return invoke<void>("start_watching");

@@ -1,6 +1,6 @@
 // Assembles the CodeMirror 6 extension stack. New editor-wide features are
 // wired in here.
-import { Annotation, EditorSelection, EditorState } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import {
   EditorView,
@@ -83,15 +83,20 @@ import { highlight } from "./highlight";
 import { tags } from "./tags";
 import { embeds } from "./embeds";
 import { attachments } from "./attachments";
-import { wikilinks } from "./wikilink";
+import { wikilinkAutocomplete, wikilinkDecorations, wikilinkModClickFollow, type NoteRef } from "./wikilink";
+import type { LinkFormat } from "../lib/rename";
 
 // Marks a transaction as an external-content reconcile (a live-reload from disk)
 // so the change listener doesn't treat it as a user edit and trigger a save-back.
 export const externalReload = Annotation.define<boolean>();
 
 export interface EditorCallbacks {
-  /** Provides current note names for wikilink autocomplete. */
-  getNotes: () => string[];
+  /** Current notes (name + rel) for wikilink autocomplete. */
+  getNotes: () => NoteRef[];
+  /** Obsidian's newLinkFormat setting (default "shortest"). */
+  getLinkFormat: () => LinkFormat;
+  /** Rel (with .md) of the note being edited — for "relative" link format. */
+  getActiveRel: () => string | null;
   /** Open the target of a clicked wikilink / note embed. */
   onOpenWikilink: (target: string) => void;
   /** Open an external URL from a clicked Markdown link. */
@@ -105,6 +110,41 @@ export interface EditorCallbacks {
   replacePlaceholder: (placeholder: string, replacement: string) => void;
   /** Fired (on every edit) with the full document text. */
   onChange: (doc: string) => void;
+}
+
+// Source mode: all Live Preview rendering lives in one Compartment so it can
+// be toggled off (raw Markdown) without rebuilding the editor.
+const renderCompartment = new Compartment();
+
+function renderExtensions(cb: EditorCallbacks): Extension[] {
+  return [
+    frontmatter,
+    tables,
+    codeBlocks,
+    callouts,
+    highlight,
+    tags,
+    embeds({ resolveImage: cb.resolveImage, onOpen: cb.onOpenWikilink }),
+    livePreview({ onOpenUrl: cb.onOpenUrl, resolveImage: cb.resolveImage }),
+    wikilinkDecorations({ onOpen: cb.onOpenWikilink }),
+  ];
+}
+
+/** Toggle Live Preview rendering on an existing editor (true = source mode).
+ * Idempotent — EditorPane calls this once on mount with the already-correct
+ * state, and a redundant reconfigure would tear down and rebuild every
+ * decoration plugin for nothing. */
+export function setSourceMode(view: EditorView, cb: EditorCallbacks, on: boolean): void {
+  const current = renderCompartment.get(view.state);
+  const currentlyOff = Array.isArray(current) && current.length === 0;
+  if (currentlyOff === on) return;
+  view.dispatch({
+    effects: [
+      renderCompartment.reconfigure(on ? [] : renderExtensions(cb)),
+      // Block widgets above the caret change height across the toggle.
+      EditorView.scrollIntoView(view.state.selection.main.head),
+    ],
+  });
 }
 
 // Where the caret should start when a note opens: just past the frontmatter, so
@@ -123,7 +163,7 @@ function initialCursor(doc: string): number {
   return 0;
 }
 
-export function createEditorState(doc: string, cb: EditorCallbacks): EditorState {
+export function createEditorState(doc: string, cb: EditorCallbacks, sourceMode = false): EditorState {
   const extensions: Extension[] = [
     history(),
     drawSelection(),
@@ -148,16 +188,17 @@ export function createEditorState(doc: string, cb: EditorCallbacks): EditorState
     markdown({ base: markdownLanguage, codeLanguages: languages, extensions: GFM }),
     basaltHighlight,
     basaltTheme,
-    frontmatter,
-    tables,
-    codeBlocks,
-    callouts,
-    highlight,
-    tags,
-    embeds({ resolveImage: cb.resolveImage, onOpen: cb.onOpenWikilink }),
+    renderCompartment.of(sourceMode ? [] : renderExtensions(cb)),
+    // Always on, even in source mode: paste/drop and [[ completion.
     attachments({ save: cb.saveAttachment, fallbackReplace: cb.replacePlaceholder }),
-    livePreview({ onOpenUrl: cb.onOpenUrl, resolveImage: cb.resolveImage }),
-    wikilinks({ getNotes: cb.getNotes, onOpen: cb.onOpenWikilink }),
+    wikilinkAutocomplete({
+      getNotes: cb.getNotes,
+      getLinkFormat: cb.getLinkFormat,
+      getActiveRel: cb.getActiveRel,
+    }),
+    // Cmd/Ctrl-click follows a raw [[link]] — the only navigation affordance
+    // that must survive source mode (Obsidian behaves the same).
+    wikilinkModClickFollow(cb.onOpenWikilink),
     // Real key precedence (higher first): completionKeymap (Prec.highest, injected
     // by autocompletion() in wikilink.ts) > markdownKeymap (Prec.high, injected by
     // markdown() — Enter continues lists/quotes/tasks, Backspace eats markup) >

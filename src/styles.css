@@ -244,6 +244,10 @@ button.primary:hover {
   color: var(--text);
   background: var(--bg-elev);
 }
+.link-btn.toggled {
+  color: var(--accent);
+  background: rgba(169, 139, 224, 0.12);
+}
 .spacer {
   flex: 1;
 }
