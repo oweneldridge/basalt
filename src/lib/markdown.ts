@@ -81,11 +81,12 @@ export function tagRegex(): RegExp {
 }
 
 /**
- * Strip a `#heading` / `^block` ref from a raw wikilink target, KEEPING any
- * `folder/` path. `"notes/Project#Goals"` → `"notes/Project"`.
+ * Strip a `#heading` / `#^block` ref from a raw wikilink target, KEEPING any
+ * `folder/` path. Block refs always follow a `#` in Obsidian, so a bare `^`
+ * is an ordinary name character. `"notes/Project#Goals"` → `"notes/Project"`.
  */
 export function targetPathPart(raw: string): string {
-  return raw.split("#")[0].split("^")[0].trim();
+  return raw.split("#")[0].trim();
 }
 
 /**

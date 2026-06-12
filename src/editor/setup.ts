@@ -82,6 +82,7 @@ import { callouts } from "./callouts";
 import { highlight } from "./highlight";
 import { tags } from "./tags";
 import { embeds } from "./embeds";
+import { attachments } from "./attachments";
 import { wikilinks } from "./wikilink";
 
 // Marks a transaction as an external-content reconcile (a live-reload from disk)
@@ -97,6 +98,11 @@ export interface EditorCallbacks {
   onOpenUrl: (url: string) => void;
   /** Resolve an image reference (relative to the active note) to a URL. */
   resolveImage: (target: string) => Promise<string | null>;
+  /** Persist a pasted/dropped file; resolves to the link target or null. */
+  saveAttachment: (file: File) => Promise<string | null>;
+  /** Replace an upload placeholder in whichever note holds it (the live editor
+   * no longer does — note switch / external reload mid-upload). */
+  replacePlaceholder: (placeholder: string, replacement: string) => void;
   /** Fired (on every edit) with the full document text. */
   onChange: (doc: string) => void;
 }
@@ -149,6 +155,7 @@ export function createEditorState(doc: string, cb: EditorCallbacks): EditorState
     highlight,
     tags,
     embeds({ resolveImage: cb.resolveImage, onOpen: cb.onOpenWikilink }),
+    attachments({ save: cb.saveAttachment, fallbackReplace: cb.replacePlaceholder }),
     livePreview({ onOpenUrl: cb.onOpenUrl, resolveImage: cb.resolveImage }),
     wikilinks({ getNotes: cb.getNotes, onOpen: cb.onOpenWikilink }),
     // Real key precedence (higher first): completionKeymap (Prec.highest, injected

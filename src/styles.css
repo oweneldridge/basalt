@@ -193,6 +193,13 @@ button.primary:hover {
   background: var(--bg-elev);
   color: var(--text);
 }
+.tree-row.attachment {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.tree-row.attachment:hover {
+  color: var(--text-muted);
+}
 .chevron {
   display: inline-block;
   width: 12px;

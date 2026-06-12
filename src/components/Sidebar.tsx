@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import type { VaultNote } from "../lib/vault";
+import type { Attachment, VaultNote } from "../lib/vault";
 import { ancestorFolders, buildTree, type TreeNode } from "../lib/tree";
 
 interface Props {
   notes: VaultNote[];
+  attachments: Attachment[];
   activePath: string | null;
   vaultName: string | null;
   onOpen: (path: string) => void;
   onNewNote: () => void;
+  /** Open an attachment in the system viewer. */
+  onOpenAttachment: (path: string) => void;
   /** Open the file context menu (Rename / Delete) for a note. */
   onContextMenu: (path: string, x: number, y: number) => void;
 }
@@ -32,11 +35,11 @@ function saveExpanded(vault: string | null, set: Set<string>): void {
   }
 }
 
-export function Sidebar({ notes, activePath, vaultName, onOpen, onNewNote, onContextMenu }: Props) {
+export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onNewNote, onOpenAttachment, onContextMenu }: Props) {
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const tree = useMemo(() => buildTree(notes), [notes]);
+  const tree = useMemo(() => buildTree(notes, attachments), [notes, attachments]);
 
   // Load persisted expansion when the vault changes.
   useEffect(() => {
@@ -79,10 +82,15 @@ export function Sidebar({ notes, activePath, vaultName, onOpen, onNewNote, onCon
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return null;
-    return notes.filter(
-      (n) => n.name.toLowerCase().includes(q) || n.rel.toLowerCase().includes(q),
-    );
-  }, [notes, filter]);
+    return {
+      notes: notes.filter(
+        (n) => n.name.toLowerCase().includes(q) || n.rel.toLowerCase().includes(q),
+      ),
+      attachments: attachments.filter(
+        (a) => a.name.toLowerCase().includes(q) || a.rel.toLowerCase().includes(q),
+      ),
+    };
+  }, [notes, attachments, filter]);
 
   // Flatten the visible (expanded) tree to rows.
   const rows = useMemo(() => {
@@ -117,7 +125,7 @@ export function Sidebar({ notes, activePath, vaultName, onOpen, onNewNote, onCon
       <div className="note-list">
         {filtered ? (
           <>
-            {filtered.map((n) => (
+            {filtered.notes.map((n) => (
               <button
                 key={n.path}
                 className={`note-item${n.path === activePath ? " active" : ""}`}
@@ -131,7 +139,19 @@ export function Sidebar({ notes, activePath, vaultName, onOpen, onNewNote, onCon
                 {n.name}
               </button>
             ))}
-            {filtered.length === 0 && <div className="empty">No notes</div>}
+            {filtered.attachments.map((a) => (
+              <button
+                key={a.path}
+                className="note-item attachment tree-row"
+                onClick={() => onOpenAttachment(a.path)}
+                title={a.rel}
+              >
+                {a.name}
+              </button>
+            ))}
+            {filtered.notes.length === 0 && filtered.attachments.length === 0 && (
+              <div className="empty">No notes</div>
+            )}
           </>
         ) : (
           rows.map(({ node, depth }) =>
@@ -148,10 +168,11 @@ export function Sidebar({ notes, activePath, vaultName, onOpen, onNewNote, onCon
             ) : (
               <button
                 key={`f:${node.path}`}
-                className={`tree-row file${node.path === activePath ? " active" : ""}`}
+                className={`tree-row file${node.attachment ? " attachment" : ""}${node.path === activePath ? " active" : ""}`}
                 style={{ paddingLeft: 22 + depth * 14 }}
-                onClick={() => onOpen(node.path)}
+                onClick={() => (node.attachment ? onOpenAttachment(node.path) : onOpen(node.path))}
                 onContextMenu={(e) => {
+                  if (node.attachment) return;
                   e.preventDefault();
                   onContextMenu(node.path, e.clientX, e.clientY);
                 }}
