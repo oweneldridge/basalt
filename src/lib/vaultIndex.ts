@@ -8,7 +8,15 @@
 // of the source note's folder. `folder/Note`, `/Note` (root-anchored), and
 // `./`/`../` relative forms are all supported.
 import type { VaultNote } from "./vault";
-import { normalizeName, proseMask, targetPathPart, wikilinkRegex } from "./markdown";
+import {
+  internalMdHref,
+  mdLinkRegexGlobal,
+  normalizeName,
+  parseMarkdownLink,
+  proseMask,
+  targetPathPart,
+  wikilinkRegex,
+} from "./markdown";
 
 /** One wikilink occurrence within a note (deduped per resolved target per line). */
 export interface LinkOccurrence {
@@ -58,6 +66,14 @@ function normalizeRel(rel: string): string {
     .toLowerCase();
 }
 
+/** Per-line dedupe key for extracted targets. Unlike normalizeRel it KEEPS a
+ * leading `./` — resolve() treats `./Note` (source-folder relative) and bare
+ * `Note` (vault-wide root-most) differently, so they must not collapse into
+ * one occurrence or a real backlink is silently dropped. */
+function dedupeKey(p: string): string {
+  return p.replace(/\\/g, "/").replace(/\.md$/i, "").normalize("NFC").trim().toLowerCase();
+}
+
 function folderOf(normRel: string): string {
   const i = normRel.lastIndexOf("/");
   return i >= 0 ? normRel.slice(0, i) : "";
@@ -83,7 +99,22 @@ function extractLinks(content: string): LinkOccurrence[] {
       const rawTarget = m[1].trim();
       const pathPart = targetPathPart(rawTarget);
       if (!pathPart) continue; // [[#heading]] self-ref
-      const key = normalizeRel(pathPart); // dedupe identical targets, keep distinct paths
+      const key = dedupeKey(pathPart); // dedupe identical targets, keep distinct paths
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ rawTarget, line: i + 1, snippet: lines[i].trim() });
+    }
+    // Markdown-style internal links: [text](Note.md), [t](folder/My%20Note.md#H)
+    // — Obsidian vaults configured with "Use [[Wikilinks]]: off" are full of
+    // them, and they must feed backlinks/graph like wikilinks do.
+    const mre = mdLinkRegexGlobal();
+    while ((m = mre.exec(line))) {
+      const parsed = parseMarkdownLink(m[0]);
+      if (!parsed) continue;
+      const internal = internalMdHref(parsed.href);
+      if (!internal) continue;
+      const rawTarget = internal.path + internal.fragment;
+      const key = dedupeKey(internal.path);
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({ rawTarget, line: i + 1, snippet: lines[i].trim() });
@@ -171,9 +202,17 @@ export class VaultIndex {
     const p = targetPathPart(rawTarget);
     if (!p) return null;
     const segments = p.split(/[/\\]/);
-    const basename = normalizeName(segments[segments.length - 1] ?? "");
-    if (!basename) return null;
-    const candidates = this.byName.get(basename);
+    // byName is keyed by extension-less note names; targets may carry .md
+    // (markdown-style links always do, wikilinks occasionally). Strip-first,
+    // unstripped-second matches Obsidian's exact-file-first precedence: a note
+    // literally named "Foo.md" (file Foo.md.md) is keyed as "foo.md" and only
+    // reachable via the unstripped fallback.
+    const lastSeg = segments[segments.length - 1] ?? "";
+    const basename = normalizeName(lastSeg.replace(/\.md$/i, ""));
+    let candidates = basename ? this.byName.get(basename) : undefined;
+    if ((!candidates || candidates.length === 0) && /\.md$/i.test(lastSeg)) {
+      candidates = this.byName.get(normalizeName(lastSeg));
+    }
     if (!candidates || candidates.length === 0) return null;
 
     // Root-anchored: [[/folder/Note]] or [[/Note]] — exact path from the root.
@@ -309,7 +348,13 @@ export class VaultIndex {
       for (let i = 0; i < lines.length; i++) {
         if (!prose[i]) continue;
         const raw = lines[i];
-        const stripped = raw.replace(linkRe, " ").replace(INLINE_CODE_RE, " ");
+        // Code FIRST, then links — the same order as extractLinks, so a link
+        // straddling one backtick of a code span (CommonMark gives code
+        // precedence) can't surface a false mention from inside code.
+        const stripped = raw
+          .replace(INLINE_CODE_RE, " ")
+          .replace(linkRe, " ")
+          .replace(mdLinkRegexGlobal(), " ");
         if (!boundary.test(stripped)) continue;
         out.push({ path: note.path, name: note.name, line: i + 1, snippet: raw.trim() });
       }
