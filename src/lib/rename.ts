@@ -59,3 +59,35 @@ export function linkTargetFor(newRel: string, basenameTaken: boolean): string {
   const base = newRel.split("/").pop() ?? newRel;
   return basenameTaken ? newRel : base;
 }
+
+export type LinkFormat = "shortest" | "relative" | "absolute";
+
+/** A `./`/`../` link from the note at `fromRel` (with .md) to `toRelNoExt`. */
+export function relativeLinkTarget(fromRel: string, toRelNoExt: string): string {
+  const fromParts = fromRel.split("/").slice(0, -1);
+  const toParts = toRelNoExt.split("/");
+  let common = 0;
+  while (
+    common < fromParts.length &&
+    common < toParts.length - 1 &&
+    fromParts[common] === toParts[common]
+  ) {
+    common++;
+  }
+  const ups = fromParts.length - common;
+  const rest = toParts.slice(common);
+  if (ups === 0) return `./${rest.join("/")}`;
+  return [...Array(ups).fill(".."), ...rest].join("/");
+}
+
+/** The link text to write for `toRelNoExt` under an Obsidian newLinkFormat. */
+export function linkTargetForFormat(
+  format: LinkFormat,
+  toRelNoExt: string,
+  basenameTaken: boolean,
+  fromRel: string | null,
+): string {
+  if (format === "absolute") return toRelNoExt;
+  if (format === "relative" && fromRel) return relativeLinkTarget(fromRel, toRelNoExt);
+  return linkTargetFor(toRelNoExt, basenameTaken);
+}

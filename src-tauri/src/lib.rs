@@ -660,6 +660,61 @@ async fn write_attachment(
     })
 }
 
+/// Read-only view of the Obsidian settings Basalt honors. Basalt never writes
+/// `.obsidian/` — the shared vault's config belongs to Obsidian.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ObsidianConfig {
+    /// "shortest" | "relative" | "absolute"
+    new_link_format: Option<String>,
+    use_markdown_links: Option<bool>,
+    attachment_folder_path: Option<String>,
+    daily_notes_folder: Option<String>,
+    daily_notes_format: Option<String>,
+    daily_notes_template: Option<String>,
+}
+
+#[tauri::command]
+fn read_obsidian_config(state: State<VaultState>) -> Result<ObsidianConfig, String> {
+    let root = current_root(&state)?;
+    let mut cfg = ObsidianConfig::default();
+    if let Ok(raw) = fs::read_to_string(root.join(".obsidian/app.json")) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+            cfg.new_link_format = v.get("newLinkFormat").and_then(|x| x.as_str()).map(String::from);
+            cfg.use_markdown_links = v.get("useMarkdownLinks").and_then(|x| x.as_bool());
+            cfg.attachment_folder_path =
+                v.get("attachmentFolderPath").and_then(|x| x.as_str()).map(String::from);
+        }
+    }
+    // Honor daily-notes.json only when the core plugin isn't explicitly
+    // disabled (core-plugins.json: old schema = array of enabled ids, new
+    // schema = id -> bool map). Missing/unparseable file = default-enabled.
+    let daily_enabled = match fs::read_to_string(root.join(".obsidian/core-plugins.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+    {
+        Some(serde_json::Value::Array(ids)) => {
+            ids.iter().any(|v| v.as_str() == Some("daily-notes"))
+        }
+        Some(serde_json::Value::Object(map)) => map
+            .get("daily-notes")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        _ => true,
+    };
+    if daily_enabled {
+        if let Ok(raw) = fs::read_to_string(root.join(".obsidian/daily-notes.json")) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                cfg.daily_notes_folder = v.get("folder").and_then(|x| x.as_str()).map(String::from);
+                cfg.daily_notes_format = v.get("format").and_then(|x| x.as_str()).map(String::from);
+                cfg.daily_notes_template =
+                    v.get("template").and_then(|x| x.as_str()).map(String::from);
+            }
+        }
+    }
+    Ok(cfg)
+}
+
 /// Watch the open vault recursively. Markdown file changes emit `vault-changed`
 /// with `{path, rel}` per note; directory-level changes (folder rename/delete,
 /// which FSEvents reports only for the folder path) emit a payload-less
@@ -856,6 +911,7 @@ pub fn run() {
             rename_note,
             list_attachments,
             write_attachment,
+            read_obsidian_config,
             start_watching,
             read_image,
             debug_log

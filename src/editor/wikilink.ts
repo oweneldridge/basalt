@@ -3,8 +3,10 @@
 // CommonMark has no wikilink node, so we scan the visible text rather than rely
 // on the grammar. When the cursor is outside a link we replace it with a
 // styled, clickable widget showing the alias/target; when the cursor is inside
-// we leave the raw text visible (just tinted) so it can be edited. We also add
-// a `[[`-triggered autocomplete sourced from the vault's note names.
+// we leave the raw text visible (just tinted) so it can be edited.
+//
+// Decorations and autocompletion are SEPARATE extensions: source mode turns the
+// decorations off but keeps `[[` completion (matching Obsidian).
 import { RangeSetBuilder } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import {
@@ -18,14 +20,28 @@ import {
   autocompletion,
 } from "@codemirror/autocomplete";
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
-import { wikilinkRegex } from "../lib/markdown";
+import { normalizeName, wikilinkRegex } from "../lib/markdown";
+import { linkTargetForFormat, type LinkFormat } from "../lib/rename";
 import { isInExcludedRegion, treeChanged } from "./regions";
 
-export interface WikilinkOptions {
-  /** Current vault note names, for autocomplete. */
-  getNotes: () => string[];
+/** What completion needs to know about a note. */
+export interface NoteRef {
+  name: string;
+  /** Vault-relative path including `.md`. */
+  rel: string;
+}
+
+export interface WikilinkDecorationOptions {
   /** Called when a wikilink is clicked. */
   onOpen: (target: string) => void;
+}
+
+export interface WikilinkCompletionOptions {
+  getNotes: () => NoteRef[];
+  /** Obsidian's newLinkFormat setting (default "shortest"). */
+  getLinkFormat: () => LinkFormat;
+  /** Rel (with .md) of the note being edited — for "relative" format. */
+  getActiveRel: () => string | null;
 }
 
 class WikilinkWidget extends WidgetType {
@@ -83,27 +99,39 @@ function buildDecorations(view: EditorView): DecorationSet {
   return builder.finish();
 }
 
-function wikilinkCompletions(getNotes: () => string[]) {
+function wikilinkCompletions(opts: WikilinkCompletionOptions) {
   return (context: CompletionContext): CompletionResult | null => {
     const before = context.matchBefore(/\[\[[^[\]]*/);
     if (!before) return null;
     // Don't pop up on a bare `[[` unless the user is actively there.
     if (before.from + 2 > context.pos) return null;
+    const notes = opts.getNotes();
     // NOTE: do NOT return a `to` past the cursor — CodeMirror silently rejects
     // such results and the popup never shows. Any closer already present (from
     // closeBrackets auto-closing `[[` to `[[]]`, or editing an existing link)
     // is absorbed at APPLY time instead, so `Name]]` can't become `[[Name]]]]`.
     return {
       from: before.from + 2,
-      options: getNotes().map((name) => ({
-        label: name,
+      options: notes.map((note) => ({
+        label: note.name,
+        detail: note.rel,
         type: "text",
-        apply: (view, _completion, from, to) => {
+        apply: (view: EditorView, _completion: unknown, from: number, to: number) => {
+          // Link text per the vault's newLinkFormat (read at apply time).
+          const relNoExt = note.rel.replace(/\.md$/i, "");
+          const taken =
+            notes.filter((n) => normalizeName(n.name) === normalizeName(note.name)).length > 1;
+          const target = linkTargetForFormat(
+            opts.getLinkFormat(),
+            relNoExt,
+            taken,
+            opts.getActiveRel(),
+          );
           const after = view.state.sliceDoc(to, to + 2);
           const closeLen = after === "]]" ? 2 : after.startsWith("]") ? 1 : 0;
           view.dispatch({
-            changes: { from, to: to + closeLen, insert: `${name}]]` },
-            selection: { anchor: from + name.length + 2 },
+            changes: { from, to: to + closeLen, insert: `${target}]]` },
+            selection: { anchor: from + target.length + 2 },
             userEvent: "input.complete",
           });
         },
@@ -113,7 +141,8 @@ function wikilinkCompletions(getNotes: () => string[]) {
   };
 }
 
-export function wikilinks(options: WikilinkOptions): Extension {
+/** The rendered-link layer (gated off in source mode). */
+export function wikilinkDecorations(options: WikilinkDecorationOptions): Extension {
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
@@ -141,5 +170,35 @@ export function wikilinks(options: WikilinkOptions): Extension {
     },
   });
 
-  return [plugin, click, autocompletion({ override: [wikilinkCompletions(options.getNotes)] })];
+  return [plugin, click];
+}
+
+/** The `[[` completion layer (always on, like Obsidian's source mode). */
+export function wikilinkAutocomplete(options: WikilinkCompletionOptions): Extension {
+  return autocompletion({ override: [wikilinkCompletions(options)] });
+}
+
+/** Cmd/Ctrl-click on raw `[[link]]` TEXT follows it — works in source mode
+ * where the decoration widgets (and their click handler) are disabled. */
+export function wikilinkModClickFollow(onOpen: (target: string) => void): Extension {
+  return EditorView.domEventHandlers({
+    mousedown: (event, view) => {
+      if (!(event.metaKey || event.ctrlKey)) return false;
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (pos == null) return false;
+      const line = view.state.doc.lineAt(pos);
+      const re = wikilinkRegex();
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(line.text))) {
+        const start = line.from + m.index;
+        const end = start + m[0].length;
+        if (pos >= start && pos <= end) {
+          onOpen(m[1].trim());
+          event.preventDefault();
+          return true;
+        }
+      }
+      return false;
+    },
+  });
 }

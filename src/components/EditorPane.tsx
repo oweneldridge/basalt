@@ -1,14 +1,19 @@
 import { useEffect, useRef } from "react";
 import { EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { createEditorState, externalReload } from "../editor/setup";
+import { createEditorState, externalReload, setSourceMode } from "../editor/setup";
+import type { EditorCallbacks } from "../editor/setup";
+import type { NoteRef } from "../editor/wikilink";
+import type { LinkFormat } from "../lib/rename";
 
 interface Props {
   /** Active note path — changing this rebuilds the editor with fresh content. */
   path: string;
   /** Document content for `path`; changing it (same path) reconciles in-place. */
   doc: string;
-  getNotes: () => string[];
+  getNotes: () => NoteRef[];
+  getLinkFormat: () => LinkFormat;
+  getActiveRel: () => string | null;
   onOpenWikilink: (target: string) => void;
   onOpenUrl: (url: string) => void;
   resolveImage: (target: string) => Promise<string | null>;
@@ -17,12 +22,16 @@ interface Props {
   onChange: (doc: string) => void;
   /** 1-based line to scroll to / place the caret on (from search or backlinks). */
   scrollToLine?: number;
+  /** True = raw Markdown (Live Preview rendering off). */
+  sourceMode: boolean;
 }
 
 export function EditorPane({
   path,
   doc,
   getNotes,
+  getLinkFormat,
+  getActiveRel,
   onOpenWikilink,
   onOpenUrl,
   resolveImage,
@@ -30,27 +39,35 @@ export function EditorPane({
   replacePlaceholder,
   onChange,
   scrollToLine,
+  sourceMode,
 }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
   const view = useRef<EditorView | null>(null);
   // Keep the latest callbacks in refs so the editor (rebuilt only per `path`)
   // always calls through to fresh closures without being torn down on every render.
-  const cbs = useRef({ getNotes, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange });
-  cbs.current = { getNotes, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange };
+  const cbs = useRef({ getNotes, getLinkFormat, getActiveRel, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange });
+  cbs.current = { getNotes, getLinkFormat, getActiveRel, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange };
+  // A stable adapter that always calls through to the freshest closures — used
+  // for both editor construction and source-mode reconfiguration.
+  const adapter = useRef<EditorCallbacks>({
+    getNotes: () => cbs.current.getNotes(),
+    getLinkFormat: () => cbs.current.getLinkFormat(),
+    getActiveRel: () => cbs.current.getActiveRel(),
+    onOpenWikilink: (t) => cbs.current.onOpenWikilink(t),
+    onOpenUrl: (u) => cbs.current.onOpenUrl(u),
+    resolveImage: (t) => cbs.current.resolveImage(t),
+    saveAttachment: (f) => cbs.current.saveAttachment(f),
+    replacePlaceholder: (ph, rep) => cbs.current.replacePlaceholder(ph, rep),
+    onChange: (d) => cbs.current.onChange(d),
+  });
+  const sourceModeRef = useRef(sourceMode);
+  sourceModeRef.current = sourceMode;
 
   // Build the editor when the note (path) changes.
   useEffect(() => {
     if (!host.current) return;
     const v = new EditorView({
-      state: createEditorState(doc, {
-        getNotes: () => cbs.current.getNotes(),
-        onOpenWikilink: (t) => cbs.current.onOpenWikilink(t),
-        onOpenUrl: (u) => cbs.current.onOpenUrl(u),
-        resolveImage: (t) => cbs.current.resolveImage(t),
-        saveAttachment: (f) => cbs.current.saveAttachment(f),
-        replacePlaceholder: (ph, rep) => cbs.current.replacePlaceholder(ph, rep),
-        onChange: (d) => cbs.current.onChange(d),
-      }),
+      state: createEditorState(doc, adapter.current, sourceModeRef.current),
       parent: host.current,
     });
     view.current = v;
@@ -92,6 +109,13 @@ export function EditorPane({
     });
     v.focus();
   }, [scrollToLine, path]);
+
+  // Toggle Live Preview rendering in place (no remount, caret preserved).
+  useEffect(() => {
+    const v = view.current;
+    if (!v) return;
+    setSourceMode(v, adapter.current, sourceMode);
+  }, [sourceMode]);
 
   return <div className="editor-host" ref={host} />;
 }

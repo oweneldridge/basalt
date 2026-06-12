@@ -17,8 +17,10 @@ import {
   readVault,
   startWatching,
   writeNote,
+  readObsidianConfig,
   type Attachment,
   type ChangedNote,
+  type ObsidianConfig,
   type VaultNote,
 } from "./lib/vault";
 import { VaultIndex } from "./lib/vaultIndex";
@@ -32,6 +34,8 @@ import { Palette } from "./components/Palette";
 import { PromptModal } from "./components/PromptModal";
 import { linkTargetFor, rewriteLinks } from "./lib/rename";
 import { looksLikeAttachment, resolveAttachment } from "./lib/attachments";
+import { fillTemplate, formatMoment, UnsupportedTokenError } from "./lib/daily";
+import type { LinkFormat } from "./lib/rename";
 import { fuzzyRank } from "./lib/fuzzy";
 import { searchVault, type SearchHit } from "./lib/search";
 import "./styles.css";
@@ -82,6 +86,23 @@ function basename(p: string): string {
   return parts[parts.length - 1] ?? p;
 }
 
+/** Mirror of the Rust build_note_path sanitization, so frontend existence
+ * lookups agree with the filename the backend will actually create. */
+function sanitizeNoteRel(relNoExt: string): string {
+  return relNoExt
+    .split(/[/\\]/)
+    .map((seg) =>
+      seg
+        .replace(/[:*?"<>|\u0000-\u001f]/g, "")
+        .trim()
+        .replace(/\.+$/, ""),
+    )
+    .filter(Boolean)
+    .join("/");
+}
+
+const normRelKey = (rel: string) => rel.replace(/\\/g, "/").replace(/\.md$/i, "").toLowerCase();
+
 /** Resolve `./`/`../` segments in a creation target against the source folder.
  * Returns a vault-relative folder-qualified name, or null if it escapes root. */
 function normalizeCreateTarget(target: string, sourceRel: string | null): string | null {
@@ -118,6 +139,7 @@ export default function App() {
   const [modal, setModal] = useState<ModalKind>(null);
   const [graphOpen, setGraphOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<"global" | "local">("global");
+  const [sourceMode, setSourceMode] = useState(false);
   const [fileMenu, setFileMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ path: string; rel: string } | null>(null);
 
@@ -128,6 +150,8 @@ export default function App() {
   notesRef.current = notes;
   const attachmentsRef = useRef<Attachment[]>([]);
   attachmentsRef.current = attachmentsList;
+  // Read-only .obsidian settings (link format, daily notes, attachment folder).
+  const obsConfigRef = useRef<ObsidianConfig | null>(null);
   const activePathRef = useRef<string | null>(null);
   activePathRef.current = active?.path ?? null;
   // The active note's vault-relative path — the key the watcher matches on.
@@ -288,6 +312,8 @@ export default function App() {
       clearImageCache();
       const root = await openVaultBackend(path); // canonical; sets managed state
       recents.current = loadRecents(root);
+      obsConfigRef.current = await readObsidianConfig().catch(() => null);
+      setSourceMode(localStorage.getItem(`basalt.sourceMode.${root}`) === "1");
       setVault(root);
       localStorage.setItem(LAST_VAULT_KEY, root);
       setActive(null);
@@ -555,7 +581,84 @@ export default function App() {
     await flushPending();
   }, [flushPending]);
 
-  const getNotes = useCallback(() => notesRef.current.map((n) => n.name), []);
+  const getNotes = useCallback(
+    () => notesRef.current.map((n) => ({ name: n.name, rel: n.rel })),
+    [],
+  );
+  const getLinkFormat = useCallback((): LinkFormat => {
+    const f = obsConfigRef.current?.newLinkFormat;
+    return f === "relative" || f === "absolute" ? f : "shortest";
+  }, []);
+  const getActiveRel = useCallback(() => activeRelRef.current, []);
+
+  const toggleSourceMode = useCallback(() => {
+    setSourceMode((on) => {
+      const next = !on;
+      const v = vaultRef.current;
+      if (v) localStorage.setItem(`basalt.sourceMode.${v}`, next ? "1" : "0");
+      return next;
+    });
+  }, []);
+
+  /** Open (creating if needed) today's daily note, honoring daily-notes.json. */
+  const openDailyNote = useCallback(async () => {
+    const cfg = obsConfigRef.current;
+    const now = new Date();
+    const fmt = cfg?.dailyNotesFormat || "YYYY-MM-DD";
+    let name: string;
+    try {
+      name = formatMoment(now, fmt);
+    } catch (e) {
+      // Never guess at an unsupported format — a wrong filename pollutes the
+      // shared vault. Fall back and say so.
+      name = formatMoment(now, "YYYY-MM-DD");
+      if (e instanceof UnsupportedTokenError) {
+        setSaveError(
+          `Daily-note format "${fmt}" isn't fully supported (${e.message}); used YYYY-MM-DD`,
+        );
+      }
+    }
+    const folder = (cfg?.dailyNotesFolder ?? "").replace(/^\/+|\/+$/g, "");
+    // Sanitize exactly like the Rust build_note_path, so the existence lookup
+    // finds the file the backend actually created (else every open after the
+    // first fails with "note already exists").
+    const relNoExt = sanitizeNoteRel(folder ? `${folder}/${name}` : name);
+    const want = normRelKey(`${relNoExt}.md`);
+    const existing = notesRef.current.find((n) => normRelKey(n.rel) === want);
+    if (existing) {
+      await openNoteByPath(existing.path);
+      return;
+    }
+    try {
+      await flushPending();
+      const path = await createNote(relNoExt);
+      const root = vaultRef.current ?? "";
+      const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
+      // Apply the configured template, if any.
+      let content = "";
+      const tplSetting = cfg?.dailyNotesTemplate?.trim();
+      if (tplSetting) {
+        const tplKey = normRelKey(tplSetting);
+        const tpl = notesRef.current.find((n) => normRelKey(n.rel) === tplKey);
+        if (tpl) {
+          // Read fresh from disk — the index blanks oversized notes' content.
+          const tplContent = await readNote(tpl.path).catch(() => "");
+          content = fillTemplate(tplContent, now, name.split("/").pop() ?? name);
+          if (content) await writeNote(path, content);
+        }
+      }
+      const note: VaultNote = { path, rel, name: nameFromRel(rel), content };
+      index.current.setNote(note);
+      rememberSelfWrite(rel, content);
+      setNotes((prev) =>
+        [...prev, note].sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
+      );
+      bumpStructure();
+      await openNoteByPath(path);
+    } catch (e) {
+      setSaveError(`Couldn't open daily note: ${e}`);
+    }
+  }, [openNoteByPath, flushPending, rememberSelfWrite, bumpStructure]);
 
   const handleOpenUrl = useCallback((url: string) => {
     void openUrl(url).catch(() => {
@@ -944,6 +1047,8 @@ export default function App() {
   const commands = useMemo<AppCommand[]>(
     () => [
       { id: "new-note", label: "New note", hint: "create an untitled note", run: () => void handleNewNote() },
+      { id: "daily-note", label: "Open today's daily note", hint: "creates it from your template if missing", run: () => void openDailyNote() },
+      { id: "source-mode", label: "Toggle Source mode", hint: "raw Markdown ↔ Live Preview", run: toggleSourceMode },
       { id: "open-note", label: "Open note…", hint: "quick switcher (⌘O)", run: () => setModal("switcher") },
       { id: "search", label: "Search vault…", hint: "full-text search (⇧⌘F)", run: () => setModal("search") },
       { id: "graph", label: "Open graph view", hint: "global link graph", run: () => setGraphOpen(true) },
@@ -983,7 +1088,7 @@ export default function App() {
         run: () => void handleReloadFromDisk(),
       },
     ],
-    [handleNewNote, handleOpenVault, handleReloadFromDisk, handleDeleteNote],
+    [handleNewNote, handleOpenVault, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode],
   );
 
   if (!vault) {
@@ -1018,6 +1123,13 @@ export default function App() {
           <button className="link-btn" onClick={() => setGraphOpen(true)} title="Graph view">
             Graph
           </button>
+          <button
+            className={sourceMode ? "link-btn toggled" : "link-btn"}
+            onClick={toggleSourceMode}
+            title="Toggle Source mode (raw Markdown)"
+          >
+            Source
+          </button>
           {changedOnDisk && (
             <span className="conflict">
               <span className="conflict-label">⚠ Changed on disk</span>
@@ -1041,6 +1153,9 @@ export default function App() {
             doc={active.doc}
             scrollToLine={active.scrollToLine}
             getNotes={getNotes}
+            getLinkFormat={getLinkFormat}
+            getActiveRel={getActiveRel}
+            sourceMode={sourceMode}
             onOpenWikilink={handleOpenWikilink}
             onOpenUrl={handleOpenUrl}
             resolveImage={handleResolveImage}
