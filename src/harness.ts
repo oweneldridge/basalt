@@ -28,6 +28,8 @@ function makeState(doc: string) {
     onOpenWikilink: (t) => opened.push(t),
     onOpenUrl: (u) => urls.push(u),
     resolveImage: () => Promise.resolve(null),
+    saveAttachment: () => Promise.resolve(null),
+    replacePlaceholder: () => {},
     onChange: () => {},
   });
 }

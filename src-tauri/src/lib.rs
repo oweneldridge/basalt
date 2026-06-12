@@ -438,6 +438,228 @@ fn rename_note(path: String, new_name: String, state: State<VaultState>) -> Resu
     Ok(canonical.to_string_lossy().to_string())
 }
 
+/// Non-Markdown file types surfaced in the tree and addressable by links.
+const ATTACHMENT_EXTS: [&str; 18] = [
+    "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "avif", "ico", "pdf", "mp3", "wav", "m4a",
+    "ogg", "flac", "mp4", "mov", "webm",
+];
+
+fn is_attachment_ext(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| ATTACHMENT_EXTS.contains(&e.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// A non-Markdown vault file (no content shipped; opened via the OS).
+#[derive(Serialize, Clone)]
+struct AttachmentEntry {
+    path: String,
+    rel: String,
+    name: String,
+}
+
+fn collect_attachments(dir: &Path, root: &Path, out: &mut Vec<AttachmentEntry>, depth: usize) {
+    if depth > 32 {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if ft.is_dir() {
+            if !is_ignored_dir(&file_name) {
+                collect_attachments(&path, root, out, depth + 1);
+            }
+        } else if is_attachment_ext(&path) {
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+            out.push(AttachmentEntry {
+                path: path.to_string_lossy().to_string(),
+                rel,
+                name: file_name,
+            });
+        }
+    }
+}
+
+/// List every attachment (non-md supported file) in the open vault.
+#[tauri::command]
+async fn list_attachments(state: State<'_, VaultState>) -> Result<Vec<AttachmentEntry>, String> {
+    let root = current_root(&state)?;
+    let mut out = Vec::new();
+    collect_attachments(&root, &root, &mut out, 0);
+    out.sort_by(|a, b| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()));
+    Ok(out)
+}
+
+fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+    fn val(c: u8) -> Result<u32, String> {
+        match c {
+            b'A'..=b'Z' => Ok((c - b'A') as u32),
+            b'a'..=b'z' => Ok((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Ok((c - b'0' + 52) as u32),
+            b'+' => Ok(62),
+            b'/' => Ok(63),
+            _ => Err("invalid base64".into()),
+        }
+    }
+    let bytes: Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks(4) {
+        if chunk.len() < 2 {
+            return Err("invalid base64".into());
+        }
+        let pad = chunk.iter().filter(|&&c| c == b'=').count();
+        if pad > 0 && chunk.len() < 4 {
+            return Err("invalid base64".into());
+        }
+        let n = val(chunk[0])? << 18
+            | val(chunk[1])? << 12
+            | if chunk.len() > 2 && chunk[2] != b'=' { val(chunk[2])? << 6 } else { 0 }
+            | if chunk.len() > 3 && chunk[3] != b'=' { val(chunk[3])? } else { 0 };
+        out.push((n >> 16) as u8);
+        if chunk.len() > 2 && pad < 2 {
+            out.push((n >> 8) as u8);
+        }
+        if chunk.len() > 3 && pad < 1 {
+            out.push(n as u8);
+        }
+    }
+    Ok(out)
+}
+
+/// Where Obsidian's `attachmentFolderPath` setting says new attachments go:
+/// absent or "/" = vault root; "./" = the note's folder; "./sub" = a subfolder
+/// of the note's folder; anything else = that vault folder.
+fn attachment_dir(root: &Path, source_rel: &str) -> PathBuf {
+    let setting = fs::read_to_string(root.join(".obsidian/app.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|v| v.get("attachmentFolderPath").and_then(|p| p.as_str().map(String::from)));
+    let source_folder = Path::new(source_rel)
+        .parent()
+        .map(|p| root.join(p))
+        .unwrap_or_else(|| root.to_path_buf());
+    match setting.as_deref() {
+        None | Some("/") | Some("") => root.to_path_buf(),
+        Some("./") | Some(".") => source_folder,
+        Some(rest) if rest.starts_with("./") => source_folder.join(&rest[2..]),
+        Some(folder) => root.join(folder.trim_start_matches(['/', '\\'])),
+    }
+}
+
+/// Save a pasted/dropped attachment (base64 payload) into the configured
+/// attachment folder, uniquifying the name. Returns the new entry.
+#[tauri::command]
+async fn write_attachment(
+    name: String,
+    data_b64: String,
+    source_rel: String,
+    state: State<'_, VaultState>,
+) -> Result<AttachmentEntry, String> {
+    let root = current_root(&state)?;
+    // Single path segment only; reuse the note-name sanitation rules.
+    if name.contains('/') || name.contains('\\') {
+        return Err("invalid attachment name".into());
+    }
+    let safe: String = name
+        .chars()
+        .filter(|c| !matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|' | '#' | '^' | '[' | ']') && !c.is_control())
+        .collect();
+    let safe = safe.trim().trim_start_matches('.').trim_end_matches('.');
+    if safe.is_empty() {
+        return Err("invalid attachment name".into());
+    }
+    if safe.len() > 200 {
+        return Err("attachment name is too long".into());
+    }
+    let stem_for_check = safe.split('.').next().unwrap_or(safe);
+    if is_reserved_name(stem_for_check) {
+        return Err(format!("'{stem_for_check}' is a reserved name"));
+    }
+    let bytes = base64_decode(&data_b64)?; // decode before any filesystem effects
+
+    let dir = attachment_dir(&root, &source_rel);
+    // Lexical containment BEFORE creating anything: no `..`, no escape, and no
+    // dot-prefixed folder (every reader skips those — the file would be
+    // invisible and its embed broken immediately).
+    if dir
+        .components()
+        .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
+        || !dir.starts_with(&root)
+    {
+        return Err("attachment folder escapes vault".into());
+    }
+    if let Ok(rel_dir) = dir.strip_prefix(&root) {
+        let rel_str = rel_dir.to_string_lossy();
+        if !rel_str.is_empty() && rel_has_ignored_component(&rel_str) {
+            return Err(
+                "attachmentFolderPath points at a hidden (dot-prefixed) folder; choose a visible one"
+                    .into(),
+            );
+        }
+    }
+    fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    let cdir = fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+    if !cdir.starts_with(&root) {
+        return Err("attachment folder escapes vault".into());
+    }
+    // Uniquify by atomically RESERVING the name (create_new) — a plain
+    // exists-then-write check races with concurrent pastes and would silently
+    // overwrite the first file.
+    let (stem, ext) = match safe.rfind('.') {
+        Some(i) if i > 0 => (&safe[..i], &safe[i..]),
+        _ => (safe, ""),
+    };
+    let mut counter = 0;
+    let (mut file, dest) = loop {
+        let candidate = if counter == 0 {
+            cdir.join(safe)
+        } else {
+            cdir.join(format!("{stem} {counter}{ext}"))
+        };
+        match fs::OpenOptions::new().write(true).create_new(true).open(&candidate) {
+            Ok(f) => break (f, candidate),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                counter += 1;
+                if counter > 1000 {
+                    return Err("could not find a free attachment name".into());
+                }
+            }
+            Err(e) => return Err(format!("create: {e}")),
+        }
+    };
+    file.write_all(&bytes).map_err(|e| format!("write: {e}"))?;
+    file.sync_all().map_err(|e| format!("fsync: {e}"))?;
+    drop(file);
+    let canonical = fs::canonicalize(&dest).map_err(|e| e.to_string())?;
+    let rel = canonical
+        .strip_prefix(&root)
+        .map_err(|_| "path escapes vault")?
+        .to_string_lossy()
+        .to_string();
+    let fname = canonical
+        .file_name()
+        .ok_or("invalid path")?
+        .to_string_lossy()
+        .to_string();
+    Ok(AttachmentEntry {
+        path: canonical.to_string_lossy().to_string(),
+        rel,
+        name: fname,
+    })
+}
+
 /// Watch the open vault recursively. Markdown file changes emit `vault-changed`
 /// with `{path, rel}` per note; directory-level changes (folder rename/delete,
 /// which FSEvents reports only for the folder path) emit a payload-less
@@ -632,6 +854,8 @@ pub fn run() {
             create_note,
             delete_note,
             rename_note,
+            list_attachments,
+            write_attachment,
             start_watching,
             read_image,
             debug_log

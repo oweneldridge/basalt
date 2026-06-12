@@ -17,10 +17,13 @@ describe("rewriteLinks", () => {
       "see [[New|the doc]]",
     );
   });
-  it("preserves #heading and ^block suffixes", () => {
-    expect(rewriteLinks("[[Old#Goals]] and [[Old^abc123]]", renameMap("Old", "New"))).toBe(
-      "[[New#Goals]] and [[New^abc123]]",
+  it("preserves #heading and #^block suffixes", () => {
+    expect(rewriteLinks("[[Old#Goals]] and [[Old#^abc123]]", renameMap("Old", "New"))).toBe(
+      "[[New#Goals]] and [[New#^abc123]]",
     );
+  });
+  it("treats a bare ^ as part of the name (not a block ref)", () => {
+    expect(rewriteLinks("[[Old^draft]]", renameMap("Old^draft", "New"))).toBe("[[New]]");
   });
   it("preserves suffix AND alias together", () => {
     expect(rewriteLinks("[[Old#Goals|see goals]]", renameMap("Old", "New"))).toBe(

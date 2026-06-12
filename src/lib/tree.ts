@@ -1,11 +1,13 @@
 // Build a folder tree from the flat note list (using each note's vault-relative
 // path), so the sidebar can show real nested folders instead of a flat list.
-import type { VaultNote } from "./vault";
+import type { Attachment, VaultNote } from "./vault";
 
 export interface TreeFile {
   type: "file";
   name: string;
-  path: string; // absolute note path
+  path: string; // absolute file path
+  /** True for non-md files (opened externally, dimmed in the tree). */
+  attachment?: boolean;
 }
 export interface TreeFolder {
   type: "folder";
@@ -25,12 +27,12 @@ function sortFolder(folder: TreeFolder): void {
   }
 }
 
-export function buildTree(notes: VaultNote[]): TreeNode[] {
+export function buildTree(notes: VaultNote[], attachments: Attachment[] = []): TreeNode[] {
   const root: TreeFolder = { type: "folder", name: "", path: "", children: [] };
   const folders = new Map<string, TreeFolder>([["", root]]);
 
-  for (const note of notes) {
-    const parts = note.rel.split(/[/\\]/);
+  const insert = (rel: string, file: TreeFile) => {
+    const parts = rel.split(/[/\\]/);
     let parent = root;
     let parentPath = "";
     for (let i = 0; i < parts.length - 1; i++) {
@@ -45,7 +47,14 @@ export function buildTree(notes: VaultNote[]): TreeNode[] {
       parent = folder;
       parentPath = fp;
     }
-    parent.children.push({ type: "file", name: note.name, path: note.path });
+    parent.children.push(file);
+  };
+
+  for (const note of notes) {
+    insert(note.rel, { type: "file", name: note.name, path: note.path });
+  }
+  for (const a of attachments) {
+    insert(a.rel, { type: "file", name: a.name, path: a.path, attachment: true });
   }
 
   sortFolder(root);

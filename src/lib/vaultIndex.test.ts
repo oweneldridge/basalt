@@ -86,7 +86,7 @@ describe("VaultIndex.resolve — Obsidian semantics", () => {
   });
   it("heading/block suffixes are ignored for resolution", () => {
     expect(idx.resolve("A#Heading", "/v/Folder/B.md")).toBe("/v/A.md");
-    expect(idx.resolve("A^block", "/v/Folder/B.md")).toBe("/v/A.md");
+    expect(idx.resolve("A#^block", "/v/Folder/B.md")).toBe("/v/A.md");
   });
 });
 

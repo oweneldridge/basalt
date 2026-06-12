@@ -2,19 +2,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   createNote,
   deleteNote,
+  listAttachments,
   nameFromRel,
   renameNote,
+  writeAttachment,
   openVaultBackend,
   pickVault,
   readNote,
   readVault,
   startWatching,
   writeNote,
+  type Attachment,
   type ChangedNote,
   type VaultNote,
 } from "./lib/vault";
@@ -28,6 +31,7 @@ import { GraphView } from "./components/GraphView";
 import { Palette } from "./components/Palette";
 import { PromptModal } from "./components/PromptModal";
 import { linkTargetFor, rewriteLinks } from "./lib/rename";
+import { looksLikeAttachment, resolveAttachment } from "./lib/attachments";
 import { fuzzyRank } from "./lib/fuzzy";
 import { searchVault, type SearchHit } from "./lib/search";
 import "./styles.css";
@@ -78,11 +82,6 @@ function basename(p: string): string {
   return parts[parts.length - 1] ?? p;
 }
 
-/** Known non-Markdown attachment extension at the end of a link target. */
-function isAttachmentTarget(pathPart: string): boolean {
-  return /\.[a-z0-9]{1,8}$/i.test(pathPart) && !/\.md$/i.test(pathPart);
-}
-
 /** Resolve `./`/`../` segments in a creation target against the source folder.
  * Returns a vault-relative folder-qualified name, or null if it escapes root. */
 function normalizeCreateTarget(target: string, sourceRel: string | null): string | null {
@@ -105,6 +104,7 @@ function normalizeCreateTarget(target: string, sourceRel: string | null): string
 export default function App() {
   const [vault, setVault] = useState<string | null>(null);
   const [notes, setNotes] = useState<VaultNote[]>([]);
+  const [attachmentsList, setAttachmentsList] = useState<Attachment[]>([]);
   const [active, setActive] = useState<ActiveNote | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -126,6 +126,8 @@ export default function App() {
   vaultRef.current = vault;
   const notesRef = useRef<VaultNote[]>([]);
   notesRef.current = notes;
+  const attachmentsRef = useRef<Attachment[]>([]);
+  attachmentsRef.current = attachmentsList;
   const activePathRef = useRef<string | null>(null);
   activePathRef.current = active?.path ?? null;
   // The active note's vault-relative path — the key the watcher matches on.
@@ -162,9 +164,10 @@ export default function App() {
   }, []);
 
   const loadVault = useCallback(async () => {
-    const list = await readVault();
+    const [list, atts] = await Promise.all([readVault(), listAttachments()]);
     index.current.build(list);
     setNotes(list);
+    setAttachmentsList(atts);
     bumpStructure();
     return list;
   }, [bumpStructure]);
@@ -565,6 +568,81 @@ export default function App() {
     return resolveImage(target, activeRelRef.current ?? "");
   }, []);
 
+  const handleOpenAttachment = useCallback((path: string) => {
+    void openPath(path).catch((e) => setSaveError(`Couldn't open: ${e}`));
+  }, []);
+
+  /** Persist a pasted/dropped file into the vault (honoring Obsidian's
+   * attachmentFolderPath) and return the embed link target. */
+  const handleSaveAttachment = useCallback(async (file: File): Promise<string | null> => {
+    if (!vaultRef.current) return null;
+    // Capture the source note BEFORE any await — a note switch mid-encode must
+    // not change where attachmentFolderPath "./" resolves.
+    const sourceRel = activeRelRef.current ?? "";
+    if (file.size > 64_000_000) {
+      setSaveError("Attachment too large (max 64 MB)");
+      return null;
+    }
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let bin = "";
+      const CHUNK = 0x8000;
+      for (let i = 0; i < buf.length; i += CHUNK) {
+        bin += String.fromCharCode(...buf.subarray(i, i + CHUNK));
+      }
+      const b64 = btoa(bin);
+      // Clipboard images arrive as generic "image.png" — name them like Obsidian.
+      const generic = !file.name || /^(image|blob)\.(png|jpe?g|gif|webp)$/i.test(file.name);
+      const ext = (file.name.split(".").pop() || file.type.split("/").pop() || "png").toLowerCase();
+      const d = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+      const name = generic ? `Pasted image ${stamp}.${ext}` : file.name;
+      const att = await writeAttachment(name, b64, sourceRel);
+      setAttachmentsList((prev) =>
+        [...prev.filter((a) => a.path !== att.path), att].sort((a, b) =>
+          a.rel.toLowerCase().localeCompare(b.rel.toLowerCase()),
+        ),
+      );
+      // Bare filename if unique, else the vault-relative path (with extension).
+      const taken = attachmentsRef.current.some(
+        (a) => a.path !== att.path && a.name.toLowerCase() === att.name.toLowerCase(),
+      );
+      return taken ? att.rel : att.name;
+    } catch (e) {
+      setSaveError(`Couldn't save attachment: ${e}`);
+      return null;
+    }
+  }, []);
+
+  /** Replace an upload placeholder in whichever note still contains it —
+   * the editor that received the paste is gone (note switch / reload). */
+  const handleReplacePlaceholder = useCallback(
+    (placeholder: string, replacement: string) => {
+      void (async () => {
+        const holder = notesRef.current.find((n) => n.content.includes(placeholder));
+        if (!holder) return; // user removed it (or it was never saved) — drop
+        try {
+          const disk = await readNote(holder.path);
+          if (!disk.includes(placeholder)) return;
+          const next = disk.split(placeholder).join(replacement);
+          await writeNote(holder.path, next);
+          rememberSelfWrite(holder.rel, next);
+          const updated: VaultNote = { ...holder, content: next };
+          index.current.setNote(updated);
+          setNotes((prev) => prev.map((n) => (n.path === holder.path ? updated : n)));
+          bumpIndex();
+          if (activePathRef.current === holder.path) {
+            setActive({ path: holder.path, doc: next });
+          }
+        } catch (e) {
+          setSaveError(`Couldn't finalize attachment: ${e}`);
+        }
+      })();
+    },
+    [rememberSelfWrite, bumpIndex],
+  );
+
   /** Create a note (folder-qualified ok) and open it, updating the index
    * incrementally — no full-vault reload. */
   const createAndOpen = useCallback(
@@ -594,8 +672,15 @@ export default function App() {
         return;
       }
       const pathPart = targetPathPart(target);
-      // Never auto-create a junk "Report.pdf.md" for an attachment link.
-      if (!pathPart || isAttachmentTarget(pathPart)) return;
+      if (!pathPart) return;
+      // An attachment target opens in the system viewer; never auto-create
+      // a junk "Report.pdf.md" note for one.
+      const att = resolveAttachment(attachmentsRef.current, target);
+      if (att) {
+        void openPath(att.path).catch((e) => setSaveError(`Couldn't open: ${e}`));
+        return;
+      }
+      if (looksLikeAttachment(pathPart)) return;
       const name = normalizeCreateTarget(pathPart, activeRelRef.current);
       if (!name) return; // relative target escaping the vault root
       try {
@@ -917,10 +1002,12 @@ export default function App() {
     <div className="app">
       <Sidebar
         notes={notes}
+        attachments={attachmentsList}
         activePath={active?.path ?? null}
         vaultName={basename(vault)}
         onOpen={(path) => openNoteByPath(path)}
         onNewNote={handleNewNote}
+        onOpenAttachment={handleOpenAttachment}
         onContextMenu={(path, x, y) => setFileMenu({ path, x, y })}
       />
       <main className="main">
@@ -957,6 +1044,8 @@ export default function App() {
             onOpenWikilink={handleOpenWikilink}
             onOpenUrl={handleOpenUrl}
             resolveImage={handleResolveImage}
+            saveAttachment={handleSaveAttachment}
+            replacePlaceholder={handleReplacePlaceholder}
             onChange={handleChange}
           />
         ) : (

@@ -25,6 +25,14 @@ export interface ChangedNote {
   rel: string;
 }
 
+/** A non-Markdown vault file (image/PDF/audio/video) — no content shipped. */
+export interface Attachment {
+  path: string;
+  rel: string;
+  /** Filename including extension (the link-able name). */
+  name: string;
+}
+
 /** Open a vault in the backend; returns the CANONICAL root path. */
 export function openVaultBackend(path: string): Promise<string> {
   return invoke<string>("open_vault", { path });
@@ -55,6 +63,20 @@ export function deleteNote(path: string): Promise<void> {
 /** Rename/move a note to a folder-qualified name (no .md); returns the new path. */
 export function renameNote(path: string, newName: string): Promise<string> {
   return invoke<string>("rename_note", { path, newName });
+}
+
+/** List every attachment (supported non-md file) in the open vault. */
+export function listAttachments(): Promise<Attachment[]> {
+  return invoke<Attachment[]>("list_attachments");
+}
+
+/** Save a pasted/dropped attachment; returns the created entry. */
+export function writeAttachment(
+  name: string,
+  dataB64: string,
+  sourceRel: string,
+): Promise<Attachment> {
+  return invoke<Attachment>("write_attachment", { name, dataB64, sourceRel });
 }
 
 /** Start (or restart) watching the open vault for on-disk changes. */
