@@ -13,11 +13,11 @@ scope (Basalt gets its own plugin API in Phase 5).
 | 1 | File tree, quick switcher, full-text search, autosave, frontmatter | shipped |
 | 2 | Link/metadata index → backlinks, unlinked mentions, graph (global+local), fs watcher | shipped |
 | 2.5 | **Hardening (2026-06 audit):** atomic writes, symlink/CSP/vault-root security, folder-rename rescan, Obsidian link-resolution parity (root-most + relative/absolute forms), fence-aware link extraction, parse-completion decoration fixes, undo/self-write data-safety, search & index perf, first tests | **shipped** |
-| 2.6 | Keystroke parity: Mod-B/I/K, Tab indent, multi-cursor, task continuation, auto-pair, spellcheck, command palette (Cmd-P), MRU switcher | next |
-| 2.7 | File lifecycle: delete to .trash, rename/move with vault-wide link rewrite, external-rename robustness | planned |
-| 2.8 | Attachments: non-md files in the tree, image paste/drop (attachmentFolderPath), PDF/audio embeds via asset protocol | planned |
-| 2.9 | Source mode toggle; read-only .obsidian interop (link format, daily notes + templates) | planned |
-| 3 | Settings UI + light theme, outline/tag/bookmark panes, heading folding, Properties editing (raw-YAML round-trip) | planned |
+| 2.6 | Keystroke parity: Mod-B/I/K, Tab indent, multi-cursor, task continuation, auto-pair, spellcheck, command palette (Cmd-P), MRU switcher | shipped |
+| 2.7 | File lifecycle: delete to .trash, rename/move with vault-wide link rewrite, external-rename robustness | shipped |
+| 2.8 | Attachments: non-md files in the tree, image paste/drop (attachmentFolderPath), PDF/audio embeds via asset protocol | shipped |
+| 2.9 | Source mode toggle; read-only .obsidian interop (link format, daily notes + templates); markdown-style `[t](N.md)` link indexing + rename rewrite | shipped |
+| 3 | Settings UI + light theme, outline/tag/bookmark panes, heading folding, Properties editing (raw-YAML round-trip) | next |
 | 3.5 | Tabs, split panes, workspaces | planned |
 | 3.7 | Reading mode; PDF/HTML export | planned |
 | 4 | JSON Canvas viewer (read-only first, then editing); Bases views over YAML (parse Obsidian .base read-only) | planned |
