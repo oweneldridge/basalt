@@ -84,6 +84,7 @@ import { tags } from "./tags";
 import { embeds } from "./embeds";
 import { attachments } from "./attachments";
 import { wikilinkAutocomplete, wikilinkDecorations, wikilinkModClickFollow, type NoteRef } from "./wikilink";
+import { headingFold, foldKeymap } from "./headingFold";
 import type { LinkFormat } from "../lib/rename";
 
 // Marks a transaction as an external-content reconcile (a live-reload from disk)
@@ -201,6 +202,9 @@ export function createEditorState(
     markdown({ base: markdownLanguage, codeLanguages: languages, extensions: GFM }),
     basaltHighlight,
     themeCompartment.of(basaltThemeFor(dark)),
+    // Heading folding — outside the render compartment, so it works in both
+    // Live Preview and source mode.
+    headingFold,
     renderCompartment.of(sourceMode ? [] : renderExtensions(cb)),
     // Always on, even in source mode: paste/drop and [[ completion.
     attachments({ save: cb.saveAttachment, fallbackReplace: cb.replacePlaceholder }),
@@ -223,6 +227,7 @@ export function createEditorState(
       ...defaultKeymap,
       ...historyKeymap,
       ...searchKeymap, // includes Mod-D select-next-occurrence (multi-cursor)
+      ...foldKeymap, // Ctrl/Cmd-Shift-[ fold, -] unfold; Ctrl-Alt-[/] fold/unfold all
     ]),
     EditorView.updateListener.of((update) => {
       if (!update.docChanged) return;

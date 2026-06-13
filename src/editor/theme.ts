@@ -210,6 +210,35 @@ const themeSpec = {
       fontSize: "0.85em",
       color: "var(--accent)",
     },
+    // Heading fold gutter — quiet by default, Obsidian-style. Open markers fade
+    // in on gutter hover; a folded heading's marker stays visible.
+    ".cm-gutters": { backgroundColor: "transparent", border: "none" },
+    ".cm-foldGutter": { width: "14px" },
+    ".cm-foldGutter .cm-gutterElement": {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      cursor: "pointer",
+    },
+    ".cm-fold-marker": {
+      color: "var(--text-faint)",
+      fontSize: "0.7em",
+      opacity: "0",
+      transition: "opacity 0.1s ease",
+    },
+    ".cm-foldGutter:hover .cm-fold-marker": { opacity: "0.65" },
+    ".cm-foldGutter .cm-gutterElement:hover .cm-fold-marker": { color: "var(--text)", opacity: "1" },
+    ".cm-fold-marker.closed": { opacity: "0.8" },
+    // The "…" placeholder for a folded section; click to unfold.
+    ".cm-foldPlaceholder": {
+      background: "var(--bg-elev)",
+      border: "1px solid var(--border)",
+      borderRadius: "4px",
+      color: "var(--text-muted)",
+      padding: "0 6px",
+      margin: "0 4px",
+      cursor: "pointer",
+    },
 };
 
 /** The editor theme for a given mode. `dark` only sets CM6's built-in flag; the
