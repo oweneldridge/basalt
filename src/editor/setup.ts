@@ -73,7 +73,7 @@ const wrapSelectionOnType = EditorView.inputHandler.of((view, _from, _to, text) 
   return true;
 });
 
-import { basaltTheme, basaltHighlight } from "./theme";
+import { basaltThemeFor, basaltHighlight } from "./theme";
 import { livePreview } from "./livePreview";
 import { tables } from "./tables";
 import { frontmatter } from "./frontmatter";
@@ -115,6 +115,14 @@ export interface EditorCallbacks {
 // Source mode: all Live Preview rendering lives in one Compartment so it can
 // be toggled off (raw Markdown) without rebuilding the editor.
 const renderCompartment = new Compartment();
+// The editor theme lives in its own compartment so a light/dark switch only
+// reconfigures CM6's `dark` flag (the colors are CSS vars) — no remount.
+const themeCompartment = new Compartment();
+
+/** Swap the editor theme between dark and light without rebuilding the editor. */
+export function setEditorTheme(view: EditorView, dark: boolean): void {
+  view.dispatch({ effects: themeCompartment.reconfigure(basaltThemeFor(dark)) });
+}
 
 function renderExtensions(cb: EditorCallbacks): Extension[] {
   return [
@@ -163,7 +171,12 @@ function initialCursor(doc: string): number {
   return 0;
 }
 
-export function createEditorState(doc: string, cb: EditorCallbacks, sourceMode = false): EditorState {
+export function createEditorState(
+  doc: string,
+  cb: EditorCallbacks,
+  sourceMode = false,
+  dark = true,
+): EditorState {
   const extensions: Extension[] = [
     history(),
     drawSelection(),
@@ -187,7 +200,7 @@ export function createEditorState(doc: string, cb: EditorCallbacks, sourceMode =
     }),
     markdown({ base: markdownLanguage, codeLanguages: languages, extensions: GFM }),
     basaltHighlight,
-    basaltTheme,
+    themeCompartment.of(basaltThemeFor(dark)),
     renderCompartment.of(sourceMode ? [] : renderExtensions(cb)),
     // Always on, even in source mode: paste/drop and [[ completion.
     attachments({ save: cb.saveAttachment, fallbackReplace: cb.replacePlaceholder }),

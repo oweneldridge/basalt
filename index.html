@@ -5,6 +5,16 @@
     
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Basalt</title>
+    <!-- Apply the saved theme before first paint (no flash). Mirrors lib/theme.ts. -->
+    <script>
+      try {
+        var m = localStorage.getItem("basalt.theme") || "system";
+        var dark =
+          m === "dark" ||
+          (m !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+      } catch (e) {}
+    </script>
   </head>
 
   <body>

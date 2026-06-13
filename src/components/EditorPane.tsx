@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { createEditorState, externalReload, setSourceMode } from "../editor/setup";
+import { createEditorState, externalReload, setEditorTheme, setSourceMode } from "../editor/setup";
 import type { EditorCallbacks } from "../editor/setup";
 import type { NoteRef } from "../editor/wikilink";
 import type { LinkFormat } from "../lib/rename";
@@ -24,6 +24,8 @@ interface Props {
   scrollToLine?: number;
   /** True = raw Markdown (Live Preview rendering off). */
   sourceMode: boolean;
+  /** True = dark editor theme (CM6 dark flag); colors come from CSS vars. */
+  dark: boolean;
 }
 
 export function EditorPane({
@@ -40,6 +42,7 @@ export function EditorPane({
   onChange,
   scrollToLine,
   sourceMode,
+  dark,
 }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
   const view = useRef<EditorView | null>(null);
@@ -62,12 +65,14 @@ export function EditorPane({
   });
   const sourceModeRef = useRef(sourceMode);
   sourceModeRef.current = sourceMode;
+  const darkRef = useRef(dark);
+  darkRef.current = dark;
 
   // Build the editor when the note (path) changes.
   useEffect(() => {
     if (!host.current) return;
     const v = new EditorView({
-      state: createEditorState(doc, adapter.current, sourceModeRef.current),
+      state: createEditorState(doc, adapter.current, sourceModeRef.current, darkRef.current),
       parent: host.current,
     });
     view.current = v;
@@ -116,6 +121,13 @@ export function EditorPane({
     if (!v) return;
     setSourceMode(v, adapter.current, sourceMode);
   }, [sourceMode]);
+
+  // Swap the editor theme in place when the app theme changes (no remount).
+  useEffect(() => {
+    const v = view.current;
+    if (!v) return;
+    setEditorTheme(v, dark);
+  }, [dark]);
 
   return <div className="editor-host" ref={host} />;
 }
