@@ -93,6 +93,20 @@ export function readObsidianConfig(): Promise<ObsidianConfig> {
   return invoke<ObsidianConfig>("read_obsidian_config");
 }
 
+/** A flattened entry from `.obsidian/bookmarks.json`. */
+export interface Bookmark {
+  type: string; // file | folder | heading | block | search | graph
+  title: string;
+  path?: string | null; // vault-relative (file / folder / heading / block)
+  subpath?: string | null; // #heading / #^block
+  query?: string | null; // search bookmarks
+  group?: string | null; // containing group's title
+}
+
+export function readObsidianBookmarks(): Promise<Bookmark[]> {
+  return invoke<Bookmark[]>("read_obsidian_bookmarks");
+}
+
 /** Start (or restart) watching the open vault for on-disk changes. */
 export function startWatching(): Promise<void> {
   return invoke<void>("start_watching");

@@ -34,16 +34,12 @@ function RefList({
   );
 }
 
+/** Backlinks + unlinked mentions for the active note. Rendered inside the
+ * tabbed RightPanel, so it returns content (no outer <aside>). */
 export function Backlinks({ noteName, backlinks, unlinked, onOpen }: Props) {
-  if (!noteName) {
-    return (
-      <aside className="backlinks">
-        <div className="empty">No note selected</div>
-      </aside>
-    );
-  }
+  if (!noteName) return <div className="empty">No note selected</div>;
   return (
-    <aside className="backlinks">
+    <>
       <div className="panel-section">
         <div className="panel-title">
           Backlinks <span className="count">{backlinks.length}</span>
@@ -56,6 +52,6 @@ export function Backlinks({ noteName, backlinks, unlinked, onOpen }: Props) {
         </div>
         <RefList items={unlinked} onOpen={onOpen} empty="None" />
       </div>
-    </aside>
+    </>
   );
 }

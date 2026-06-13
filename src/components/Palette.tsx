@@ -10,6 +10,8 @@ interface PaletteProps<T> {
   onSelect: (item: T) => void;
   onClose: () => void;
   emptyText?: string;
+  /** Seed the query box (e.g. opening search pre-filled with a clicked tag). */
+  initialQuery?: string;
 }
 
 const MAX_RENDER = 100;
@@ -22,8 +24,9 @@ export function Palette<T>({
   onSelect,
   onClose,
   emptyText = "No results",
+  initialQuery = "",
 }: PaletteProps<T>) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement | null>(null);
 

@@ -331,12 +331,45 @@ button.primary:hover {
   color: var(--text-faint);
 }
 
-/* Backlinks / right panel */
-.backlinks {
+/* Right panel — tabbed (Backlinks / Outline / Tags / Bookmarks) */
+.right-panel {
   background: var(--bg-sidebar);
   border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.right-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  padding: 0 4px;
+}
+.right-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  padding: 9px 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.right-tab:hover {
+  color: var(--text);
+}
+.right-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.right-body {
   overflow: auto;
   min-height: 0;
+  flex: 1;
   padding: 10px 0;
 }
 .panel-section {
@@ -390,6 +423,114 @@ button.primary:hover {
   display: block;
   font-size: 0.78rem;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Outline pane */
+.outline {
+  padding: 4px 8px;
+}
+.outline-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.83rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.outline-row:hover {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+
+/* Tags pane */
+.tag-list {
+  padding: 4px 8px;
+}
+.tag-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.tag-row:hover {
+  background: var(--bg-elev);
+}
+.tag-name {
+  color: var(--accent);
+  font-size: 0.84rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tag-row .count {
+  background: var(--bg-elev);
+  color: var(--text-muted);
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+/* Bookmarks pane */
+.bookmark-list {
+  padding: 4px 8px;
+}
+.bookmark-group {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  padding: 8px 8px 4px;
+}
+.bookmark-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.bookmark-row:hover:not(:disabled) {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+.bookmark-row:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.bookmark-icon {
+  flex: 0 0 auto;
+  font-size: 0.8rem;
+  width: 16px;
+  text-align: center;
+  color: var(--text-faint);
+}
+.bookmark-title {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

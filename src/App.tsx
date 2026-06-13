@@ -18,7 +18,9 @@ import {
   startWatching,
   writeNote,
   readObsidianConfig,
+  readObsidianBookmarks,
   type Attachment,
+  type Bookmark,
   type ChangedNote,
   type ObsidianConfig,
   type VaultNote,
@@ -28,7 +30,7 @@ import { clearImageCache, resolveImage } from "./lib/assets";
 import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { EditorPane } from "./components/EditorPane";
-import { Backlinks } from "./components/Backlinks";
+import { RightPanel, type RightTab } from "./components/RightPanel";
 import { GraphView } from "./components/GraphView";
 import { Palette } from "./components/Palette";
 import { PromptModal } from "./components/PromptModal";
@@ -79,6 +81,7 @@ interface AppCommand {
 
 const RECENT_MAX = 50;
 const recentKey = (vault: string) => `basalt.recent.${vault}`;
+const rightTabKey = (vault: string) => `basalt.rightTab.${vault}`;
 
 function loadRecents(vault: string): string[] {
   try {
@@ -155,6 +158,10 @@ export default function App() {
   const [dark, setDark] = useState<boolean>(
     () => document.documentElement.dataset.theme !== "light",
   );
+  const [rightTab, setRightTab] = useState<RightTab>("backlinks");
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+  // Seeds the search palette when opened from a tag / search bookmark.
+  const [searchSeed, setSearchSeed] = useState("");
   const [fileMenu, setFileMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ path: string; rel: string } | null>(null);
 
@@ -328,6 +335,13 @@ export default function App() {
       const root = await openVaultBackend(path); // canonical; sets managed state
       recents.current = loadRecents(root);
       obsConfigRef.current = await readObsidianConfig().catch(() => null);
+      setBookmarks(await readObsidianBookmarks().catch(() => []));
+      const savedTab = localStorage.getItem(rightTabKey(root));
+      setRightTab(
+        savedTab === "outline" || savedTab === "tags" || savedTab === "bookmarks"
+          ? savedTab
+          : "backlinks",
+      );
       setSourceMode(localStorage.getItem(`basalt.sourceMode.${root}`) === "1");
       setVault(root);
       localStorage.setItem(LAST_VAULT_KEY, root);
@@ -550,6 +564,7 @@ export default function App() {
         setModal("switcher");
       } else if (k === "f" && e.shiftKey) {
         e.preventDefault();
+        setSearchSeed("");
         setModal("search");
       } else if (k === "p" && !e.shiftKey) {
         e.preventDefault(); // also suppresses the webview's print dialog
@@ -868,6 +883,44 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeName, active]);
 
+  // Vault-wide tags for the tag pane — from the incremental index, so this only
+  // recomputes when content (indexVersion) or structure (structureVersion) changes.
+  const tags = useMemo(
+    () => index.current.allTags(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [indexVersion, structureVersion],
+  );
+
+  // Persist the active right-panel tab per vault.
+  useEffect(() => {
+    const v = vaultRef.current;
+    if (!v) return;
+    try {
+      localStorage.setItem(rightTabKey(v), rightTab);
+    } catch {
+      /* ignore */
+    }
+  }, [rightTab]);
+
+  const handleSelectTag = useCallback((tag: string) => {
+    setSearchSeed(`#${tag} `);
+    setModal("search");
+  }, []);
+  const handleOpenBookmark = useCallback(
+    (b: Bookmark) => {
+      if (!b.path) return;
+      // Bookmark paths are vault-relative; resolve to a note or attachment.
+      const note = notesRef.current.find((n) => n.rel === b.path);
+      if (note) {
+        void openNoteByPath(note.path);
+        return;
+      }
+      const att = attachmentsRef.current.find((a) => a.rel === b.path);
+      if (att) handleOpenAttachment(att.path);
+    },
+    [openNoteByPath, handleOpenAttachment],
+  );
+
   // Key the local graph on the active PATH (not the whole active object) so an
   // autosave or caret move doesn't rebuild the simulation.
   const graphKey = graphMode === "local" ? (active?.path ?? null) : null;
@@ -1094,7 +1147,7 @@ export default function App() {
       { id: "daily-note", label: "Open today's daily note", hint: "creates it from your template if missing", run: () => void openDailyNote() },
       { id: "source-mode", label: "Toggle Source mode", hint: "raw Markdown ↔ Live Preview", run: toggleSourceMode },
       { id: "open-note", label: "Open note…", hint: "quick switcher (⌘O)", run: () => setModal("switcher") },
-      { id: "search", label: "Search vault…", hint: "full-text search (⇧⌘F)", run: () => setModal("search") },
+      { id: "search", label: "Search vault…", hint: "full-text search (⇧⌘F)", run: () => { setSearchSeed(""); setModal("search"); } },
       { id: "graph", label: "Open graph view", hint: "global link graph", run: () => setGraphOpen(true) },
       {
         id: "graph-local",
@@ -1221,11 +1274,25 @@ export default function App() {
           <div className="placeholder">Select a note, or press + to create one.</div>
         )}
       </main>
-      <Backlinks
+      <RightPanel
+        tab={rightTab}
+        onTab={setRightTab}
         noteName={activeName}
         backlinks={backlinks}
         unlinked={unlinked}
-        onOpen={(path, line) => openNoteByPath(path, line)}
+        onOpenRef={(path, line) => openNoteByPath(path, line)}
+        outlineDoc={activeNote?.content ?? active?.doc ?? null}
+        onJumpLine={(line) => {
+          if (active) void openNoteByPath(active.path, line);
+        }}
+        tags={tags}
+        onSelectTag={handleSelectTag}
+        bookmarks={bookmarks}
+        onOpenBookmark={handleOpenBookmark}
+        onSearch={(query) => {
+          setSearchSeed(query);
+          setModal("search");
+        }}
       />
       {modal === "switcher" && (
         <Palette<VaultNote>
@@ -1249,6 +1316,7 @@ export default function App() {
       {modal === "search" && (
         <Palette<SearchHit>
           placeholder="Search vault…"
+          initialQuery={searchSeed}
           getItems={(q) => searchVault(notesRef.current, q)}
           itemKey={(h, i) => `${h.path}:${h.line}:${i}`}
           renderItem={(h) => (
