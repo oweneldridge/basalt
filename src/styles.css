@@ -11,10 +11,41 @@
   --accent: #a98be0;
   --selection: rgba(169, 139, 224, 0.28);
   --highlight: rgba(255, 214, 110, 0.32);
+  /* Theme-aware semantic colors (were hardcoded; now vars so the light theme flips them). */
+  --accent-text: #14121a; /* text/icons on an --accent background */
+  --accent-soft: rgba(169, 139, 224, 0.12); /* tinted toggle/hover backgrounds */
+  --danger: #f7768e; /* destructive actions, error status */
+  --overlay: rgba(0, 0, 0, 0.45); /* modal / menu backdrop */
+  --shadow: rgba(0, 0, 0, 0.5); /* elevated-surface drop shadow */
   --font-text: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   color-scheme: dark;
+}
+
+/* Light theme: overrides the palette only — every rule already uses var().
+   Applied by data-theme="light" on <html> (lib/theme.ts + the index.html
+   no-flash script). */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-editor: #ffffff;
+  --bg-sidebar: #f4f5f7;
+  --bg-elev: #e9ebee;
+  --border: #d8dade;
+  --text: #1f2125;
+  --text-muted: #686b73;
+  --text-faint: #9a9da6;
+  --code: #b15c00;
+  --accent: #7c5cd0;
+  --selection: rgba(124, 92, 208, 0.22);
+  --highlight: rgba(255, 206, 84, 0.5);
+  --accent-text: #ffffff;
+  --accent-soft: rgba(124, 92, 208, 0.13);
+  --danger: #c0392b;
+  --overlay: rgba(0, 0, 0, 0.32);
+  --shadow: rgba(0, 0, 0, 0.18);
+
+  color-scheme: light;
 }
 
 * {
@@ -62,7 +93,7 @@ button {
 }
 button.primary {
   background: var(--accent);
-  color: #14121a;
+  color: var(--accent-text);
   border: none;
   border-radius: 8px;
   padding: 10px 18px;
@@ -246,7 +277,7 @@ button.primary:hover {
 }
 .link-btn.toggled {
   color: var(--accent);
-  background: rgba(169, 139, 224, 0.12);
+  background: var(--accent-soft);
 }
 .spacer {
   flex: 1;
@@ -256,7 +287,7 @@ button.primary:hover {
   font-size: 0.8rem;
 }
 .status-error {
-  color: #f7768e;
+  color: var(--danger);
   font-weight: 600;
 }
 .conflict {
@@ -399,7 +430,7 @@ button.primary:hover {
 }
 .graph-mode.active {
   background: var(--accent);
-  color: #14121a;
+  color: var(--accent-text);
   font-weight: 600;
 }
 .graph-count {
@@ -434,7 +465,7 @@ button.primary:hover {
 .palette-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--overlay);
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -450,7 +481,7 @@ button.primary:hover {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 16px 48px var(--shadow);
   overflow: hidden;
 }
 .palette-input {
@@ -485,7 +516,7 @@ button.primary:hover {
 .palette-item.active .palette-name,
 .palette-item.active .palette-sub,
 .palette-item.active .palette-line {
-  color: #14121a;
+  color: var(--accent-text);
 }
 .palette-name {
   font-size: 0.92rem;
@@ -524,7 +555,7 @@ button.primary:hover {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 28px var(--shadow);
   padding: 4px;
   z-index: 121;
 }
@@ -544,7 +575,7 @@ button.primary:hover {
   background: var(--bg-sidebar);
 }
 .ctx-item.danger {
-  color: #f7768e;
+  color: var(--danger);
 }
 
 /* Prompt modal (rename) */
@@ -587,6 +618,107 @@ button.primary:hover {
   font-size: 0.85rem !important;
 }
 
+/* Settings modal */
+.settings {
+  width: 90%;
+  max-width: 560px;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px var(--shadow);
+  padding: 4px 20px 20px;
+}
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  background: var(--bg-elev);
+  padding-top: 16px;
+}
+.settings-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.settings-section {
+  margin-top: 18px;
+}
+.settings-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-row-label {
+  font-size: 0.9rem;
+  color: var(--text);
+}
+.seg {
+  display: inline-flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 2px;
+  gap: 2px;
+}
+.seg-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  padding: 4px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.seg-btn:hover {
+  color: var(--text);
+}
+.seg-btn.active {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.settings-hint {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: var(--text-faint);
+}
+.settings-hint code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+.settings-config {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-config-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) 1fr;
+  gap: 10px;
+  font-size: 0.85rem;
+}
+.settings-config-key {
+  color: var(--text-muted);
+}
+.settings-config-val {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  word-break: break-word;
+}
+
 /* CodeMirror autocomplete popup */
 .cm-tooltip.cm-tooltip-autocomplete {
   background: var(--bg-elev);
@@ -596,5 +728,5 @@ button.primary:hover {
 }
 .cm-tooltip-autocomplete > ul > li[aria-selected] {
   background: var(--accent);
-  color: #14121a;
+  color: var(--accent-text);
 }

@@ -4,8 +4,11 @@ import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import type { Extension } from "@codemirror/state";
 
-export const basaltTheme: Extension = EditorView.theme(
-  {
+// All colors are CSS variables (styles.css), so a light/dark switch is a palette
+// flip on <html> — this spec is theme-agnostic. Only CM6's built-in `dark` flag
+// differs between modes (see basaltThemeFor), which EditorPane swaps via a
+// compartment without remounting.
+const themeSpec = {
     "&": {
       color: "var(--text)",
       backgroundColor: "var(--bg-editor)",
@@ -207,9 +210,16 @@ export const basaltTheme: Extension = EditorView.theme(
       fontSize: "0.85em",
       color: "var(--accent)",
     },
-  },
-  { dark: true },
-);
+};
+
+/** The editor theme for a given mode. `dark` only sets CM6's built-in flag; the
+ * actual colors come from the CSS-variable palette, which the document root
+ * flips. */
+export function basaltThemeFor(dark: boolean): Extension {
+  return EditorView.theme(themeSpec, { dark });
+}
+
+export const basaltTheme: Extension = basaltThemeFor(true);
 
 const highlight = HighlightStyle.define([
   { tag: t.heading1, fontSize: "1.8em", fontWeight: "700", lineHeight: "1.3" },

@@ -32,6 +32,15 @@ import { Backlinks } from "./components/Backlinks";
 import { GraphView } from "./components/GraphView";
 import { Palette } from "./components/Palette";
 import { PromptModal } from "./components/PromptModal";
+import { SettingsModal } from "./components/SettingsModal";
+import {
+  applyResolvedTheme,
+  applyThemeMode,
+  loadThemeMode,
+  saveThemeMode,
+  watchSystemTheme,
+  type ThemeMode,
+} from "./lib/theme";
 import { linkTargetForFormat, rewriteLinks } from "./lib/rename";
 import { looksLikeAttachment, resolveAttachment } from "./lib/attachments";
 import { fillTemplate, formatMoment, UnsupportedTokenError } from "./lib/daily";
@@ -59,7 +68,7 @@ interface ActiveNote {
   scrollToLine?: number;
 }
 
-type ModalKind = "switcher" | "search" | "commands" | null;
+type ModalKind = "switcher" | "search" | "commands" | "settings" | null;
 
 interface AppCommand {
   id: string;
@@ -140,6 +149,12 @@ export default function App() {
   const [graphOpen, setGraphOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<"global" | "local">("global");
   const [sourceMode, setSourceMode] = useState(false);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(loadThemeMode);
+  // The CONCRETE theme (after resolving "system"), used to flip the editor's
+  // dark flag. Seeded from the data-theme the no-flash script already applied.
+  const [dark, setDark] = useState<boolean>(
+    () => document.documentElement.dataset.theme !== "light",
+  );
   const [fileMenu, setFileMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ path: string; rel: string } | null>(null);
 
@@ -539,6 +554,9 @@ export default function App() {
       } else if (k === "p" && !e.shiftKey) {
         e.preventDefault(); // also suppresses the webview's print dialog
         setModal("commands");
+      } else if (e.key === ",") {
+        e.preventDefault();
+        setModal("settings");
       }
     };
     window.addEventListener("keydown", onKey);
@@ -590,6 +608,25 @@ export default function App() {
     return f === "relative" || f === "absolute" ? f : "shortest";
   }, []);
   const getActiveRel = useCallback(() => activeRelRef.current, []);
+
+  // Persist + apply the chosen theme mode; keep `dark` (the resolved theme) in
+  // sync so the editor's dark flag follows.
+  useEffect(() => {
+    saveThemeMode(themeMode);
+    setDark(applyThemeMode(themeMode) === "dark");
+  }, [themeMode]);
+  // While on "system", track OS appearance changes live.
+  useEffect(() => {
+    if (themeMode !== "system") return;
+    return watchSystemTheme((resolved) => {
+      applyResolvedTheme(resolved);
+      setDark(resolved === "dark");
+    });
+  }, [themeMode]);
+  const toggleTheme = useCallback(() => {
+    // Toolbar quick-toggle: pick the explicit opposite of what's showing.
+    setThemeMode(document.documentElement.dataset.theme === "light" ? "dark" : "light");
+  }, []);
 
   const toggleSourceMode = useCallback(() => {
     setSourceMode((on) => {
@@ -1069,6 +1106,8 @@ export default function App() {
         },
       },
       { id: "change-vault", label: "Change vault…", hint: "open a different folder", run: () => void handleOpenVault() },
+      { id: "settings", label: "Open settings", hint: "appearance, vault info (⌘,)", run: () => setModal("settings") },
+      { id: "toggle-theme", label: "Toggle light/dark theme", hint: "switch appearance", run: toggleTheme },
       {
         id: "rename-note",
         label: "Rename current note…",
@@ -1095,7 +1134,7 @@ export default function App() {
         run: () => void handleReloadFromDisk(),
       },
     ],
-    [handleNewNote, handleOpenVault, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode],
+    [handleNewNote, handleOpenVault, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleTheme],
   );
 
   if (!vault) {
@@ -1137,6 +1176,13 @@ export default function App() {
           >
             Source
           </button>
+          <button
+            className="link-btn"
+            onClick={toggleTheme}
+            title={`Switch to ${dark ? "light" : "dark"} theme`}
+          >
+            {dark ? "☾" : "☀"}
+          </button>
           {changedOnDisk && (
             <span className="conflict">
               <span className="conflict-label">⚠ Changed on disk</span>
@@ -1163,6 +1209,7 @@ export default function App() {
             getLinkFormat={getLinkFormat}
             getActiveRel={getActiveRel}
             sourceMode={sourceMode}
+            dark={dark}
             onOpenWikilink={handleOpenWikilink}
             onOpenUrl={handleOpenUrl}
             resolveImage={handleResolveImage}
@@ -1237,6 +1284,14 @@ export default function App() {
           }}
           onClose={() => setModal(null)}
           emptyText="No matching command"
+        />
+      )}
+      {modal === "settings" && (
+        <SettingsModal
+          themeMode={themeMode}
+          onThemeMode={setThemeMode}
+          obsConfig={obsConfigRef.current}
+          onClose={() => setModal(null)}
         />
       )}
       {fileMenu && (
