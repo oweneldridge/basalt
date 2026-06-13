@@ -14,6 +14,7 @@ import {
   normalizeName,
   parseMarkdownLink,
   proseMask,
+  tagRegex,
   targetPathPart,
   wikilinkRegex,
 } from "./markdown";
@@ -127,17 +128,89 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** A `#tag` aggregate row for the tag pane. */
+export interface TagCount {
+  tag: string; // bare name, no leading '#'
+  count: number; // notes containing it
+}
+
+/** Tags declared in a leading YAML `tags:`/`tag:` key. Handles the inline
+ * (`[a, b]` / `a, b` / `a`) and block-list (`- a`) forms — the same subset the
+ * Properties parser understands; richer YAML is left for the body scan. */
+function frontmatterTags(lines: string[]): string[] {
+  if (lines.length < 2 || lines[0].trim() !== "---") return [];
+  let end = -1;
+  for (let j = 1; j < lines.length; j++) {
+    const t = lines[j].trim();
+    if (t === "---" || t === "...") {
+      end = j;
+      break;
+    }
+  }
+  if (end === -1) return [];
+  const unquote = (s: string) => s.trim().replace(/^['"]|['"]$/g, "").replace(/^#/, "").trim();
+  const out: string[] = [];
+  for (let j = 1; j < end; j++) {
+    const m = /^(tags|tag)\s*:\s*(.*)$/i.exec(lines[j]);
+    if (!m) continue;
+    const rest = m[2].trim();
+    if (rest && rest !== "[]") {
+      for (const part of rest.replace(/^\[|\]$/g, "").split(",")) {
+        const v = unquote(part);
+        if (v) out.push(v);
+      }
+    } else {
+      for (let k = j + 1; k < end; k++) {
+        const lm = /^\s*-\s+(.*)$/.exec(lines[k]);
+        if (!lm) break;
+        const v = unquote(lm[1]);
+        if (v) out.push(v);
+      }
+    }
+  }
+  return out;
+}
+
+/** Distinct tags in a note (frontmatter `tags:` + body `#tag`), deduped
+ * case-insensitively, preserving first-seen display casing. */
+export function extractTags(content: string): string[] {
+  const lines = content.split("\n");
+  const prose = proseMask(lines);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (raw: string) => {
+    const t = raw.replace(/^#/, "").trim();
+    if (!t) return;
+    const key = t.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(t);
+  };
+  for (const t of frontmatterTags(lines)) add(t);
+  for (let i = 0; i < lines.length; i++) {
+    if (!prose[i]) continue;
+    const line = lines[i].replace(INLINE_CODE_RE, " "); // `#x` in code isn't a tag
+    const re = tagRegex();
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line))) add(m[2]); // group 2 = bare name
+  }
+  return out;
+}
+
 export class VaultIndex {
   private occ = new Map<string, LinkOccurrence[]>();
   private meta = new Map<string, Meta>();
   // Resolution: normalized basename -> paths (an array, so case/Unicode-distinct
   // notes that share a basename all coexist). Slashed targets filter by path.
   private byName = new Map<string, string[]>();
+  // Per-note distinct tags, for the vault-wide tag pane (incremental like occ).
+  private tags = new Map<string, string[]>();
 
   build(notes: VaultNote[]): void {
     this.occ.clear();
     this.meta.clear();
     this.byName.clear();
+    this.tags.clear();
     for (const note of notes) this.setNote(note);
   }
 
@@ -146,13 +219,32 @@ export class VaultIndex {
     this.removeFromMaps(note.path); // drop the old name/rel entry for this path
     this.meta.set(note.path, { rel: note.rel, name: note.name });
     this.occ.set(note.path, extractLinks(note.content));
+    this.tags.set(note.path, extractTags(note.content));
     this.addToMaps(note.path, note.rel, note.name);
   }
 
   removeNote(path: string): void {
     this.removeFromMaps(path);
     this.occ.delete(path);
+    this.tags.delete(path);
     this.meta.delete(path);
+  }
+
+  /** Every tag in the vault with the number of notes using it. Sorted by count
+   * (desc), then name — the order the tag pane shows. */
+  allTags(): TagCount[] {
+    const counts = new Map<string, { display: string; count: number }>();
+    for (const tags of this.tags.values()) {
+      for (const t of tags) {
+        const key = t.toLowerCase();
+        const e = counts.get(key);
+        if (e) e.count++;
+        else counts.set(key, { display: t, count: 1 });
+      }
+    }
+    return [...counts.values()]
+      .map((e) => ({ tag: e.display, count: e.count }))
+      .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
   }
 
   private addToMaps(path: string, _rel: string, name: string): void {

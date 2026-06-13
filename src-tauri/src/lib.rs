@@ -715,6 +715,75 @@ fn read_obsidian_config(state: State<VaultState>) -> Result<ObsidianConfig, Stri
     Ok(cfg)
 }
 
+/// One flattened entry from `.obsidian/bookmarks.json`. Obsidian nests
+/// bookmarks in `group` items; we flatten them, carrying the group title for
+/// display. `path` is vault-relative; `subpath` is a `#heading`/`#^block` ref.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Bookmark {
+    #[serde(rename = "type")]
+    kind: String,
+    title: String,
+    path: Option<String>,
+    subpath: Option<String>,
+    query: Option<String>,
+    group: Option<String>,
+}
+
+fn collect_bookmarks(items: &[serde_json::Value], group: Option<String>, out: &mut Vec<Bookmark>) {
+    for item in items {
+        let kind = item.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let title_opt = item.get("title").and_then(|v| v.as_str()).map(String::from);
+        if kind == "group" {
+            if let Some(children) = item.get("items").and_then(|v| v.as_array()) {
+                collect_bookmarks(children, title_opt.or(group.clone()), out);
+            }
+            continue;
+        }
+        let path = item.get("path").and_then(|v| v.as_str()).map(String::from);
+        let subpath = item.get("subpath").and_then(|v| v.as_str()).map(String::from);
+        let query = item.get("query").and_then(|v| v.as_str()).map(String::from);
+        // Display title: explicit title, else derive from the path (+subpath) or query.
+        let title = title_opt.unwrap_or_else(|| {
+            if let Some(p) = &path {
+                let base = std::path::Path::new(p)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| p.clone());
+                match &subpath {
+                    Some(s) => format!("{base} {s}"),
+                    None => base,
+                }
+            } else if let Some(q) = &query {
+                format!("Search: {q}")
+            } else {
+                kind.clone()
+            }
+        });
+        out.push(Bookmark { kind, title, path, subpath, query, group: group.clone() });
+    }
+}
+
+/// Read `.obsidian/bookmarks.json` (Obsidian's Bookmarks core plugin),
+/// flattened. Missing/unparseable file = no bookmarks (never an error).
+#[tauri::command]
+fn read_obsidian_bookmarks(state: State<VaultState>) -> Result<Vec<Bookmark>, String> {
+    let root = current_root(&state)?;
+    let raw = match fs::read_to_string(root.join(".obsidian/bookmarks.json")) {
+        Ok(r) => r,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let v: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut out = Vec::new();
+    if let Some(items) = v.get("items").and_then(|x| x.as_array()) {
+        collect_bookmarks(items, None, &mut out);
+    }
+    Ok(out)
+}
+
 /// Watch the open vault recursively. Markdown file changes emit `vault-changed`
 /// with `{path, rel}` per note; directory-level changes (folder rename/delete,
 /// which FSEvents reports only for the folder path) emit a payload-less
@@ -912,6 +981,7 @@ pub fn run() {
             list_attachments,
             write_attachment,
             read_obsidian_config,
+            read_obsidian_bookmarks,
             start_watching,
             read_image,
             debug_log
@@ -923,6 +993,40 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collect_bookmarks_flattens_groups_and_derives_titles() {
+        let json = serde_json::json!({
+            "items": [
+                { "type": "file", "path": "Note.md" },
+                { "type": "heading", "path": "Doc.md", "subpath": "#Intro", "title": "Custom" },
+                { "type": "search", "query": "todo" },
+                { "type": "group", "title": "Refs", "items": [
+                    { "type": "block", "path": "Other.md", "subpath": "#^abc" },
+                    { "type": "graph" }
+                ]}
+            ]
+        });
+        let mut out = Vec::new();
+        collect_bookmarks(json["items"].as_array().unwrap(), None, &mut out);
+        // group is flattened away; its two leaf children remain (graph included,
+        // disabled in the UI).
+        assert_eq!(out.len(), 5);
+        // file: title derived from basename, no group
+        assert_eq!(out[0].title, "Note");
+        assert_eq!(out[0].group, None);
+        // explicit title wins
+        assert_eq!(out[1].title, "Custom");
+        // search: derived title + query preserved
+        assert_eq!(out[2].title, "Search: todo");
+        assert_eq!(out[2].query.as_deref(), Some("todo"));
+        // nested block carries the group; title is basename + subpath
+        assert_eq!(out[3].title, "Other #^abc");
+        assert_eq!(out[3].group.as_deref(), Some("Refs"));
+        // a typeless/path-less graph bookmark falls back to its kind for a title
+        assert_eq!(out[4].kind, "graph");
+        assert_eq!(out[4].group.as_deref(), Some("Refs"));
+    }
 
     #[test]
     fn atomic_write_roundtrip_tmp() {

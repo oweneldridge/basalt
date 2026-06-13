@@ -2,7 +2,7 @@
 // resolution, fence/frontmatter-aware extraction, and the multiline-wikilink
 // crash fix. Pure logic — no DOM, no Tauri.
 import { describe, expect, it } from "vitest";
-import { VaultIndex } from "./vaultIndex";
+import { VaultIndex, extractTags } from "./vaultIndex";
 import { proseMask, wikilinkRegex } from "./markdown";
 import type { VaultNote } from "./vault";
 
@@ -154,6 +154,46 @@ describe("markdown-style link indexing (useMarkdownLinks vaults)", () => {
       note("S.md", ["[see [1]](T.md)", "[![alt](img.png)](T.md)"].join("\n")),
     ]);
     expect(idx.backlinksFor("/v/T.md")).toHaveLength(2);
+  });
+});
+
+describe("extractTags", () => {
+  it("collects body #tags and nested tags, skipping code and headings", () => {
+    const t = extractTags(
+      ["# Heading not a tag", "Body with #alpha and #foo/bar.", "`#incode` ignored", "```", "#fenced", "```"].join("\n"),
+    );
+    expect(t.sort()).toEqual(["alpha", "foo/bar"]);
+  });
+  it("reads frontmatter tags in inline-array, comma, and list forms", () => {
+    expect(extractTags(["---", "tags: [a, b]", "---", "body"].join("\n")).sort()).toEqual(["a", "b"]);
+    expect(extractTags(["---", "tags: c, d", "---"].join("\n")).sort()).toEqual(["c", "d"]);
+    expect(extractTags(["---", "tags:", "  - e", "  - f", "---"].join("\n")).sort()).toEqual(["e", "f"]);
+  });
+  it("strips a leading # in frontmatter and dedupes against body, case-insensitively", () => {
+    const t = extractTags(["---", "tags: [Project]", "---", "see #project and #PROJECT"].join("\n"));
+    expect(t).toEqual(["Project"]); // first-seen casing kept, single entry
+  });
+  it("returns nothing for a note with no tags", () => {
+    expect(extractTags("just prose, no tags here")).toEqual([]);
+  });
+});
+
+describe("VaultIndex.allTags", () => {
+  it("counts notes per tag and sorts by count then name", () => {
+    const idx = indexOf([
+      note("A.md", "#shared #only-a"),
+      note("B.md", "#shared"),
+      note("C.md", ["---", "tags: [shared, zed]", "---"].join("\n")),
+    ]);
+    const tags = idx.allTags();
+    expect(tags[0]).toEqual({ tag: "shared", count: 3 }); // in all three
+    const names = tags.map((t) => t.tag).sort();
+    expect(names).toEqual(["only-a", "shared", "zed"]);
+  });
+  it("drops a note's tags when it is removed", () => {
+    const idx = indexOf([note("A.md", "#x"), note("B.md", "#x")]);
+    idx.removeNote("/v/B.md");
+    expect(idx.allTags()).toEqual([{ tag: "x", count: 1 }]);
   });
 });
 
