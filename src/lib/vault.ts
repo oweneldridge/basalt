@@ -107,6 +107,11 @@ export function readObsidianBookmarks(): Promise<Bookmark[]> {
   return invoke<Bookmark[]>("read_obsidian_bookmarks");
 }
 
+/** Write an export file to a user-chosen (save-dialog) path. */
+export function exportFile(path: string, content: string): Promise<void> {
+  return invoke<void>("export_file", { path, content });
+}
+
 /** Start (or restart) watching the open vault for on-disk changes. */
 export function startWatching(): Promise<void> {
   return invoke<void>("start_watching");
