@@ -37,6 +37,7 @@ import {
   type LayoutNode,
   type Dir,
   firstLeafId,
+  leafIds,
   removeLeaf,
   setSizes,
   splitLeaf,
@@ -102,6 +103,14 @@ interface AppCommand {
 const RECENT_MAX = 50;
 const recentKey = (vault: string) => `basalt.recent.${vault}`;
 const rightTabKey = (vault: string) => `basalt.rightTab.${vault}`;
+const workspaceKey = (vault: string) => `basalt.workspace.${vault}`;
+
+/** The serializable shape of a workspace (no live doc — restored from disk). */
+interface SavedWorkspace {
+  layout: LayoutNode;
+  panes: Record<string, { tabs: string[]; active: string | null }>;
+  focusedId: string | null;
+}
 
 function loadRecents(vault: string): string[] {
   try {
@@ -558,11 +567,68 @@ export default function App() {
     [],
   );
 
+  // Rebuild the saved tab/split layout for a vault. Tabs pointing at notes that
+  // no longer exist are dropped; emptied panes are removed; active docs are
+  // loaded from disk. Any malformed state silently leaves the workspace empty.
+  const restoreWorkspace = useCallback(
+    async (savedWs: string | null, list: VaultNote[]) => {
+      if (!savedWs) return;
+      let ws: SavedWorkspace;
+      try {
+        ws = JSON.parse(savedWs) as SavedWorkspace;
+        if (!ws.layout || !ws.panes) return;
+      } catch {
+        return;
+      }
+      const exists = new Set(list.map((n) => n.path));
+      let ids: string[];
+      try {
+        ids = leafIds(ws.layout);
+      } catch {
+        return;
+      }
+      const rebuilt: Record<string, Pane> = {};
+      let maxN = 0;
+      for (const id of ids) {
+        const saved = ws.panes[id];
+        const m = /(\d+)$/.exec(id);
+        if (m) maxN = Math.max(maxN, Number(m[1]));
+        const tabs = (saved?.tabs ?? []).filter((p) => exists.has(p));
+        if (tabs.length === 0) continue; // pane will be pruned from the layout
+        const active = saved?.active && tabs.includes(saved.active) ? saved.active : tabs[0];
+        let doc = "";
+        try {
+          doc = await readNote(active);
+        } catch {
+          doc = "";
+        }
+        rebuilt[id] = { id, tabs, active, doc };
+      }
+      // Drop layout leaves with no surviving pane.
+      let lay: LayoutNode | null = ws.layout;
+      for (const id of ids) if (!rebuilt[id] && lay) lay = removeLeaf(lay, id);
+      if (!lay || Object.keys(rebuilt).length === 0) return; // nothing to restore
+      const focus =
+        ws.focusedId && rebuilt[ws.focusedId] ? ws.focusedId : firstLeafId(lay);
+      paneCounter.current = Math.max(paneCounter.current, maxN);
+      panesRef.current = rebuilt;
+      layoutRef.current = lay;
+      focusedIdRef.current = focus;
+      setPanes(rebuilt);
+      setLayout(lay);
+      setFocusedId(focus);
+    },
+    [],
+  );
+
   const openVault = useCallback(
     async (path: string) => {
       await flushAll();
       clearImageCache();
       const root = await openVaultBackend(path); // canonical; sets managed state
+      // Read the saved workspace NOW (before any state reset fires the save
+      // effect and overwrites it) so it survives until restore below.
+      const savedWs = localStorage.getItem(workspaceKey(root));
       recents.current = loadRecents(root);
       obsConfigRef.current = await readObsidianConfig().catch(() => null);
       setBookmarks(await readObsidianBookmarks().catch(() => []));
@@ -591,13 +657,14 @@ export default function App() {
       // be clickable while the new vault loads.
       setNotes([]);
       index.current.build([]);
-      await loadVault();
+      const list = await loadVault();
+      await restoreWorkspace(savedWs, list);
       await listenerReady.current?.promise; // ensure we can hear events first
       startWatching().catch(() => {
         /* watcher unavailable — degrade gracefully */
       });
     },
-    [flushAll, loadVault],
+    [flushAll, loadVault, restoreWorkspace],
   );
 
   // Restore the last vault on launch (once — StrictMode double-mounts effects).
@@ -610,6 +677,25 @@ export default function App() {
       openVault(last).catch(() => localStorage.removeItem(LAST_VAULT_KEY));
     }
   }, [openVault]);
+
+  // Persist the workspace (layout + tabs + active + focus, NOT live docs) per
+  // vault. Keyed on the structural projection so per-keystroke doc syncs don't
+  // write; restored on the next openVault.
+  const lastSavedWs = useRef<string>("");
+  useEffect(() => {
+    const v = vaultRef.current;
+    if (!v) return;
+    const projected: SavedWorkspace["panes"] = {};
+    for (const [id, p] of Object.entries(panes)) projected[id] = { tabs: p.tabs, active: p.active };
+    const json = JSON.stringify({ layout, panes: projected, focusedId });
+    if (json === lastSavedWs.current) return;
+    lastSavedWs.current = json;
+    try {
+      localStorage.setItem(workspaceKey(v), json);
+    } catch {
+      /* ignore */
+    }
+  }, [layout, panes, focusedId]);
 
   // Prune tabs whose note no longer exists (deleted/moved) across ALL panes; a
   // pane that empties is removed from the layout. A pane's active note is kept
