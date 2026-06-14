@@ -33,6 +33,7 @@ import { EditorPane } from "./components/EditorPane";
 import { RightPanel, type RightTab } from "./components/RightPanel";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
+import { ReadingView } from "./components/ReadingView";
 import {
   type LayoutNode,
   type Dir,
@@ -187,6 +188,8 @@ export default function App() {
   const [graphOpen, setGraphOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<"global" | "local">("global");
   const [sourceMode, setSourceMode] = useState(false);
+  // Reading view: a rendered, read-only HTML view (vs the editable CM6 panes).
+  const [readingMode, setReadingMode] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(loadThemeMode);
   // The CONCRETE theme (after resolving "system"), used to flip the editor's
   // dark flag. Seeded from the data-theme the no-flash script already applied.
@@ -639,6 +642,7 @@ export default function App() {
           : "backlinks",
       );
       setSourceMode(localStorage.getItem(`basalt.sourceMode.${root}`) === "1");
+      setReadingMode(localStorage.getItem(`basalt.reading.${root}`) === "1");
       setVault(root);
       localStorage.setItem(LAST_VAULT_KEY, root);
       // Reset the workspace for the new vault.
@@ -1067,6 +1071,15 @@ export default function App() {
       const next = !on;
       const v = vaultRef.current;
       if (v) localStorage.setItem(`basalt.sourceMode.${v}`, next ? "1" : "0");
+      return next;
+    });
+  }, []);
+
+  const toggleReading = useCallback(() => {
+    setReadingMode((on) => {
+      const next = !on;
+      const v = vaultRef.current;
+      if (v) localStorage.setItem(`basalt.reading.${v}`, next ? "1" : "0");
       return next;
     });
   }, []);
@@ -1583,6 +1596,7 @@ export default function App() {
       { id: "new-note", label: "New note", hint: "create an untitled note", run: () => void handleNewNote() },
       { id: "daily-note", label: "Open today's daily note", hint: "creates it from your template if missing", run: () => void openDailyNote() },
       { id: "source-mode", label: "Toggle Source mode", hint: "raw Markdown ↔ Live Preview", run: toggleSourceMode },
+      { id: "reading-mode", label: "Toggle Reading view", hint: "rendered, read-only ↔ edit", run: toggleReading },
       { id: "open-note", label: "Open note…", hint: "quick switcher (⌘O)", run: () => setModal("switcher") },
       { id: "search", label: "Search vault…", hint: "full-text search (⇧⌘F)", run: () => { setSearchSeed(""); setModal("search"); } },
       { id: "graph", label: "Open graph view", hint: "global link graph", run: () => setGraphOpen(true) },
@@ -1626,7 +1640,7 @@ export default function App() {
         run: () => void handleReloadFromDisk(),
       },
     ],
-    [handleNewNote, handleOpenVault, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleTheme, splitFocused],
+    [handleNewNote, handleOpenVault, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused],
   );
 
   if (!vault) {
@@ -1667,25 +1681,37 @@ export default function App() {
           />
         )}
         {path ? (
-          <EditorPane
-            key={`${id}:${path}`}
-            path={path}
-            doc={pane.doc}
-            scrollToLine={pane.scrollToLine}
-            getNotes={getNotes}
-            getLinkFormat={getLinkFormat}
-            getActiveRel={() => rel || null}
-            sourceMode={sourceMode}
-            dark={dark}
-            onOpenWikilink={handleOpenWikilink}
-            onOpenUrl={handleOpenUrl}
-            resolveImage={(target) =>
-              vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null)
-            }
-            saveAttachment={handleSaveAttachment}
-            replacePlaceholder={handleReplacePlaceholder}
-            onChange={(doc) => handleChange(id, path, doc)}
-          />
+          readingMode ? (
+            <ReadingView
+              key={`${id}:${path}:read`}
+              doc={pane.doc}
+              onOpenInternal={handleOpenWikilink}
+              onOpenUrl={handleOpenUrl}
+              resolveImage={(target) =>
+                vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null)
+              }
+            />
+          ) : (
+            <EditorPane
+              key={`${id}:${path}`}
+              path={path}
+              doc={pane.doc}
+              scrollToLine={pane.scrollToLine}
+              getNotes={getNotes}
+              getLinkFormat={getLinkFormat}
+              getActiveRel={() => rel || null}
+              sourceMode={sourceMode}
+              dark={dark}
+              onOpenWikilink={handleOpenWikilink}
+              onOpenUrl={handleOpenUrl}
+              resolveImage={(target) =>
+                vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null)
+              }
+              saveAttachment={handleSaveAttachment}
+              replacePlaceholder={handleReplacePlaceholder}
+              onChange={(doc) => handleChange(id, path, doc)}
+            />
+          )
         ) : (
           <div className="placeholder">Select a note, or press + to create one.</div>
         )}
@@ -1714,9 +1740,17 @@ export default function App() {
             Graph
           </button>
           <button
+            className={readingMode ? "link-btn toggled" : "link-btn"}
+            onClick={toggleReading}
+            title="Toggle Reading view (rendered, read-only)"
+          >
+            Reading
+          </button>
+          <button
             className={sourceMode ? "link-btn toggled" : "link-btn"}
             onClick={toggleSourceMode}
             title="Toggle Source mode (raw Markdown)"
+            disabled={readingMode}
           >
             Source
           </button>

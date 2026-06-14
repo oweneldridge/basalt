@@ -461,6 +461,100 @@ button.primary:hover {
   min-height: 0;
   overflow: hidden;
 }
+
+/* Reading view (rendered, read-only) */
+.reading-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px 48px 40vh;
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+  color: var(--text);
+  font-family: var(--font-text);
+  line-height: 1.6;
+  font-size: 16px;
+}
+.reading-view h1 { font-size: 1.8em; }
+.reading-view h2 { font-size: 1.5em; }
+.reading-view h3 { font-size: 1.3em; }
+.reading-view h4 { font-size: 1.15em; }
+.reading-view h1, .reading-view h2, .reading-view h3,
+.reading-view h4, .reading-view h5, .reading-view h6 {
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 1em 0 0.4em;
+}
+.reading-view p { margin: 0.6em 0; }
+.reading-view a { color: var(--accent); text-decoration: none; cursor: pointer; }
+.reading-view a:hover { text-decoration: underline; }
+.reading-view ul, .reading-view ol { padding-left: 1.6em; margin: 0.4em 0; }
+.reading-view li.md-task { list-style: none; margin-left: -1.2em; }
+.reading-view li.md-task input { margin-right: 6px; }
+.reading-view blockquote {
+  border-left: 3px solid var(--border);
+  margin: 0.6em 0;
+  padding: 0 0 0 12px;
+  color: var(--text-muted);
+}
+.reading-view hr { border: none; border-top: 1px solid var(--border); margin: 1.2em 0; }
+.md-code-inline {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-elev);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--code);
+}
+.reading-view pre.md-code {
+  background: var(--bg-elev);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.reading-view pre.md-code code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  color: var(--text);
+}
+.md-wikilink { color: var(--accent); }
+.md-tag {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 8px;
+  padding: 1px 7px;
+  font-size: 0.86em;
+}
+.md-highlight { background: var(--highlight); border-radius: 3px; padding: 0 1px; }
+.reading-view img.md-image, .reading-view img.md-embed {
+  display: block;
+  max-width: 100%;
+  border-radius: 6px;
+  margin: 6px 0;
+}
+.md-image-missing { color: var(--text-faint); font-size: 0.9em; }
+.reading-view table.md-table, .reading-view table.md-properties {
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 0.95em;
+}
+.reading-view table.md-table th, .reading-view table.md-table td,
+.reading-view table.md-properties th, .reading-view table.md-properties td {
+  border: 1px solid var(--border);
+  padding: 5px 11px;
+  text-align: left;
+}
+.reading-view table.md-table th { background: var(--bg-elev); font-weight: 700; }
+.reading-view table.md-properties th { color: var(--text-muted); font-weight: 600; }
+.reading-view .md-callout {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 6px 12px;
+  margin: 0.6em 0;
+}
+.reading-view .md-callout-title { font-weight: 700; color: var(--accent); }
 .editor-host .cm-editor {
   height: 100%;
 }
