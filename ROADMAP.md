@@ -19,8 +19,8 @@ scope (Basalt gets its own plugin API in Phase 5).
 | 2.9 | Source mode toggle; read-only .obsidian interop (link format, daily notes + templates); markdown-style `[t](N.md)` link indexing + rename rewrite | shipped |
 | 3 | Settings UI + light theme, outline/tag/bookmark panes, heading folding, Properties editing (raw-YAML round-trip) | shipped |
 | 3.5 | Tabs, split panes, workspaces | shipped |
-| 3.7 | Reading mode; PDF/HTML export | next |
-| 4 | JSON Canvas viewer (read-only first, then editing); Bases views over YAML (parse Obsidian .base read-only) | planned |
+| 3.7 | Reading mode; PDF/HTML export | shipped |
+| 4 | JSON Canvas viewer (read-only first, then editing); Bases views over YAML (parse Obsidian .base read-only) | next |
 | 4.5 | Multi-vault switcher polish; multi-window (watchers keyed per vault root) | planned |
 | 5 | Basalt plugin API + first-party must-have workflows (Dataview-style queries, templater, tasks) | planned |
 
