@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { confirm, save } from "@tauri-apps/plugin-dialog";
 import {
   createNote,
   deleteNote,
@@ -19,6 +19,7 @@ import {
   writeNote,
   readObsidianConfig,
   readObsidianBookmarks,
+  exportFile,
   type Attachment,
   type Bookmark,
   type ChangedNote,
@@ -34,6 +35,8 @@ import { RightPanel, type RightTab } from "./components/RightPanel";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { ReadingView } from "./components/ReadingView";
+import { renderMarkdown } from "./lib/render";
+import { buildHtmlDocument } from "./lib/export";
 import {
   type LayoutNode,
   type Dir,
@@ -1084,6 +1087,59 @@ export default function App() {
     });
   }, []);
 
+  // Export the focused note as a self-contained HTML file (images inlined as
+  // data URLs so it stands alone).
+  const handleExportHtml = useCallback(async () => {
+    const pane = focusedIdRef.current ? panesRef.current[focusedIdRef.current] : null;
+    const path = pane?.active;
+    if (!path) return;
+    const note = notesRef.current.find((n) => n.path === path);
+    const name = note?.name ?? "note";
+    const rel = note?.rel ?? "";
+    try {
+      const dom = new DOMParser().parseFromString(`<div>${renderMarkdown(pane.doc)}</div>`, "text/html");
+      await Promise.all(
+        [...dom.querySelectorAll("img[data-basalt-img]")].map(async (img) => {
+          const target = img.getAttribute("data-basalt-img") ?? "";
+          img.removeAttribute("data-basalt-img");
+          if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//")) {
+            img.setAttribute("src", target);
+            return;
+          }
+          const url = await resolveImage(target, rel).catch(() => null);
+          if (url) {
+            img.setAttribute("src", url);
+          } else {
+            const span = dom.createElement("span");
+            span.className = "md-image-missing";
+            span.textContent = `🖼 ${target}`;
+            img.replaceWith(span);
+          }
+        }),
+      );
+      const body = dom.body.firstElementChild?.innerHTML ?? "";
+      const out = await save({
+        defaultPath: `${name}.html`,
+        filters: [{ name: "HTML", extensions: ["html"] }],
+      });
+      if (out) {
+        await exportFile(out, buildHtmlDocument(name, body));
+        setSaveError(null);
+      }
+    } catch (e) {
+      setSaveError(`Couldn't export: ${e}`);
+    }
+  }, []);
+
+  // Print / Save-as-PDF: needs the full (non-virtualized) Reading view, so
+  // switch to it first, then print after it renders.
+  const handlePrintPdf = useCallback(() => {
+    setReadingMode(true);
+    const v = vaultRef.current;
+    if (v) localStorage.setItem(`basalt.reading.${v}`, "1");
+    requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
+  }, []);
+
   /** Open (creating if needed) today's daily note, honoring daily-notes.json. */
   const openDailyNote = useCallback(async () => {
     const cfg = obsConfigRef.current;
@@ -1597,6 +1653,8 @@ export default function App() {
       { id: "daily-note", label: "Open today's daily note", hint: "creates it from your template if missing", run: () => void openDailyNote() },
       { id: "source-mode", label: "Toggle Source mode", hint: "raw Markdown ↔ Live Preview", run: toggleSourceMode },
       { id: "reading-mode", label: "Toggle Reading view", hint: "rendered, read-only ↔ edit", run: toggleReading },
+      { id: "export-html", label: "Export note as HTML…", hint: "self-contained file", run: () => void handleExportHtml() },
+      { id: "print-pdf", label: "Print / Save as PDF…", hint: "prints the Reading view", run: handlePrintPdf },
       { id: "open-note", label: "Open note…", hint: "quick switcher (⌘O)", run: () => setModal("switcher") },
       { id: "search", label: "Search vault…", hint: "full-text search (⇧⌘F)", run: () => { setSearchSeed(""); setModal("search"); } },
       { id: "graph", label: "Open graph view", hint: "global link graph", run: () => setGraphOpen(true) },
@@ -1640,7 +1698,7 @@ export default function App() {
         run: () => void handleReloadFromDisk(),
       },
     ],
-    [handleNewNote, handleOpenVault, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused],
+    [handleNewNote, handleOpenVault, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf],
   );
 
   if (!vault) {

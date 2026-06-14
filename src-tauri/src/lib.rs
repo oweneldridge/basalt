@@ -660,6 +660,14 @@ async fn write_attachment(
     })
 }
 
+/// Write a user-chosen export file. The path comes from the OS save dialog, so
+/// it is user-authorized and may live outside the vault (no containment check).
+/// One-shot, not a vault note, so it isn't written atomically.
+#[tauri::command]
+fn export_file(path: String, content: String) -> Result<(), String> {
+    fs::write(&path, content).map_err(|e| e.to_string())
+}
+
 /// Read-only view of the Obsidian settings Basalt honors. Basalt never writes
 /// `.obsidian/` — the shared vault's config belongs to Obsidian.
 #[derive(Serialize, Default)]
@@ -982,6 +990,7 @@ pub fn run() {
             write_attachment,
             read_obsidian_config,
             read_obsidian_bookmarks,
+            export_file,
             start_watching,
             read_image,
             debug_log
