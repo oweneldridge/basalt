@@ -32,6 +32,15 @@ import { Sidebar } from "./components/Sidebar";
 import { EditorPane } from "./components/EditorPane";
 import { RightPanel, type RightTab } from "./components/RightPanel";
 import { TabBar, type TabItem } from "./components/TabBar";
+import { PaneTree } from "./components/PaneTree";
+import {
+  type LayoutNode,
+  type Dir,
+  firstLeafId,
+  removeLeaf,
+  setSizes,
+  splitLeaf,
+} from "./lib/workspace";
 import { GraphView } from "./components/GraphView";
 import { Palette } from "./components/Palette";
 import { PromptModal } from "./components/PromptModal";
@@ -68,6 +77,16 @@ interface ActiveNote {
   path: string;
   doc: string;
   /** 1-based line to scroll to on open (from search / backlinks). */
+  scrollToLine?: number;
+}
+
+/** One editor pane: its own tab set, the live (active) note, and that note's
+ * loaded content. Multiple panes = multiple independently-live editors. */
+interface Pane {
+  id: string;
+  tabs: string[]; // open note paths, in tab order
+  active: string | null; // the live note path
+  doc: string; // content of the active note (initial/reconciled for its editor)
   scrollToLine?: number;
 }
 
@@ -139,7 +158,11 @@ export default function App() {
   const [vault, setVault] = useState<string | null>(null);
   const [notes, setNotes] = useState<VaultNote[]>([]);
   const [attachmentsList, setAttachmentsList] = useState<Attachment[]>([]);
-  const [active, setActive] = useState<ActiveNote | null>(null);
+  // Split-pane workspace: a layout tree of panes (by id), the panes map, and
+  // which pane has focus (drives the right panel / toolbar / open targets).
+  const [panes, setPanes] = useState<Record<string, Pane>>({});
+  const [layout, setLayout] = useState<LayoutNode | null>(null);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   // indexVersion bumps on every index change (incl. local saves) — graph etc.
@@ -148,7 +171,9 @@ export default function App() {
   // save, so the backlinks memo keys off this cheaper counter.
   const [indexVersion, setIndexVersion] = useState(0);
   const [structureVersion, setStructureVersion] = useState(0);
-  const [changedOnDisk, setChangedOnDisk] = useState(false);
+  // Paths with an unresolved on-disk conflict (per note, since panes may each
+  // hold a different dirty note). The badge shows for the focused note.
+  const [conflicts, setConflicts] = useState<Set<string>>(() => new Set());
   const [modal, setModal] = useState<ModalKind>(null);
   const [graphOpen, setGraphOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<"global" | "local">("global");
@@ -165,12 +190,6 @@ export default function App() {
   const [searchSeed, setSearchSeed] = useState("");
   const [fileMenu, setFileMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ path: string; rel: string } | null>(null);
-  // Open notes as tabs (paths, in tab order). Only the ACTIVE tab is the live
-  // editor — switching tabs flushes pending via openNoteByPath, so the single-
-  // note autosave/conflict machinery is untouched.
-  const [openTabs, setOpenTabs] = useState<string[]>([]);
-  const openTabsRef = useRef<string[]>([]);
-  openTabsRef.current = openTabs;
 
   const index = useRef(new VaultIndex());
   const vaultRef = useRef<string | null>(null);
@@ -181,14 +200,35 @@ export default function App() {
   attachmentsRef.current = attachmentsList;
   // Read-only .obsidian settings (link format, daily notes, attachment folder).
   const obsConfigRef = useRef<ObsidianConfig | null>(null);
+
+  // Workspace refs (read in callbacks/watcher without re-subscribing).
+  const panesRef = useRef<Record<string, Pane>>({});
+  panesRef.current = panes;
+  const layoutRef = useRef<LayoutNode | null>(null);
+  layoutRef.current = layout;
+  const focusedIdRef = useRef<string | null>(null);
+  focusedIdRef.current = focusedId;
+  const paneCounter = useRef(0);
+
+  // The FOCUSED pane and its active note — the "current note" for the right
+  // panel, toolbar, image resolution, and where openNoteByPath targets.
+  const focusedPane = focusedId ? (panes[focusedId] ?? null) : null;
+  const active: ActiveNote | null =
+    focusedPane && focusedPane.active
+      ? { path: focusedPane.active, doc: focusedPane.doc, scrollToLine: focusedPane.scrollToLine }
+      : null;
+  const changedOnDisk = !!(active && conflicts.has(active.path));
+
   const activePathRef = useRef<string | null>(null);
   activePathRef.current = active?.path ?? null;
   // The active note's vault-relative path — the key the watcher matches on.
   const activeRelRef = useRef<string | null>(null);
-  const changedOnDiskRef = useRef(false);
-  changedOnDiskRef.current = changedOnDisk;
-  const saveTimer = useRef<number | undefined>(undefined);
-  const pending = useRef<{ path: string; doc: string } | null>(null);
+  const conflictsRef = useRef<Set<string>>(conflicts);
+  conflictsRef.current = conflicts;
+  // Per-note pending edit (path -> latest doc) and per-note debounce timers —
+  // panes may each have a different unsaved note, so saving is keyed by path.
+  const saveTimers = useRef<Map<string, number>>(new Map());
+  const pending = useRef<Map<string, string>>(new Map());
   // Most-recently-opened rels (per vault) — orders the blank-query switcher.
   const recents = useRef<string[]>([]);
   // rel -> exact content Basalt last wrote there. The watcher echo of our own
@@ -234,6 +274,36 @@ export default function App() {
     }
   }, []);
 
+  // Conflict helpers also mutate conflictsRef synchronously so same-tick reads
+  // (e.g. closeTab's guard right after resolving) see the new state.
+  const clearConflict = useCallback((path: string) => {
+    if (conflictsRef.current.has(path)) {
+      const n = new Set(conflictsRef.current);
+      n.delete(path);
+      conflictsRef.current = n;
+    }
+    setConflicts((c) => {
+      if (!c.has(path)) return c;
+      const n = new Set(c);
+      n.delete(path);
+      return n;
+    });
+  }, []);
+  const addConflict = useCallback((path: string) => {
+    if (!conflictsRef.current.has(path)) {
+      conflictsRef.current = new Set(conflictsRef.current).add(path);
+    }
+    setConflicts((c) => (c.has(path) ? c : new Set(c).add(path)));
+  }, []);
+
+  // Update one pane's state (and keep panesRef in sync for same-tick reads).
+  const patchPane = useCallback((id: string, patch: Partial<Pane>) => {
+    setPanes((ps) => (ps[id] ? { ...ps, [id]: { ...ps[id], ...patch } } : ps));
+    if (panesRef.current[id]) {
+      panesRef.current = { ...panesRef.current, [id]: { ...panesRef.current[id], ...patch } };
+    }
+  }, []);
+
   const flushSave = useCallback(
     async (path: string, doc: string) => {
       setSaving(true);
@@ -250,11 +320,26 @@ export default function App() {
           setNotes((prev) => prev.map((n) => (n.path === path ? updated : n)));
           bumpIndex();
         }
-        if (path === activePathRef.current) setChangedOnDisk(false);
+        // `pending` is held until the write SUCCEEDS (not deleted before the
+        // await), so an external edit landing mid-write still sees this note as
+        // dirty and raises a conflict rather than being silently overwritten.
+        if (conflictsRef.current.has(path)) {
+          // A conflict was raised during the write — keep the local content for
+          // Keep-mine and leave the badge up; don't mark this saved.
+          if (!pending.current.has(path)) pending.current.set(path, doc);
+        } else if (pending.current.get(path) === doc) {
+          // No newer edit arrived during the write: fully saved.
+          pending.current.delete(path);
+          const t = saveTimers.current.get(path);
+          if (t !== undefined) {
+            window.clearTimeout(t);
+            saveTimers.current.delete(path);
+          }
+        }
       } catch (e) {
-        // Keep the edit pending (retried on the next change/flush) and say so —
-        // a failed write must never show "Saved".
-        pending.current = { path, doc };
+        // Keep the edit pending — but never clobber a NEWER edit typed during
+        // the failed write.
+        if (!pending.current.has(path)) pending.current.set(path, doc);
         setSaveError(String(e));
       } finally {
         setSaving(false);
@@ -263,67 +348,117 @@ export default function App() {
     [bumpIndex, rememberSelfWrite],
   );
 
-  const flushPending = useCallback(
-    async (force = false) => {
-      // While a disk conflict is unresolved, never auto-write — the badge makes
-      // the user choose Reload vs Keep mine. `force` is the explicit Keep-mine;
-      // the pending edit (and badge) survive otherwise.
-      if (changedOnDiskRef.current && !force) return;
-      if (saveTimer.current !== undefined) {
-        window.clearTimeout(saveTimer.current);
-        saveTimer.current = undefined;
-      }
-      const p = pending.current;
-      if (p) {
-        pending.current = null;
-        await flushSave(p.path, p.doc);
-      }
-    },
-    [flushSave],
-  );
-
+  // Debounced per-note autosave. `pending`/`saveTimers` are keyed by note PATH
+  // (one source of truth per note); when the same note is live in more than one
+  // pane, the OTHER panes are reconciled to this edit so they never diverge or
+  // collide (shared-document semantics). `paneId` is the pane that fired.
   const handleChange = useCallback(
-    (doc: string) => {
-      const path = activePathRef.current;
+    (paneId: string, path: string, doc: string) => {
       if (!path) return;
-      // A failed save can leave another note's edit pending — flush it rather
-      // than silently overwriting it with this note's pending.
-      if (pending.current && pending.current.path !== path) {
-        const p = pending.current;
-        pending.current = null;
-        void flushSave(p.path, p.doc);
+      pending.current.set(path, doc);
+      for (const p of Object.values(panesRef.current)) {
+        if (p.id !== paneId && p.active === path) patchPane(p.id, { doc });
       }
-      pending.current = { path, doc };
-      window.clearTimeout(saveTimer.current);
-      saveTimer.current = window.setTimeout(() => {
-        // While a disk conflict is pending, don't auto-overwrite — keep `pending`
-        // and wait for the user to resolve via the badge.
-        if (changedOnDiskRef.current) return;
-        const p = pending.current;
-        if (!p) return;
-        pending.current = null;
-        flushSave(p.path, p.doc);
-      }, SAVE_DEBOUNCE_MS);
+      const existing = saveTimers.current.get(path);
+      if (existing !== undefined) window.clearTimeout(existing);
+      saveTimers.current.set(
+        path,
+        window.setTimeout(() => {
+          saveTimers.current.delete(path);
+          // Don't auto-overwrite a note with an unresolved disk conflict.
+          if (conflictsRef.current.has(path)) return;
+          const d = pending.current.get(path);
+          if (d === undefined) return;
+          flushSave(path, d); // flushSave deletes `pending` only on success
+        }, SAVE_DEBOUNCE_MS),
+      );
+    },
+    [flushSave, patchPane],
+  );
+
+  // Flush ONE note's pending edit. While a conflict is unresolved, refuse unless
+  // `force` (the explicit Keep-mine) — the pending edit and badge survive.
+  const flushPath = useCallback(
+    async (path: string, force = false) => {
+      const t = saveTimers.current.get(path);
+      if (t !== undefined) {
+        window.clearTimeout(t);
+        saveTimers.current.delete(path);
+      }
+      if (conflictsRef.current.has(path) && !force) return;
+      const doc = pending.current.get(path);
+      if (doc === undefined) return;
+      await flushSave(path, doc); // flushSave deletes `pending` on success
     },
     [flushSave],
   );
 
-  const openNoteByPath = useCallback(
-    async (path: string, line?: number) => {
-      if (path === activePathRef.current) {
-        if (line !== undefined) {
-          setActive((a) => (a && a.path === path && a.scrollToLine !== line ? { ...a, scrollToLine: line } : a));
-        }
+  // Flush EVERY pending note (app close / vault switch / focus loss). Respects
+  // conflicts unless forced.
+  const flushAll = useCallback(
+    async (force = false) => {
+      for (const path of Array.from(pending.current.keys())) await flushPath(path, force);
+    },
+    [flushPath],
+  );
+
+  // Ensure there is a focused pane; create the first one if the workspace is
+  // empty. Refs are updated synchronously so an immediate open finds the pane.
+  const ensureWorkspace = useCallback((): string => {
+    const cur = focusedIdRef.current;
+    if (cur && panesRef.current[cur]) return cur;
+    const id = `pane${(paneCounter.current += 1)}`;
+    const pane: Pane = { id, tabs: [], active: null, doc: "" };
+    const lay: LayoutNode = { kind: "leaf", id };
+    panesRef.current = { ...panesRef.current, [id]: pane };
+    layoutRef.current = lay;
+    focusedIdRef.current = id;
+    setPanes((ps) => ({ ...ps, [id]: pane }));
+    setLayout(lay);
+    setFocusedId(id);
+    return id;
+  }, []);
+
+  const focusPane = useCallback((id: string) => {
+    if (focusedIdRef.current === id) return;
+    focusedIdRef.current = id;
+    setFocusedId(id);
+  }, []);
+
+  // Remove a pane from the layout (its last tab closed). Focus a neighbor.
+  const removePaneFromWorkspace = useCallback((id: string) => {
+    const next = layoutRef.current ? removeLeaf(layoutRef.current, id) : null;
+    const nextFocus =
+      focusedIdRef.current === id ? (next ? firstLeafId(next) : null) : focusedIdRef.current;
+    layoutRef.current = next;
+    focusedIdRef.current = nextFocus;
+    const np = { ...panesRef.current };
+    delete np[id];
+    panesRef.current = np;
+    setLayout(next);
+    setFocusedId(nextFocus);
+    setPanes((ps) => {
+      const n = { ...ps };
+      delete n[id];
+      return n;
+    });
+  }, []);
+
+  // Open `path` in a specific pane (adds the tab, loads the doc, focuses it).
+  const openInPane = useCallback(
+    async (id: string, path: string, line?: number) => {
+      const pane = panesRef.current[id];
+      if (!pane) return;
+      focusPane(id);
+      if (pane.active === path) {
+        if (line !== undefined) patchPane(id, { scrollToLine: line });
         return;
       }
-      // Don't silently leave an unresolved conflict — switching would flush the
-      // local edit over the on-disk version (implicit Keep-mine). Make the user
-      // resolve it first.
-      if (changedOnDiskRef.current) {
+      if (pane.active && conflictsRef.current.has(pane.active)) {
         setSaveError("Resolve the “Changed on disk” conflict (Reload or Keep mine) first");
         return;
       }
-      await flushPending();
+      if (pane.active) await flushPath(pane.active);
       let doc: string;
       try {
         doc = await readNote(path);
@@ -332,10 +467,8 @@ export default function App() {
         return;
       }
       setSaveError(null);
-      setChangedOnDisk(false);
-      setActive({ path, doc, scrollToLine: line });
-      setOpenTabs((tabs) => (tabs.includes(path) ? tabs : [...tabs, path]));
-      // Track recency for the quick switcher.
+      const tabs = pane.tabs.includes(path) ? pane.tabs : [...pane.tabs, path];
+      patchPane(id, { tabs, active: path, doc, scrollToLine: line });
       const rel = notesRef.current.find((n) => n.path === path)?.rel;
       const v = vaultRef.current;
       if (rel && v) {
@@ -347,51 +480,87 @@ export default function App() {
         }
       }
     },
-    [flushPending],
+    [flushPath, focusPane, patchPane],
   );
 
-  // Remove a tab. If it was the active one, activate a neighbor (right, else
-  // left) or clear when none remain. Does NOT flush — callers handle pending
-  // (closeTab flushes; delete/external-removal discard).
-  const dropTab = useCallback(
-    (path: string) => {
-      const tabs = openTabsRef.current;
-      const idx = tabs.indexOf(path);
-      if (idx === -1) return;
-      const next = tabs.filter((p) => p !== path);
-      setOpenTabs(next);
-      if (path === activePathRef.current) {
-        const neighbor = next[idx] ?? next[idx - 1] ?? null;
-        if (neighbor) {
-          void openNoteByPath(neighbor);
-        } else {
-          setActive(null);
-          setChangedOnDisk(false);
-        }
-      }
+  // Open a note in the FOCUSED pane (creating the first pane if needed). The
+  // sidebar / switcher / backlinks all route through here.
+  const openNoteByPath = useCallback(
+    async (path: string, line?: number) => {
+      const id = ensureWorkspace();
+      await openInPane(id, path, line);
     },
-    [openNoteByPath],
+    [ensureWorkspace, openInPane],
   );
 
-  // User-initiated close (× / Cmd-W): save the active tab's edits first. Block
-  // closing a note with an unresolved conflict (closing would silently flush).
+  // User-initiated close of one pane's tab. Saves first; blocks while that note
+  // has an unresolved conflict; removes the pane when its last tab closes.
   const closeTab = useCallback(
-    async (path: string) => {
-      if (path === activePathRef.current) {
-        if (changedOnDiskRef.current) {
-          setSaveError("Resolve the “Changed on disk” conflict before closing this note");
-          return;
-        }
-        await flushPending();
+    async (id: string, path: string) => {
+      const pane = panesRef.current[id];
+      if (!pane) return;
+      const isActive = pane.active === path;
+      if (isActive && conflictsRef.current.has(path)) {
+        setSaveError("Resolve the “Changed on disk” conflict before closing this note");
+        return;
       }
-      dropTab(path);
+      if (isActive) await flushPath(path);
+      const idx = pane.tabs.indexOf(path);
+      const tabs = pane.tabs.filter((p) => p !== path);
+      if (tabs.length === 0) {
+        removePaneFromWorkspace(id);
+        return;
+      }
+      if (!isActive) {
+        patchPane(id, { tabs });
+        return;
+      }
+      const neighbor = tabs[idx] ?? tabs[idx - 1] ?? null;
+      let doc = "";
+      if (neighbor) {
+        try {
+          doc = await readNote(neighbor);
+        } catch {
+          doc = "";
+        }
+      }
+      patchPane(id, { tabs, active: neighbor, doc, scrollToLine: undefined });
     },
-    [flushPending, dropTab],
+    [flushPath, patchPane, removePaneFromWorkspace],
+  );
+
+  // Split the focused pane along `dir`, opening the same note in the new pane
+  // (Obsidian opens the current note in the split).
+  const splitFocused = useCallback(
+    (dir: Dir) => {
+      const id = focusedIdRef.current;
+      const lay = layoutRef.current;
+      if (!id || !lay) return;
+      const src = panesRef.current[id];
+      const newId = `pane${(paneCounter.current += 1)}`;
+      const active = src?.active ?? null;
+      const newPane: Pane = {
+        id: newId,
+        tabs: active ? [active] : [],
+        active,
+        // Carry the live (unsaved) content, not just the last-loaded doc.
+        doc: active ? (pending.current.get(active) ?? src?.doc ?? "") : "",
+        scrollToLine: src?.scrollToLine,
+      };
+      const nextLayout = splitLeaf(lay, id, newId, dir);
+      panesRef.current = { ...panesRef.current, [newId]: newPane };
+      layoutRef.current = nextLayout;
+      focusedIdRef.current = newId;
+      setPanes((ps) => ({ ...ps, [newId]: newPane }));
+      setLayout(nextLayout);
+      setFocusedId(newId);
+    },
+    [],
   );
 
   const openVault = useCallback(
     async (path: string) => {
-      await flushPending();
+      await flushAll();
       clearImageCache();
       const root = await openVaultBackend(path); // canonical; sets managed state
       recents.current = loadRecents(root);
@@ -406,9 +575,17 @@ export default function App() {
       setSourceMode(localStorage.getItem(`basalt.sourceMode.${root}`) === "1");
       setVault(root);
       localStorage.setItem(LAST_VAULT_KEY, root);
-      setActive(null);
-      setOpenTabs([]);
-      setChangedOnDisk(false);
+      // Reset the workspace for the new vault.
+      panesRef.current = {};
+      layoutRef.current = null;
+      focusedIdRef.current = null;
+      setPanes({});
+      setLayout(null);
+      setFocusedId(null);
+      setConflicts(new Set());
+      pending.current.clear();
+      saveTimers.current.forEach((t) => window.clearTimeout(t));
+      saveTimers.current.clear();
       selfWrites.current.clear();
       // Empty the stale note list immediately — the old vault's entries must not
       // be clickable while the new vault loads.
@@ -420,7 +597,7 @@ export default function App() {
         /* watcher unavailable — degrade gracefully */
       });
     },
-    [flushPending, loadVault],
+    [flushAll, loadVault],
   );
 
   // Restore the last vault on launch (once — StrictMode double-mounts effects).
@@ -434,16 +611,63 @@ export default function App() {
     }
   }, [openVault]);
 
-  // Prune tabs whose note no longer exists (deleted/moved). The active tab is
-  // kept even mid-conflict — its removal is handled by the reconcile/delete
-  // paths (which switch to a neighbor), not here.
+  // Prune tabs whose note no longer exists (deleted/moved) across ALL panes; a
+  // pane that empties is removed from the layout. A pane's active note is kept
+  // even if gone WHILE it has an unresolved conflict (awaiting Reload/Keep mine).
   useEffect(() => {
     const exists = new Set(notes.map((n) => n.path));
-    setOpenTabs((tabs) => {
-      const next = tabs.filter((p) => exists.has(p) || p === activePathRef.current);
-      return next.length === tabs.length ? tabs : next;
-    });
-  }, [notes]);
+    const conf = conflictsRef.current;
+    const panesNow = panesRef.current;
+    let changed = false;
+    const nextPanes: Record<string, Pane> = {};
+    const removeIds: string[] = [];
+    // Panes whose active note was pruned and need a neighbor loaded from disk.
+    const toLoad: { id: string; neighbor: string }[] = [];
+    for (const [id, pane] of Object.entries(panesNow)) {
+      const keep = pane.tabs.filter((p) => exists.has(p) || (p === pane.active && conf.has(p)));
+      if (keep.length === pane.tabs.length) {
+        nextPanes[id] = pane;
+        continue;
+      }
+      changed = true;
+      if (keep.length === 0) {
+        removeIds.push(id);
+        continue;
+      }
+      if (pane.active && !keep.includes(pane.active)) {
+        // Active note gone. Show a placeholder until the neighbor's content is
+        // read from DISK — never seed the editor from the in-memory notes list
+        // (it's empty for oversized notes, which a stray keystroke would then
+        // truncate on disk).
+        const idx = pane.tabs.indexOf(pane.active);
+        toLoad.push({ id, neighbor: keep[Math.min(idx, keep.length - 1)] });
+        nextPanes[id] = { ...pane, tabs: keep, active: null, doc: "", scrollToLine: undefined };
+      } else {
+        nextPanes[id] = { ...pane, tabs: keep };
+      }
+    }
+    if (!changed) return;
+    let lay = layoutRef.current;
+    for (const id of removeIds) {
+      delete nextPanes[id];
+      if (lay) lay = removeLeaf(lay, id);
+    }
+    let focus = focusedIdRef.current;
+    if (focus && !nextPanes[focus]) focus = lay ? firstLeafId(lay) : null;
+    panesRef.current = nextPanes;
+    layoutRef.current = lay;
+    focusedIdRef.current = focus;
+    setPanes(nextPanes);
+    setLayout(lay);
+    setFocusedId(focus);
+    for (const { id, neighbor } of toLoad) {
+      void readNote(neighbor)
+        .then((doc) => patchPane(id, { active: neighbor, doc, scrollToLine: undefined }))
+        .catch(() => {
+          /* neighbor gone too — the next prune pass handles it */
+        });
+    }
+  }, [notes, patchPane]);
 
   // Apply a batch of external (on-disk) changes, matched by vault-relative path.
   const processChanges = useCallback(
@@ -500,53 +724,56 @@ export default function App() {
       });
       bumpStructure();
 
-      // Reconcile the open note per the conflict policy.
-      const activeRel = activeRelRef.current;
-      const activePath = activePathRef.current;
-      if (!activeRel || !activePath) return;
-      const open = results.find((r) => r.rel === activeRel);
-      if (!open) return;
-      // A content-identical "change" (mtime touch, sync-client noise) is a
-      // no-op — it must never raise a conflict, even while the user is typing.
-      if (open.ok && open.content === prevByRel.get(activeRel)) return;
-      const dirty = pending.current?.path === activePath;
-      if (!open.ok) {
-        if (dirty) setChangedOnDisk(true);
-        else dropTab(activePath); // vanished from disk: close its tab, pick a neighbor
-        return;
+      // Reconcile EVERY pane whose live note changed, per the conflict policy.
+      for (const r of results) {
+        // A content-identical "change" (mtime touch, sync noise) is a no-op — it
+        // must never raise a conflict, even while the user is typing.
+        if (r.ok && r.content === prevByRel.get(r.rel)) continue;
+        const dirty = pending.current.has(r.path);
+        if (!r.ok) {
+          // Vanished from disk. If dirty, keep it open with a conflict badge
+          // (the prune effect won't drop a conflicted active); else the prune
+          // effect (notes now lack it) closes its tabs.
+          if (dirty) addConflict(r.path);
+          continue;
+        }
+        if (dirty) {
+          addConflict(r.path);
+          continue;
+        }
+        // Update content in every pane showing it (each EditorPane reconciles,
+        // preserving its caret).
+        for (const p of Object.values(panesRef.current)) {
+          if (p.active === r.path) patchPane(p.id, { doc: r.content });
+        }
       }
-      if (dirty) {
-        setChangedOnDisk(true);
-        return;
-      }
-      // Update content in-place (EditorPane reconciles, preserving the caret).
-      setActive({ path: activePath, doc: open.content });
     },
-    [bumpStructure, dropTab],
+    [bumpStructure, addConflict, patchPane],
   );
 
   // Full-index rescan (folder rename/delete — the watcher can't enumerate the
   // affected notes, so reload everything and reconcile the open note).
   const handleRescan = useCallback(async () => {
     if (!vaultRef.current) return;
-    const activePath = activePathRef.current;
-    const prevContent = activePath
-      ? notesRef.current.find((n) => n.path === activePath)?.content
-      : undefined;
+    // Snapshot each pane's live note content before the reload.
+    const prevByPath = new Map(notesRef.current.map((n) => [n.path, n.content]));
     const list = await loadVault();
     changedBuf.current.clear(); // the reload covered anything still buffered
-    if (!activePath) return;
-    const still = list.find((n) => n.path === activePath);
-    const dirty = pending.current?.path === activePath;
-    if (!still) {
-      if (dirty) setChangedOnDisk(true);
-      else dropTab(activePath);
-      return;
+    const byPath = new Map(list.map((n) => [n.path, n]));
+    for (const p of Object.values(panesRef.current)) {
+      if (!p.active) continue;
+      const still = byPath.get(p.active);
+      const dirty = pending.current.has(p.active);
+      if (!still) {
+        if (dirty) addConflict(p.active); // keep + badge; else the prune effect drops it
+        continue;
+      }
+      const prev = prevByPath.get(p.active);
+      if (!dirty && prev !== undefined && still.content !== prev) {
+        patchPane(p.id, { doc: still.content });
+      }
     }
-    if (!dirty && prevContent !== undefined && still.content !== prevContent) {
-      setActive({ path: activePath, doc: still.content });
-    }
-  }, [loadVault, dropTab]);
+  }, [loadVault, addConflict, patchPane]);
 
   // Listen for on-disk changes; debounce; then apply.
   useEffect(() => {
@@ -599,7 +826,7 @@ export default function App() {
   // Never lose a pending edit on focus loss or app close.
   useEffect(() => {
     const onBlur = () => {
-      void flushPending();
+      void flushAll();
     };
     window.addEventListener("blur", onBlur);
     let unlisten: (() => void) | undefined;
@@ -611,7 +838,7 @@ export default function App() {
           if (closing) return;
           closing = true;
           event.preventDefault();
-          await flushPending();
+          await flushAll();
           void win.close();
         });
       } catch {
@@ -622,7 +849,7 @@ export default function App() {
       window.removeEventListener("blur", onBlur);
       unlisten?.();
     };
-  }, [flushPending]);
+  }, [flushAll]);
 
   // Quick switcher (Cmd/Ctrl-O) and vault search (Cmd/Ctrl-Shift-F).
   useEffect(() => {
@@ -651,68 +878,75 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Tab keyboard: Mod-W closes the active tab; Ctrl-Tab / Ctrl-Shift-Tab cycle.
+  // Tab keyboard (focused pane): Mod-W closes the active tab; Ctrl-Tab /
+  // Ctrl-Shift-Tab cycle.
   useEffect(() => {
     const isMac = /Mac/.test(navigator.platform);
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || !vaultRef.current) return;
+      const pane = focusedIdRef.current ? panesRef.current[focusedIdRef.current] : null;
+      if (!pane || !pane.active) return;
       const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
       if (mod && e.key.toLowerCase() === "w") {
-        const p = activePathRef.current;
-        if (p) {
-          e.preventDefault();
-          void closeTab(p);
-        }
+        e.preventDefault();
+        void closeTab(pane.id, pane.active);
         return;
       }
-      if (e.ctrlKey && e.key === "Tab") {
-        const tabs = openTabsRef.current;
-        if (tabs.length > 1) {
-          e.preventDefault();
-          const cur = tabs.indexOf(activePathRef.current ?? "");
-          const dir = e.shiftKey ? -1 : 1;
-          void openNoteByPath(tabs[(cur + dir + tabs.length) % tabs.length]);
-        }
+      if (e.ctrlKey && e.key === "Tab" && pane.tabs.length > 1) {
+        e.preventDefault();
+        const cur = pane.tabs.indexOf(pane.active);
+        const d = e.shiftKey ? -1 : 1;
+        void openInPane(pane.id, pane.tabs[(cur + d + pane.tabs.length) % pane.tabs.length]);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [closeTab, openNoteByPath]);
+  }, [closeTab, openInPane]);
 
   const handleOpenVault = useCallback(async () => {
     const picked = await pickVault();
     if (picked) await openVault(picked);
   }, [openVault]);
 
-  // Conflict resolution: take the on-disk version, discarding local edits.
+  // Conflict resolution (focused pane): take the on-disk version, discarding
+  // local edits.
   const handleReloadFromDisk = useCallback(async () => {
-    const path = activePathRef.current;
-    if (!path) return;
-    window.clearTimeout(saveTimer.current);
-    saveTimer.current = undefined;
-    pending.current = null;
-    setChangedOnDisk(false);
+    const id = focusedIdRef.current;
+    const path = id ? panesRef.current[id]?.active : null;
+    if (!id || !path) return;
+    const t = saveTimers.current.get(path);
+    if (t !== undefined) {
+      window.clearTimeout(t);
+      saveTimers.current.delete(path);
+    }
+    pending.current.delete(path);
+    clearConflict(path);
     try {
       const doc = await readNote(path);
-      setActive({ path, doc });
+      // Sync every pane showing this note to the on-disk version.
+      for (const p of Object.values(panesRef.current)) {
+        if (p.active === path) patchPane(p.id, { doc, scrollToLine: undefined });
+      }
     } catch {
-      dropTab(path);
+      void closeTab(id, path); // vanished — close its tab
     }
-  }, [dropTab]);
+  }, [clearConflict, patchPane, closeTab]);
 
-  // Conflict resolution: keep local edits, overwriting the on-disk version.
+  // Conflict resolution (focused pane): keep local edits, overwriting disk.
   const handleKeepMine = useCallback(async () => {
-    // If the note vanished from the vault (deleted/moved externally), don't
-    // recreate it at a stale path from here.
-    const path = activePathRef.current;
-    if (path && !notesRef.current.some((n) => n.path === path)) {
-      pending.current = null;
-      dropTab(path);
+    const id = focusedIdRef.current;
+    const path = id ? panesRef.current[id]?.active : null;
+    if (!id || !path) return;
+    if (!notesRef.current.some((n) => n.path === path)) {
+      // Vanished externally — don't recreate it at a stale path; just close it.
+      pending.current.delete(path);
+      clearConflict(path);
+      void closeTab(id, path);
       return;
     }
-    setChangedOnDisk(false);
-    await flushPending(true); // explicit Keep-mine: write despite the conflict
-  }, [flushPending, dropTab]);
+    clearConflict(path);
+    await flushPath(path, true); // explicit Keep-mine: write despite the conflict
+  }, [clearConflict, flushPath, closeTab]);
 
   const getNotes = useCallback(
     () => notesRef.current.map((n) => ({ name: n.name, rel: n.rel })),
@@ -722,7 +956,6 @@ export default function App() {
     const f = obsConfigRef.current?.newLinkFormat;
     return f === "relative" || f === "absolute" ? f : "shortest";
   }, []);
-  const getActiveRel = useCallback(() => activeRelRef.current, []);
 
   // Persist + apply the chosen theme mode; keep `dark` (the resolved theme) in
   // sync so the editor's dark flag follows.
@@ -782,7 +1015,6 @@ export default function App() {
       return;
     }
     try {
-      await flushPending();
       const path = await createNote(relNoExt);
       const root = vaultRef.current ?? "";
       const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
@@ -810,17 +1042,12 @@ export default function App() {
     } catch (e) {
       setSaveError(`Couldn't open daily note: ${e}`);
     }
-  }, [openNoteByPath, flushPending, rememberSelfWrite, bumpStructure]);
+  }, [openNoteByPath, rememberSelfWrite, bumpStructure]);
 
   const handleOpenUrl = useCallback((url: string) => {
     void openUrl(url).catch(() => {
       /* opener unavailable or blocked URL — ignore */
     });
-  }, []);
-
-  const handleResolveImage = useCallback((target: string) => {
-    if (!vaultRef.current) return Promise.resolve(null);
-    return resolveImage(target, activeRelRef.current ?? "");
   }, []);
 
   const handleOpenAttachment = useCallback((path: string) => {
@@ -887,15 +1114,16 @@ export default function App() {
           index.current.setNote(updated);
           setNotes((prev) => prev.map((n) => (n.path === holder.path ? updated : n)));
           bumpIndex();
-          if (activePathRef.current === holder.path) {
-            setActive({ path: holder.path, doc: next });
+          // Reflect the finalized link in any pane showing this note.
+          for (const p of Object.values(panesRef.current)) {
+            if (p.active === holder.path) patchPane(p.id, { doc: next });
           }
         } catch (e) {
           setSaveError(`Couldn't finalize attachment: ${e}`);
         }
       })();
     },
-    [rememberSelfWrite, bumpIndex],
+    [rememberSelfWrite, bumpIndex, patchPane],
   );
 
   /** Create a note (folder-qualified ok) and open it, updating the index
@@ -904,7 +1132,6 @@ export default function App() {
     async (name: string) => {
       const root = vaultRef.current;
       if (!root) return;
-      await flushPending();
       const path = await createNote(name);
       const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
       const note: VaultNote = { path, rel, name: nameFromRel(rel), content: "" };
@@ -914,9 +1141,9 @@ export default function App() {
       );
       rememberSelfWrite(rel, "");
       bumpStructure();
-      await openNoteByPath(path);
+      await openNoteByPath(path); // flushes the focused pane's current note first
     },
-    [flushPending, openNoteByPath, rememberSelfWrite, bumpStructure],
+    [openNoteByPath, rememberSelfWrite, bumpStructure],
   );
 
   const handleOpenWikilink = useCallback(
@@ -960,33 +1187,40 @@ export default function App() {
     }
   }, [createAndOpen]);
 
+  const activePath = active?.path ?? null;
   const activeNote = useMemo(
-    () => (active ? (notes.find((n) => n.path === active.path) ?? null) : null),
-    [active, notes],
+    () => (activePath ? (notes.find((n) => n.path === activePath) ?? null) : null),
+    [activePath, notes],
   );
   const activeName = activeNote?.name ?? null;
   activeRelRef.current = activeNote?.rel ?? null;
 
-  const tabItems = useMemo<TabItem[]>(
-    () => openTabs.map((p) => ({ path: p, name: notes.find((n) => n.path === p)?.name ?? basename(p) })),
-    [openTabs, notes],
+  // Tab labels for a given pane's open paths.
+  const tabItemsFor = useCallback(
+    (paths: string[]): TabItem[] =>
+      paths.map((p) => ({
+        path: p,
+        name: notesRef.current.find((n) => n.path === p)?.name ?? basename(p),
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [notes],
   );
 
   // Backlinks of the active note can only change when OTHER notes change, so
   // this keys off structureVersion — a local autosave doesn't re-resolve the vault.
   const backlinks = useMemo(() => {
-    if (!active) return [];
-    return index.current.backlinksFor(active.path);
+    if (!activePath) return [];
+    return index.current.backlinksFor(activePath);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, structureVersion]);
+  }, [activePath, structureVersion]);
 
   // Expensive (full vault text scan). Recompute only when the active note
   // changes — not on every debounced save — to keep typing smooth.
   const unlinked = useMemo(() => {
-    if (!activeName || !active) return [];
-    return index.current.unlinkedMentionsFor(activeName, notesRef.current, active.path);
+    if (!activeName || !activePath) return [];
+    return index.current.unlinkedMentionsFor(activeName, notesRef.current, activePath);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeName, active]);
+  }, [activeName, activePath]);
 
   // Vault-wide tags for the tag pane — from the incremental index, so this only
   // recomputes when content (indexVersion) or structure (structureVersion) changes.
@@ -1066,22 +1300,23 @@ export default function App() {
       });
       if (!ok) return;
       try {
-        if (pending.current?.path === path) {
-          window.clearTimeout(saveTimer.current);
-          pending.current = null; // never resurrect a deleted note via autosave
-        }
+        // Never resurrect a deleted note via autosave / a stale conflict.
+        const t = saveTimers.current.get(path);
+        if (t !== undefined) window.clearTimeout(t);
+        saveTimers.current.delete(path);
+        pending.current.delete(path);
+        clearConflict(path);
         await deleteNote(path);
         selfWrites.current.delete(note.rel); // a restored copy must not be swallowed
         index.current.removeNote(path);
         setNotes((prev) => prev.filter((n) => n.path !== path));
         recents.current = recents.current.filter((r) => r !== note.rel);
-        dropTab(path); // close its tab; activate a neighbor if it was active
-        bumpStructure();
+        bumpStructure(); // the prune effect closes its tab in every pane
       } catch (e) {
         setSaveError(`Couldn't delete: ${e}`);
       }
     },
-    [bumpStructure, dropTab],
+    [bumpStructure, clearConflict],
   );
 
   /** Rename/move a note and rewrite every link to it across the vault.
@@ -1099,14 +1334,13 @@ export default function App() {
       const root = vaultRef.current;
       if (!root) return;
       try {
-        await flushPending();
-        if (pending.current) {
+        await flushAll();
+        if (pending.current.has(oldPath)) {
           setSaveError("Couldn't rename: unsaved changes failed to save");
           return;
         }
         const oldNote = notesRef.current.find((n) => n.path === oldPath);
         if (!oldNote) return;
-        const wasActive = activePathRef.current === oldPath;
 
         // Pre-rename resolution snapshot — mapTarget decisions must use the
         // OLD vault shape even after the live index is updated below.
@@ -1179,10 +1413,23 @@ export default function App() {
             .sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
         );
         bumpStructure();
-        // Keep the tab pointing at the renamed path (the prune effect would
-        // otherwise drop the now-nonexistent oldPath).
-        setOpenTabs((tabs) => tabs.map((p) => (p === oldPath ? newPath : p)));
-        if (wasActive) setActive({ path: newPath, doc: renamedContent });
+        // Re-point the renamed note in every pane (tabs + active + doc) so the
+        // prune effect doesn't drop the now-nonexistent oldPath.
+        const repoint = (pane: Pane): Pane => {
+          if (!pane.tabs.includes(oldPath)) return pane;
+          return {
+            ...pane,
+            tabs: pane.tabs.map((p) => (p === oldPath ? newPath : p)),
+            active: pane.active === oldPath ? newPath : pane.active,
+            doc: pane.active === oldPath ? renamedContent : pane.doc,
+          };
+        };
+        panesRef.current = Object.fromEntries(
+          Object.entries(panesRef.current).map(([id, pane]) => [id, repoint(pane)]),
+        );
+        setPanes((ps) =>
+          Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, repoint(pane)])),
+        );
 
         // Rewrite affected sources. Candidates are found via the in-memory
         // snapshot (cheap), but each rewrite reads DISK content so a fresher
@@ -1215,10 +1462,9 @@ export default function App() {
           const byPath = new Map(updates.map((u) => [u.path, u]));
           setNotes((prev) => prev.map((n) => byPath.get(n.path) ?? n));
           bumpStructure();
-          const activeNow = activePathRef.current;
-          if (activeNow && byPath.has(activeNow)) {
-            // The open note had links rewritten — reconcile in place.
-            setActive({ path: activeNow, doc: byPath.get(activeNow)!.content });
+          // Any pane showing a note whose links were rewritten reconciles in place.
+          for (const p of Object.values(panesRef.current)) {
+            if (p.active && byPath.has(p.active)) patchPane(p.id, { doc: byPath.get(p.active)!.content });
           }
         }
         setSaveError(
@@ -1228,7 +1474,7 @@ export default function App() {
         setSaveError(`Couldn't rename: ${e}`);
       }
     },
-    [flushPending, bumpStructure, rememberSelfWrite, getLinkFormat],
+    [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane],
   );
 
   // Blank-query switcher shows recently opened notes first.
@@ -1266,6 +1512,8 @@ export default function App() {
       { id: "change-vault", label: "Change vault…", hint: "open a different folder", run: () => void handleOpenVault() },
       { id: "settings", label: "Open settings", hint: "appearance, vault info (⌘,)", run: () => setModal("settings") },
       { id: "toggle-theme", label: "Toggle light/dark theme", hint: "switch appearance", run: toggleTheme },
+      { id: "split-right", label: "Split right", hint: "open the current note in a vertical split", run: () => splitFocused("row") },
+      { id: "split-down", label: "Split down", hint: "open the current note in a horizontal split", run: () => splitFocused("col") },
       {
         id: "rename-note",
         label: "Rename current note…",
@@ -1292,7 +1540,7 @@ export default function App() {
         run: () => void handleReloadFromDisk(),
       },
     ],
-    [handleNewNote, handleOpenVault, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleTheme],
+    [handleNewNote, handleOpenVault, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleTheme, splitFocused],
   );
 
   if (!vault) {
@@ -1306,6 +1554,58 @@ export default function App() {
       </div>
     );
   }
+
+  // Render one pane's content: a tab bar + the live editor for its active note.
+  // Mousedown anywhere in the pane focuses it (so it drives the right panel).
+  const renderPane = (id: string) => {
+    const pane = panes[id];
+    if (!pane) return null;
+    const focused = id === focusedId;
+    const path = pane.active;
+    const rel = path ? (notes.find((n) => n.path === path)?.rel ?? "") : "";
+    return (
+      <div
+        className={focused ? "pane focused" : "pane"}
+        onMouseDownCapture={() => focusPane(id)}
+      >
+        {pane.tabs.length > 0 && (
+          <TabBar
+            tabs={tabItemsFor(pane.tabs)}
+            activePath={pane.active}
+            onSelect={(p) => void openInPane(id, p)}
+            onClose={(p) => void closeTab(id, p)}
+            onNew={() => {
+              focusPane(id);
+              setModal("switcher");
+            }}
+          />
+        )}
+        {path ? (
+          <EditorPane
+            key={`${id}:${path}`}
+            path={path}
+            doc={pane.doc}
+            scrollToLine={pane.scrollToLine}
+            getNotes={getNotes}
+            getLinkFormat={getLinkFormat}
+            getActiveRel={() => rel || null}
+            sourceMode={sourceMode}
+            dark={dark}
+            onOpenWikilink={handleOpenWikilink}
+            onOpenUrl={handleOpenUrl}
+            resolveImage={(target) =>
+              vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null)
+            }
+            saveAttachment={handleSaveAttachment}
+            replacePlaceholder={handleReplacePlaceholder}
+            onChange={(doc) => handleChange(id, path, doc)}
+          />
+        ) : (
+          <div className="placeholder">Select a note, or press + to create one.</div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="app">
@@ -1341,6 +1641,14 @@ export default function App() {
           >
             {dark ? "☾" : "☀"}
           </button>
+          <button
+            className="link-btn"
+            onClick={() => splitFocused("row")}
+            title="Split right"
+            disabled={!active}
+          >
+            ⊟
+          </button>
           {changedOnDisk && (
             <span className="conflict">
               <span className="conflict-label">⚠ Changed on disk</span>
@@ -1357,32 +1665,18 @@ export default function App() {
             {saveError ? `⚠ ${saveError}` : saving ? "Saving…" : active ? "Saved" : ""}
           </span>
         </div>
-        {openTabs.length > 0 && (
-          <TabBar
-            tabs={tabItems}
-            activePath={active?.path ?? null}
-            onSelect={(path) => void openNoteByPath(path)}
-            onClose={(path) => void closeTab(path)}
-            onNew={() => setModal("switcher")}
-          />
-        )}
-        {active ? (
-          <EditorPane
-            key={active.path}
-            path={active.path}
-            doc={active.doc}
-            scrollToLine={active.scrollToLine}
-            getNotes={getNotes}
-            getLinkFormat={getLinkFormat}
-            getActiveRel={getActiveRel}
-            sourceMode={sourceMode}
-            dark={dark}
-            onOpenWikilink={handleOpenWikilink}
-            onOpenUrl={handleOpenUrl}
-            resolveImage={handleResolveImage}
-            saveAttachment={handleSaveAttachment}
-            replacePlaceholder={handleReplacePlaceholder}
-            onChange={handleChange}
+        {layout ? (
+          <PaneTree
+            node={layout}
+            renderPane={renderPane}
+            onSizes={(p, sizes) =>
+              setLayout((l) => {
+                if (!l) return l;
+                const next = setSizes(l, p, sizes);
+                layoutRef.current = next;
+                return next;
+              })
+            }
           />
         ) : (
           <div className="placeholder">Select a note, or press + to create one.</div>

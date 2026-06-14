@@ -385,6 +385,77 @@ button.primary:hover {
   background: var(--bg-elev);
 }
 
+/* Split panes */
+.pane-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.pane-split-row {
+  flex-direction: row;
+}
+.pane-split-col {
+  flex-direction: column;
+}
+.pane-cell {
+  display: flex;
+  flex-basis: 0;
+  min-width: 0;
+  min-height: 0;
+}
+.pane-cell > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.pane-resizer {
+  flex: 0 0 auto;
+  position: relative;
+  background: var(--border);
+  z-index: 5;
+}
+.pane-resizer-v {
+  width: 1px;
+  cursor: col-resize;
+}
+.pane-resizer-h {
+  height: 1px;
+  cursor: row-resize;
+}
+/* Wider invisible hit area around the 1px divider. */
+.pane-resizer-v::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+.pane-resizer-h::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -3px;
+}
+.pane-resizer:hover {
+  background: var(--accent);
+}
+.pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+.pane.focused .tab-bar {
+  background: var(--bg-elev);
+}
+
 .editor-host {
   flex: 1;
   min-height: 0;
