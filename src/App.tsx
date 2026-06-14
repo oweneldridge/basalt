@@ -31,6 +31,7 @@ import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { EditorPane } from "./components/EditorPane";
 import { RightPanel, type RightTab } from "./components/RightPanel";
+import { TabBar, type TabItem } from "./components/TabBar";
 import { GraphView } from "./components/GraphView";
 import { Palette } from "./components/Palette";
 import { PromptModal } from "./components/PromptModal";
@@ -164,6 +165,12 @@ export default function App() {
   const [searchSeed, setSearchSeed] = useState("");
   const [fileMenu, setFileMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ path: string; rel: string } | null>(null);
+  // Open notes as tabs (paths, in tab order). Only the ACTIVE tab is the live
+  // editor — switching tabs flushes pending via openNoteByPath, so the single-
+  // note autosave/conflict machinery is untouched.
+  const [openTabs, setOpenTabs] = useState<string[]>([]);
+  const openTabsRef = useRef<string[]>([]);
+  openTabsRef.current = openTabs;
 
   const index = useRef(new VaultIndex());
   const vaultRef = useRef<string | null>(null);
@@ -256,17 +263,24 @@ export default function App() {
     [bumpIndex, rememberSelfWrite],
   );
 
-  const flushPending = useCallback(async () => {
-    if (saveTimer.current !== undefined) {
-      window.clearTimeout(saveTimer.current);
-      saveTimer.current = undefined;
-    }
-    const p = pending.current;
-    if (p) {
-      pending.current = null;
-      await flushSave(p.path, p.doc);
-    }
-  }, [flushSave]);
+  const flushPending = useCallback(
+    async (force = false) => {
+      // While a disk conflict is unresolved, never auto-write — the badge makes
+      // the user choose Reload vs Keep mine. `force` is the explicit Keep-mine;
+      // the pending edit (and badge) survive otherwise.
+      if (changedOnDiskRef.current && !force) return;
+      if (saveTimer.current !== undefined) {
+        window.clearTimeout(saveTimer.current);
+        saveTimer.current = undefined;
+      }
+      const p = pending.current;
+      if (p) {
+        pending.current = null;
+        await flushSave(p.path, p.doc);
+      }
+    },
+    [flushSave],
+  );
 
   const handleChange = useCallback(
     (doc: string) => {
@@ -302,6 +316,13 @@ export default function App() {
         }
         return;
       }
+      // Don't silently leave an unresolved conflict — switching would flush the
+      // local edit over the on-disk version (implicit Keep-mine). Make the user
+      // resolve it first.
+      if (changedOnDiskRef.current) {
+        setSaveError("Resolve the “Changed on disk” conflict (Reload or Keep mine) first");
+        return;
+      }
       await flushPending();
       let doc: string;
       try {
@@ -313,6 +334,7 @@ export default function App() {
       setSaveError(null);
       setChangedOnDisk(false);
       setActive({ path, doc, scrollToLine: line });
+      setOpenTabs((tabs) => (tabs.includes(path) ? tabs : [...tabs, path]));
       // Track recency for the quick switcher.
       const rel = notesRef.current.find((n) => n.path === path)?.rel;
       const v = vaultRef.current;
@@ -326,6 +348,45 @@ export default function App() {
       }
     },
     [flushPending],
+  );
+
+  // Remove a tab. If it was the active one, activate a neighbor (right, else
+  // left) or clear when none remain. Does NOT flush — callers handle pending
+  // (closeTab flushes; delete/external-removal discard).
+  const dropTab = useCallback(
+    (path: string) => {
+      const tabs = openTabsRef.current;
+      const idx = tabs.indexOf(path);
+      if (idx === -1) return;
+      const next = tabs.filter((p) => p !== path);
+      setOpenTabs(next);
+      if (path === activePathRef.current) {
+        const neighbor = next[idx] ?? next[idx - 1] ?? null;
+        if (neighbor) {
+          void openNoteByPath(neighbor);
+        } else {
+          setActive(null);
+          setChangedOnDisk(false);
+        }
+      }
+    },
+    [openNoteByPath],
+  );
+
+  // User-initiated close (× / Cmd-W): save the active tab's edits first. Block
+  // closing a note with an unresolved conflict (closing would silently flush).
+  const closeTab = useCallback(
+    async (path: string) => {
+      if (path === activePathRef.current) {
+        if (changedOnDiskRef.current) {
+          setSaveError("Resolve the “Changed on disk” conflict before closing this note");
+          return;
+        }
+        await flushPending();
+      }
+      dropTab(path);
+    },
+    [flushPending, dropTab],
   );
 
   const openVault = useCallback(
@@ -346,6 +407,7 @@ export default function App() {
       setVault(root);
       localStorage.setItem(LAST_VAULT_KEY, root);
       setActive(null);
+      setOpenTabs([]);
       setChangedOnDisk(false);
       selfWrites.current.clear();
       // Empty the stale note list immediately — the old vault's entries must not
@@ -371,6 +433,17 @@ export default function App() {
       openVault(last).catch(() => localStorage.removeItem(LAST_VAULT_KEY));
     }
   }, [openVault]);
+
+  // Prune tabs whose note no longer exists (deleted/moved). The active tab is
+  // kept even mid-conflict — its removal is handled by the reconcile/delete
+  // paths (which switch to a neighbor), not here.
+  useEffect(() => {
+    const exists = new Set(notes.map((n) => n.path));
+    setOpenTabs((tabs) => {
+      const next = tabs.filter((p) => exists.has(p) || p === activePathRef.current);
+      return next.length === tabs.length ? tabs : next;
+    });
+  }, [notes]);
 
   // Apply a batch of external (on-disk) changes, matched by vault-relative path.
   const processChanges = useCallback(
@@ -439,7 +512,7 @@ export default function App() {
       const dirty = pending.current?.path === activePath;
       if (!open.ok) {
         if (dirty) setChangedOnDisk(true);
-        else setActive(null);
+        else dropTab(activePath); // vanished from disk: close its tab, pick a neighbor
         return;
       }
       if (dirty) {
@@ -449,7 +522,7 @@ export default function App() {
       // Update content in-place (EditorPane reconciles, preserving the caret).
       setActive({ path: activePath, doc: open.content });
     },
-    [bumpStructure],
+    [bumpStructure, dropTab],
   );
 
   // Full-index rescan (folder rename/delete — the watcher can't enumerate the
@@ -467,13 +540,13 @@ export default function App() {
     const dirty = pending.current?.path === activePath;
     if (!still) {
       if (dirty) setChangedOnDisk(true);
-      else setActive(null);
+      else dropTab(activePath);
       return;
     }
     if (!dirty && prevContent !== undefined && still.content !== prevContent) {
       setActive({ path: activePath, doc: still.content });
     }
-  }, [loadVault]);
+  }, [loadVault, dropTab]);
 
   // Listen for on-disk changes; debounce; then apply.
   useEffect(() => {
@@ -578,6 +651,34 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Tab keyboard: Mod-W closes the active tab; Ctrl-Tab / Ctrl-Shift-Tab cycle.
+  useEffect(() => {
+    const isMac = /Mac/.test(navigator.platform);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !vaultRef.current) return;
+      const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+      if (mod && e.key.toLowerCase() === "w") {
+        const p = activePathRef.current;
+        if (p) {
+          e.preventDefault();
+          void closeTab(p);
+        }
+        return;
+      }
+      if (e.ctrlKey && e.key === "Tab") {
+        const tabs = openTabsRef.current;
+        if (tabs.length > 1) {
+          e.preventDefault();
+          const cur = tabs.indexOf(activePathRef.current ?? "");
+          const dir = e.shiftKey ? -1 : 1;
+          void openNoteByPath(tabs[(cur + dir + tabs.length) % tabs.length]);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [closeTab, openNoteByPath]);
+
   const handleOpenVault = useCallback(async () => {
     const picked = await pickVault();
     if (picked) await openVault(picked);
@@ -595,9 +696,9 @@ export default function App() {
       const doc = await readNote(path);
       setActive({ path, doc });
     } catch {
-      setActive(null);
+      dropTab(path);
     }
-  }, []);
+  }, [dropTab]);
 
   // Conflict resolution: keep local edits, overwriting the on-disk version.
   const handleKeepMine = useCallback(async () => {
@@ -605,14 +706,13 @@ export default function App() {
     // recreate it at a stale path from here.
     const path = activePathRef.current;
     if (path && !notesRef.current.some((n) => n.path === path)) {
-      setChangedOnDisk(false);
-      setActive(null);
       pending.current = null;
+      dropTab(path);
       return;
     }
     setChangedOnDisk(false);
-    await flushPending();
-  }, [flushPending]);
+    await flushPending(true); // explicit Keep-mine: write despite the conflict
+  }, [flushPending, dropTab]);
 
   const getNotes = useCallback(
     () => notesRef.current.map((n) => ({ name: n.name, rel: n.rel })),
@@ -867,6 +967,11 @@ export default function App() {
   const activeName = activeNote?.name ?? null;
   activeRelRef.current = activeNote?.rel ?? null;
 
+  const tabItems = useMemo<TabItem[]>(
+    () => openTabs.map((p) => ({ path: p, name: notes.find((n) => n.path === p)?.name ?? basename(p) })),
+    [openTabs, notes],
+  );
+
   // Backlinks of the active note can only change when OTHER notes change, so
   // this keys off structureVersion — a local autosave doesn't re-resolve the vault.
   const backlinks = useMemo(() => {
@@ -970,16 +1075,13 @@ export default function App() {
         index.current.removeNote(path);
         setNotes((prev) => prev.filter((n) => n.path !== path));
         recents.current = recents.current.filter((r) => r !== note.rel);
-        if (activePathRef.current === path) {
-          setChangedOnDisk(false);
-          setActive(null);
-        }
+        dropTab(path); // close its tab; activate a neighbor if it was active
         bumpStructure();
       } catch (e) {
         setSaveError(`Couldn't delete: ${e}`);
       }
     },
-    [bumpStructure],
+    [bumpStructure, dropTab],
   );
 
   /** Rename/move a note and rewrite every link to it across the vault.
@@ -1077,6 +1179,9 @@ export default function App() {
             .sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
         );
         bumpStructure();
+        // Keep the tab pointing at the renamed path (the prune effect would
+        // otherwise drop the now-nonexistent oldPath).
+        setOpenTabs((tabs) => tabs.map((p) => (p === oldPath ? newPath : p)));
         if (wasActive) setActive({ path: newPath, doc: renamedContent });
 
         // Rewrite affected sources. Candidates are found via the in-memory
@@ -1252,6 +1357,15 @@ export default function App() {
             {saveError ? `⚠ ${saveError}` : saving ? "Saving…" : active ? "Saved" : ""}
           </span>
         </div>
+        {openTabs.length > 0 && (
+          <TabBar
+            tabs={tabItems}
+            activePath={active?.path ?? null}
+            onSelect={(path) => void openNoteByPath(path)}
+            onClose={(path) => void closeTab(path)}
+            onNew={() => setModal("switcher")}
+          />
+        )}
         {active ? (
           <EditorPane
             key={active.path}
