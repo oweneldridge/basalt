@@ -35,6 +35,7 @@ import { RightPanel, type RightTab } from "./components/RightPanel";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { ReadingView } from "./components/ReadingView";
+import { CanvasView } from "./components/CanvasView";
 import { renderMarkdown } from "./lib/render";
 import { renderMermaid } from "./lib/mermaid";
 import { buildHtmlDocument } from "./lib/export";
@@ -131,6 +132,10 @@ function basename(p: string): string {
   const parts = p.split(/[/\\]/).filter(Boolean);
   return parts[parts.length - 1] ?? p;
 }
+
+/** Markdown notes are editable + indexed; other openable files (.canvas) are
+ * read-only viewers — autosave/conflict logic must skip them. */
+const isMarkdownPath = (p: string) => /\.md$/i.test(p);
 
 /** Mirror of the Rust build_note_path sanitization, so frontend existence
  * lookups agree with the filename the backend will actually create. */
@@ -234,6 +239,9 @@ export default function App() {
       ? { path: focusedPane.active, doc: focusedPane.doc, scrollToLine: focusedPane.scrollToLine }
       : null;
   const changedOnDisk = !!(active && conflicts.has(active.path));
+  // A focused .canvas is a read-only viewer, not an editable note: the toolbar,
+  // outline, export/print, and reading/source toggles must not treat it as one.
+  const activeIsCanvas = !!active && /\.canvas$/i.test(active.path);
 
   const activePathRef = useRef<string | null>(null);
   activePathRef.current = active?.path ?? null;
@@ -278,7 +286,7 @@ export default function App() {
     setNotes(list);
     setAttachmentsList(atts);
     bumpStructure();
-    return list;
+    return { notes: list, attachments: atts };
   }, [bumpStructure]);
 
   const rememberSelfWrite = useCallback((rel: string, content: string) => {
@@ -370,7 +378,7 @@ export default function App() {
   // collide (shared-document semantics). `paneId` is the pane that fired.
   const handleChange = useCallback(
     (paneId: string, path: string, doc: string) => {
-      if (!path) return;
+      if (!path || !isMarkdownPath(path)) return; // read-only viewers don't autosave
       pending.current.set(path, doc);
       for (const p of Object.values(panesRef.current)) {
         if (p.id !== paneId && p.active === path) patchPane(p.id, { doc });
@@ -578,7 +586,7 @@ export default function App() {
   // no longer exist are dropped; emptied panes are removed; active docs are
   // loaded from disk. Any malformed state silently leaves the workspace empty.
   const restoreWorkspace = useCallback(
-    async (savedWs: string | null, list: VaultNote[]) => {
+    async (savedWs: string | null, list: VaultNote[], atts: Attachment[]) => {
       if (!savedWs) return;
       let ws: SavedWorkspace;
       try {
@@ -587,7 +595,8 @@ export default function App() {
       } catch {
         return;
       }
-      const exists = new Set(list.map((n) => n.path));
+      // Notes AND attachments (.canvas) are valid tab paths.
+      const exists = new Set([...list.map((n) => n.path), ...atts.map((a) => a.path)]);
       let ids: string[];
       try {
         ids = leafIds(ws.layout);
@@ -665,8 +674,8 @@ export default function App() {
       // be clickable while the new vault loads.
       setNotes([]);
       index.current.build([]);
-      const list = await loadVault();
-      await restoreWorkspace(savedWs, list);
+      const { notes: list, attachments: atts } = await loadVault();
+      await restoreWorkspace(savedWs, list, atts);
       await listenerReady.current?.promise; // ensure we can hear events first
       startWatching().catch(() => {
         /* watcher unavailable — degrade gracefully */
@@ -709,7 +718,8 @@ export default function App() {
   // pane that empties is removed from the layout. A pane's active note is kept
   // even if gone WHILE it has an unresolved conflict (awaiting Reload/Keep mine).
   useEffect(() => {
-    const exists = new Set(notes.map((n) => n.path));
+    // Notes AND attachments (.canvas opens in a pane) are valid tab paths.
+    const exists = new Set([...notes.map((n) => n.path), ...attachmentsList.map((a) => a.path)]);
     const conf = conflictsRef.current;
     const panesNow = panesRef.current;
     let changed = false;
@@ -761,7 +771,7 @@ export default function App() {
           /* neighbor gone too — the next prune pass handles it */
         });
     }
-  }, [notes, patchPane]);
+  }, [notes, attachmentsList, patchPane]);
 
   // Apply a batch of external (on-disk) changes, matched by vault-relative path.
   const processChanges = useCallback(
@@ -851,11 +861,29 @@ export default function App() {
     if (!vaultRef.current) return;
     // Snapshot each pane's live note content before the reload.
     const prevByPath = new Map(notesRef.current.map((n) => [n.path, n.content]));
-    const list = await loadVault();
+    const { notes: list, attachments: atts } = await loadVault();
     changedBuf.current.clear(); // the reload covered anything still buffered
     const byPath = new Map(list.map((n) => [n.path, n]));
+    const attPaths = new Set(atts.map((a) => a.path));
     for (const p of Object.values(panesRef.current)) {
       if (!p.active) continue;
+      // Canvas panes are read-only attachments (not in `notes`): re-read the file
+      // so external edits show; if it's gone the prune effect closes the pane
+      // (attachmentsList was just refreshed by loadVault).
+      if (/\.canvas$/i.test(p.active)) {
+        if (attPaths.has(p.active)) {
+          const id = p.id;
+          const prevDoc = p.doc;
+          void readNote(p.active)
+            .then((fresh) => {
+              if (fresh !== prevDoc) patchPane(id, { doc: fresh });
+            })
+            .catch(() => {
+              /* removed between listing and read — prune handles it */
+            });
+        }
+        continue;
+      }
       const still = byPath.get(p.active);
       const dirty = pending.current.has(p.active);
       if (!still) {
@@ -1094,6 +1122,10 @@ export default function App() {
     const pane = focusedIdRef.current ? panesRef.current[focusedIdRef.current] : null;
     const path = pane?.active;
     if (!path) return;
+    if (/\.canvas$/i.test(path)) {
+      setSaveError("Export to HTML isn't available for canvas files.");
+      return;
+    }
     const note = notesRef.current.find((n) => n.path === path);
     const name = note?.name ?? "note";
     const rel = note?.rel ?? "";
@@ -1148,6 +1180,11 @@ export default function App() {
   // Print / Save-as-PDF: needs the full (non-virtualized) Reading view, so
   // switch to it first, then print after it renders.
   const handlePrintPdf = useCallback(() => {
+    const pane = focusedIdRef.current ? panesRef.current[focusedIdRef.current] : null;
+    if (pane?.active && /\.canvas$/i.test(pane.active)) {
+      setSaveError("Print / PDF isn't available for canvas files.");
+      return;
+    }
     setReadingMode(true);
     const v = vaultRef.current;
     if (v) localStorage.setItem(`basalt.reading.${v}`, "1");
@@ -1219,9 +1256,18 @@ export default function App() {
     });
   }, []);
 
-  const handleOpenAttachment = useCallback((path: string) => {
-    void openPath(path).catch((e) => setSaveError(`Couldn't open: ${e}`));
-  }, []);
+  const handleOpenAttachment = useCallback(
+    (path: string) => {
+      // .canvas opens in a pane (read-only viewer); other attachments open in
+      // the system viewer.
+      if (/\.canvas$/i.test(path)) {
+        void openNoteByPath(path);
+        return;
+      }
+      void openPath(path).catch((e) => setSaveError(`Couldn't open: ${e}`));
+    },
+    [openNoteByPath],
+  );
 
   /** Persist a pasted/dropped file into the vault (honoring Obsidian's
    * attachmentFolderPath) and return the embed link target. */
@@ -1315,8 +1361,10 @@ export default function App() {
     [openNoteByPath, rememberSelfWrite, bumpStructure],
   );
 
+  // `allowCreate` is false for read-only viewers (the canvas): an unresolved
+  // file node must NOT silently create a note in the live vault.
   const handleOpenWikilink = useCallback(
-    async (target: string) => {
+    async (target: string, allowCreate = true) => {
       const resolved = index.current.resolve(target, activePathRef.current ?? "");
       if (resolved) {
         await openNoteByPath(resolved);
@@ -1332,6 +1380,10 @@ export default function App() {
         return;
       }
       if (looksLikeAttachment(pathPart)) return;
+      if (!allowCreate) {
+        setSaveError(`File not found: ${pathPart}`);
+        return;
+      }
       const name = normalizeCreateTarget(pathPart, activeRelRef.current);
       if (!name) return; // relative target escaping the vault root
       try {
@@ -1753,7 +1805,19 @@ export default function App() {
           />
         )}
         {path ? (
-          readingMode ? (
+          /\.canvas$/i.test(path) ? (
+            <CanvasView
+              key={`${id}:${path}:canvas`}
+              doc={pane.doc}
+              onOpenFile={(file, subpath) =>
+                void handleOpenWikilink(file + (subpath ?? ""), false) /* read-only: never create */
+              }
+              onOpenUrl={handleOpenUrl}
+              resolveImage={(target) =>
+                vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null)
+              }
+            />
+          ) : readingMode ? (
             <ReadingView
               key={`${id}:${path}:read`}
               doc={pane.doc}
@@ -1816,6 +1880,7 @@ export default function App() {
             className={readingMode ? "link-btn toggled" : "link-btn"}
             onClick={toggleReading}
             title="Toggle Reading view (rendered, read-only)"
+            disabled={activeIsCanvas}
           >
             Reading
           </button>
@@ -1823,7 +1888,7 @@ export default function App() {
             className={sourceMode ? "link-btn toggled" : "link-btn"}
             onClick={toggleSourceMode}
             title="Toggle Source mode (raw Markdown)"
-            disabled={readingMode}
+            disabled={readingMode || activeIsCanvas}
           >
             Source
           </button>
@@ -1855,7 +1920,15 @@ export default function App() {
           )}
           <span className="spacer" />
           <span className={saveError ? "status status-error" : "status"} title={saveError ?? ""}>
-            {saveError ? `⚠ ${saveError}` : saving ? "Saving…" : active ? "Saved" : ""}
+            {saveError
+              ? `⚠ ${saveError}`
+              : saving
+                ? "Saving…"
+                : activeIsCanvas
+                  ? "Read-only"
+                  : active
+                    ? "Saved"
+                    : ""}
           </span>
         </div>
         {layout ? (
@@ -1882,7 +1955,7 @@ export default function App() {
         backlinks={backlinks}
         unlinked={unlinked}
         onOpenRef={(path, line) => openNoteByPath(path, line)}
-        outlineDoc={activeNote?.content ?? active?.doc ?? null}
+        outlineDoc={activeIsCanvas ? null : (activeNote?.content ?? active?.doc ?? null)}
         onJumpLine={(line) => {
           if (active) void openNoteByPath(active.path, line);
         }}

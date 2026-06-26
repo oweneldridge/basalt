@@ -283,6 +283,21 @@ fn read_note(path: String, state: State<VaultState>) -> Result<String, String> {
 fn write_note(path: String, content: String, state: State<VaultState>) -> Result<(), String> {
     let root = current_root(&state)?;
     let resolved = ensure_in_vault(&root, &path)?;
+    // Defense in depth: write_note IS the Markdown-note pipeline, so it must only
+    // ever touch a `.md` file. This turns the "never write back a .canvas (or any
+    // attachment) opened in a read-only viewer" rule — otherwise enforced only by
+    // frontend discipline (isMarkdownPath) — into a hard filesystem boundary that
+    // a future regression can't bypass.
+    let is_md = resolved
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("md"));
+    if !is_md {
+        return Err(format!(
+            "write_note refuses a non-Markdown path: {}",
+            resolved.display()
+        ));
+    }
     atomic_write(&resolved, content.as_bytes())
 }
 
@@ -439,9 +454,9 @@ fn rename_note(path: String, new_name: String, state: State<VaultState>) -> Resu
 }
 
 /// Non-Markdown file types surfaced in the tree and addressable by links.
-const ATTACHMENT_EXTS: [&str; 18] = [
+const ATTACHMENT_EXTS: [&str; 19] = [
     "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "avif", "ico", "pdf", "mp3", "wav", "m4a",
-    "ogg", "flac", "mp4", "mov", "webm",
+    "ogg", "flac", "mp4", "mov", "webm", "canvas",
 ];
 
 fn is_attachment_ext(path: &Path) -> bool {
@@ -662,10 +677,27 @@ async fn write_attachment(
 
 /// Write a user-chosen export file. The path comes from the OS save dialog, so
 /// it is user-authorized and may live outside the vault (no containment check).
-/// One-shot, not a vault note, so it isn't written atomically.
+/// Written atomically (temp + rename) so a failed/partial export can't leave a
+/// half-written file in place of an existing one.
 #[tauri::command]
 fn export_file(path: String, content: String) -> Result<(), String> {
-    fs::write(&path, content).map_err(|e| e.to_string())
+    let dest = PathBuf::from(&path);
+    // The export dialog targets .html; refuse to overwrite an existing Markdown
+    // note or any known attachment (incl. .canvas), so a mistyped Save-As name
+    // can't truncate a real vault file.
+    if dest.exists() {
+        if let Some(ext) = dest.extension().and_then(|e| e.to_str()) {
+            let ext = ext.to_ascii_lowercase();
+            if ext == "md" || ATTACHMENT_EXTS.contains(&ext.as_str()) {
+                return Err(format!(
+                    "refusing to overwrite a vault file ({}): {}",
+                    ext,
+                    dest.display()
+                ));
+            }
+        }
+    }
+    atomic_write(&dest, content.as_bytes())
 }
 
 /// Read-only view of the Obsidian settings Basalt honors. Basalt never writes
@@ -836,9 +868,13 @@ fn start_watching(
                     path: p.to_string_lossy().to_string(),
                     rel,
                 });
-            } else if p.extension().is_none() {
+            } else if p.extension().is_none() || is_attachment_ext(p) {
                 // No extension: almost certainly a directory event (folder
-                // create/rename/delete). A full rescan keeps the index honest.
+                // create/rename/delete). An attachment (.canvas/image/pdf…)
+                // created/edited/deleted/renamed: the file tree, the attachment
+                // list, and any open .canvas viewer pane must refresh. A full
+                // rescan keeps the index honest and prunes panes for a file
+                // that's now gone.
                 rescan = true;
             }
         }
