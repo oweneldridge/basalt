@@ -82,6 +82,11 @@ describe("blocks", () => {
       '<pre class="md-code"><code class="language-js">let x = 1 &lt; 2;</code></pre>',
     );
   });
+  it("tags a ```mermaid block so reading/export can find it", () => {
+    expect(renderMarkdown("```mermaid\ngraph TD; A-->B\n```")).toContain(
+      '<code class="language-mermaid">graph TD; A--&gt;B</code>',
+    );
+  });
   it("a '#' inside a fence is not a heading", () => {
     expect(renderMarkdown("```\n# not a heading\n```")).toContain("# not a heading");
     expect(renderMarkdown("```\n# not a heading\n```")).not.toContain("<h1>");

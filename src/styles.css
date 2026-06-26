@@ -555,6 +555,15 @@ button.primary:hover {
   margin: 0.6em 0;
 }
 .reading-view .md-callout-title { font-weight: 700; color: var(--accent); }
+.reading-view .md-mermaid { text-align: center; margin: 12px 0; }
+.reading-view .md-mermaid svg { max-width: 100%; height: auto; }
+.reading-view .md-mermaid-error {
+  text-align: left;
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  white-space: pre-wrap;
+}
 
 /* Print / Save-as-PDF: show only the Reading view (the editor is virtualized
    and can't print). Forced light for legible output. */
