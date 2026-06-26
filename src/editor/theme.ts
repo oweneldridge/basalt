@@ -303,6 +303,23 @@ const themeSpec = {
     ".cm-foldGutter:hover .cm-fold-marker": { opacity: "0.65" },
     ".cm-foldGutter .cm-gutterElement:hover .cm-fold-marker": { color: "var(--text)", opacity: "1" },
     ".cm-fold-marker.closed": { opacity: "0.8" },
+    // Mermaid diagram block.
+    ".cm-mermaid": {
+      display: "block",
+      textAlign: "center",
+      margin: "8px 0",
+      padding: "8px 0",
+      color: "var(--text-muted)",
+      cursor: "pointer",
+    },
+    ".cm-mermaid svg": { maxWidth: "100%", height: "auto" },
+    ".cm-mermaid-error": {
+      textAlign: "left",
+      color: "var(--danger)",
+      fontFamily: "var(--font-mono)",
+      fontSize: "0.85em",
+      whiteSpace: "pre-wrap",
+    },
     // The "…" placeholder for a folded section; click to unfold.
     ".cm-foldPlaceholder": {
       background: "var(--bg-elev)",

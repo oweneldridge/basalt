@@ -33,6 +33,8 @@ table.md-table th{background:var(--elev);font-weight:700}
 table.md-properties th{color:var(--muted);font-weight:600}
 .md-callout{border-left:3px solid var(--accent);background:rgba(124,92,208,.08);border-radius:4px;padding:6px 12px;margin:.6em 0}
 .md-callout-title{font-weight:700;color:var(--accent)}
+.md-mermaid{text-align:center;margin:12px 0}
+.md-mermaid svg{max-width:100%;height:auto}
 `.trim();
 
 /** Wrap rendered note HTML in a standalone, styled HTML document. */

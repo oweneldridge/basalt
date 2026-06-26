@@ -85,6 +85,7 @@ import { embeds } from "./embeds";
 import { attachments } from "./attachments";
 import { wikilinkAutocomplete, wikilinkDecorations, wikilinkModClickFollow, type NoteRef } from "./wikilink";
 import { headingFold, foldKeymap } from "./headingFold";
+import { mermaid } from "./mermaid";
 import type { LinkFormat } from "../lib/rename";
 
 // Marks a transaction as an external-content reconcile (a live-reload from disk)
@@ -129,6 +130,7 @@ function renderExtensions(cb: EditorCallbacks): Extension[] {
   return [
     frontmatter,
     tables,
+    mermaid,
     codeBlocks,
     callouts,
     highlight,

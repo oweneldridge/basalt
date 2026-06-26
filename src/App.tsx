@@ -36,6 +36,7 @@ import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { ReadingView } from "./components/ReadingView";
 import { renderMarkdown } from "./lib/render";
+import { renderMermaid } from "./lib/mermaid";
 import { buildHtmlDocument } from "./lib/export";
 import {
   type LayoutNode,
@@ -1098,6 +1099,19 @@ export default function App() {
     const rel = note?.rel ?? "";
     try {
       const dom = new DOMParser().parseFromString(`<div>${renderMarkdown(pane.doc)}</div>`, "text/html");
+      // Render mermaid diagrams to inline SVG.
+      await Promise.all(
+        [...dom.querySelectorAll("pre.md-code > code.language-mermaid")].map(async (code) => {
+          const r = await renderMermaid(code.textContent ?? "");
+          const pre = code.parentElement;
+          if (!pre) return;
+          const box = dom.createElement("div");
+          box.className = "md-mermaid";
+          if ("svg" in r) box.innerHTML = r.svg;
+          else box.textContent = `Mermaid error: ${r.error}`;
+          pre.replaceWith(box);
+        }),
+      );
       await Promise.all(
         [...dom.querySelectorAll("img[data-basalt-img]")].map(async (img) => {
           const target = img.getAttribute("data-basalt-img") ?? "";
@@ -1743,6 +1757,7 @@ export default function App() {
             <ReadingView
               key={`${id}:${path}:read`}
               doc={pane.doc}
+              dark={dark}
               onOpenInternal={handleOpenWikilink}
               onOpenUrl={handleOpenUrl}
               resolveImage={(target) =>
