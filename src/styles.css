@@ -565,6 +565,101 @@ button.primary:hover {
   white-space: pre-wrap;
 }
 
+/* JSON Canvas viewer (read-only) */
+.canvas-view {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-editor);
+  cursor: grab;
+}
+.canvas-view.canvas-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  cursor: default;
+}
+.canvas-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+.canvas-edges {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+.canvas-edge-label {
+  fill: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-text);
+  paint-order: stroke;
+  stroke: var(--bg-editor);
+  stroke-width: 3px;
+  dominant-baseline: middle;
+}
+.canvas-node {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+.canvas-group {
+  background: rgba(124, 92, 208, 0.05);
+  border-width: 2px;
+}
+.canvas-group-label {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 4px 8px;
+}
+.canvas-text.reading-view {
+  padding: 8px 12px;
+  max-width: none;
+  margin: 0;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.canvas-file,
+.canvas-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  color: var(--text);
+}
+.canvas-file:hover,
+.canvas-link:hover {
+  background: var(--bg-sidebar);
+}
+.canvas-file-name,
+.canvas-link-url {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.canvas-link-url {
+  color: var(--accent);
+}
+.canvas-file-image {
+  padding: 0;
+  display: flex;
+}
+.canvas-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 /* Print / Save-as-PDF: show only the Reading view (the editor is virtualized
    and can't print). Forced light for legible output. */
 @media print {
