@@ -5,14 +5,20 @@ import { Outline } from "./Outline";
 import { Tags } from "./Tags";
 import { Bookmarks } from "./Bookmarks";
 
-export type RightTab = "backlinks" | "outline" | "tags" | "bookmarks";
+export type RightTab = "backlinks" | "links" | "outline" | "tags" | "bookmarks";
 
 const TABS: { id: RightTab; label: string }[] = [
   { id: "backlinks", label: "Backlinks" },
+  { id: "links", label: "Links" },
   { id: "outline", label: "Outline" },
   { id: "tags", label: "Tags" },
   { id: "bookmarks", label: "Bookmarks" },
 ];
+
+export interface OutgoingLinks {
+  resolved: { target: string; path: string; name: string }[];
+  unresolved: string[];
+}
 
 interface Props {
   tab: RightTab;
@@ -21,6 +27,7 @@ interface Props {
   noteName: string | null;
   backlinks: Backlink[];
   unlinked: Backlink[];
+  outgoing: OutgoingLinks;
   onOpenRef: (path: string, line: number) => void;
   // Outline
   outlineDoc: string | null;
@@ -40,6 +47,7 @@ export function RightPanel({
   noteName,
   backlinks,
   unlinked,
+  outgoing,
   onOpenRef,
   outlineDoc,
   onJumpLine,
@@ -70,6 +78,28 @@ export function RightPanel({
             unlinked={unlinked}
             onOpen={onOpenRef}
           />
+        )}
+        {tab === "links" && (
+          <div className="outgoing">
+            {outgoing.resolved.length === 0 && outgoing.unresolved.length === 0 && (
+              <div className="panel-empty">No outgoing links</div>
+            )}
+            {outgoing.resolved.map((l, i) => (
+              <button key={`r${i}`} className="outgoing-item" onClick={() => onOpenRef(l.path, 1)} title={l.path}>
+                {l.name}
+              </button>
+            ))}
+            {outgoing.unresolved.length > 0 && (
+              <>
+                <div className="outgoing-head">Unresolved</div>
+                {outgoing.unresolved.map((t, i) => (
+                  <div key={`u${i}`} className="outgoing-item unresolved">
+                    {t}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
         )}
         {tab === "outline" && <Outline doc={outlineDoc} onJump={onJumpLine} />}
         {tab === "tags" && <Tags tags={tags} onSelect={onSelectTag} />}

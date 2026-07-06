@@ -125,3 +125,17 @@ describe("blocks", () => {
     expect(html).not.toContain("title: Hi");
   });
 });
+
+describe("stripComments (Obsidian %% comments)", () => {
+  it("removes inline and multi-line comments but keeps code", () => {
+    expect(renderMarkdown("a %%hidden%% b")).toContain("a  b");
+    expect(renderMarkdown("a %%hidden%% b")).not.toContain("hidden");
+    const multi = renderMarkdown("before\n%%\nsecret\nnote\n%%\nafter");
+    expect(multi).toContain("before");
+    expect(multi).toContain("after");
+    expect(multi).not.toContain("secret");
+    // code spans keep their %%
+    expect(renderMarkdown("`%%kept%%`")).toContain("%%kept%%");
+    expect(renderMarkdown("```\n%%kept%%\n```")).toContain("%%kept%%");
+  });
+});

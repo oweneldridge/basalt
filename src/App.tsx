@@ -262,6 +262,14 @@ export default function App() {
   const [conflicts, setConflicts] = useState<Set<string>>(() => new Set());
   const [modal, setModal] = useState<ModalKind>(null);
   const [recentVaults, setRecentVaults] = useState<RecentVault[]>(() => loadRecentVaults());
+  // Sidebar visibility + UI zoom (Obsidian parity: ⌘\ / ⌘⌥\ , ⌘+ / ⌘- / ⌘0).
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
+  const [zoom, setZoom] = useState(1);
+  useEffect(() => {
+    document.documentElement.style.fontSize = `${Math.round(16 * zoom)}px`;
+  }, [zoom]);
+  const zoomBy = useCallback((d: number) => setZoom((z) => Math.max(0.6, Math.min(2, Math.round((z + d) * 20) / 20))), []);
   // A pending template prompt (tp.system.prompt) awaiting user input.
   const [templatePrompt, setTemplatePrompt] = useState<{
     message: string;
@@ -746,7 +754,7 @@ export default function App() {
       setBookmarks(await readObsidianBookmarks().catch(() => []));
       const savedTab = localStorage.getItem(rightTabKey(root));
       setRightTab(
-        savedTab === "outline" || savedTab === "tags" || savedTab === "bookmarks"
+        savedTab === "outline" || savedTab === "tags" || savedTab === "bookmarks" || savedTab === "links"
           ? savedTab
           : "backlinks",
       );
@@ -1111,11 +1119,24 @@ export default function App() {
       } else if (e.key === ",") {
         e.preventDefault();
         setModal("settings");
+      } else if (e.key === "\\") {
+        e.preventDefault();
+        if (e.altKey) setRightOpen((v) => !v);
+        else setLeftOpen((v) => !v);
+      } else if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        zoomBy(0.1);
+      } else if (e.key === "-") {
+        e.preventDefault();
+        zoomBy(-0.1);
+      } else if (e.key === "0") {
+        e.preventDefault();
+        setZoom(1);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [zoomBy]);
 
   // Tab keyboard (focused pane): Mod-W closes the active tab; Ctrl-Tab /
   // Ctrl-Shift-Tab cycle.
@@ -1888,6 +1909,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePath, structureVersion]);
 
+  const outgoing = useMemo(() => {
+    if (!activePath) return { resolved: [], unresolved: [] };
+    return index.current.outgoingLinksFor(activePath);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePath, indexVersion, structureVersion]);
+
   // Expensive (full vault text scan). Recompute only when the active note
   // changes — not on every debounced save — to keep typing smooth.
   const unlinked = useMemo(() => {
@@ -2186,6 +2213,11 @@ export default function App() {
           setGraphOpen(true);
         },
       },
+      { id: "toggle-left-sidebar", label: "Toggle left sidebar", hint: "⌘\\", run: () => setLeftOpen((v) => !v) },
+      { id: "toggle-right-sidebar", label: "Toggle right sidebar", hint: "⌘⌥\\", run: () => setRightOpen((v) => !v) },
+      { id: "zoom-in", label: "Zoom in", hint: "⌘+", run: () => zoomBy(0.1) },
+      { id: "zoom-out", label: "Zoom out", hint: "⌘-", run: () => zoomBy(-0.1) },
+      { id: "zoom-reset", label: "Reset zoom", hint: "⌘0", run: () => setZoom(1) },
       { id: "insert-template", label: "Insert template…", hint: "apply a template at the cursor", run: () => setModal("templates") },
       { id: "switch-vault", label: "Switch vault…", hint: "recent vaults / open a folder", run: openVaultSwitcher },
       { id: "new-window", label: "New window", hint: "open another window", run: () => void handleOpenInNewWindow() },
@@ -2340,16 +2372,18 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar
-        notes={notes}
-        attachments={attachmentsList}
-        activePath={active?.path ?? null}
-        vaultName={basename(vault)}
-        onOpen={(path) => openNoteByPath(path)}
-        onNewNote={handleNewNote}
-        onOpenAttachment={handleOpenAttachment}
-        onContextMenu={(path, x, y) => setFileMenu({ path, x, y })}
-      />
+      {leftOpen && (
+        <Sidebar
+          notes={notes}
+          attachments={attachmentsList}
+          activePath={active?.path ?? null}
+          vaultName={basename(vault)}
+          onOpen={(path) => openNoteByPath(path)}
+          onNewNote={handleNewNote}
+          onOpenAttachment={handleOpenAttachment}
+          onContextMenu={(path, x, y) => setFileMenu({ path, x, y })}
+        />
+      )}
       <main className="main">
         <div className="toolbar">
           <button className="link-btn" onClick={openVaultSwitcher} title="Switch vault (recent / open a folder)">
@@ -2430,26 +2464,29 @@ export default function App() {
           <div className="placeholder">Select a note, or press + to create one.</div>
         )}
       </main>
-      <RightPanel
-        tab={rightTab}
-        onTab={setRightTab}
-        noteName={activeName}
-        backlinks={backlinks}
-        unlinked={unlinked}
-        onOpenRef={(path, line) => openNoteByPath(path, line)}
-        outlineDoc={activeIsViewer ? null : (activeNote?.content ?? active?.doc ?? null)}
-        onJumpLine={(line) => {
-          if (active) void openNoteByPath(active.path, line);
-        }}
-        tags={tags}
-        onSelectTag={handleSelectTag}
-        bookmarks={bookmarks}
-        onOpenBookmark={handleOpenBookmark}
-        onSearch={(query) => {
-          setSearchSeed(query);
-          setModal("search");
-        }}
-      />
+      {rightOpen && (
+        <RightPanel
+          tab={rightTab}
+          onTab={setRightTab}
+          noteName={activeName}
+          backlinks={backlinks}
+          unlinked={unlinked}
+          outgoing={outgoing}
+          onOpenRef={(path, line) => openNoteByPath(path, line)}
+          outlineDoc={activeIsViewer ? null : (activeNote?.content ?? active?.doc ?? null)}
+          onJumpLine={(line) => {
+            if (active) void openNoteByPath(active.path, line);
+          }}
+          tags={tags}
+          onSelectTag={handleSelectTag}
+          bookmarks={bookmarks}
+          onOpenBookmark={handleOpenBookmark}
+          onSearch={(query) => {
+            setSearchSeed(query);
+            setModal("search");
+          }}
+        />
+      )}
       {modal === "switcher" && (
         <Palette<VaultNote>
           placeholder="Open note…"

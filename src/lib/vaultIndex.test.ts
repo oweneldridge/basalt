@@ -229,3 +229,21 @@ describe("2.9b review regressions", () => {
     expect(indexOf(notes2).unlinkedMentionsFor("y", notes2)).toHaveLength(1);
   });
 });
+
+describe("outgoingLinksFor", () => {
+  it("splits a note's links into resolved and unresolved (deduped)", () => {
+    const idx = indexOf([
+      note("A.md", "links [[B]] and [[B]] again, plus [[Ghost]] and [[C]]"),
+      note("B.md"),
+      note("C.md"),
+    ]);
+    const out = idx.outgoingLinksFor("/v/A.md");
+    expect(out.resolved.map((r) => r.name).sort()).toEqual(["B", "C"]);
+    expect(out.resolved.filter((r) => r.name === "B")).toHaveLength(1); // deduped
+    expect(out.unresolved).toEqual(["Ghost"]);
+  });
+  it("is empty for a note with no links", () => {
+    const idx = indexOf([note("Solo.md", "no links here")]);
+    expect(idx.outgoingLinksFor("/v/Solo.md")).toEqual({ resolved: [], unresolved: [] });
+  });
+});
