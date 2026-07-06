@@ -45,13 +45,14 @@ zoom, `%%comments%%`, paste-URL→link, outgoing-links pane):
   **Properties** widgets; per-command **hotkey assignment**; **CSS snippets**;
   status bar / ribbon; tab pinning + drag-between-panes; search **operators**
   (`path:`/`tag:`/regex/boolean).
-- **Large**: **note/heading/block transclusion** (`![[Note#h]]`) — **shipped**
-  (2026-07, editor + reading, DoS-hardened); **Canvas editing** (drag/resize/
-  create/edit/delete/colour nodes, draw edges) — **shipped** (2026-07, atomic
-  write_canvas, conflict-safe, non-destructive to unmodeled fields); **Bases
-  editing** (rename/type/limit/columns/filter + add/delete views) — **shipped**
-  (2026-07, atomic write_base via a shared viewer write-path, comment-preserving
-  YAML Document edit); file-recovery snapshots — still open (optional).
+- **Large — all shipped (2026-07):** **note/heading/block transclusion**
+  (`![[Note#h]]`, editor + reading, DoS-hardened); **Canvas editing** (drag/
+  resize/create/edit/delete/colour nodes, draw edges — atomic write_canvas,
+  conflict-safe, non-destructive to unmodeled fields); **Bases editing**
+  (rename/type/limit/columns/filter + add/delete views — atomic write_base via a
+  shared viewer write-path, comment-preserving YAML Document edit);
+  **file-recovery snapshots** (local IndexedDB version history + restore,
+  delete/rename-aware). Each shipped with a full adversarial data-safety review.
 
 Out of scope by design: Obsidian Sync/Publish (paid services), the mobile app,
 and running Obsidian's own community plugins (Basalt has its own plugin API).
