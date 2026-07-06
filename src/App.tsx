@@ -36,6 +36,7 @@ import {
   type RecentVault,
 } from "./lib/recentVaults";
 import { setQueryHost } from "./lib/queryHost";
+import { setTranscludeHost } from "./lib/transclude";
 import { noteRow, tasksForNote } from "./lib/vaultRows";
 import { parseQuery, runQuery, type Task } from "./lib/query";
 import { applyTemplate, type TemplateCtx } from "./lib/templates";
@@ -1733,6 +1734,28 @@ export default function App() {
     });
     return () => setQueryHost(null);
   }, [tagsOf, linkKeysOf]);
+
+  // Install the transclusion host (used by ![[Note]] embeds in editor + reading).
+  useEffect(() => {
+    setTranscludeHost({
+      resolve: (rawTarget, sourceRel) => {
+        const srcAbs = notesRef.current.find((n) => n.rel === sourceRel)?.path ?? "";
+        const abs = index.current.resolve(rawTarget, srcAbs);
+        if (!abs) return null;
+        const note = notesRef.current.find((n) => n.path === abs);
+        return note ? { path: abs, rel: note.rel, name: note.name } : null;
+      },
+      content: (abs) => {
+        const note = notesRef.current.find((n) => n.path === abs);
+        return note && note.content ? note.content : null; // "" (oversized) → read from disk
+      },
+      readContent: (abs) => readNote(abs),
+      onOpen: (rawTarget) => openViewerFileRef.current(rawTarget),
+      resolveImage: (target, rel) =>
+        vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null),
+    });
+    return () => setTranscludeHost(null);
+  }, []);
 
   // A transient toast (used by plugins' Notice + a few app messages). Capped so
   // a plugin spamming Notice() can't accumulate unbounded toasts.

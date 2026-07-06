@@ -9,7 +9,7 @@
 // Block structure is parsed line-by-line (the same shape proseMask uses for
 // fences/frontmatter); inline syntax reuses the app's link/tag/highlight
 // semantics so Reading mode and the editor agree on what a link/tag is.
-import { parseMarkdownLink, targetNoteName } from "./markdown";
+import { parseMarkdownLink, targetNoteName, proseMask } from "./markdown";
 import { parseFm } from "./frontmatter";
 
 export function escapeHtml(s: string): string {
@@ -59,7 +59,13 @@ export function renderInline(text: string, depth = 0): string {
       out += `<code class="md-code-inline">${escapeHtml(tok.slice(1, -1))}</code>`;
     } else if (m[2]) {
       const inner = tok.slice(3, -2).split("|")[0].trim();
-      out += `<img class="md-embed" data-basalt-img="${escapeHtml(inner)}" alt="${escapeHtml(inner)}" />`;
+      // An image file → <img>; anything else → a note transclusion marker the
+      // reader resolves and renders inline.
+      if (/\.(png|jpe?g|gif|svg|webp|bmp|avif|ico)$/i.test(inner.split("#")[0])) {
+        out += `<img class="md-embed" data-basalt-img="${escapeHtml(inner)}" alt="${escapeHtml(inner)}" />`;
+      } else {
+        out += `<span class="md-embed-ref" data-basalt-embed="${escapeHtml(inner)}"></span>`;
+      }
     } else if (m[3]) {
       const [rawTarget, alias] = tok.slice(2, -2).split("|");
       // The full raw target (folder/heading kept) so resolution matches the
@@ -164,9 +170,22 @@ export function stripComments(md: string): string {
   return md.replace(/(```[\s\S]*?```|`[^`\n]*`)|%%[\s\S]*?%%/g, (_m, code) => code ?? "");
 }
 
+/** Conceal Obsidian block-reference markers (`^blockid` at a line's end or on
+ * its own line) — they're anchors, not content, and Obsidian hides them. Only
+ * in prose lines, so a `^id` inside a code block is left intact. */
+export function stripBlockIds(md: string): string {
+  const lines = md.split("\n");
+  const mask = proseMask(lines);
+  return lines
+    .map((l, i) =>
+      mask[i] ? l.replace(/[ \t]+\^[A-Za-z0-9-]+\s*$/, "").replace(/^\^[A-Za-z0-9-]+[ \t]*$/, "") : l,
+    )
+    .join("\n");
+}
+
 /** Render a full Markdown document to an HTML string. */
 export function renderMarkdown(src: string): string {
-  const md = stripComments(src);
+  const md = stripBlockIds(stripComments(src));
   const lines = md.split("\n");
   let i = 0;
   const parts: string[] = [];

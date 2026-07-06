@@ -1,9 +1,9 @@
-// Obsidian embeds `![[…]]`: image files render as an <img>; note embeds render
-// as a titled box that opens the note (full transclusion is a later phase).
-// Regex-scan (CommonMark has no embed node); reveal raw `![[…]]` when editing.
+// Obsidian IMAGE embeds `![[img.png]]` render as an <img> in Live Preview (note
+// transclusions ![[Note]] live in editor/transcludeBlocks.ts). Regex-scan
+// (CommonMark has no embed node); reveal raw `![[…]]` when editing.
 import { RangeSetBuilder } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
-import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
+import { Decoration, EditorView, ViewPlugin } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { isInExcludedRegion, treeChanged } from "./regions";
 import { ImgWidget } from "./livePreview";
@@ -17,29 +17,6 @@ export interface EmbedOptions {
   onOpen: (target: string) => void;
 }
 
-class NoteEmbedWidget extends WidgetType {
-  constructor(
-    readonly target: string,
-    readonly label: string,
-  ) {
-    super();
-  }
-  eq(other: NoteEmbedWidget): boolean {
-    return other.target === this.target && other.label === this.label;
-  }
-  toDOM(): HTMLElement {
-    const box = document.createElement("div");
-    box.className = "cm-embed-note";
-    box.dataset.target = this.target;
-    box.textContent = this.label;
-    box.setAttribute("role", "link");
-    return box;
-  }
-  ignoreEvent(): boolean {
-    return false;
-  }
-}
-
 function build(view: EditorView, opts: EmbedOptions): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const sel = view.state.selection;
@@ -51,6 +28,8 @@ function build(view: EditorView, opts: EmbedOptions): DecorationSet {
     const re = new RegExp(EMBED_SRC, "g");
     let m: RegExpExecArray | null;
     while ((m = re.exec(text))) {
+      const rawTarget = m[1].trim();
+      if (!IMAGE_EXT.test(targetPathPart(rawTarget))) continue; // note embed → transcludeBlocks
       const start = from + m.index;
       const end = start + m[0].length;
       if (isInExcludedRegion(view.state, start)) continue;
@@ -58,27 +37,20 @@ function build(view: EditorView, opts: EmbedOptions): DecorationSet {
         builder.add(start, end, Decoration.mark({ class: "cm-embed-source" }));
         continue;
       }
-      const rawTarget = m[1].trim();
       const aliasOrSize = (m[2] ?? "").trim();
-      const pathPart = targetPathPart(rawTarget);
-      if (IMAGE_EXT.test(pathPart)) {
-        const width = /^\d+(x\d+)?$/.test(aliasOrSize) ? parseInt(aliasOrSize, 10) : undefined;
-        builder.add(
-          start,
-          end,
-          Decoration.replace({ widget: new ImgWidget(rawTarget, rawTarget, width, opts.resolveImage) }),
-        );
-      } else {
-        const label = aliasOrSize || (pathPart.split("/").pop() ?? pathPart);
-        builder.add(start, end, Decoration.replace({ widget: new NoteEmbedWidget(rawTarget, label) }));
-      }
+      const width = /^\d+(x\d+)?$/.test(aliasOrSize) ? parseInt(aliasOrSize, 10) : undefined;
+      builder.add(
+        start,
+        end,
+        Decoration.replace({ widget: new ImgWidget(rawTarget, rawTarget, width, opts.resolveImage) }),
+      );
     }
   }
   return builder.finish();
 }
 
 export function embeds(opts: EmbedOptions): Extension {
-  const plugin = ViewPlugin.fromClass(
+  return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
       constructor(view: EditorView) {
@@ -92,18 +64,4 @@ export function embeds(opts: EmbedOptions): Extension {
     },
     { decorations: (v) => v.decorations },
   );
-
-  const click = EditorView.domEventHandlers({
-    mousedown: (event) => {
-      const el = (event.target as HTMLElement | null)?.closest(".cm-embed-note") as HTMLElement | null;
-      if (el && el.dataset.target) {
-        opts.onOpen(el.dataset.target);
-        event.preventDefault();
-        return true;
-      }
-      return false;
-    },
-  });
-
-  return [plugin, click];
 }
