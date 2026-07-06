@@ -34,6 +34,9 @@ import {
   workspaceKey as wsKey,
   type RecentVault,
 } from "./lib/recentVaults";
+import { setQueryHost } from "./lib/queryHost";
+import { noteRow, tasksForNote } from "./lib/vaultRows";
+import { parseQuery, runQuery, type Task } from "./lib/query";
 import { clearImageCache, resolveImage } from "./lib/assets";
 import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
@@ -165,6 +168,27 @@ const isMarkdownPath = (p: string) => /\.md$/i.test(p);
 
 /** Files that open in a pane as a READ-ONLY viewer rather than an editor. */
 const isViewerPath = (p: string) => /\.(canvas|base)$/i.test(p);
+
+/** Find a task's CURRENT line in freshly-read content, verifying identity
+ * (text + status + indent) so a toggle never flips the wrong line or
+ * double-flips a task an external edit already changed. Returns the captured
+ * line if it still matches, else the unique matching line, else -1 (ambiguous
+ * or gone → the caller refuses to write). */
+function locateTask(lines: string[], task: Task): number {
+  const matches = (line: string): boolean => {
+    const m = /^(\s*)[-*+]\s+\[(.)\]\s+(.*)$/.exec(line.replace(/\r$/, ""));
+    return !!m && m[3] === task.text && m[2] === task.status && m[1].length === task.indent;
+  };
+  if (task.line < lines.length && matches(lines[task.line])) return task.line;
+  let found = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (matches(lines[i])) {
+      if (found >= 0) return -1; // ambiguous — refuse rather than guess
+      found = i;
+    }
+  }
+  return found;
+}
 
 /** Mirror of the Rust build_note_path sanitization, so frontend existence
  * lookups agree with the filename the backend will actually create. */
@@ -1500,6 +1524,118 @@ export default function App() {
     [],
   );
 
+  // Per-note serialization for task toggles: a read-modify-write must not race
+  // another toggle on the same note (the second would read stale content and
+  // lose the first's flip). Toggles for a path chain through this promise.
+  const toggleChains = useRef(new Map<string, Promise<void>>());
+
+  // Toggle a task's checkbox on disk (from a ```dataview / ```query block).
+  const handleToggleTask = useCallback(
+    (task: Task): void => {
+      const note = notesRef.current.find((n) => n.rel === task.path);
+      if (!note) return;
+      const key = note.path;
+      const prev = toggleChains.current.get(key) ?? Promise.resolve();
+      const run = prev.then(async () => {
+        const cur = notesRef.current.find((n) => n.path === key);
+        if (!cur) return; // note deleted meanwhile
+        // Refuse if the note has unsaved editor edits — writing would clobber
+        // them. Re-checked after the async read too (it may go dirty in between).
+        if (pending.current.has(key)) {
+          setSaveError("Save this note before toggling its tasks");
+          return;
+        }
+        try {
+          const disk = await readNote(key); // FRESH — don't trust in-memory content
+          const lines = disk.split("\n");
+          // TOCTOU: the captured line index may be stale (lines inserted above).
+          // Only flip if that line is STILL this exact task; otherwise search for
+          // the task by its text, and abort rather than risk the wrong line.
+          const idx = locateTask(lines, task);
+          if (idx < 0) {
+            setSaveError("That task moved or changed — refresh the query");
+            return;
+          }
+          if (pending.current.has(key)) {
+            setSaveError("Save this note before toggling its tasks");
+            return;
+          }
+          lines[idx] = lines[idx].replace(
+            /^(\s*[-*+]\s+\[)(.)(\])/,
+            (_m, a, c, b) => a + (c === " " ? "x" : " ") + b,
+          );
+          const next = lines.join("\n");
+          await writeNote(key, next);
+          rememberSelfWrite(cur.rel, next); // AFTER a successful write (no stale suppression)
+          const updated: VaultNote = {
+            ...cur,
+            content: next,
+            mtime: Date.now(),
+            size: new TextEncoder().encode(next).length,
+          };
+          index.current.setNote(updated);
+          setNotes((p) => p.map((n) => (n.path === key ? updated : n)));
+          bumpStructure();
+          // Reflect in an open pane, but never over an unsaved edit.
+          if (!pending.current.has(key)) {
+            for (const p of Object.values(panesRef.current)) {
+              if (p.active === key) patchPane(p.id, { doc: next });
+            }
+          }
+        } catch (e) {
+          setSaveError(`Couldn't update task: ${e}`);
+        }
+      });
+      // Keep the chain but drop it once settled if nothing newer was queued.
+      const settled = run.catch(() => {});
+      toggleChains.current.set(key, settled);
+      void settled.then(() => {
+        if (toggleChains.current.get(key) === settled) toggleChains.current.delete(key);
+      });
+    },
+    [rememberSelfWrite, bumpStructure, patchPane],
+  );
+
+  // Install the query host (used by ```dataview blocks in the editor + reading
+  // view). Installed once; `run`/callbacks read live refs, so it stays current.
+  const handleToggleTaskRef = useRef(handleToggleTask);
+  handleToggleTaskRef.current = handleToggleTask;
+  const openViewerFileRef = useRef(openViewerFile);
+  openViewerFileRef.current = openViewerFile;
+  const structureVersionRef = useRef(structureVersion);
+  structureVersionRef.current = structureVersion;
+  useEffect(() => {
+    setQueryHost({
+      run: (source, selfPath) => {
+        const v = structureVersionRef.current;
+        const rows = notesRef.current.map((n) => noteRow(n, v, tagsOf, linkKeysOf));
+        const absToRel = new Map(notesRef.current.map((n) => [n.path, n.rel]));
+        return runQuery(parseQuery(source), {
+          rows,
+          selfPath,
+          tasksOf: (rel) => {
+            const note = notesRef.current.find((n) => n.rel === rel);
+            return note ? tasksForNote(note) : [];
+          },
+          incomingTo: (target) => {
+            const abs = index.current.resolve(target, selfPath);
+            const set = new Set<string>();
+            if (abs) {
+              for (const b of index.current.backlinksFor(abs)) {
+                const rel = absToRel.get(b.path);
+                if (rel) set.add(rel);
+              }
+            }
+            return set;
+          },
+        });
+      },
+      openLink: (target) => openViewerFileRef.current(target),
+      toggleTask: (task) => void handleToggleTaskRef.current(task),
+    });
+    return () => setQueryHost(null);
+  }, [tagsOf, linkKeysOf]);
+
   const handleNewNote = useCallback(async () => {
     if (!vaultRef.current) return;
     const existing = new Set(notesRef.current.map((n) => normalizeName(n.name)));
@@ -1942,6 +2078,7 @@ export default function App() {
             <ReadingView
               key={`${id}:${path}:read`}
               doc={pane.doc}
+              selfRel={rel}
               dark={dark}
               onOpenInternal={handleOpenWikilink}
               onOpenUrl={handleOpenUrl}
@@ -1953,6 +2090,7 @@ export default function App() {
             <EditorPane
               key={`${id}:${path}`}
               path={path}
+              selfRel={rel}
               doc={pane.doc}
               scrollToLine={pane.scrollToLine}
               getNotes={getNotes}

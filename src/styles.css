@@ -1514,3 +1514,91 @@ button.primary:hover {
   padding: 10px 16px;
   border-top: 1px solid var(--border);
 }
+
+/* ------- Query blocks (```dataview / ```query) ------- */
+.cm-query {
+  margin: 4px 0;
+}
+.query-block {
+  font-size: 0.95em;
+}
+.query-error {
+  color: var(--danger);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+}
+.query-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 2px 0;
+}
+.query-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 2px 0;
+}
+.query-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  padding: 4px 8px;
+}
+.query-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 4px 8px;
+  vertical-align: top;
+}
+.query-group-row td {
+  background: var(--bg-secondary);
+  font-weight: 600;
+}
+.query-group {
+  font-weight: 600;
+  margin: 8px 0 2px;
+}
+.query-list {
+  margin: 2px 0;
+  padding-left: 1.4em;
+}
+.query-list li {
+  margin: 1px 0;
+}
+.query-tasks {
+  list-style: none;
+  margin: 2px 0;
+  padding-left: 0;
+}
+.query-task {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 2px 0;
+}
+.query-task input {
+  cursor: pointer;
+}
+.query-task-text.done {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+.query-task-src {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.query-link {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: none;
+}
+.query-link:hover {
+  text-decoration: underline;
+}
+.query-tag {
+  color: var(--accent);
+}
