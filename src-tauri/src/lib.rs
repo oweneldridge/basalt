@@ -13,6 +13,7 @@
 // RELATIVE path (not absolute), because macOS FSEvents reports firmlink/symlink-
 // resolved absolute paths that won't string-match the dialog-derived path.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -22,7 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use notify::{RecursiveMode, Watcher};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 /// A note plus its full content — returned in bulk so the frontend can build
 /// its link/metadata index in a single IPC round-trip. File stats (ms epoch /
@@ -59,10 +60,15 @@ struct ChangedNote {
     rel: String,
 }
 
-/// The canonical root of the currently open vault (set by `open_vault`).
-struct VaultState(Mutex<Option<PathBuf>>);
-/// Holds the live vault watcher so it isn't dropped (which would stop watching).
-struct WatcherState(Mutex<Option<notify::RecommendedWatcher>>);
+/// The canonical vault root PER WINDOW (keyed by window label), set by
+/// `open_vault`. Each window is an independent vault + workspace, so a command
+/// validates its paths against the calling WINDOW's root — one window can never
+/// name a location outside its own open vault, and never reach into another
+/// window's vault.
+struct VaultState(Mutex<HashMap<String, PathBuf>>);
+/// The live vault watcher per window (kept alive so it isn't dropped, which
+/// would stop watching).
+struct WatcherState(Mutex<HashMap<String, notify::RecommendedWatcher>>);
 
 static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -70,12 +76,14 @@ static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// them on demand via read_note); keeps the bulk IPC message bounded.
 const MAX_INDEXED_NOTE_BYTES: u64 = 5_000_000;
 
-fn current_root(state: &State<VaultState>) -> Result<PathBuf, String> {
+/// The canonical root of the vault open in `label`'s window.
+fn current_root(state: &State<VaultState>, label: &str) -> Result<PathBuf, String> {
     state
         .0
         .lock()
         .map_err(|e| e.to_string())?
-        .clone()
+        .get(label)
+        .cloned()
         .ok_or_else(|| "no vault open".into())
 }
 
@@ -261,21 +269,74 @@ fn collect_vault(dir: &Path, root: &Path, out: &mut Vec<VaultNote>) {
 /// write temps, and return the canonical root (the path form every subsequent
 /// command and event will use).
 #[tauri::command]
-fn open_vault(path: String, state: State<VaultState>) -> Result<String, String> {
+fn open_vault(
+    path: String,
+    window: tauri::Window,
+    state: State<VaultState>,
+    watcher_state: State<WatcherState>,
+) -> Result<String, String> {
     let root = fs::canonicalize(&path).map_err(|e| format!("vault: {e}"))?;
     if !root.is_dir() {
         return Err("vault is not a directory".into());
     }
     sweep_temps(&root, 0);
-    *state.0.lock().map_err(|e| e.to_string())? = Some(root.clone());
+    let label = window.label().to_string();
+    // Switching vaults: stop watching the OLD root now so its watcher can't emit
+    // stale events to this window against the new vault (start_watching installs
+    // a fresh one). Drop the old watcher outside the lock.
+    let old = watcher_state.0.lock().map_err(|e| e.to_string())?.remove(&label);
+    drop(old);
+    state.0.lock().map_err(|e| e.to_string())?.insert(label, root.clone());
     Ok(root.to_string_lossy().to_string())
+}
+
+/// Open a NEW app window. If `vault` is given, that window's frontend opens it
+/// (via a `?vault=` URL param); otherwise the new window shows the vault picker.
+/// Each window gets a unique label and its own independent VaultState entry.
+#[tauri::command]
+fn open_new_window(app: AppHandle, vault: Option<String>) -> Result<String, String> {
+    // Lowest free `w<n>` label. Reusing labels keeps per-window localStorage keys
+    // (workspace layouts) bounded by the max concurrent window count instead of
+    // growing forever, and the capability glob `w*` (capabilities/default.json)
+    // covers all of them so their event/dialog/opener permissions are granted.
+    let existing: std::collections::HashSet<String> = app.webview_windows().into_keys().collect();
+    let mut n = 1u32;
+    while existing.contains(&format!("w{n}")) {
+        n += 1;
+    }
+    let label = format!("w{n}");
+    let mut url = "index.html".to_string();
+    if let Some(v) = vault {
+        // percent-encode the path into the query so the frontend can read it.
+        url = format!("index.html?vault={}", percent_encode(&v));
+    }
+    WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
+        .title("Basalt")
+        .inner_size(1100.0, 760.0)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(label)
+}
+
+/// Minimal percent-encoding for a URL query value (path → ?vault=…).
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// Read every note in the open vault *with its content*, in one call. Powers
 /// the frontend link/metadata index. Async so the walk stays off the main thread.
 #[tauri::command]
-async fn read_vault(state: State<'_, VaultState>) -> Result<Vec<VaultNote>, String> {
-    let root = current_root(&state)?;
+async fn read_vault(window: tauri::Window, state: State<'_, VaultState>) -> Result<Vec<VaultNote>, String> {
+    let root = current_root(&state, window.label())?;
     let mut out = Vec::new();
     collect_vault(&root, &root, &mut out);
     out.sort_by(|a, b| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()));
@@ -294,16 +355,16 @@ fn debug_log(msg: String) {
 /// Read a note's contents as UTF-8. Errors on non-UTF8 rather than lossily
 /// decoding, so that a later save can't silently re-encode and corrupt the file.
 #[tauri::command]
-fn read_note(path: String, state: State<VaultState>) -> Result<String, String> {
-    let root = current_root(&state)?;
+fn read_note(path: String, window: tauri::Window, state: State<VaultState>) -> Result<String, String> {
+    let root = current_root(&state, window.label())?;
     let resolved = ensure_in_vault(&root, &path)?;
     fs::read_to_string(&resolved).map_err(|e| format!("read {}: {e}", resolved.display()))
 }
 
 /// Atomically write a note's contents, only within the vault.
 #[tauri::command]
-fn write_note(path: String, content: String, state: State<VaultState>) -> Result<(), String> {
-    let root = current_root(&state)?;
+fn write_note(path: String, content: String, window: tauri::Window, state: State<VaultState>) -> Result<(), String> {
+    let root = current_root(&state, window.label())?;
     let resolved = ensure_in_vault(&root, &path)?;
     // Defense in depth: write_note IS the Markdown-note pipeline, so it must only
     // ever touch a `.md` file. This turns the "never write back a .canvas (or any
@@ -376,8 +437,8 @@ fn occupied(path: &Path) -> bool {
 /// Create a new empty note, returning its canonical path. `name` may be folder-
 /// qualified (`sub/New`); parent folders are created.
 #[tauri::command]
-fn create_note(name: String, state: State<VaultState>) -> Result<String, String> {
-    let root = current_root(&state)?;
+fn create_note(name: String, window: tauri::Window, state: State<VaultState>) -> Result<String, String> {
+    let root = current_root(&state, window.label())?;
     let path = build_note_path(&root, &name)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
@@ -397,8 +458,8 @@ fn create_note(name: String, state: State<VaultState>) -> Result<String, String>
 /// Move a note to `<vault>/.trash/` (Obsidian-compatible, recoverable). A name
 /// collision in the trash gets a timestamp suffix.
 #[tauri::command]
-fn delete_note(path: String, state: State<VaultState>) -> Result<(), String> {
-    let root = current_root(&state)?;
+fn delete_note(path: String, window: tauri::Window, state: State<VaultState>) -> Result<(), String> {
+    let root = current_root(&state, window.label())?;
     let resolved = ensure_in_vault(&root, &path)?;
     if !resolved.is_file() {
         return Err("not a file".into());
@@ -425,8 +486,8 @@ fn delete_note(path: String, state: State<VaultState>) -> Result<(), String> {
 /// Rename/move a note to a new folder-qualified name (no `.md`), creating
 /// parent folders. Refuses to overwrite. Returns the canonical new path.
 #[tauri::command]
-fn rename_note(path: String, new_name: String, state: State<VaultState>) -> Result<String, String> {
-    let root = current_root(&state)?;
+fn rename_note(path: String, new_name: String, window: tauri::Window, state: State<VaultState>) -> Result<String, String> {
+    let root = current_root(&state, window.label())?;
     let from = ensure_in_vault(&root, &path)?;
     if !from.is_file() {
         return Err("not a file".into());
@@ -539,8 +600,8 @@ fn collect_attachments(dir: &Path, root: &Path, out: &mut Vec<AttachmentEntry>, 
 
 /// List every attachment (non-md supported file) in the open vault.
 #[tauri::command]
-async fn list_attachments(state: State<'_, VaultState>) -> Result<Vec<AttachmentEntry>, String> {
-    let root = current_root(&state)?;
+async fn list_attachments(window: tauri::Window, state: State<'_, VaultState>) -> Result<Vec<AttachmentEntry>, String> {
+    let root = current_root(&state, window.label())?;
     let mut out = Vec::new();
     collect_attachments(&root, &root, &mut out, 0);
     out.sort_by(|a, b| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()));
@@ -610,9 +671,9 @@ async fn write_attachment(
     name: String,
     data_b64: String,
     source_rel: String,
-    state: State<'_, VaultState>,
+    window: tauri::Window, state: State<'_, VaultState>,
 ) -> Result<AttachmentEntry, String> {
-    let root = current_root(&state)?;
+    let root = current_root(&state, window.label())?;
     // Single path segment only; reuse the note-name sanitation rules.
     if name.contains('/') || name.contains('\\') {
         return Err("invalid attachment name".into());
@@ -749,8 +810,8 @@ struct ObsidianConfig {
 }
 
 #[tauri::command]
-fn read_obsidian_config(state: State<VaultState>) -> Result<ObsidianConfig, String> {
-    let root = current_root(&state)?;
+fn read_obsidian_config(window: tauri::Window, state: State<VaultState>) -> Result<ObsidianConfig, String> {
+    let root = current_root(&state, window.label())?;
     let mut cfg = ObsidianConfig::default();
     if let Ok(raw) = fs::read_to_string(root.join(".obsidian/app.json")) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
@@ -841,8 +902,8 @@ fn collect_bookmarks(items: &[serde_json::Value], group: Option<String>, out: &m
 /// Read `.obsidian/bookmarks.json` (Obsidian's Bookmarks core plugin),
 /// flattened. Missing/unparseable file = no bookmarks (never an error).
 #[tauri::command]
-fn read_obsidian_bookmarks(state: State<VaultState>) -> Result<Vec<Bookmark>, String> {
-    let root = current_root(&state)?;
+fn read_obsidian_bookmarks(window: tauri::Window, state: State<VaultState>) -> Result<Vec<Bookmark>, String> {
+    let root = current_root(&state, window.label())?;
     let raw = match fs::read_to_string(root.join(".obsidian/bookmarks.json")) {
         Ok(r) => r,
         Err(_) => return Ok(Vec::new()),
@@ -865,15 +926,14 @@ fn read_obsidian_bookmarks(state: State<VaultState>) -> Result<Vec<Bookmark>, St
 #[tauri::command]
 fn start_watching(
     app: AppHandle,
+    window: tauri::Window,
     state: State<VaultState>,
     watcher_state: State<WatcherState>,
 ) -> Result<(), String> {
-    let root = current_root(&state)?;
-    {
-        let mut guard = watcher_state.0.lock().map_err(|e| e.to_string())?;
-        *guard = None; // stop the previous watcher before starting the new one
-    }
+    let label = window.label().to_string();
+    let root = current_root(&state, &label)?;
     let handle = app.clone();
+    let emit_label = label.clone();
     let root_for_closure = root.clone();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(event) = res else {
@@ -912,20 +972,33 @@ fn start_watching(
                 rescan = true;
             }
         }
+        // Target ONLY the owning window — a change in one window's vault must
+        // not reach another window watching a different vault.
         if !changed.is_empty() {
-            let _ = handle.emit("vault-changed", changed);
+            let _ = handle.emit_to(emit_label.as_str(), "vault-changed", changed);
         }
         if rescan {
-            let _ = handle.emit("vault-rescan", ());
+            let _ = handle.emit_to(emit_label.as_str(), "vault-rescan", ());
         }
     })
     .map_err(|e| e.to_string())?;
+    // Build-then-swap: fully construct AND .watch() the new watcher BEFORE
+    // touching the map, so a build/watch failure (e.g. transient EMFILE) leaves
+    // this window's existing watcher — and its conflict-detection safety net —
+    // intact instead of leaving the window silently unwatched.
     watcher
         .watch(&root, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
-    *watcher_state.0.lock().map_err(|e| e.to_string())? = Some(watcher);
+    // Swap under the lock but drop the OLD watcher AFTER releasing it — a
+    // watcher's Drop can block, and it must not stall other windows' commands.
+    let old = watcher_state
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(label.clone(), watcher);
+    drop(old);
     #[cfg(debug_assertions)]
-    eprintln!("[basalt] watching {}", root.display());
+    eprintln!("[basalt] window {label} watching {}", root.display());
     Ok(())
 }
 
@@ -995,9 +1068,9 @@ fn find_file(dir: &Path, name: &str, depth: usize) -> Option<PathBuf> {
 async fn read_image(
     target: String,
     source_rel: String,
-    state: State<'_, VaultState>,
+    window: tauri::Window, state: State<'_, VaultState>,
 ) -> Result<String, String> {
-    let root = current_root(&state)?;
+    let root = current_root(&state, window.label())?;
     let t = target.trim();
     if t.is_empty() {
         return Err("empty image target".into());
@@ -1046,10 +1119,31 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(VaultState(Mutex::new(None)))
-        .manage(WatcherState(Mutex::new(None)))
+        .manage(VaultState(Mutex::new(HashMap::new())))
+        .manage(WatcherState(Mutex::new(HashMap::new())))
+        .on_window_event(|window, event| {
+            // When a window closes, drop its vault + watcher entries so its state
+            // can't be reused by a future window that happens to reuse the label.
+            if let tauri::WindowEvent::Destroyed = event {
+                let label = window.label().to_string();
+                let app = window.app_handle();
+                if let Some(s) = app.try_state::<VaultState>() {
+                    if let Ok(mut m) = s.0.lock() {
+                        m.remove(&label);
+                    }
+                }
+                if let Some(s) = app.try_state::<WatcherState>() {
+                    // Remove under the lock but drop the watcher (its Drop can
+                    // block) only after releasing it, so a closing window can't
+                    // stall another window's in-flight command.
+                    let old = s.0.lock().ok().and_then(|mut m| m.remove(&label));
+                    drop(old);
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             open_vault,
+            open_new_window,
             read_vault,
             read_note,
             write_note,
@@ -1072,6 +1166,16 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn percent_encode_escapes_url_significant_and_reserved_chars() {
+        // '#' MUST be encoded (a raw '#' in ?vault= would start a URL fragment
+        // and truncate the path); so must space, '/', '&', '?', and non-ASCII.
+        assert_eq!(percent_encode("/Users/o/My Vault#2&x"), "%2FUsers%2Fo%2FMy%20Vault%232%26x");
+        assert_eq!(percent_encode("a?b=c"), "a%3Fb%3Dc");
+        assert_eq!(percent_encode("Notes-2024_v.1~x"), "Notes-2024_v.1~x"); // unreserved kept
+        assert_eq!(percent_encode("café"), "caf%C3%A9"); // UTF-8 bytes, uppercase hex
+    }
 
     #[test]
     fn collect_bookmarks_flattens_groups_and_derives_titles() {

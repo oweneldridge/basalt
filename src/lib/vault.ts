@@ -52,6 +52,12 @@ export function readVault(): Promise<VaultNote[]> {
   return invoke<VaultNote[]>("read_vault");
 }
 
+/** Open a new app window. With `vault`, that window opens it directly; without,
+ * the new window shows the vault picker. Returns the new window's label. */
+export function openNewWindow(vault?: string): Promise<string> {
+  return invoke<string>("open_new_window", { vault: vault ?? null });
+}
+
 export function readNote(path: string): Promise<string> {
   return invoke<string>("read_note", { path });
 }

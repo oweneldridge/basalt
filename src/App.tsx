@@ -12,6 +12,7 @@ import {
   renameNote,
   writeAttachment,
   openVaultBackend,
+  openNewWindow,
   pickVault,
   readNote,
   readVault,
@@ -27,6 +28,12 @@ import {
   type VaultNote,
 } from "./lib/vault";
 import { VaultIndex } from "./lib/vaultIndex";
+import {
+  loadRecentVaults,
+  pushRecentVault,
+  workspaceKey as wsKey,
+  type RecentVault,
+} from "./lib/recentVaults";
 import { clearImageCache, resolveImage } from "./lib/assets";
 import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
@@ -37,6 +44,7 @@ import { PaneTree } from "./components/PaneTree";
 import { ReadingView } from "./components/ReadingView";
 import { CanvasView } from "./components/CanvasView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { VaultSwitcher } from "./components/VaultSwitcher";
 // Lazy: the Bases engine pulls in a YAML parser — keep it out of the initial
 // bundle until a .base pane is actually opened (same reasoning as mermaid).
 const BaseView = lazy(() =>
@@ -76,6 +84,16 @@ import "./styles.css";
 
 const LAST_VAULT_KEY = "basalt.lastVault";
 
+/** This window's Tauri label ("main" for the first window). Each window is an
+ * independent vault + workspace. Falls back to "main" outside Tauri (tests). */
+const WINDOW_LABEL: string = (() => {
+  try {
+    return getCurrentWindow().label;
+  } catch {
+    return "main";
+  }
+})();
+
 // Mirrors a frontend diagnostic into the dev terminal (used for failures that
 // must never be silently swallowed).
 function jsLog(msg: string): void {
@@ -103,7 +121,7 @@ interface Pane {
   scrollToLine?: number;
 }
 
-type ModalKind = "switcher" | "search" | "commands" | "settings" | null;
+type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | null;
 
 interface AppCommand {
   id: string;
@@ -115,7 +133,9 @@ interface AppCommand {
 const RECENT_MAX = 50;
 const recentKey = (vault: string) => `basalt.recent.${vault}`;
 const rightTabKey = (vault: string) => `basalt.rightTab.${vault}`;
-const workspaceKey = (vault: string) => `basalt.workspace.${vault}`;
+// Layout is per-WINDOW so two windows on the same vault don't clobber each
+// other's tabs (see lib/recentVaults.ts::workspaceKey).
+const workspaceKey = (vault: string) => wsKey(vault, WINDOW_LABEL);
 
 /** The serializable shape of a workspace (no live doc — restored from disk). */
 interface SavedWorkspace {
@@ -203,6 +223,7 @@ export default function App() {
   // hold a different dirty note). The badge shows for the focused note.
   const [conflicts, setConflicts] = useState<Set<string>>(() => new Set());
   const [modal, setModal] = useState<ModalKind>(null);
+  const [recentVaults, setRecentVaults] = useState<RecentVault[]>(() => loadRecentVaults());
   const [graphOpen, setGraphOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<"global" | "local">("global");
   const [sourceMode, setSourceMode] = useState(false);
@@ -680,7 +701,19 @@ export default function App() {
       setSourceMode(localStorage.getItem(`basalt.sourceMode.${root}`) === "1");
       setReadingMode(localStorage.getItem(`basalt.reading.${root}`) === "1");
       setVault(root);
-      localStorage.setItem(LAST_VAULT_KEY, root);
+      setRecentVaults(pushRecentVault(root, Date.now()));
+      if (WINDOW_LABEL === "main") {
+        // The main window auto-restores its last vault on next launch.
+        localStorage.setItem(LAST_VAULT_KEY, root);
+      } else {
+        // A secondary window's vault lives in its URL (?vault=) so a reload/F5
+        // restores THIS vault — even after the user switched vaults in it.
+        try {
+          history.replaceState(null, "", `${location.pathname}?vault=${encodeURIComponent(root)}`);
+        } catch {
+          /* non-fatal */
+        }
+      }
       // Reset the workspace for the new vault.
       panesRef.current = {};
       layoutRef.current = null;
@@ -712,6 +745,15 @@ export default function App() {
   useEffect(() => {
     if (restoredRef.current) return;
     restoredRef.current = true;
+    // A window opened via "open in new window" carries its vault in ?vault=.
+    // Otherwise the main window restores its last vault; a bare extra window
+    // starts at the picker.
+    const fromUrl = new URLSearchParams(location.search).get("vault");
+    if (fromUrl) {
+      openVault(fromUrl).catch((e) => setSaveError(`Couldn't open vault: ${e}`));
+      return;
+    }
+    if (WINDOW_LABEL !== "main") return;
     const last = localStorage.getItem(LAST_VAULT_KEY);
     if (last) {
       openVault(last).catch(() => localStorage.removeItem(LAST_VAULT_KEY));
@@ -1052,6 +1094,20 @@ export default function App() {
     const picked = await pickVault();
     if (picked) await openVault(picked);
   }, [openVault]);
+
+  // Open a vault in a NEW window (or an empty new window if no vault given).
+  const handleOpenInNewWindow = useCallback(async (vaultPath?: string) => {
+    try {
+      await openNewWindow(vaultPath);
+    } catch (e) {
+      setSaveError(`Couldn't open a new window: ${e}`);
+    }
+  }, []);
+
+  const openVaultSwitcher = useCallback(() => {
+    setRecentVaults(loadRecentVaults()); // freshen (another window may have opened one)
+    setModal("vaults");
+  }, []);
 
   // Conflict resolution (focused pane): take the on-disk version, discarding
   // local edits.
@@ -1782,7 +1838,8 @@ export default function App() {
           setGraphOpen(true);
         },
       },
-      { id: "change-vault", label: "Change vault…", hint: "open a different folder", run: () => void handleOpenVault() },
+      { id: "switch-vault", label: "Switch vault…", hint: "recent vaults / open a folder", run: openVaultSwitcher },
+      { id: "new-window", label: "New window", hint: "open another window", run: () => void handleOpenInNewWindow() },
       { id: "settings", label: "Open settings", hint: "appearance, vault info (⌘,)", run: () => setModal("settings") },
       { id: "toggle-theme", label: "Toggle light/dark theme", hint: "switch appearance", run: toggleTheme },
       { id: "split-right", label: "Split right", hint: "open the current note in a vertical split", run: () => splitFocused("row") },
@@ -1813,7 +1870,7 @@ export default function App() {
         run: () => void handleReloadFromDisk(),
       },
     ],
-    [handleNewNote, handleOpenVault, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf],
+    [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf],
   );
 
   if (!vault) {
@@ -1934,8 +1991,8 @@ export default function App() {
       />
       <main className="main">
         <div className="toolbar">
-          <button className="link-btn" onClick={handleOpenVault}>
-            Change vault…
+          <button className="link-btn" onClick={openVaultSwitcher} title="Switch vault (recent / open a folder)">
+            Vault…
           </button>
           <button className="link-btn" onClick={() => setGraphOpen(true)} title="Graph view">
             Graph
@@ -2097,6 +2154,25 @@ export default function App() {
           themeMode={themeMode}
           onThemeMode={setThemeMode}
           obsConfig={obsConfigRef.current}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === "vaults" && (
+        <VaultSwitcher
+          recents={recentVaults}
+          currentVault={vault}
+          onOpen={(p) => {
+            setModal(null);
+            void openVault(p).catch((e) => setSaveError(`Couldn't open vault: ${e}`));
+          }}
+          onOpenNewWindow={(p) => {
+            setModal(null);
+            void handleOpenInNewWindow(p);
+          }}
+          onPickFolder={() => {
+            setModal(null);
+            void handleOpenVault();
+          }}
           onClose={() => setModal(null)}
         />
       )}

@@ -1416,3 +1416,101 @@ button.primary:hover {
   word-break: break-word;
   font-family: var(--font-mono, monospace);
 }
+
+/* ------- Vault switcher ------- */
+.vault-switcher {
+  position: fixed;
+  top: 15vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, 92vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px var(--shadow);
+  overflow: hidden;
+  z-index: 50;
+}
+.vault-switcher-title {
+  padding: 12px 16px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.vault-list {
+  overflow-y: auto;
+  flex: 1;
+}
+.vault-empty {
+  padding: 20px 16px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.vault-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.vault-item.sel {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.vault-item.current .vault-item-name {
+  color: var(--accent);
+}
+.vault-item-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.vault-item-name {
+  font-weight: 500;
+}
+.vault-item-path {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl; /* keep the tail (vault folder) visible when truncated */
+  text-align: left;
+}
+.vault-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex: none;
+}
+.vault-badge {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 8px;
+  padding: 1px 7px;
+}
+.vault-newwin {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 1px 6px;
+  font-size: 13px;
+}
+.vault-newwin:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.vault-actions {
+  display: flex;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+}
