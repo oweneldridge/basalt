@@ -386,6 +386,36 @@ fn write_note(path: String, content: String, window: tauri::Window, state: State
     atomic_write(&resolved, content.as_bytes())
 }
 
+/// Atomically write a `.canvas` file (the editable JSON Canvas), only within the
+/// vault. Extension-gated like write_note so this pipeline can only ever touch a
+/// `.canvas` — never a note or another attachment.
+#[tauri::command]
+fn write_canvas(
+    path: String,
+    content: String,
+    window: tauri::Window,
+    state: State<VaultState>,
+) -> Result<(), String> {
+    let root = current_root(&state, window.label())?;
+    let resolved = ensure_in_vault(&root, &path)?;
+    let is_canvas = resolved
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("canvas"));
+    if !is_canvas {
+        return Err(format!(
+            "write_canvas refuses a non-.canvas path: {}",
+            resolved.display()
+        ));
+    }
+    // The file must already exist — canvas editing only modifies canvases opened
+    // from the vault; it never creates arbitrary files.
+    if !resolved.is_file() {
+        return Err("canvas file does not exist".into());
+    }
+    atomic_write(&resolved, content.as_bytes())
+}
+
 /// Build `<root>/<name>.md` from a folder-qualified note name, sanitizing each
 /// segment and rejecting `..`/absolute/dot-leading/reserved segments.
 fn build_note_path(root: &Path, name: &str) -> Result<PathBuf, String> {
@@ -1275,6 +1305,7 @@ pub fn run() {
             read_vault,
             read_note,
             write_note,
+            write_canvas,
             create_note,
             delete_note,
             rename_note,

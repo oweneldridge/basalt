@@ -18,6 +18,7 @@ import {
   readVault,
   startWatching,
   writeNote,
+  writeCanvas,
   readObsidianConfig,
   readObsidianBookmarks,
   exportFile,
@@ -334,6 +335,9 @@ export default function App() {
   // toolbar, outline, export/print, and reading/source toggles must not treat
   // it as one.
   const activeIsViewer = !!active && isViewerPath(active.path);
+  // .base is read-only; .canvas is editable (autosaves), so only .base shows the
+  // "Read-only" status. Export/outline/reading toggles stay off for both.
+  const activeIsBase = !!active && /\.base$/i.test(active.path);
 
   const activePathRef = useRef<string | null>(null);
   activePathRef.current = active?.path ?? null;
@@ -477,6 +481,76 @@ export default function App() {
     [bumpIndex, rememberSelfWrite],
   );
 
+  // Flush ONE canvas's pending edit. Same pending/conflict discipline as
+  // flushSave, but writes via the .canvas-gated writeCanvas and updates the
+  // attachment (not the note index).
+  const flushCanvas = useCallback(
+    async (path: string, doc: string) => {
+      setSaving(true);
+      try {
+        const att = attachmentsRef.current.find((a) => a.path === path);
+        const rel = att?.rel;
+        // Pre-write conflict guard (closes the race where an external edit lands
+        // during the async rescan window): if disk has diverged from the last
+        // content Basalt knew was there — and isn't already what we're writing —
+        // raise a conflict instead of clobbering the external change.
+        if (rel !== undefined) {
+          const onDisk = await readNote(path).catch(() => null);
+          const baseline = selfWrites.current.get(rel);
+          if (onDisk !== null && baseline !== undefined && onDisk !== baseline && onDisk !== doc) {
+            addConflict(path);
+            if (!pending.current.has(path)) pending.current.set(path, doc);
+            return;
+          }
+        }
+        await writeCanvas(path, doc);
+        setSaveError(null);
+        if (rel !== undefined) rememberSelfWrite(rel, doc); // AFTER a successful write
+        if (conflictsRef.current.has(path)) {
+          if (!pending.current.has(path)) pending.current.set(path, doc);
+        } else if (pending.current.get(path) === doc) {
+          pending.current.delete(path);
+          const t = saveTimers.current.get(path);
+          if (t !== undefined) {
+            window.clearTimeout(t);
+            saveTimers.current.delete(path);
+          }
+        }
+      } catch (e) {
+        if (!pending.current.has(path)) pending.current.set(path, doc);
+        setSaveError(String(e));
+      } finally {
+        setSaving(false);
+      }
+    },
+    [rememberSelfWrite, addConflict],
+  );
+
+  // A canvas edit from the editable CanvasView: same debounced, conflict-safe,
+  // sibling-syncing path as note autosave (pending/saveTimers keyed by path).
+  const handleCanvasChange = useCallback(
+    (paneId: string, path: string, doc: string) => {
+      pending.current.set(path, doc);
+      patchPane(paneId, { doc }); // keep the pane's doc current (restore/rescan)
+      for (const p of Object.values(panesRef.current)) {
+        if (p.id !== paneId && p.active === path) patchPane(p.id, { doc });
+      }
+      const existing = saveTimers.current.get(path);
+      if (existing !== undefined) window.clearTimeout(existing);
+      saveTimers.current.set(
+        path,
+        window.setTimeout(() => {
+          saveTimers.current.delete(path);
+          if (conflictsRef.current.has(path)) return;
+          const d = pending.current.get(path);
+          if (d === undefined) return;
+          void flushCanvas(path, d);
+        }, SAVE_DEBOUNCE_MS),
+      );
+    },
+    [flushCanvas, patchPane],
+  );
+
   // Debounced per-note autosave. `pending`/`saveTimers` are keyed by note PATH
   // (one source of truth per note); when the same note is live in more than one
   // pane, the OTHER panes are reconciled to this edit so they never diverge or
@@ -517,9 +591,10 @@ export default function App() {
       if (conflictsRef.current.has(path) && !force) return;
       const doc = pending.current.get(path);
       if (doc === undefined) return;
-      await flushSave(path, doc); // flushSave deletes `pending` on success
+      if (/\.canvas$/i.test(path)) await flushCanvas(path, doc);
+      else await flushSave(path, doc); // both delete `pending` on success
     },
-    [flushSave],
+    [flushSave, flushCanvas],
   );
 
   // Flush EVERY pending note (app close / vault switch / focus loss). Respects
@@ -598,6 +673,13 @@ export default function App() {
       setSaveError(null);
       const tabs = pane.tabs.includes(path) ? pane.tabs : [...pane.tabs, path];
       patchPane(id, { tabs, active: path, doc, scrollToLine: line });
+      // For an editable viewer (.canvas), record the loaded content as the disk
+      // baseline: watcher echoes of it are suppressed, and flushCanvas compares
+      // against it to refuse clobbering an external change (see flushCanvas).
+      if (isViewerPath(path)) {
+        const arel = attachmentsRef.current.find((a) => a.path === path)?.rel;
+        if (arel) rememberSelfWrite(arel, doc);
+      }
       const rel = notesRef.current.find((n) => n.path === path)?.rel;
       const v = vaultRef.current;
       if (rel && v) {
@@ -609,7 +691,7 @@ export default function App() {
         }
       }
     },
-    [flushPath, focusPane, patchPane],
+    [flushPath, focusPane, patchPane, rememberSelfWrite],
   );
 
   // Open a note in the FOCUSED pane (creating the first pane if needed). The
@@ -991,6 +1073,7 @@ export default function App() {
     changedBuf.current.clear(); // the reload covered anything still buffered
     const byPath = new Map(list.map((n) => [n.path, n]));
     const attPaths = new Set(atts.map((a) => a.path));
+    const attByPath = new Map(atts.map((a) => [a.path, a]));
     for (const p of Object.values(panesRef.current)) {
       if (!p.active) continue;
       // Viewer panes (.canvas/.base) are read-only attachments (not in
@@ -1000,13 +1083,24 @@ export default function App() {
         if (attPaths.has(p.active)) {
           const id = p.id;
           const prevDoc = p.doc;
-          void readNote(p.active)
+          const path = p.active;
+          const rel = attByPath.get(path)?.rel;
+          void readNote(path)
             .then((fresh) => {
-              if (fresh !== prevDoc) patchPane(id, { doc: fresh });
+              // Our OWN write echoing back through the watcher — ignore it (same
+              // content-based suppression notes get via processChanges).
+              if (rel !== undefined && selfWrites.current.get(rel) === fresh) return;
+              if (fresh === prevDoc) return;
+              // An editable canvas with unsaved edits: don't clobber them —
+              // raise a conflict so the user chooses Reload / Keep mine.
+              if (pending.current.has(path)) addConflict(path);
+              else patchPane(id, { doc: fresh });
             })
             .catch(() => {
               /* removed between listing and read — prune handles it */
             });
+        } else if (pending.current.has(p.active)) {
+          addConflict(p.active); // canvas deleted externally but has unsaved edits
         }
         continue;
       }
@@ -1261,7 +1355,12 @@ export default function App() {
     const id = focusedIdRef.current;
     const path = id ? panesRef.current[id]?.active : null;
     if (!id || !path) return;
-    if (!notesRef.current.some((n) => n.path === path)) {
+    // A .canvas is an attachment (never in notesRef); check the right registry
+    // so Keep-mine writes the local canvas instead of dropping it as "vanished".
+    const stillExists = isViewerPath(path)
+      ? attachmentsRef.current.some((a) => a.path === path)
+      : notesRef.current.some((n) => n.path === path);
+    if (!stillExists) {
       // Vanished externally — don't recreate it at a stale path; just close it.
       pending.current.delete(path);
       clearConflict(path);
@@ -2332,6 +2431,7 @@ export default function App() {
                 resolveImage={(target) =>
                   vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null)
                 }
+                onChange={(json) => handleCanvasChange(id, path, json)}
               />
             </ErrorBoundary>
           ) : /\.base$/i.test(path) ? (
@@ -2463,7 +2563,7 @@ export default function App() {
               ? `⚠ ${saveError}`
               : saving
                 ? "Saving…"
-                : activeIsViewer
+                : activeIsBase
                   ? "Read-only"
                   : active
                     ? "Saved"
