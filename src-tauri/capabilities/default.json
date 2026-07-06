@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Capability for the main window and any window opened via open_new_window (labels w<n>). Without covering the extra windows, their event listeners (the on-disk conflict watcher + flush-on-close) and dialog/opener would be denied — which silently defeats lost-update protection on the live vault.",
   "windows": [
-    "main"
+    "main",
+    "w*"
   ],
   "permissions": [
     "core:default",
