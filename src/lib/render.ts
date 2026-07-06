@@ -157,8 +157,16 @@ function renderList(items: LI[]): string {
   return out;
 }
 
+/** Remove Obsidian `%%comments%%` (inline + multi-line) outside code spans, so
+ * reading mode and export hide them (matching Obsidian). Fenced and inline code
+ * are preserved. */
+export function stripComments(md: string): string {
+  return md.replace(/(```[\s\S]*?```|`[^`\n]*`)|%%[\s\S]*?%%/g, (_m, code) => code ?? "");
+}
+
 /** Render a full Markdown document to an HTML string. */
-export function renderMarkdown(md: string): string {
+export function renderMarkdown(src: string): string {
+  const md = stripComments(src);
   const lines = md.split("\n");
   let i = 0;
   const parts: string[] = [];

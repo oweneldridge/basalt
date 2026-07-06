@@ -1665,3 +1665,41 @@ button.primary:hover {
   font-family: var(--font-mono, monospace);
   font-size: 12px;
 }
+
+/* ------- Outgoing links pane ------- */
+.outgoing {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.outgoing-item {
+  background: none;
+  border: none;
+  text-align: left;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 3px 4px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.outgoing-item:hover {
+  background: var(--accent-soft);
+}
+.outgoing-item.unresolved {
+  color: var(--text-muted);
+  cursor: default;
+  font-style: italic;
+}
+.outgoing-head {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  margin: 8px 4px 2px;
+}
+.panel-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 12px;
+  text-align: center;
+}

@@ -429,6 +429,32 @@ export class VaultIndex {
     };
   }
 
+  /** The outbound links of the note at `path`, split into those that resolve to
+   * an existing note and those that don't (deduped, in first-seen order). */
+  outgoingLinksFor(path: string): { resolved: { target: string; path: string; name: string }[]; unresolved: string[] } {
+    const resolved: { target: string; path: string; name: string }[] = [];
+    const unresolved: string[] = [];
+    const seenR = new Set<string>();
+    const seenU = new Set<string>();
+    for (const o of this.occ.get(path) ?? []) {
+      const dest = this.resolve(o.rawTarget, path);
+      if (dest) {
+        const meta = this.meta.get(dest);
+        if (meta && !seenR.has(dest)) {
+          seenR.add(dest);
+          resolved.push({ target: o.rawTarget, path: dest, name: meta.name });
+        }
+      } else {
+        const key = o.rawTarget.trim();
+        if (key && !seenU.has(key.toLowerCase())) {
+          seenU.add(key.toLowerCase());
+          unresolved.push(key);
+        }
+      }
+    }
+    return { resolved, unresolved };
+  }
+
   /** Every wikilink in any other note that resolves to the note at `targetPath`. */
   backlinksFor(targetPath: string): Backlink[] {
     const out: Backlink[] = [];

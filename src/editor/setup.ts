@@ -88,6 +88,7 @@ import { headingFold, foldKeymap } from "./headingFold";
 import { mermaid } from "./mermaid";
 import { query, notePathFacet } from "./query";
 import { pluginBlocks } from "./pluginBlocks";
+import { pasteLink } from "./pasteLink";
 import { pluginEditorExtensions } from "../lib/plugins";
 import type { LinkFormat } from "../lib/rename";
 
@@ -218,6 +219,7 @@ export function createEditorState(
     // Obsidian-style tab indentation for nested lists.
     indentUnit.of("\t"),
     wrapSelectionOnType,
+    pasteLink,
     // Native spellcheck/autocorrect in the editor, like Obsidian.
     EditorView.contentAttributes.of({
       spellcheck: "true",
