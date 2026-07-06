@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseProperties,
   parseBase,
+  serializeBase,
   evalExpr,
   evalFilter,
   runView,
@@ -43,6 +44,81 @@ function mkCtx(r: Partial<BaseRow> = {}, formulas: Record<string, string> = {}):
 }
 
 const ev = (src: string, ctx: EvalCtx = mkCtx()) => evalExpr(src, ctx);
+
+describe("serializeBase", () => {
+  it("round-trips view edits and preserves everything else", () => {
+    const src = [
+      "filters: 'status != \"done\"'",
+      "formulas:",
+      "  age: 'now() - file.ctime'",
+      "properties:",
+      "  status:",
+      "    displayName: State",
+      "customField: keep-me",
+      "views:",
+      "  - type: table",
+      "    name: All",
+      "    order: [file.name, status]",
+      "    sort:",
+      "      - property: status",
+      "        direction: DESC",
+    ].join("\n");
+    const def = parseBase(src)!;
+    // Edit a view: add a column + rename.
+    def.views[0] = { ...def.views[0], name: "Everything", order: ["file.name", "status", "age"] };
+    const out = parseBase(serializeBase(def))!;
+    // view edits applied
+    expect(out.views[0].name).toBe("Everything");
+    expect(out.views[0].order).toEqual(["file.name", "status", "age"]);
+    expect(out.views[0].sort).toEqual([{ property: "status", direction: "DESC" }]);
+    // everything Basalt's editor doesn't touch is preserved
+    expect(out.formulas.age).toBe("now() - file.ctime");
+    expect(out.display.status).toBe("State");
+    expect(out.filters).toBe('status != "done"');
+    // an unknown top-level key survives (via raw)
+    expect(serializeBase(def)).toMatch(/customField:\s*keep-me/);
+  });
+
+  it("drops an optional (limit) when cleared", () => {
+    const def = parseBase("views:\n  - type: table\n    name: V\n    limit: 5")!;
+    def.views[0] = { ...def.views[0], limit: undefined };
+    expect(parseBase(serializeBase(def))!.views[0].limit).toBeUndefined();
+  });
+
+  it("preserves top-level comments and formatting on a view edit (no data loss)", () => {
+    const src = [
+      "# my base notes",
+      "filters: 'status != \"done\"'  # only open items",
+      "formulas:",
+      "  age: 'now()'",
+      "views:",
+      "  - type: table",
+      "    name: All",
+    ].join("\n");
+    const def = parseBase(src)!;
+    def.views[0] = { ...def.views[0], name: "Renamed" };
+    const out = serializeBase(def);
+    expect(out).toContain("# my base notes");
+    expect(out).toContain("# only open items");
+    expect(out).toContain("age: 'now()'"); // formula body untouched
+    expect(parseBase(out)!.views[0].name).toBe("Renamed"); // edit applied
+  });
+
+  it("does not re-serialize (and risk dropping) a nested filter it can't fully model", () => {
+    const src = [
+      "views:",
+      "  - type: table",
+      "    name: V",
+      "    filters:",
+      "      and:",
+      "        - 'a == 1'",
+      "        - unknownKey: keep", // a shape filterNode() doesn't model
+    ].join("\n");
+    const def = parseBase(src)!;
+    def.views[0] = { ...def.views[0], name: "V2" }; // edit something else
+    expect(serializeBase(def)).toContain("unknownKey: keep");
+  });
+});
 
 describe("parseProperties", () => {
   it("YAML-parses typed frontmatter values", () => {

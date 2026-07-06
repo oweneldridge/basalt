@@ -1806,3 +1806,59 @@ button.primary:hover {
 }
 .canvas-file-image .canvas-node-content { padding: 0; }
 .canvas-node-content.reading-view { max-width: none; }
+
+/* ------- Bases editor ------- */
+.base-edit-btn {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 10px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.base-edit-btn:hover, .base-edit-btn.active { color: var(--accent); border-color: var(--accent); }
+.base-editor {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 8px 0;
+  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.base-editor-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; }
+.base-editor label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-muted); }
+.base-editor input, .base-editor select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.base-editor-section { display: flex; flex-direction: column; gap: 6px; }
+.base-editor-title { font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.04em; }
+.base-col-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.base-col-list li { display: flex; align-items: center; gap: 4px; }
+.base-col-key { flex: 1; font-size: 13px; }
+.base-col-list button, .base-sort-dir, .base-editor-actions button {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text);
+  padding: 1px 7px;
+  font-size: 12px;
+}
+.base-col-list button:disabled { opacity: 0.35; cursor: default; }
+.base-col-list button:hover:not(:disabled), .base-sort-dir:hover { border-color: var(--accent); color: var(--accent); }
+.base-add-col, .base-filter-input { align-self: flex-start; }
+.base-filter-input { width: 100%; box-sizing: border-box; }
+.base-filter-readonly { font-size: 12px; color: var(--text-muted); font-style: italic; }
+.base-editor-actions { display: flex; gap: 8px; }
+.base-editor-actions button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.base-editor-actions button:disabled { opacity: 0.4; cursor: default; }
