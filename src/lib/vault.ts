@@ -102,6 +102,7 @@ export interface ObsidianConfig {
   dailyNotesFolder?: string | null;
   dailyNotesFormat?: string | null;
   dailyNotesTemplate?: string | null;
+  templatesFolder?: string | null;
 }
 
 export function readObsidianConfig(): Promise<ObsidianConfig> {

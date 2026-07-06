@@ -29,6 +29,15 @@ interface Props {
   sourceMode: boolean;
   /** True = dark editor theme (CM6 dark flag); colors come from CSS vars. */
   dark: boolean;
+  /** When set (the focused pane), receives an imperative handle for actions
+   * that must target this live editor — e.g. inserting a template at the caret. */
+  apiRef?: { current: EditorApi | null };
+}
+
+export interface EditorApi {
+  /** Replace the selection with `text`; place the caret at `caretOffset` into
+   * the inserted text (default: end). */
+  insertAtCursor: (text: string, caretOffset?: number) => void;
 }
 
 export function EditorPane({
@@ -47,6 +56,7 @@ export function EditorPane({
   scrollToLine,
   sourceMode,
   dark,
+  apiRef,
 }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
   const view = useRef<EditorView | null>(null);
@@ -90,6 +100,28 @@ export function EditorPane({
     // Rebuild only when the note changes; `doc` is the initial content for it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
+
+  // Publish an imperative handle while this is the focused pane (apiRef set).
+  useEffect(() => {
+    if (!apiRef) return;
+    apiRef.current = {
+      insertAtCursor: (text, caretOffset) => {
+        const v = view.current;
+        if (!v) return;
+        const sel = v.state.selection.main;
+        const caret = sel.from + (caretOffset ?? text.length);
+        v.dispatch({
+          changes: { from: sel.from, to: sel.to, insert: text },
+          selection: EditorSelection.cursor(caret),
+          scrollIntoView: true,
+        });
+        v.focus();
+      },
+    };
+    return () => {
+      if (apiRef.current) apiRef.current = null;
+    };
+  }, [apiRef, path]);
 
   // Reconcile an external live-reload into the existing editor WITHOUT remounting,
   // preserving the caret (clamped) and not triggering a save-back.
