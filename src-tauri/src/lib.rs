@@ -25,13 +25,30 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
 /// A note plus its full content — returned in bulk so the frontend can build
-/// its link/metadata index in a single IPC round-trip.
+/// its link/metadata index in a single IPC round-trip. File stats (ms epoch /
+/// bytes; 0 when unavailable) feed Bases' file.mtime/ctime/size.
 #[derive(Serialize, Clone)]
 struct VaultNote {
     path: String,
     rel: String,
     name: String,
     content: String,
+    mtime: u64,
+    ctime: u64,
+    size: u64,
+}
+
+/// (mtime ms, ctime ms, size bytes) for a file, all 0 on error — stat data is
+/// display metadata, never worth failing a vault scan over.
+fn file_stats(md: Option<&fs::Metadata>) -> (u64, u64, u64) {
+    let Some(m) = md else { return (0, 0, 0) };
+    let to_ms = |t: std::io::Result<SystemTime>| -> u64 {
+        t.ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    };
+    (to_ms(m.modified()), to_ms(m.created()), m.len())
 }
 
 /// A changed note reported by the watcher: absolute path (for reading) plus the
@@ -204,8 +221,9 @@ fn collect_vault(dir: &Path, root: &Path, out: &mut Vec<VaultNote>) {
             // Cap what we inline: oversized notes are listed with empty content
             // (still openable via read_note); lossily decode non-UTF8 rather
             // than blanking; skip on a hard IO error.
-            let too_big = entry
-                .metadata()
+            let md = entry.metadata().ok();
+            let too_big = md
+                .as_ref()
                 .map(|m| m.len() > MAX_INDEXED_NOTE_BYTES)
                 .unwrap_or(false);
             let content = if too_big {
@@ -225,11 +243,15 @@ fn collect_vault(dir: &Path, root: &Path, out: &mut Vec<VaultNote>) {
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| file_name.clone());
+            let (mtime, ctime, size) = file_stats(md.as_ref());
             out.push(VaultNote {
                 path: path.to_string_lossy().to_string(),
                 rel,
                 name,
                 content,
+                mtime,
+                ctime,
+                size,
             });
         }
     }
@@ -454,9 +476,9 @@ fn rename_note(path: String, new_name: String, state: State<VaultState>) -> Resu
 }
 
 /// Non-Markdown file types surfaced in the tree and addressable by links.
-const ATTACHMENT_EXTS: [&str; 19] = [
+const ATTACHMENT_EXTS: [&str; 20] = [
     "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "avif", "ico", "pdf", "mp3", "wav", "m4a",
-    "ogg", "flac", "mp4", "mov", "webm", "canvas",
+    "ogg", "flac", "mp4", "mov", "webm", "canvas", "base",
 ];
 
 fn is_attachment_ext(path: &Path) -> bool {
@@ -466,12 +488,16 @@ fn is_attachment_ext(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// A non-Markdown vault file (no content shipped; opened via the OS).
+/// A non-Markdown vault file (no content shipped; opened via the OS). Stats
+/// (ms epoch / bytes; 0 when unavailable) feed Bases' file.mtime/ctime/size.
 #[derive(Serialize, Clone)]
 struct AttachmentEntry {
     path: String,
     rel: String,
     name: String,
+    mtime: u64,
+    ctime: u64,
+    size: u64,
 }
 
 fn collect_attachments(dir: &Path, root: &Path, out: &mut Vec<AttachmentEntry>, depth: usize) {
@@ -498,10 +524,14 @@ fn collect_attachments(dir: &Path, root: &Path, out: &mut Vec<AttachmentEntry>, 
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .to_string();
+            let (mtime, ctime, size) = file_stats(entry.metadata().ok().as_ref());
             out.push(AttachmentEntry {
                 path: path.to_string_lossy().to_string(),
                 rel,
                 name: file_name,
+                mtime,
+                ctime,
+                size,
             });
         }
     }
@@ -668,10 +698,14 @@ async fn write_attachment(
         .ok_or("invalid path")?
         .to_string_lossy()
         .to_string();
+    let (mtime, ctime, size) = file_stats(fs::metadata(&canonical).ok().as_ref());
     Ok(AttachmentEntry {
         path: canonical.to_string_lossy().to_string(),
         rel,
         name: fname,
+        mtime,
+        ctime,
+        size,
     })
 }
 

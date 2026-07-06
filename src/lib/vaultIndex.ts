@@ -230,6 +230,36 @@ export class VaultIndex {
     this.meta.delete(path);
   }
 
+  /** One note's tags (as extracted: frontmatter + inline, original case). */
+  tagsOf(path: string): string[] {
+    return this.tags.get(path) ?? [];
+  }
+
+  /** Lowercase match keys for a note's OUTBOUND links — Bases' file.hasLink.
+   * For each link: the raw path-part (fragment stripped, with and without
+   * .md), plus the resolved note's rel and basename when it resolves. */
+  linkKeysOf(path: string): string[] {
+    const keys = new Set<string>();
+    const add = (s: string) => {
+      const t = s.replace(/\.md$/i, "").toLowerCase();
+      if (t) keys.add(t);
+    };
+    for (const o of this.occ.get(path) ?? []) {
+      const pathPart = o.rawTarget.split("#")[0].trim();
+      if (!pathPart) continue;
+      add(pathPart);
+      const resolved = this.resolve(o.rawTarget, path);
+      if (resolved) {
+        const meta = this.meta.get(resolved);
+        if (meta) {
+          add(meta.rel);
+          add(meta.name);
+        }
+      }
+    }
+    return [...keys];
+  }
+
   /** Every tag in the vault with the number of notes using it. Sorted by count
    * (desc), then name — the order the tag pane shows. */
   allTags(): TagCount[] {
