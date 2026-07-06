@@ -46,9 +46,11 @@ zoom, `%%comments%%`, paste-URL→link, outgoing-links pane):
   status bar / ribbon; tab pinning + drag-between-panes; search **operators**
   (`path:`/`tag:`/regex/boolean).
 - **Large**: **note/heading/block transclusion** (`![[Note#h]]`) — **shipped**
-  (2026-07, editor + reading, DoS-hardened); **Canvas editing** (create/drag/
-  resize nodes, edges, groups) — currently read-only; **Bases editing** (create/
-  edit views/columns/filters) — currently read-only; file-recovery snapshots.
+  (2026-07, editor + reading, DoS-hardened); **Canvas editing** (drag/resize/
+  create/edit/delete/colour nodes, draw edges) — **shipped** (2026-07, atomic
+  write_canvas, conflict-safe, non-destructive to unmodeled fields); **Bases
+  editing** (create/edit views/columns/filters) — currently read-only;
+  file-recovery snapshots.
 
 Out of scope by design: Obsidian Sync/Publish (paid services), the mobile app,
 and running Obsidian's own community plugins (Basalt has its own plugin API).
