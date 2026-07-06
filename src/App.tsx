@@ -2744,9 +2744,9 @@ export default function App() {
       )}
       {modal === "search" && (
         <Palette<SearchHit>
-          placeholder="Search vault…"
+          placeholder="Search… (path: file: tag: -exclude &quot;phrase&quot; /regex/)"
           initialQuery={searchSeed}
-          getItems={(q) => searchVault(notesRef.current, q)}
+          getItems={(q) => searchVault(notesRef.current, q, { tagsOf: (p) => index.current.tagsOf(p) })}
           itemKey={(h, i) => `${h.path}:${h.line}:${i}`}
           renderItem={(h) => (
             <>
