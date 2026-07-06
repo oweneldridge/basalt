@@ -109,6 +109,24 @@ export function readObsidianConfig(): Promise<ObsidianConfig> {
   return invoke<ObsidianConfig>("read_obsidian_config");
 }
 
+/** Raw plugin as read from `.basalt/plugins/<id>/`. */
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  minAppVersion: string;
+  code: string;
+  data: string | null;
+}
+export function listPlugins(): Promise<PluginInfo[]> {
+  return invoke<PluginInfo[]>("list_plugins");
+}
+export function writePluginData(id: string, data: string): Promise<void> {
+  return invoke<void>("write_plugin_data", { id, data });
+}
+
 /** A flattened entry from `.obsidian/bookmarks.json`. */
 export interface Bookmark {
   type: string; // file | folder | heading | block | search | graph

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { createEditorState, externalReload, setEditorTheme, setSourceMode } from "../editor/setup";
+import { createEditorState, externalReload, reconfigurePlugins, setEditorTheme, setSourceMode } from "../editor/setup";
 import type { EditorCallbacks } from "../editor/setup";
 import type { NoteRef } from "../editor/wikilink";
 import type { LinkFormat } from "../lib/rename";
@@ -29,6 +29,9 @@ interface Props {
   sourceMode: boolean;
   /** True = dark editor theme (CM6 dark flag); colors come from CSS vars. */
   dark: boolean;
+  /** Bumps when the plugin registry changes → re-apply plugin editor extensions
+   * and re-render plugin code-blocks in this live editor. */
+  pluginVersion: number;
   /** When set (the focused pane), receives an imperative handle for actions
    * that must target this live editor — e.g. inserting a template at the caret. */
   apiRef?: { current: EditorApi | null };
@@ -56,6 +59,7 @@ export function EditorPane({
   scrollToLine,
   sourceMode,
   dark,
+  pluginVersion,
   apiRef,
 }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
@@ -100,6 +104,12 @@ export function EditorPane({
     // Rebuild only when the note changes; `doc` is the initial content for it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
+
+  // Re-apply plugin editor extensions + re-render plugin code-blocks when the
+  // plugin registry changes (enable/disable), without rebuilding the editor.
+  useEffect(() => {
+    if (view.current) reconfigurePlugins(view.current);
+  }, [pluginVersion]);
 
   // Publish an imperative handle while this is the focused pane (apiRef set).
   useEffect(() => {

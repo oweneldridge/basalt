@@ -31,6 +31,7 @@ import { VaultIndex } from "./lib/vaultIndex";
 import {
   loadRecentVaults,
   pushRecentVault,
+  vaultName,
   workspaceKey as wsKey,
   type RecentVault,
 } from "./lib/recentVaults";
@@ -38,6 +39,17 @@ import { setQueryHost } from "./lib/queryHost";
 import { noteRow, tasksForNote } from "./lib/vaultRows";
 import { parseQuery, runQuery, type Task } from "./lib/query";
 import { applyTemplate, type TemplateCtx } from "./lib/templates";
+import {
+  installHost,
+  loadPlugin,
+  unloadPlugin,
+  unloadAll,
+  pluginCommands,
+  loadEnabled,
+  saveEnabled,
+  type HostDeps,
+} from "./lib/plugins";
+import { listPlugins, writePluginData, type PluginInfo } from "./lib/vault";
 import type { EditorApi } from "./components/EditorPane";
 import { clearImageCache, resolveImage } from "./lib/assets";
 import { normalizeName, targetPathPart } from "./lib/markdown";
@@ -258,6 +270,12 @@ export default function App() {
   } | null>(null);
   // Imperative handle to the FOCUSED editor (for inserting a template at the caret).
   const editorApiRef = useRef<EditorApi | null>(null);
+  // Plugins: installed manifests, a version that bumps when the plugin registry
+  // (commands/processors) changes, and transient notices (toasts).
+  const [installedPlugins, setInstalledPlugins] = useState<PluginInfo[]>([]);
+  const [pluginVersion, setPluginVersion] = useState(0);
+  const [notices, setNotices] = useState<{ id: number; msg: string }[]>([]);
+  const noticeSeq = useRef(0);
   const [graphOpen, setGraphOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<"global" | "local">("global");
   const [sourceMode, setSourceMode] = useState(false);
@@ -1695,6 +1713,141 @@ export default function App() {
     return () => setQueryHost(null);
   }, [tagsOf, linkKeysOf]);
 
+  // A transient toast (used by plugins' Notice + a few app messages). Capped so
+  // a plugin spamming Notice() can't accumulate unbounded toasts.
+  const showNotice = useCallback((msg: string, timeoutMs = 4000) => {
+    const id = ++noticeSeq.current;
+    setNotices((n) => [...n, { id, msg }].slice(-6));
+    window.setTimeout(() => setNotices((n) => n.filter((x) => x.id !== id)), Math.max(500, timeoutMs));
+  }, []);
+
+  // Write a plugin-modified note through the SAME vetted path as autosave
+  // (atomic + .md-only backend guard + self-write suppression + index update).
+  const pluginModifyNote = useCallback(
+    async (rel: string, content: string) => {
+      const note = notesRef.current.find((n) => n.rel === rel);
+      if (!note) throw new Error(`no such note: ${rel}`);
+      // Refuse to be a SECOND uncoordinated writer: if the note has an unsaved
+      // editor edit or an unresolved on-disk conflict, writing here would race
+      // autosave / clobber the conflicted version and silently lose an update.
+      // Fail loudly instead (the plugin gets a rejected promise).
+      if (conflictsRef.current.has(note.path)) {
+        throw new Error(`"${rel}" has an unresolved "Changed on disk" conflict`);
+      }
+      if (pending.current.has(note.path)) {
+        throw new Error(`"${rel}" has unsaved edits — save it before modifying via a plugin`);
+      }
+      await writeNote(note.path, content);
+      rememberSelfWrite(rel, content); // AFTER a successful write (no stale suppression)
+      const updated: VaultNote = {
+        ...note,
+        content,
+        mtime: Date.now(),
+        size: new TextEncoder().encode(content).length,
+      };
+      index.current.setNote(updated);
+      setNotes((prev) => prev.map((n) => (n.path === note.path ? updated : n)));
+      bumpStructure();
+      for (const p of Object.values(panesRef.current)) {
+        if (p.active === note.path && !pending.current.has(note.path)) patchPane(p.id, { doc: content });
+      }
+    },
+    [rememberSelfWrite, bumpStructure, patchPane],
+  );
+
+  // Install the plugin host once; its deps read live refs / stable callbacks.
+  useEffect(() => {
+    const deps: HostDeps = {
+      getMarkdownFiles: () => notesRef.current.map((n) => ({ path: n.rel, name: n.name })),
+      readNote: (rel) => {
+        const note = notesRef.current.find((n) => n.rel === rel);
+        return readNote(note ? note.path : rel);
+      },
+      createNote: async (rel, content) => {
+        const name = rel.replace(/\.md$/i, "");
+        const abs = await createNote(name); // sanitized + vault-contained in Rust
+        const vrel = abs.startsWith(vaultRef.current ?? "")
+          ? abs.slice((vaultRef.current ?? "").length).replace(/^[/\\]+/, "")
+          : abs;
+        await writeNote(abs, content);
+        rememberSelfWrite(vrel, content); // AFTER the content write succeeds
+        const note: VaultNote = { path: abs, rel: vrel, name: nameFromRel(vrel), content };
+        index.current.setNote(note);
+        setNotes((prev) =>
+          [...prev, note].sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
+        );
+        bumpStructure();
+      },
+      modifyNote: (rel, content) => pluginModifyNote(rel, content),
+      getActiveNotePath: () => {
+        const p = focusedIdRef.current ? panesRef.current[focusedIdRef.current]?.active : null;
+        if (!p) return null;
+        return notesRef.current.find((n) => n.path === p)?.rel ?? null;
+      },
+      openNote: (target) => openViewerFileRef.current(target),
+      vaultName: () => vaultName(vaultRef.current ?? ""),
+      savePluginData: (id, json) => writePluginData(id, json),
+      notice: (msg, timeoutMs) => showNotice(msg, timeoutMs),
+      onRegistryChanged: () => setPluginVersion((v) => v + 1),
+    };
+    installHost(deps);
+    return () => installHost(null);
+  }, [pluginModifyNote, showNotice]);
+
+  // Load the enabled plugins for a vault (called on open + on toggle).
+  const refreshPlugins = useCallback(async () => {
+    const v = vaultRef.current;
+    if (!v) return;
+    let infos: PluginInfo[] = [];
+    try {
+      infos = await listPlugins();
+    } catch {
+      /* no plugins folder */
+    }
+    if (vaultRef.current !== v) return; // vault changed during the async list
+    setInstalledPlugins(infos);
+    const enabled = new Set(loadEnabled(v));
+    await unloadAll();
+    for (const info of infos) {
+      if (vaultRef.current !== v) break; // vault switched mid-load — stop
+      if (!enabled.has(info.id)) continue;
+      try {
+        await loadPlugin(info);
+      } catch (e) {
+        showNotice(`Plugin "${info.name}" failed to load: ${e instanceof Error ? e.message : e}`, 8000);
+      }
+    }
+    setPluginVersion((x) => x + 1);
+  }, [showNotice]);
+
+  // Enable/disable a plugin from Settings.
+  const setPluginEnabled = useCallback(
+    async (info: PluginInfo, enabled: boolean) => {
+      const v = vaultRef.current;
+      if (!v) return;
+      const cur = new Set(loadEnabled(v));
+      if (enabled) cur.add(info.id);
+      else cur.delete(info.id);
+      saveEnabled(v, [...cur]);
+      try {
+        if (enabled) await loadPlugin(info);
+        else await unloadPlugin(info.id);
+      } catch (e) {
+        showNotice(`Plugin "${info.name}": ${e instanceof Error ? e.message : e}`, 8000);
+      }
+      setPluginVersion((x) => x + 1);
+    },
+    [showNotice],
+  );
+
+  // (Re)load this vault's enabled plugins whenever the open vault changes.
+  useEffect(() => {
+    if (vault) void refreshPlugins();
+    return () => {
+      void unloadAll();
+    };
+  }, [vault, refreshPlugins]);
+
   const handleNewNote = useCallback(async () => {
     if (!vaultRef.current) return;
     const existing = new Set(notesRef.current.map((n) => normalizeName(n.name)));
@@ -2065,8 +2218,16 @@ export default function App() {
         hint: "discard unsaved changes",
         run: () => void handleReloadFromDisk(),
       },
+      // Commands contributed by enabled plugins (pluginVersion re-derives this).
+      ...pluginCommands().map((c) => ({
+        id: `plugin:${c.id}`,
+        label: c.name,
+        hint: "plugin command",
+        run: c.callback,
+      })),
     ],
-    [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf, pluginVersion],
   );
 
   if (!vault) {
@@ -2151,6 +2312,7 @@ export default function App() {
               key={`${id}:${path}`}
               path={path}
               selfRel={rel}
+              pluginVersion={pluginVersion}
               apiRef={id === focusedId ? editorApiRef : undefined}
               doc={pane.doc}
               scrollToLine={pane.scrollToLine}
@@ -2353,6 +2515,9 @@ export default function App() {
           themeMode={themeMode}
           onThemeMode={setThemeMode}
           obsConfig={obsConfigRef.current}
+          plugins={installedPlugins}
+          enabledPlugins={vault ? loadEnabled(vault) : []}
+          onTogglePlugin={(info, on) => void setPluginEnabled(info, on)}
           onClose={() => setModal(null)}
         />
       )}
@@ -2408,6 +2573,15 @@ export default function App() {
             setTemplatePrompt(null);
           }}
         />
+      )}
+      {notices.length > 0 && (
+        <div className="notices">
+          {notices.map((n) => (
+            <div key={n.id} className="notice" onClick={() => setNotices((x) => x.filter((y) => y.id !== n.id))}>
+              {n.msg}
+            </div>
+          ))}
+        </div>
       )}
       {fileMenu && (
         <div className="ctx-overlay" onMouseDown={() => setFileMenu(null)} onContextMenu={(e) => e.preventDefault()}>

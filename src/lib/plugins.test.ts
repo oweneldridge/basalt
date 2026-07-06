@@ -1,0 +1,189 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  installHost,
+  loadPlugin,
+  unloadPlugin,
+  unloadAll,
+  pluginCommands,
+  codeBlockProcessor,
+  hasCodeBlockProcessor,
+  isLoaded,
+  loadEnabled,
+  saveEnabled,
+  type HostDeps,
+  type PluginInfo,
+} from "./plugins";
+
+function info(over: Partial<PluginInfo> = {}): PluginInfo {
+  return {
+    id: "sample",
+    name: "Sample",
+    version: "1.0.0",
+    description: "",
+    author: "",
+    minAppVersion: "",
+    code: "",
+    data: null,
+    ...over,
+  };
+}
+
+function fakeHost(over: Partial<HostDeps> = {}): { host: HostDeps; notices: string[]; saved: Record<string, string> } {
+  const notices: string[] = [];
+  const saved: Record<string, string> = {};
+  const host: HostDeps = {
+    getMarkdownFiles: () => [{ path: "A.md", name: "A" }],
+    readNote: async () => "content",
+    createNote: async () => {},
+    modifyNote: async () => {},
+    getActiveNotePath: () => "A.md",
+    openNote: () => {},
+    vaultName: () => "Vault",
+    savePluginData: async (id, json) => {
+      saved[id] = json;
+    },
+    notice: (m) => notices.push(m),
+    onRegistryChanged: () => {},
+    ...over,
+  };
+  return { host, notices, saved };
+}
+
+beforeEach(async () => {
+  await unloadAll();
+  installHost(null);
+});
+
+describe("plugin host", () => {
+  it("loads a class plugin, registers a command + processor, and fires onload", async () => {
+    const { host, notices } = fakeHost();
+    installHost(host);
+    const code = `
+      const { Plugin, Notice } = require("basalt");
+      module.exports = class extends Plugin {
+        async onload() {
+          new Notice("loaded " + this.app.vault.getName());
+          this.addCommand({ id: "hi", name: "Say hi", callback: () => new Notice("hi") });
+          this.registerMarkdownCodeBlockProcessor("greet", (src, el) => { el.textContent = "G:" + src; });
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "p1", code }));
+    expect(isLoaded("p1")).toBe(true);
+    expect(notices).toEqual(["loaded Vault"]);
+    const cmds = pluginCommands();
+    expect(cmds.map((c) => c.id)).toEqual(["p1:hi"]);
+    // run the command
+    cmds[0].callback();
+    expect(notices).toEqual(["loaded Vault", "hi"]);
+    // the processor renders (node env: a minimal element stub)
+    expect(hasCodeBlockProcessor("greet")).toBe(true);
+    const el = { textContent: "" } as unknown as HTMLElement;
+    codeBlockProcessor("GREET")!("world", el, { notePath: "A.md" });
+    expect(el.textContent).toBe("G:world");
+  });
+
+  it("unload removes commands, processors, and runs onunload + cleanups", async () => {
+    const { host, notices } = fakeHost();
+    installHost(host);
+    const code = `
+      const { Plugin, Notice } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          this.addCommand({ id: "c", name: "C", callback: () => {} });
+          this.registerMarkdownCodeBlockProcessor("x", () => {});
+          this.register(() => new Notice("cleanup"));
+        }
+        onunload() { new Notice("bye"); }
+      };
+    `;
+    await loadPlugin(info({ id: "p2", code }));
+    expect(pluginCommands()).toHaveLength(1);
+    expect(hasCodeBlockProcessor("x")).toBe(true);
+    await unloadPlugin("p2");
+    expect(isLoaded("p2")).toBe(false);
+    expect(pluginCommands()).toHaveLength(0);
+    expect(hasCodeBlockProcessor("x")).toBe(false);
+    expect(notices).toEqual(["bye", "cleanup"]); // onunload, then cleanups (LIFO)
+  });
+
+  it("supports a plain-object module and loadData/saveData", async () => {
+    const { host, saved } = fakeHost();
+    installHost(host);
+    const code = `
+      module.exports = {
+        async onload() {},
+      };
+    `;
+    await loadPlugin(info({ id: "obj", code }));
+    expect(isLoaded("obj")).toBe(true);
+
+    // a plugin that persists data
+    const code2 = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        async onload() {
+          const d = await this.loadData();
+          await this.saveData({ count: (d?.count ?? 0) + 1 });
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "counter", code: code2, data: JSON.stringify({ count: 4 }) }));
+    expect(JSON.parse(saved["counter"])).toEqual({ count: 5 });
+  });
+
+  it("require of anything other than 'basalt' throws (bubbles as a load error)", async () => {
+    installHost(fakeHost().host);
+    const code = `const fs = require("fs");`;
+    await expect(loadPlugin(info({ id: "bad", code }))).rejects.toThrow(/not available/);
+    expect(isLoaded("bad")).toBe(false);
+  });
+
+  it("a throwing onload rolls back atomically — no dangling command, not loaded", async () => {
+    installHost(fakeHost().host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() { this.addCommand({ id: "x", name: "X", callback: () => {} }); throw new Error("boom"); }
+      };
+    `;
+    await expect(loadPlugin(info({ id: "throwing", code }))).rejects.toThrow(/boom/);
+    // the partial registration was rolled back and the plugin is not loaded
+    expect(pluginCommands()).toHaveLength(0);
+    expect(isLoaded("throwing")).toBe(false);
+  });
+
+  it("a plugin cannot register a reserved (built-in) code-block language", async () => {
+    const { host, notices } = fakeHost();
+    installHost(host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          this.registerMarkdownCodeBlockProcessor("mermaid", () => {});
+          this.registerMarkdownCodeBlockProcessor("dataview", () => {});
+          this.registerMarkdownCodeBlockProcessor("chart", () => {});
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "r", code }));
+    expect(hasCodeBlockProcessor("mermaid")).toBe(false);
+    expect(hasCodeBlockProcessor("dataview")).toBe(false);
+    expect(hasCodeBlockProcessor("chart")).toBe(true); // non-reserved is fine
+    expect(notices.some((n) => /built-in/.test(n))).toBe(true);
+  });
+});
+
+describe("enabled-plugin persistence", () => {
+  it("round-trips per vault and dedupes", () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => store.set(k, v),
+    });
+    saveEnabled("/v", ["a", "b", "a"]);
+    expect(loadEnabled("/v").sort()).toEqual(["a", "b"]);
+    expect(loadEnabled("/other")).toEqual([]);
+    vi.unstubAllGlobals();
+  });
+});

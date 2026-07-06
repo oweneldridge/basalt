@@ -75,6 +75,8 @@ static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Notes larger than this are listed without content (the editor still opens
 /// them on demand via read_note); keeps the bulk IPC message bounded.
 const MAX_INDEXED_NOTE_BYTES: u64 = 5_000_000;
+/// A plugin's main.js larger than this is skipped (a plugin is code, not data).
+const MAX_PLUGIN_BYTES: u64 = 10_000_000;
 
 /// The canonical root of the vault open in `label`'s window.
 fn current_root(state: &State<VaultState>, label: &str) -> Result<PathBuf, String> {
@@ -1130,6 +1132,116 @@ async fn read_image(
     Ok(format!("data:{};base64,{}", mime_for(&canon), base64_encode(&bytes)))
 }
 
+/// A Basalt plugin discovered under `.basalt/plugins/<id>/`. `code` is the raw
+/// main.js the webview will execute (Basalt plugins are trusted in-webview JS —
+/// the user installs only plugins they trust). `data` is its persisted
+/// settings JSON (data.json), if any.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginInfo {
+    id: String,
+    name: String,
+    version: String,
+    description: String,
+    author: String,
+    min_app_version: String,
+    code: String,
+    data: Option<String>,
+}
+
+/// A plugin id must be a single safe path segment (no traversal, no separators).
+fn valid_plugin_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 100
+        && id != "."
+        && id != ".."
+        && !id.contains('/')
+        && !id.contains('\\')
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && !id.starts_with('.')
+}
+
+/// List installed Basalt plugins (each folder under `.basalt/plugins/` with a
+/// manifest.json + main.js). Missing/malformed plugins are skipped, not fatal.
+#[tauri::command]
+fn list_plugins(window: tauri::Window, state: State<VaultState>) -> Result<Vec<PluginInfo>, String> {
+    let root = current_root(&state, window.label())?;
+    let dir = root.join(".basalt").join("plugins");
+    let mut out = Vec::new();
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Ok(out); // no plugins folder yet
+    };
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let id = entry.file_name().to_string_lossy().to_string();
+        if !valid_plugin_id(&id) {
+            continue;
+        }
+        let pdir = entry.path();
+        let Ok(manifest_raw) = fs::read_to_string(pdir.join("manifest.json")) else {
+            continue;
+        };
+        let Ok(m) = serde_json::from_str::<serde_json::Value>(&manifest_raw) else {
+            continue;
+        };
+        // Skip an implausibly large main.js rather than reading it into memory.
+        let main = pdir.join("main.js");
+        if fs::metadata(&main).map(|md| md.len() > MAX_PLUGIN_BYTES).unwrap_or(true) {
+            continue;
+        }
+        let Ok(code) = fs::read_to_string(&main) else {
+            continue;
+        };
+        let get = |k: &str| m.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        out.push(PluginInfo {
+            id: id.clone(),
+            name: {
+                let n = get("name");
+                if n.is_empty() {
+                    id
+                } else {
+                    n
+                }
+            },
+            version: get("version"),
+            description: get("description"),
+            author: get("author"),
+            min_app_version: get("minAppVersion"),
+            code,
+            data: fs::read_to_string(pdir.join("data.json")).ok(),
+        });
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(out)
+}
+
+/// Persist a plugin's settings JSON to `.basalt/plugins/<id>/data.json`.
+#[tauri::command]
+fn write_plugin_data(
+    id: String,
+    data: String,
+    window: tauri::Window,
+    state: State<VaultState>,
+) -> Result<(), String> {
+    if !valid_plugin_id(&id) {
+        return Err("invalid plugin id".into());
+    }
+    let root = current_root(&state, window.label())?;
+    let pdir = root.join(".basalt").join("plugins").join(&id);
+    if !pdir.is_dir() {
+        return Err("plugin not installed".into());
+    }
+    // Defense in depth beyond valid_plugin_id: confirm the resolved folder is
+    // really inside the vault (a symlinked plugin dir can't escape it).
+    let canon = fs::canonicalize(&pdir).map_err(|e| e.to_string())?;
+    if !canon.starts_with(&root) {
+        return Err("plugin path escapes vault".into());
+    }
+    atomic_write(&canon.join("data.json"), data.as_bytes())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1173,6 +1285,8 @@ pub fn run() {
             export_file,
             start_watching,
             read_image,
+            list_plugins,
+            write_plugin_data,
             debug_log
         ])
         .run(tauri::generate_context!())
