@@ -37,14 +37,18 @@ zoom, `%%comments%%`, paste-URL→link, outgoing-links pane):
   (⌘-click); new-note-in-folder (folder context menu — backend already
   supports folder-qualified names); quick-switcher "Create <query>"; reveal-in-
   Finder; readable-line-length toggle; spellcheck toggle; local-graph depth.
-- **Medium**: inline/block **math (KaTeX)**; **footnotes**; **block references**
-  (`^id` + `#^block` nav/autocomplete); heading/block **link autocomplete**;
-  **alias** resolution (frontmatter `aliases:`); raw **HTML in Markdown**;
+- **Medium — shipped (2026-07):** inline/block **math (KaTeX)** (reading +
+  Live Preview + export); **footnotes** (`[^id]` + `^[inline]`); **alias**
+  resolution (frontmatter `aliases:` — resolve/backlinks/autocomplete, rename-
+  safe, real-file precedence).
+- **Medium — remaining**: **block references** (`^id` + `#^block` nav/
+  autocomplete); heading/block **link autocomplete**; raw **HTML in Markdown**;
   inline **audio/video/PDF embed players**; **new folder** + folder/attachment
   context menus + **drag-drop** file tree; **hover page-preview**; typed
   **Properties** widgets; per-command **hotkey assignment**; **CSS snippets**;
   status bar / ribbon; tab pinning + drag-between-panes; search **operators**
-  (`path:`/`tag:`/regex/boolean).
+  (`path:`/`tag:`/regex/boolean). Math export-font inlining + Live-Preview
+  footnotes are small follow-ups.
 - **Large — all shipped (2026-07):** **note/heading/block transclusion**
   (`![[Note#h]]`, editor + reading, DoS-hardened); **Canvas editing** (drag/
   resize/create/edit/delete/colour nodes, draw edges — atomic write_canvas,
