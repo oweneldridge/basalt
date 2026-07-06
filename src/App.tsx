@@ -39,6 +39,7 @@ import {
 } from "./lib/recentVaults";
 import { setQueryHost } from "./lib/queryHost";
 import { setTranscludeHost } from "./lib/transclude";
+import { recordSnapshot, listSnapshots, clearSnapshots, renameSnapshots, type Snapshot } from "./lib/snapshots";
 import { noteRow, tasksForNote } from "./lib/vaultRows";
 import { parseQuery, runQuery, type Task } from "./lib/query";
 import { applyTemplate, type TemplateCtx } from "./lib/templates";
@@ -65,6 +66,7 @@ import { ReadingView } from "./components/ReadingView";
 import { CanvasView } from "./components/CanvasView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { VaultSwitcher } from "./components/VaultSwitcher";
+import { VersionHistory } from "./components/VersionHistory";
 // Lazy: the Bases engine pulls in a YAML parser — keep it out of the initial
 // bundle until a .base pane is actually opened (same reasoning as mermaid).
 const BaseView = lazy(() =>
@@ -141,7 +143,7 @@ interface Pane {
   scrollToLine?: number;
 }
 
-type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | "templates" | null;
+type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | "templates" | "history" | null;
 
 interface AppCommand {
   id: string;
@@ -264,6 +266,7 @@ export default function App() {
   // hold a different dirty note). The badge shows for the focused note.
   const [conflicts, setConflicts] = useState<Set<string>>(() => new Set());
   const [modal, setModal] = useState<ModalKind>(null);
+  const [versionSnapshots, setVersionSnapshots] = useState<Snapshot[]>([]);
   const [recentVaults, setRecentVaults] = useState<RecentVault[]>(() => loadRecentVaults());
   // Sidebar visibility + UI zoom (Obsidian parity: ⌘\ / ⌘⌥\ , ⌘+ / ⌘- / ⌘0).
   const [leftOpen, setLeftOpen] = useState(true);
@@ -442,6 +445,9 @@ export default function App() {
           // Record AFTER a successful write (a failed write leaves no stale
           // suppression), keyed by the rel + content the watcher will see.
           rememberSelfWrite(meta.rel, doc);
+          // Local version-history snapshot (throttled + pruned inside).
+          const vkey = vaultRef.current;
+          if (vkey) void recordSnapshot(vkey, meta.rel, doc, Date.now());
           // Refresh stats so a Bases view sorting/filtering on file.mtime/size
           // reflects this save immediately (ctime is preserved).
           const updated: VaultNote = {
@@ -1373,6 +1379,61 @@ export default function App() {
     await flushPath(path, true); // explicit Keep-mine: write despite the conflict
   }, [clearConflict, flushPath, closeTab]);
 
+  // The note whose history is open — captured so a restore always targets it
+  // even if focus moved to another note while the modal was up.
+  const historyTargetRef = useRef<string | null>(null);
+
+  // Load the focused note's local snapshot history and open the version modal.
+  const openVersionHistory = useCallback(async () => {
+    const id = focusedIdRef.current;
+    const path = id ? panesRef.current[id]?.active : null;
+    const vkey = vaultRef.current;
+    if (!path || !isMarkdownPath(path) || !vkey) {
+      setSaveError("Version history is only available for a note");
+      return;
+    }
+    const meta = notesRef.current.find((n) => n.path === path);
+    historyTargetRef.current = path;
+    setVersionSnapshots(meta ? await listSnapshots(vkey, meta.rel) : []);
+    setModal("history");
+  }, []);
+
+  // Restore a snapshot into the note the history was opened for (NOT whatever is
+  // focused now): navigate to it if needed, then apply through the normal
+  // conflict-safe autosave path.
+  const restoreSnapshot = useCallback(
+    async (content: string) => {
+      const path = historyTargetRef.current;
+      if (!path || !isMarkdownPath(path)) {
+        setModal(null);
+        return;
+      }
+      // Don't overwrite a note with an unresolved disk conflict — the restore
+      // would silently not persist AND drop the conflicted local edits.
+      if (conflictsRef.current.has(path)) {
+        setSaveError("Resolve the “Changed on disk” conflict before restoring a version");
+        setModal(null);
+        return;
+      }
+      setModal(null);
+      let id = focusedIdRef.current;
+      if (!id || panesRef.current[id]?.active !== path) {
+        await openNoteByPath(path); // bring the target note back into focus
+        id = focusedIdRef.current;
+      }
+      if (!id || panesRef.current[id]?.active !== path) return;
+      // Force-snapshot the CURRENT content first, so restoring is itself
+      // reversible (the pre-restore state stays in the history).
+      const vkey = vaultRef.current;
+      const rel = notesRef.current.find((n) => n.path === path)?.rel;
+      const cur = panesRef.current[id]?.doc;
+      if (vkey && rel && cur) await recordSnapshot(vkey, rel, cur, Date.now(), true);
+      patchPane(id, { doc: content }); // editor reconciles to the restored text
+      handleChange(id, path, content); // mark dirty + autosave
+    },
+    [patchPane, handleChange, openNoteByPath],
+  );
+
   const getNotes = useCallback(
     () => notesRef.current.map((n) => ({ name: n.name, rel: n.rel })),
     [],
@@ -2133,6 +2194,9 @@ export default function App() {
         clearConflict(path);
         await deleteNote(path);
         selfWrites.current.delete(note.rel); // a restored copy must not be swallowed
+        // Drop the snapshot history so a later note reusing this rel can't
+        // inherit — and restore — the deleted note's content.
+        if (vaultRef.current) void clearSnapshots(vaultRef.current, note.rel);
         index.current.removeNote(path);
         setNotes((prev) => prev.filter((n) => n.path !== path));
         recents.current = recents.current.filter((r) => r !== note.rel);
@@ -2179,6 +2243,8 @@ export default function App() {
           ? newPath.slice(root.length).replace(/^[/\\]+/, "")
           : newPath;
         const newBase = nameFromRel(newRel);
+        // Migrate the local snapshot history so recovery follows the note.
+        void renameSnapshots(root, oldNote.rel, newRel);
 
         // Link text Obsidian would write, honoring the vault's newLinkFormat
         // (shortest: bare name unless another note shares the new basename;
@@ -2327,6 +2393,7 @@ export default function App() {
       { id: "print-pdf", label: "Print / Save as PDF…", hint: "prints the Reading view", run: handlePrintPdf },
       { id: "open-note", label: "Open note…", hint: "quick switcher (⌘O)", run: () => setModal("switcher") },
       { id: "search", label: "Search vault…", hint: "full-text search (⇧⌘F)", run: () => { setSearchSeed(""); setModal("search"); } },
+      { id: "version-history", label: "Show version history", hint: "restore a past snapshot of this note", run: () => void openVersionHistory() },
       { id: "graph", label: "Open graph view", hint: "global link graph", run: () => setGraphOpen(true) },
       {
         id: "graph-local",
@@ -2735,6 +2802,14 @@ export default function App() {
             templatePrompt.resolve(null);
             setTemplatePrompt(null);
           }}
+        />
+      )}
+      {modal === "history" && (
+        <VersionHistory
+          noteName={activeName ?? "note"}
+          snapshots={versionSnapshots}
+          onRestore={restoreSnapshot}
+          onClose={() => setModal(null)}
         />
       )}
       {notices.length > 0 && (
