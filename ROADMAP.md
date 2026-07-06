@@ -40,15 +40,15 @@ zoom, `%%comments%%`, paste-URL→link, outgoing-links pane):
 - **Medium — shipped (2026-07):** inline/block **math (KaTeX)** (reading +
   Live Preview + export); **footnotes** (`[^id]` + `^[inline]`); **alias**
   resolution (frontmatter `aliases:` — resolve/backlinks/autocomplete, rename-
-  safe, real-file precedence).
-- **Medium — remaining**: **block references** (`^id` + `#^block` nav/
-  autocomplete); heading/block **link autocomplete**; raw **HTML in Markdown**;
-  inline **audio/video/PDF embed players**; **new folder** + folder/attachment
-  context menus + **drag-drop** file tree; **hover page-preview**; typed
-  **Properties** widgets; per-command **hotkey assignment**; **CSS snippets**;
-  status bar / ribbon; tab pinning + drag-between-panes; search **operators**
-  (`path:`/`tag:`/regex/boolean). Math export-font inlining + Live-Preview
-  footnotes are small follow-ups.
+  safe, real-file precedence); **heading link autocomplete** (`[[Note#…`) +
+  **subpath navigation** (`[[Note#Heading]]`/`#^block` scroll-to); **search
+  operators** (`path:`/`file:`/`tag:`, `-exclude`, `"phrase"`, `/regex/`).
+- **Medium — remaining**: **block-id autocomplete** (`[[Note#^…`); raw **HTML in
+  Markdown**; inline **audio/video/PDF embed players**; **new folder** + folder/
+  attachment context menus + **drag-drop** file tree; **hover page-preview**;
+  typed **Properties** widgets; per-command **hotkey assignment**; **CSS
+  snippets**; status bar / ribbon; tab pinning + drag-between-panes. Math
+  export-font inlining + Live-Preview footnotes are small follow-ups.
 - **Large — all shipped (2026-07):** **note/heading/block transclusion**
   (`![[Note#h]]`, editor + reading, DoS-hardened); **Canvas editing** (drag/
   resize/create/edit/delete/colour nodes, draw edges — atomic write_canvas,
