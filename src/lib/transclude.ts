@@ -67,6 +67,42 @@ function headingText(lines: string[], i: number): string {
   return atx ? atx[2] : l.trim();
 }
 
+/** The 1-based line of a subpath (`Heading` or `^blockid`) in `content`, or
+ * null — for scroll-to-target when following `[[Note#…]]`. Operates on the
+ * WHOLE file (frontmatter included) so the line number is absolute. */
+export function subpathToLine(content: string, subpath: string): number | null {
+  if (!subpath) return null;
+  const lines = content.split("\n");
+  const mask = proseMask(lines);
+  if (subpath.startsWith("^")) {
+    const esc = subpath.slice(1).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const inlineRe = new RegExp(`\\s\\^${esc}\\s*$`);
+    const ownRe = new RegExp(`^\\^${esc}\\s*$`);
+    for (let i = 0; i < lines.length; i++) {
+      if (!mask[i]) continue;
+      const l = lines[i].replace(/\r$/, "");
+      if (inlineRe.test(l) || ownRe.test(l.trim())) return i + 1;
+    }
+    return null;
+  }
+  const want = norm(subpath);
+  for (let i = 0; i < lines.length; i++) {
+    if (headingLevel(lines, mask, i) && norm(headingText(lines, i)) === want) return i + 1;
+  }
+  return null;
+}
+
+/** All heading texts in a note (in document order) — for `[[Note#…` completion. */
+export function extractHeadings(content: string): string[] {
+  const lines = content.split("\n");
+  const mask = proseMask(lines);
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (headingLevel(lines, mask, i)) out.push(headingText(lines, i));
+  }
+  return out;
+}
+
 function extractHeading(body: string, heading: string): string {
   const lines = body.split("\n");
   const mask = proseMask(lines);

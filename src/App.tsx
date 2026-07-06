@@ -38,7 +38,7 @@ import {
   type RecentVault,
 } from "./lib/recentVaults";
 import { setQueryHost } from "./lib/queryHost";
-import { setTranscludeHost } from "./lib/transclude";
+import { setTranscludeHost, splitSubpath, subpathToLine, extractHeadings } from "./lib/transclude";
 import { recordSnapshot, listSnapshots, clearSnapshots, renameSnapshots, type Snapshot } from "./lib/snapshots";
 import { noteRow, tasksForNote } from "./lib/vaultRows";
 import { parseQuery, runQuery, type Task } from "./lib/query";
@@ -1444,6 +1444,12 @@ export default function App() {
     ],
     [],
   );
+  // Headings of the note a `[[Name#…` completion targets.
+  const getHeadings = useCallback((name: string): string[] => {
+    const path = index.current.resolve(name, activePathRef.current ?? "");
+    const note = path ? notesRef.current.find((n) => n.path === path) : null;
+    return note ? extractHeadings(note.content) : [];
+  }, []);
   const getLinkFormat = useCallback((): LinkFormat => {
     const f = obsConfigRef.current?.newLinkFormat;
     return f === "relative" || f === "absolute" ? f : "shortest";
@@ -1742,7 +1748,14 @@ export default function App() {
     async (target: string, allowCreate = true) => {
       const resolved = index.current.resolve(target, activePathRef.current ?? "");
       if (resolved) {
-        await openNoteByPath(resolved);
+        // Follow a `#Heading` / `#^block` subpath: scroll to that line.
+        const { subpath } = splitSubpath(target);
+        let line: number | undefined;
+        if (subpath) {
+          const note = notesRef.current.find((n) => n.path === resolved);
+          line = (note && subpathToLine(note.content, subpath)) || undefined;
+        }
+        await openNoteByPath(resolved, line);
         return;
       }
       const pathPart = targetPathPart(target);
@@ -2573,6 +2586,7 @@ export default function App() {
               getNotes={getNotes}
               getLinkFormat={getLinkFormat}
               getActiveRel={() => rel || null}
+              getHeadings={getHeadings}
               sourceMode={sourceMode}
               dark={dark}
               onOpenWikilink={handleOpenWikilink}

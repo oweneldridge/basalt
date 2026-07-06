@@ -2,6 +2,7 @@
 // stub callbacks and exposes hooks for browser automation. See harness.html.
 import { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
+import { startCompletion, currentCompletions } from "@codemirror/autocomplete";
 import { createEditorState, setSourceMode } from "./editor/setup";
 import type { EditorCallbacks } from "./editor/setup";
 import type { LinkFormat } from "./lib/rename";
@@ -19,6 +20,8 @@ declare global {
       setSource: (on: boolean) => void;
       setLinkFormat: (f: LinkFormat) => void;
       setActiveRel: (rel: string | null) => void;
+      startCompletion: () => void;
+      completions: () => string[];
     };
   }
 }
@@ -37,6 +40,7 @@ const cb: EditorCallbacks = {
   ],
   getLinkFormat: () => linkFormat,
   getActiveRel: () => activeRel,
+  getHeadings: (name) => (name === "Beta Note" ? ["Overview", "Details", "Summary"] : []),
   onOpenWikilink: (t) => opened.push(t),
   onOpenUrl: (u) => urls.push(u),
   resolveImage: () => Promise.resolve(null),
@@ -71,4 +75,6 @@ window.__harness = {
   setActiveRel: (rel) => {
     activeRel = rel;
   },
+  startCompletion: () => startCompletion(view),
+  completions: () => currentCompletions(view.state).map((c) => c.label),
 };

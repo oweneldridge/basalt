@@ -45,6 +45,8 @@ export interface WikilinkCompletionOptions {
   getLinkFormat: () => LinkFormat;
   /** Rel (with .md) of the note being edited — for "relative" format. */
   getActiveRel: () => string | null;
+  /** Headings of the note named/aliased `name` — for `[[Note#…` completion. */
+  getHeadings: (name: string) => string[];
 }
 
 class WikilinkWidget extends WidgetType {
@@ -108,6 +110,34 @@ function wikilinkCompletions(opts: WikilinkCompletionOptions) {
     if (!before) return null;
     // Don't pop up on a bare `[[` unless the user is actively there.
     if (before.from + 2 > context.pos) return null;
+
+    // `[[Note#…` → suggest Note's headings (from the `#` onward).
+    const hash = before.text.indexOf("#");
+    if (hash >= 0) {
+      const noteName = before.text.slice(2, hash).trim();
+      const partial = before.text.slice(hash + 1);
+      if (partial.startsWith("^")) return null; // block ids: no suggestion list
+      const headings = opts.getHeadings(noteName);
+      if (headings.length === 0) return null;
+      return {
+        from: before.from + hash + 1,
+        options: headings.map((h) => ({
+          label: h,
+          type: "text",
+          apply: (view: EditorView, _c: unknown, from: number, to: number) => {
+            const after = view.state.sliceDoc(to, to + 2);
+            const closeLen = after === "]]" ? 2 : after.startsWith("]") ? 1 : 0;
+            view.dispatch({
+              changes: { from, to: to + closeLen, insert: `${h}]]` },
+              selection: { anchor: from + h.length + 2 },
+              userEvent: "input.complete",
+            });
+          },
+        })),
+        filter: true,
+      };
+    }
+
     const notes = opts.getNotes();
     // NOTE: do NOT return a `to` past the cursor — CodeMirror silently rejects
     // such results and the popup never shows. Any closer already present (from
