@@ -27,6 +27,32 @@ scope (Basalt gets its own plugin API in Phase 5).
 | 5b | Templater-style templates (variables, dates, cursor, prompts) — no JS eval, curated tp.* | **shipped** |
 | 5c | Basalt plugin API — in-webview plugins (basalt API: commands/code-block processors/editor extensions, .basalt/plugins loader, enable/disable, settings); off by default | **shipped** |
 
+## Parity backlog (2026-07 Obsidian core-app audit)
+
+A 5-dimension audit assessed 83 core features; the roadmap above covers the
+majority. Remaining gaps, by size (quick-wins already shipped: sidebar toggles,
+zoom, `%%comments%%`, paste-URL→link, outgoing-links pane):
+
+- **Small (next)**: callout folding (`[!x]+/-`); follow-link-in-new-pane
+  (⌘-click); new-note-in-folder (folder context menu — backend already
+  supports folder-qualified names); quick-switcher "Create <query>"; reveal-in-
+  Finder; readable-line-length toggle; spellcheck toggle; local-graph depth.
+- **Medium**: inline/block **math (KaTeX)**; **footnotes**; **block references**
+  (`^id` + `#^block` nav/autocomplete); heading/block **link autocomplete**;
+  **alias** resolution (frontmatter `aliases:`); raw **HTML in Markdown**;
+  inline **audio/video/PDF embed players**; **new folder** + folder/attachment
+  context menus + **drag-drop** file tree; **hover page-preview**; typed
+  **Properties** widgets; per-command **hotkey assignment**; **CSS snippets**;
+  status bar / ribbon; tab pinning + drag-between-panes; search **operators**
+  (`path:`/`tag:`/regex/boolean).
+- **Large**: **Canvas editing** (create/drag/resize nodes, edges, groups) —
+  currently read-only; **Bases editing** (create/edit views/columns/filters) —
+  currently read-only; **note/heading/block transclusion** (`![[Note#h]]`);
+  file-recovery snapshots.
+
+Out of scope by design: Obsidian Sync/Publish (paid services), the mobile app,
+and running Obsidian's own community plugins (Basalt has its own plugin API).
+
 ## Ground rules (carried forward from the audit)
 
 - The vault is shared live with Obsidian: never diverge silently on link
