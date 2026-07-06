@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -36,6 +36,12 @@ import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { ReadingView } from "./components/ReadingView";
 import { CanvasView } from "./components/CanvasView";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+// Lazy: the Bases engine pulls in a YAML parser — keep it out of the initial
+// bundle until a .base pane is actually opened (same reasoning as mermaid).
+const BaseView = lazy(() =>
+  import("./components/BaseView").then((m) => ({ default: m.BaseView })),
+);
 import { renderMarkdown } from "./lib/render";
 import { renderMermaid } from "./lib/mermaid";
 import { buildHtmlDocument } from "./lib/export";
@@ -133,9 +139,12 @@ function basename(p: string): string {
   return parts[parts.length - 1] ?? p;
 }
 
-/** Markdown notes are editable + indexed; other openable files (.canvas) are
- * read-only viewers — autosave/conflict logic must skip them. */
+/** Markdown notes are editable + indexed; other openable files (.canvas,
+ * .base) are read-only viewers — autosave/conflict logic must skip them. */
 const isMarkdownPath = (p: string) => /\.md$/i.test(p);
+
+/** Files that open in a pane as a READ-ONLY viewer rather than an editor. */
+const isViewerPath = (p: string) => /\.(canvas|base)$/i.test(p);
 
 /** Mirror of the Rust build_note_path sanitization, so frontend existence
  * lookups agree with the filename the backend will actually create. */
@@ -239,9 +248,10 @@ export default function App() {
       ? { path: focusedPane.active, doc: focusedPane.doc, scrollToLine: focusedPane.scrollToLine }
       : null;
   const changedOnDisk = !!(active && conflicts.has(active.path));
-  // A focused .canvas is a read-only viewer, not an editable note: the toolbar,
-  // outline, export/print, and reading/source toggles must not treat it as one.
-  const activeIsCanvas = !!active && /\.canvas$/i.test(active.path);
+  // A focused .canvas/.base is a read-only viewer, not an editable note: the
+  // toolbar, outline, export/print, and reading/source toggles must not treat
+  // it as one.
+  const activeIsViewer = !!active && isViewerPath(active.path);
 
   const activePathRef = useRef<string | null>(null);
   activePathRef.current = active?.path ?? null;
@@ -279,6 +289,12 @@ export default function App() {
     setIndexVersion((v) => v + 1);
     setStructureVersion((v) => v + 1);
   }, []);
+
+  // Stable index accessors for the Bases viewer (index is a ref, so these
+  // never change identity; BaseView invalidates its rows via structureVersion
+  // plus per-note object identity).
+  const tagsOf = useCallback((path: string) => index.current.tagsOf(path), []);
+  const linkKeysOf = useCallback((path: string) => index.current.linkKeysOf(path), []);
 
   const loadVault = useCallback(async () => {
     const [list, atts] = await Promise.all([readVault(), listAttachments()]);
@@ -339,7 +355,14 @@ export default function App() {
           // Record AFTER a successful write (a failed write leaves no stale
           // suppression), keyed by the rel + content the watcher will see.
           rememberSelfWrite(meta.rel, doc);
-          const updated: VaultNote = { ...meta, content: doc };
+          // Refresh stats so a Bases view sorting/filtering on file.mtime/size
+          // reflects this save immediately (ctime is preserved).
+          const updated: VaultNote = {
+            ...meta,
+            content: doc,
+            mtime: Date.now(),
+            size: new TextEncoder().encode(doc).length,
+          };
           index.current.setNote(updated);
           setNotes((prev) => prev.map((n) => (n.path === path ? updated : n)));
           bumpIndex();
@@ -867,10 +890,10 @@ export default function App() {
     const attPaths = new Set(atts.map((a) => a.path));
     for (const p of Object.values(panesRef.current)) {
       if (!p.active) continue;
-      // Canvas panes are read-only attachments (not in `notes`): re-read the file
-      // so external edits show; if it's gone the prune effect closes the pane
-      // (attachmentsList was just refreshed by loadVault).
-      if (/\.canvas$/i.test(p.active)) {
+      // Viewer panes (.canvas/.base) are read-only attachments (not in
+      // `notes`): re-read the file so external edits show; if it's gone the
+      // prune effect closes the pane (attachmentsList was just refreshed).
+      if (isViewerPath(p.active)) {
         if (attPaths.has(p.active)) {
           const id = p.id;
           const prevDoc = p.doc;
@@ -1122,8 +1145,8 @@ export default function App() {
     const pane = focusedIdRef.current ? panesRef.current[focusedIdRef.current] : null;
     const path = pane?.active;
     if (!path) return;
-    if (/\.canvas$/i.test(path)) {
-      setSaveError("Export to HTML isn't available for canvas files.");
+    if (isViewerPath(path)) {
+      setSaveError("Export to HTML is only available for notes.");
       return;
     }
     const note = notesRef.current.find((n) => n.path === path);
@@ -1181,8 +1204,8 @@ export default function App() {
   // switch to it first, then print after it renders.
   const handlePrintPdf = useCallback(() => {
     const pane = focusedIdRef.current ? panesRef.current[focusedIdRef.current] : null;
-    if (pane?.active && /\.canvas$/i.test(pane.active)) {
-      setSaveError("Print / PDF isn't available for canvas files.");
+    if (pane?.active && isViewerPath(pane.active)) {
+      setSaveError("Print / PDF is only available for notes.");
       return;
     }
     setReadingMode(true);
@@ -1258,9 +1281,9 @@ export default function App() {
 
   const handleOpenAttachment = useCallback(
     (path: string) => {
-      // .canvas opens in a pane (read-only viewer); other attachments open in
-      // the system viewer.
-      if (/\.canvas$/i.test(path)) {
+      // .canvas/.base open in a pane (read-only viewer); other attachments
+      // open in the system viewer.
+      if (isViewerPath(path)) {
         void openNoteByPath(path);
         return;
       }
@@ -1372,11 +1395,13 @@ export default function App() {
       }
       const pathPart = targetPathPart(target);
       if (!pathPart) return;
-      // An attachment target opens in the system viewer; never auto-create
-      // a junk "Report.pdf.md" note for one.
+      // An attachment target: .canvas/.base open in the in-app viewer pane;
+      // everything else opens in the system viewer. Never auto-create a junk
+      // "Report.pdf.md" note for one.
       const att = resolveAttachment(attachmentsRef.current, target);
       if (att) {
-        void openPath(att.path).catch((e) => setSaveError(`Couldn't open: ${e}`));
+        if (isViewerPath(att.path)) void openNoteByPath(att.path);
+        else void openPath(att.path).catch((e) => setSaveError(`Couldn't open: ${e}`));
         return;
       }
       if (looksLikeAttachment(pathPart)) return;
@@ -1393,6 +1418,30 @@ export default function App() {
       }
     },
     [openNoteByPath, createAndOpen],
+  );
+
+  // Stable callbacks for the read-only viewers (canvas/base). Keeping these
+  // memoized lets BaseView (React.memo) skip re-render on unrelated App ticks.
+  // A viewer passes an EXACT vault-relative path, so resolve it directly first
+  // (a '#' in a filename must not truncate the target through wikilink parsing).
+  const openViewerFile = useCallback(
+    (target: string) => {
+      const exact =
+        notesRef.current.find((n) => n.rel === target) ??
+        attachmentsRef.current.find((a) => a.rel === target);
+      if (exact) {
+        if (isMarkdownPath(exact.path) || isViewerPath(exact.path)) void openNoteByPath(exact.path);
+        else void openPath(exact.path).catch((e) => setSaveError(`Couldn't open: ${e}`));
+        return;
+      }
+      void handleOpenWikilink(target, false); // fall back to link resolution, never create
+    },
+    [openNoteByPath, handleOpenWikilink],
+  );
+  const resolveImageRel = useCallback(
+    (target: string, rel: string) =>
+      vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null),
+    [],
   );
 
   const handleNewNote = useCallback(async () => {
@@ -1806,17 +1855,32 @@ export default function App() {
         )}
         {path ? (
           /\.canvas$/i.test(path) ? (
-            <CanvasView
-              key={`${id}:${path}:canvas`}
-              doc={pane.doc}
-              onOpenFile={(file, subpath) =>
-                void handleOpenWikilink(file + (subpath ?? ""), false) /* read-only: never create */
-              }
-              onOpenUrl={handleOpenUrl}
-              resolveImage={(target) =>
-                vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null)
-              }
-            />
+            <ErrorBoundary key={`${id}:${path}:canvas`} resetKey={path} onClose={() => void closeTab(id, path)}>
+              <CanvasView
+                doc={pane.doc}
+                onOpenFile={(file, subpath) => openViewerFile(file + (subpath ?? ""))}
+                onOpenUrl={handleOpenUrl}
+                resolveImage={(target) =>
+                  vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null)
+                }
+              />
+            </ErrorBoundary>
+          ) : /\.base$/i.test(path) ? (
+            <ErrorBoundary key={`${id}:${path}:base`} resetKey={path} onClose={() => void closeTab(id, path)}>
+              <Suspense fallback={<div className="placeholder">Loading base…</div>}>
+                <BaseView
+                  doc={pane.doc}
+                  sourceRel={rel}
+                  notes={notes}
+                  attachments={attachmentsList}
+                  structureVersion={structureVersion}
+                  tagsOf={tagsOf}
+                  linkKeysOf={linkKeysOf}
+                  onOpenFile={openViewerFile}
+                  resolveImageRel={resolveImageRel}
+                />
+              </Suspense>
+            </ErrorBoundary>
           ) : readingMode ? (
             <ReadingView
               key={`${id}:${path}:read`}
@@ -1880,7 +1944,7 @@ export default function App() {
             className={readingMode ? "link-btn toggled" : "link-btn"}
             onClick={toggleReading}
             title="Toggle Reading view (rendered, read-only)"
-            disabled={activeIsCanvas}
+            disabled={activeIsViewer}
           >
             Reading
           </button>
@@ -1888,7 +1952,7 @@ export default function App() {
             className={sourceMode ? "link-btn toggled" : "link-btn"}
             onClick={toggleSourceMode}
             title="Toggle Source mode (raw Markdown)"
-            disabled={readingMode || activeIsCanvas}
+            disabled={readingMode || activeIsViewer}
           >
             Source
           </button>
@@ -1924,7 +1988,7 @@ export default function App() {
               ? `⚠ ${saveError}`
               : saving
                 ? "Saving…"
-                : activeIsCanvas
+                : activeIsViewer
                   ? "Read-only"
                   : active
                     ? "Saved"
@@ -1955,7 +2019,7 @@ export default function App() {
         backlinks={backlinks}
         unlinked={unlinked}
         onOpenRef={(path, line) => openNoteByPath(path, line)}
-        outlineDoc={activeIsCanvas ? null : (activeNote?.content ?? active?.doc ?? null)}
+        outlineDoc={activeIsViewer ? null : (activeNote?.content ?? active?.doc ?? null)}
         onJumpLine={(line) => {
           if (active) void openNoteByPath(active.path, line);
         }}

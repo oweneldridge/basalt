@@ -14,8 +14,17 @@ export interface Note {
   name: string;
 }
 
+/** File stats shipped by the backend (ms epoch / bytes; 0 or absent when
+ * unavailable) — they feed Bases' file.mtime/ctime/size. Optional because
+ * frontend-constructed entries (e.g. a just-created note) omit them. */
+export interface FileStats {
+  mtime?: number;
+  ctime?: number;
+  size?: number;
+}
+
 /** A note plus its content, returned in bulk for indexing. */
-export interface VaultNote extends Note {
+export interface VaultNote extends Note, FileStats {
   content: string;
 }
 
@@ -26,7 +35,7 @@ export interface ChangedNote {
 }
 
 /** A non-Markdown vault file (image/PDF/audio/video) — no content shipped. */
-export interface Attachment {
+export interface Attachment extends FileStats {
   path: string;
   rel: string;
   /** Filename including extension (the link-able name). */
