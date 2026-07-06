@@ -39,11 +39,58 @@ function inlineRe(): RegExp {
       /((?<![\w/#])#[A-Za-z0-9_][\w-]*(?:\/[A-Za-z0-9_][\w-]*)*)/, // 10 tag
       /(\$\$[^\n]+?\$\$)/, // 11 inline display math $$…$$
       /(\$(?!\s)(?:\\.|[^$\n\\])+?(?<!\s)\$)/, // 12 inline math $…$ (no leading/trailing space)
+      /(\^\[[^\][\n]+?\])/, // 13 inline footnote ^[text]
+      /(\[\^[^\][\s]+?\])/, // 14 footnote reference [^id]
     ]
       .map((r) => r.source)
       .join("|"),
     "gi",
   );
+}
+
+// Footnote state for one renderMarkdown call. Not re-entrant within a single
+// call (renderInline recurses but never calls renderMarkdown), and transclusion
+// only renders embeds after the host render has returned — so module state is
+// safe here and avoids threading a context through every renderInline call.
+interface FnEntry {
+  num: number;
+  content: string;
+}
+let fnState: { defs: Map<string, string>; refs: Map<string, FnEntry>; order: string[]; inlineSeq: number } | null =
+  null;
+
+function footnoteRef(id: string): string {
+  if (!fnState) return escapeHtml(`[^${id}]`);
+  let e = fnState.refs.get(id);
+  if (!e) {
+    e = { num: fnState.order.length + 1, content: fnState.defs.get(id) ?? "" };
+    fnState.refs.set(id, e);
+    fnState.order.push(id);
+  }
+  const eid = escapeHtml(id);
+  return `<sup class="footnote-ref" id="fnref-${eid}"><a href="#fn-${eid}">${e.num}</a></sup>`;
+}
+
+function inlineFootnote(text: string): string {
+  if (!fnState) return escapeHtml(text);
+  const id = `inline-${(fnState.inlineSeq += 1)}`;
+  const num = fnState.order.length + 1;
+  fnState.refs.set(id, { num, content: text });
+  fnState.order.push(id);
+  return `<sup class="footnote-ref" id="fnref-${id}"><a href="#fn-${id}">${num}</a></sup>`;
+}
+
+function emitFootnotes(): string {
+  if (!fnState || fnState.order.length === 0) return "";
+  const ids = [...fnState.order]; // snapshot: rendering content may add more
+  const items = ids
+    .map((id) => {
+      const e = fnState!.refs.get(id)!;
+      const eid = escapeHtml(id);
+      return `<li id="fn-${eid}">${renderInline(e.content || "", 0)} <a class="footnote-backref" href="#fnref-${eid}">↩</a></li>`;
+    })
+    .join("");
+  return `<section class="footnotes"><hr /><ol>${items}</ol></section>`;
 }
 
 /** A math placeholder the reader / editor / export fills with KaTeX (data-tex
@@ -114,6 +161,10 @@ export function renderInline(text: string, depth = 0): string {
       out += mathPlaceholder(tok.slice(2, -2), true); // $$…$$
     } else if (m[12]) {
       out += mathPlaceholder(tok.slice(1, -1), false); // $…$
+    } else if (m[13]) {
+      out += inlineFootnote(tok.slice(2, -1)); // ^[inline footnote]
+    } else if (m[14]) {
+      out += footnoteRef(tok.slice(2, -1)); // [^id]
     }
     last = m.index + tok.length;
   }
@@ -201,7 +252,7 @@ export function stripBlockIds(md: string): string {
 /** Render a full Markdown document to an HTML string. */
 export function renderMarkdown(src: string): string {
   const md = stripBlockIds(stripComments(src));
-  const lines = md.split("\n");
+  const lines = extractFootnoteDefs(md);
   let i = 0;
   const parts: string[] = [];
 
@@ -371,5 +422,35 @@ export function renderMarkdown(src: string): string {
     }
     if (para.length) parts.push(`<p>${renderInline(para.join("\n"))}</p>`);
   }
-  return parts.join("\n");
+  const footnotes = emitFootnotes();
+  fnState = null;
+  return parts.join("\n") + footnotes;
+}
+
+/** Pull footnote definitions (`[^id]: text` + indented continuations, in prose)
+ * out of the doc into `fnState.defs`, blanking their lines; returns the body
+ * lines to render. Initializes fnState for this render. */
+function extractFootnoteDefs(md: string): string[] {
+  const raw = md.split("\n");
+  const mask = proseMask(raw);
+  const defs = new Map<string, string>();
+  const body: string[] = [];
+  const DEF = /^\[\^([^\]\s]+)\]:\s?(.*)$/;
+  for (let i = 0; i < raw.length; i++) {
+    const dm = mask[i] ? DEF.exec(raw[i]) : null;
+    if (!dm) {
+      body.push(raw[i]);
+      continue;
+    }
+    let content = dm[2];
+    while (i + 1 < raw.length && raw[i + 1].trim() !== "" && /^(\s{2,}|\t)/.test(raw[i + 1])) {
+      content += "\n" + raw[i + 1].trim();
+      i++;
+      body.push(""); // preserve line count so nothing else shifts
+    }
+    defs.set(dm[1], content.trim());
+    body.push(""); // the def line itself
+  }
+  fnState = { defs, refs: new Map(), order: [], inlineSeq: 0 };
+  return body;
 }

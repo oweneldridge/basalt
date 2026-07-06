@@ -1931,3 +1931,12 @@ button.primary:hover {
 .math-inline, .cm-math { }
 .math-error { color: var(--danger); font-family: var(--font-mono, monospace); font-size: 0.9em; }
 .cm-math { cursor: default; }
+
+/* ------- Footnotes ------- */
+.footnote-ref { font-size: 0.75em; line-height: 0; }
+.footnote-ref a { text-decoration: none; padding: 0 1px; }
+.footnotes { margin-top: 24px; font-size: 0.9em; color: var(--text-muted); }
+.footnotes hr { border: none; border-top: 1px solid var(--border); margin: 0 0 8px; }
+.footnotes ol { padding-left: 1.4em; }
+.footnotes li { margin: 3px 0; }
+.footnote-backref { text-decoration: none; margin-left: 4px; }

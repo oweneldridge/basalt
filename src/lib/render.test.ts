@@ -171,3 +171,36 @@ describe("math placeholders", () => {
     expect(renderMarkdown("`$x$`")).not.toContain("data-math");
   });
 });
+
+describe("footnotes", () => {
+  it("numbers references by first appearance and emits a footnotes section", () => {
+    const out = renderMarkdown("First[^a] then second[^b].\n\n[^a]: Note A.\n[^b]: Note B.");
+    // ref markers numbered 1, 2 in order
+    expect(out).toMatch(/footnote-ref"[^>]*id="fnref-a"><a href="#fn-a">1</);
+    expect(out).toMatch(/footnote-ref"[^>]*id="fnref-b"><a href="#fn-b">2</);
+    // a footnotes section with the definitions + backrefs
+    expect(out).toContain('<section class="footnotes">');
+    expect(out).toContain('id="fn-a"');
+    expect(out).toContain("Note A.");
+    expect(out).toContain('class="footnote-backref"');
+    // the definition lines are not rendered as body paragraphs
+    expect(out).not.toContain("<p>[^a]: Note A.");
+  });
+
+  it("supports inline footnotes ^[text]", () => {
+    const out = renderMarkdown("Claim^[the evidence].");
+    expect(out).toContain("footnote-ref");
+    expect(out).toContain("the evidence");
+    expect(out).toContain('<section class="footnotes">');
+  });
+
+  it("reuses the number for a footnote referenced twice", () => {
+    const out = renderMarkdown("a[^x] b[^x]\n\n[^x]: once");
+    expect((out.match(/>1<\/a>/g) ?? []).length).toBe(2); // both refs show 1
+    expect((out.match(/<li id="fn-x"/g) ?? []).length).toBe(1); // one definition
+  });
+
+  it("emits nothing when there are no footnotes", () => {
+    expect(renderMarkdown("plain text")).not.toContain("footnotes");
+  });
+});
