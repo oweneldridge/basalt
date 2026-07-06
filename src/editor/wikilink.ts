@@ -29,6 +29,9 @@ export interface NoteRef {
   name: string;
   /** Vault-relative path including `.md`. */
   rel: string;
+  /** When set, this entry is a frontmatter ALIAS of the note named here; `name`
+   * is the alias text and picking it inserts `[[alias]]` (which resolves). */
+  alias?: string;
 }
 
 export interface WikilinkDecorationOptions {
@@ -114,19 +117,17 @@ function wikilinkCompletions(opts: WikilinkCompletionOptions) {
       from: before.from + 2,
       options: notes.map((note) => ({
         label: note.name,
-        detail: note.rel,
-        type: "text",
+        detail: note.alias ? `alias of ${note.alias}` : note.rel,
+        type: note.alias ? "keyword" : "text",
         apply: (view: EditorView, _completion: unknown, from: number, to: number) => {
-          // Link text per the vault's newLinkFormat (read at apply time).
+          // An alias resolves by its own text — insert it verbatim. Otherwise
+          // compute the link per the vault's newLinkFormat (read at apply time).
           const relNoExt = note.rel.replace(/\.md$/i, "");
           const taken =
             notes.filter((n) => normalizeName(n.name) === normalizeName(note.name)).length > 1;
-          const target = linkTargetForFormat(
-            opts.getLinkFormat(),
-            relNoExt,
-            taken,
-            opts.getActiveRel(),
-          );
+          const target = note.alias
+            ? note.name
+            : linkTargetForFormat(opts.getLinkFormat(), relNoExt, taken, opts.getActiveRel());
           const after = view.state.sliceDoc(to, to + 2);
           const closeLen = after === "]]" ? 2 : after.startsWith("]") ? 1 : 0;
           view.dispatch({

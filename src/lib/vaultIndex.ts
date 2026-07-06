@@ -53,6 +53,8 @@ export interface GraphData {
 interface Meta {
   rel: string;
   name: string;
+  /** Frontmatter `aliases:` — extra names that resolve to this note. */
+  aliases?: string[];
 }
 
 /** Reduce a vault-relative path to a comparison key: forward slashes, no `./`
@@ -171,6 +173,74 @@ function frontmatterTags(lines: string[]): string[] {
   return out;
 }
 
+/** Frontmatter `aliases:` (or `alias:`) — inline `[a, b]` or a YAML block list.
+ * Extra names Obsidian resolves `[[…]]` to. */
+export function frontmatterAliases(content: string): string[] {
+  const lines = content.split("\n");
+  if (lines.length < 2 || lines[0].trim() !== "---") return [];
+  let end = -1;
+  for (let j = 1; j < lines.length; j++) {
+    const t = lines[j].trim();
+    if (t === "---" || t === "...") {
+      end = j;
+      break;
+    }
+  }
+  if (end === -1) return [];
+  const unquote = (s: string) => s.trim().replace(/^['"]|['"]$/g, "").trim();
+  const out: string[] = [];
+  for (let j = 1; j < end; j++) {
+    const m = /^(aliases|alias)\s*:\s*(.*)$/i.exec(lines[j]);
+    if (!m) continue;
+    const rest = m[2].trim();
+    if (rest && rest !== "[]") {
+      for (const part of splitOutsideQuotes(rest.replace(/^\[|\]$/g, ""))) {
+        const v = unquote(part);
+        if (v) out.push(v);
+      }
+    } else {
+      for (let k = j + 1; k < end; k++) {
+        const lm = /^\s*-\s+(.*)$/.exec(lines[k]);
+        if (!lm) break;
+        const v = unquote(lm[1]);
+        if (v) out.push(v);
+      }
+    }
+  }
+  // Dedupe case-insensitively, keeping first-seen casing.
+  const seen = new Set<string>();
+  return out.filter((a) => {
+    const k = normalizeName(a);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+/** Split a YAML flow sequence on commas that are OUTSIDE single/double quotes,
+ * so `["a, b", c]` yields ["a, b"] and "c" rather than three fragments. */
+function splitOutsideQuotes(s: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let q = "";
+  for (const ch of s) {
+    if (q) {
+      cur += ch;
+      if (ch === q) q = "";
+    } else if (ch === '"' || ch === "'") {
+      cur += ch;
+      q = ch;
+    } else if (ch === ",") {
+      out.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
 /** Distinct tags in a note (frontmatter `tags:` + body `#tag`), deduped
  * case-insensitively, preserving first-seen display casing. */
 export function extractTags(content: string): string[] {
@@ -203,6 +273,9 @@ export class VaultIndex {
   // Resolution: normalized basename -> paths (an array, so case/Unicode-distinct
   // notes that share a basename all coexist). Slashed targets filter by path.
   private byName = new Map<string, string[]>();
+  // Frontmatter aliases → paths. Separate from byName so a real file always
+  // wins over another note's alias in resolve() (Obsidian precedence).
+  private byAlias = new Map<string, string[]>();
   // Per-note distinct tags, for the vault-wide tag pane (incremental like occ).
   private tags = new Map<string, string[]>();
 
@@ -210,17 +283,19 @@ export class VaultIndex {
     this.occ.clear();
     this.meta.clear();
     this.byName.clear();
+    this.byAlias.clear();
     this.tags.clear();
     for (const note of notes) this.setNote(note);
   }
 
   /** Insert or replace a single note's entry (incremental update on save). */
   setNote(note: VaultNote): void {
-    this.removeFromMaps(note.path); // drop the old name/rel entry for this path
-    this.meta.set(note.path, { rel: note.rel, name: note.name });
+    this.removeFromMaps(note.path); // drop the old name/alias entries for this path
+    const aliases = frontmatterAliases(note.content);
+    this.meta.set(note.path, { rel: note.rel, name: note.name, aliases: aliases.length ? aliases : undefined });
     this.occ.set(note.path, extractLinks(note.content));
     this.tags.set(note.path, extractTags(note.content));
-    this.addToMaps(note.path, note.rel, note.name);
+    this.addToMaps(note.path, note.name, aliases);
   }
 
   removeNote(path: string): void {
@@ -233,6 +308,25 @@ export class VaultIndex {
   /** One note's tags (as extracted: frontmatter + inline, original case). */
   tagsOf(path: string): string[] {
     return this.tags.get(path) ?? [];
+  }
+
+  /** One note's frontmatter aliases (original case). */
+  aliasesOf(path: string): string[] {
+    return this.meta.get(path)?.aliases ?? [];
+  }
+
+  /** Every (alias, rel, name) triple — for `[[` autocomplete. Aliases that
+   * can't round-trip through a bare `[[…]]` (contain `#|[]` or a newline) are
+   * skipped, since picking one would insert a non-resolving link. */
+  allAliases(): { alias: string; rel: string; name: string }[] {
+    const out: { alias: string; rel: string; name: string }[] = [];
+    for (const m of this.meta.values()) {
+      for (const alias of m.aliases ?? []) {
+        if (/[#|[\]\n]/.test(alias)) continue;
+        out.push({ alias, rel: m.rel, name: m.name });
+      }
+    }
+    return out;
   }
 
   /** Lowercase match keys for a note's OUTBOUND links — Bases' file.hasLink.
@@ -277,23 +371,33 @@ export class VaultIndex {
       .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
   }
 
-  private addToMaps(path: string, _rel: string, name: string): void {
-    const nn = normalizeName(name);
-    const arr = this.byName.get(nn) ?? [];
-    if (!arr.includes(path)) arr.push(path);
-    this.byName.set(nn, arr);
+  private addToMaps(path: string, name: string, aliases: string[]): void {
+    // Real basenames and aliases live in SEPARATE maps so resolve() can prefer
+    // a real file over another note's alias (Obsidian's precedence).
+    const push = (map: Map<string, string[]>, key: string) => {
+      const nn = normalizeName(key);
+      if (!nn) return;
+      const arr = map.get(nn) ?? [];
+      if (!arr.includes(path)) arr.push(path);
+      map.set(nn, arr);
+    };
+    push(this.byName, name);
+    for (const a of aliases) push(this.byAlias, a);
   }
 
   private removeFromMaps(path: string): void {
     const m = this.meta.get(path);
     if (!m) return;
-    const nn = normalizeName(m.name);
-    const arr = this.byName.get(nn);
-    if (arr) {
+    const drop = (map: Map<string, string[]>, key: string) => {
+      const nn = normalizeName(key);
+      const arr = map.get(nn);
+      if (!arr) return;
       const i = arr.indexOf(path);
       if (i >= 0) arr.splice(i, 1);
-      if (arr.length === 0) this.byName.delete(nn);
-    }
+      if (arr.length === 0) map.delete(nn);
+    };
+    drop(this.byName, m.name);
+    for (const a of m.aliases ?? []) drop(this.byAlias, a);
   }
 
   /** Pick the best of several same-basename candidates: root-most (shortest
@@ -331,16 +435,18 @@ export class VaultIndex {
     // reachable via the unstripped fallback.
     const lastSeg = segments[segments.length - 1] ?? "";
     const basename = normalizeName(lastSeg.replace(/\.md$/i, ""));
+    // Only REAL filenames satisfy path-anchored/folder-qualified targets;
+    // aliases are bare vault-wide names, matched only for a bare `[[name]]`.
     let candidates = basename ? this.byName.get(basename) : undefined;
     if ((!candidates || candidates.length === 0) && /\.md$/i.test(lastSeg)) {
       candidates = this.byName.get(normalizeName(lastSeg));
     }
-    if (!candidates || candidates.length === 0) return null;
+    const real = candidates ?? [];
 
     // Root-anchored: [[/folder/Note]] or [[/Note]] — exact path from the root.
     if (p.startsWith("/") || p.startsWith("\\")) {
       const wantRel = normalizeRel(p.replace(/^[/\\]+/, ""));
-      const matches = this.exactRel(candidates, wantRel);
+      const matches = this.exactRel(real, wantRel);
       return matches.length ? this.pickBest(matches) : null;
     }
 
@@ -358,20 +464,23 @@ export class VaultIndex {
         }
       }
       const wantRel = normalizeRel(stack.join("/"));
-      const matches = this.exactRel(candidates, wantRel);
+      const matches = this.exactRel(real, wantRel);
       return matches.length ? this.pickBest(matches) : null;
     }
 
     if (segments.length > 1) {
       // Folder-qualified: keep only notes whose path ends with the given path.
       const wantRel = normalizeRel(p);
-      const matches = candidates.filter((path) => {
+      const matches = real.filter((path) => {
         const rel = normalizeRel(this.meta.get(path)?.rel ?? "");
         return rel === wantRel || rel.endsWith(`/${wantRel}`);
       });
       return matches.length ? this.pickBest(matches) : null;
     }
-    return this.pickBest(candidates);
+    // Bare name: a real file wins; only if none matches do aliases apply.
+    if (real.length) return this.pickBest(real);
+    const aliasCands = basename ? this.byAlias.get(basename) : undefined;
+    return aliasCands && aliasCands.length ? this.pickBest(aliasCands) : null;
   }
 
   /** The whole vault as a graph: a node per note, an edge per resolved link. */

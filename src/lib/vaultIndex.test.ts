@@ -247,3 +247,65 @@ describe("outgoingLinksFor", () => {
     expect(idx.outgoingLinksFor("/v/Solo.md")).toEqual({ resolved: [], unresolved: [] });
   });
 });
+
+describe("aliases", () => {
+  it("resolves [[alias]] to the note declaring it in frontmatter", () => {
+    const idx = indexOf([
+      note("JS.md", "---\naliases: [JavaScript, ECMAScript]\n---\n# JS"),
+      note("Other.md", "see [[JavaScript]] and [[ECMAScript]] and [[JS]]"),
+    ]);
+    expect(idx.resolve("JavaScript", "/v/Other.md")).toBe("/v/JS.md");
+    expect(idx.resolve("ECMAScript", "/v/Other.md")).toBe("/v/JS.md");
+    expect(idx.resolve("JS", "/v/Other.md")).toBe("/v/JS.md"); // basename still works
+    expect(idx.aliasesOf("/v/JS.md")).toEqual(["JavaScript", "ECMAScript"]);
+  });
+
+  it("counts an [[alias]] link as a backlink to the aliased note", () => {
+    const idx = indexOf([
+      note("JS.md", "---\naliases:\n  - JavaScript\n---"),
+      note("Other.md", "uses [[JavaScript]] daily"),
+    ]);
+    const bl = idx.backlinksFor("/v/JS.md");
+    expect(bl.map((b) => b.name)).toContain("Other");
+  });
+
+  it("drops old aliases from resolution when frontmatter changes", () => {
+    const idx = indexOf([note("N.md", "---\naliases: [Old]\n---")]);
+    expect(idx.resolve("Old", "/v/N.md")).toBe("/v/N.md");
+    idx.setNote(note("N.md", "---\naliases: [New]\n---"));
+    expect(idx.resolve("Old", "/v/N.md")).toBeNull(); // stale alias removed
+    expect(idx.resolve("New", "/v/N.md")).toBe("/v/N.md");
+  });
+});
+
+describe("aliases — precedence and parsing (review fixes)", () => {
+  it("a REAL file wins over another note's alias of the same name", () => {
+    const idx = indexOf([
+      note("Foo.md", "the real foo"),
+      note("Bar.md", "---\naliases: [Foo]\n---"),
+      note("Src.md", "link [[Foo]]"),
+    ]);
+    expect(idx.resolve("Foo", "/v/Src.md")).toBe("/v/Foo.md"); // real file, not Bar
+  });
+
+  it("aliases only match a BARE name, not a folder-qualified path", () => {
+    const idx = indexOf([note("sub/Note.md", "---\naliases: [Alpha]\n---")]);
+    expect(idx.resolve("Alpha", "/v/x.md")).toBe("/v/sub/Note.md");
+    expect(idx.resolve("sub/Alpha", "/v/x.md")).toBeNull(); // path-qualified alias ≠ match
+  });
+
+  it("does not split an inline alias on a comma inside quotes", () => {
+    const idx = indexOf([note("N.md", '---\naliases: ["Doe, John", Jane]\n---')]);
+    expect(idx.aliasesOf("/v/N.md")).toEqual(["Doe, John", "Jane"]);
+  });
+
+  it("dedupes aliases case-insensitively", () => {
+    const idx = indexOf([note("N.md", "---\naliases: [Foo, foo, FOO]\n---")]);
+    expect(idx.aliasesOf("/v/N.md")).toEqual(["Foo"]);
+  });
+
+  it("skips aliases with wikilink-special chars from autocomplete", () => {
+    const idx = indexOf([note("N.md", '---\naliases: ["a|b", "c#d", Good]\n---')]);
+    expect(idx.allAliases().map((a) => a.alias)).toEqual(["Good"]);
+  });
+});
