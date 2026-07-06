@@ -87,6 +87,8 @@ import { wikilinkAutocomplete, wikilinkDecorations, wikilinkModClickFollow, type
 import { headingFold, foldKeymap } from "./headingFold";
 import { mermaid } from "./mermaid";
 import { query, notePathFacet } from "./query";
+import { pluginBlocks } from "./pluginBlocks";
+import { pluginEditorExtensions } from "../lib/plugins";
 import type { LinkFormat } from "../lib/rename";
 
 // Marks a transaction as an external-content reconcile (a live-reload from disk)
@@ -121,10 +123,23 @@ const renderCompartment = new Compartment();
 // The editor theme lives in its own compartment so a light/dark switch only
 // reconfigures CM6's `dark` flag (the colors are CSS vars) — no remount.
 const themeCompartment = new Compartment();
+// Plugin-contributed CM6 extensions live in a compartment so enabling/disabling
+// a plugin can add/remove them from LIVE editors without a remount.
+const pluginCompartment = new Compartment();
 
 /** Swap the editor theme between dark and light without rebuilding the editor. */
 export function setEditorTheme(view: EditorView, dark: boolean): void {
   view.dispatch({ effects: themeCompartment.reconfigure(basaltThemeFor(dark)) });
+}
+
+/** Re-apply the current set of plugin editor extensions to a live editor, and
+ * force plugin/query block widgets to recompute (so a just-enabled plugin's
+ * code-block processor renders in an already-open note). */
+export function reconfigurePlugins(view: EditorView): void {
+  view.dispatch({
+    effects: pluginCompartment.reconfigure(pluginEditorExtensions()),
+    selection: view.state.selection, // re-set → block StateFields recompute
+  });
 }
 
 function renderExtensions(cb: EditorCallbacks): Extension[] {
@@ -133,6 +148,7 @@ function renderExtensions(cb: EditorCallbacks): Extension[] {
     tables,
     mermaid,
     query,
+    pluginBlocks,
     codeBlocks,
     callouts,
     highlight,
@@ -185,6 +201,9 @@ export function createEditorState(
 ): EditorState {
   const extensions: Extension[] = [
     notePathFacet.of(selfRel),
+    // CM6 extensions contributed by enabled plugins — in a compartment so
+    // enable/disable reflects into live editors via reconfigurePlugins().
+    pluginCompartment.of(pluginEditorExtensions()),
     history(),
     drawSelection(),
     rectangularSelection(),

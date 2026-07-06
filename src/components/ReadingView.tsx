@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { renderMarkdown } from "../lib/render";
 import { renderMermaid } from "../lib/mermaid";
 import { renderQuerySource } from "../lib/queryHost";
+import { codeBlockProcessor } from "../lib/plugins";
 import { internalMdHref } from "../lib/markdown";
 
 interface Props {
@@ -40,6 +41,25 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
       const pre = code.parentElement;
       if (!pre) return;
       pre.replaceWith(renderQuerySource(code.textContent ?? "", selfRel));
+    });
+
+    // Render fenced blocks a PLUGIN registered a processor for.
+    el.querySelectorAll<HTMLElement>("pre.md-code > code[class^='language-']").forEach((code) => {
+      const lang = (code.className.match(/language-([\w-]+)/)?.[1] ?? "").toLowerCase();
+      const fn = lang ? codeBlockProcessor(lang) : null;
+      if (!fn) return;
+      const pre = code.parentElement;
+      if (!pre) return;
+      const box = document.createElement("div");
+      box.className = "md-plugin-block";
+      try {
+        fn(code.textContent ?? "", box, { notePath: selfRel });
+        pre.replaceWith(box);
+      } catch (e) {
+        box.className = "md-plugin-block md-plugin-block-error";
+        box.textContent = `Plugin block error: ${e instanceof Error ? e.message : e}`;
+        pre.replaceWith(box);
+      }
     });
 
     // Render ```mermaid blocks to SVG, replacing their <pre> with the diagram.

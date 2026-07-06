@@ -1,12 +1,17 @@
 import { useEffect } from "react";
 import type { ThemeMode } from "../lib/theme";
-import type { ObsidianConfig } from "../lib/vault";
+import type { ObsidianConfig, PluginInfo } from "../lib/vault";
 
 interface Props {
   themeMode: ThemeMode;
   onThemeMode: (mode: ThemeMode) => void;
   /** The vault's read-only Obsidian settings Basalt honors (informational). */
   obsConfig: ObsidianConfig | null;
+  /** Installed Basalt plugins (from .basalt/plugins/). */
+  plugins: PluginInfo[];
+  /** Currently-enabled plugin ids. */
+  enabledPlugins: string[];
+  onTogglePlugin: (info: PluginInfo, enabled: boolean) => void;
   onClose: () => void;
 }
 
@@ -27,7 +32,16 @@ function ConfigRow({ label, value }: { label: string; value: string | null | und
   );
 }
 
-export function SettingsModal({ themeMode, onThemeMode, obsConfig, onClose }: Props) {
+export function SettingsModal({
+  themeMode,
+  onThemeMode,
+  obsConfig,
+  plugins,
+  enabledPlugins,
+  onTogglePlugin,
+  onClose,
+}: Props) {
+  const enabled = new Set(enabledPlugins);
   // Esc closes (the overlay handles click-away).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -91,6 +105,37 @@ export function SettingsModal({ themeMode, onThemeMode, obsConfig, onClose }: Pr
           )}
           <p className="settings-hint">
             Basalt reads these from <code>.obsidian/</code> and never writes them.
+          </p>
+        </section>
+
+        <section className="settings-section">
+          <div className="settings-label">Plugins</div>
+          {plugins.length === 0 ? (
+            <p className="settings-hint">
+              No plugins found. Add one under <code>.basalt/plugins/&lt;id&gt;/</code> (a{" "}
+              <code>manifest.json</code> + <code>main.js</code>).
+            </p>
+          ) : (
+            <div className="plugin-list">
+              {plugins.map((p) => (
+                <div key={p.id} className="plugin-row">
+                  <label className="plugin-toggle">
+                    <input
+                      type="checkbox"
+                      checked={enabled.has(p.id)}
+                      onChange={(e) => onTogglePlugin(p, e.target.checked)}
+                    />
+                    <span className="plugin-name">{p.name}</span>
+                    {p.version && <span className="plugin-version">v{p.version}</span>}
+                  </label>
+                  {p.description && <div className="plugin-desc">{p.description}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="settings-hint">
+            ⚠ Plugins run with full app access. Enable only plugins you trust. Enabled
+            per-vault on this device.
           </p>
         </section>
       </div>

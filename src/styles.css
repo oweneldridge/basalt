@@ -1602,3 +1602,66 @@ button.primary:hover {
 .query-tag {
   color: var(--accent);
 }
+
+/* ------- Notices (toasts) ------- */
+.notices {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 100;
+  max-width: 360px;
+}
+.notice {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  padding: 8px 12px;
+  box-shadow: 0 6px 20px var(--shadow);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* ------- Plugin settings + blocks ------- */
+.plugin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.plugin-row {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.plugin-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.plugin-name {
+  font-weight: 500;
+}
+.plugin-version {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.plugin-desc {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+.cm-plugin-block,
+.md-plugin-block {
+  margin: 4px 0;
+}
+.cm-plugin-block-error,
+.md-plugin-block-error {
+  color: var(--danger);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+}
