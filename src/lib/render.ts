@@ -37,11 +37,22 @@ function inlineRe(): RegExp {
       /(~~[^\n]+?~~)/, // 8 strikethrough
       /(==[^\n]+?==)/, // 9 highlight
       /((?<![\w/#])#[A-Za-z0-9_][\w-]*(?:\/[A-Za-z0-9_][\w-]*)*)/, // 10 tag
+      /(\$\$[^\n]+?\$\$)/, // 11 inline display math $$…$$
+      /(\$(?!\s)(?:\\.|[^$\n\\])+?(?<!\s)\$)/, // 12 inline math $…$ (no leading/trailing space)
     ]
       .map((r) => r.source)
       .join("|"),
     "gi",
   );
+}
+
+/** A math placeholder the reader / editor / export fills with KaTeX (data-tex
+ * holds the escaped TeX; render.ts stays synchronous + KaTeX-free). */
+function mathPlaceholder(tex: string, display: boolean): string {
+  const tag = display ? "div" : "span";
+  return `<${tag} class="math ${display ? "math-block" : "math-inline"}" data-math="${
+    display ? "block" : "inline"
+  }" data-tex="${escapeHtml(tex)}"></${tag}>`;
 }
 
 /** Render inline markdown to an HTML string. Recurses (bounded) into emphasis
@@ -99,6 +110,10 @@ export function renderInline(text: string, depth = 0): string {
       out += `<mark class="md-highlight">${renderInline(tok.slice(2, -2), depth + 1)}</mark>`;
     } else if (m[10]) {
       out += `<span class="md-tag">${escapeHtml(tok)}</span>`;
+    } else if (m[11]) {
+      out += mathPlaceholder(tok.slice(2, -2), true); // $$…$$
+    } else if (m[12]) {
+      out += mathPlaceholder(tok.slice(1, -1), false); // $…$
     }
     last = m.index + tok.length;
   }
@@ -216,6 +231,29 @@ export function renderMarkdown(src: string): string {
       i++;
       continue;
     }
+    // Block math: a `$$` fence (possibly multi-line). A complete single-line
+    // `$$…$$` is left to the inline pass unless it's alone on the line.
+    const trimmed = line.trim();
+    if (trimmed.startsWith("$$")) {
+      const oneLine = trimmed.length > 4 && trimmed.endsWith("$$");
+      if (oneLine) {
+        parts.push(mathPlaceholder(trimmed.slice(2, -2), true));
+        i++;
+        continue;
+      }
+      const body: string[] = [trimmed.slice(2)];
+      i++;
+      while (i < lines.length && !lines[i].trim().endsWith("$$")) {
+        body.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length) {
+        body.push(lines[i].trim().replace(/\$\$$/, ""));
+        i++;
+      }
+      parts.push(mathPlaceholder(body.join("\n").trim(), true));
+      continue;
+    }
     // Fenced code.
     const fence = FENCE.exec(line);
     if (fence) {
@@ -321,6 +359,11 @@ export function renderMarkdown(src: string): string {
     while (i < lines.length && lines[i].trim() !== "") {
       const l = lines[i];
       if (FENCE.test(l) || ATX.test(l) || HR.test(l) || QUOTE.test(l) || BULLET.test(l) || ORDERED.test(l))
+        break;
+      // A `$$` line opens a display-math block — end the paragraph so the block
+      // loop handles it (unless it's a complete single-line $$…$$, which the
+      // inline pass renders).
+      if (para.length && l.trim().startsWith("$$") && !(l.trim().length > 4 && l.trim().endsWith("$$")))
         break;
       if (l.includes("|") && i + 1 < lines.length && TABLE_DELIM.test(lines[i + 1])) break;
       para.push(l);

@@ -1925,3 +1925,9 @@ button.primary:hover {
   font-weight: 500;
 }
 .vh-restore:hover { filter: brightness(1.1); }
+
+/* ------- Math (KaTeX) ------- */
+.math-block, .cm-math-block { display: block; text-align: center; margin: 8px 0; overflow-x: auto; }
+.math-inline, .cm-math { }
+.math-error { color: var(--danger); font-family: var(--font-mono, monospace); font-size: 0.9em; }
+.cm-math { cursor: default; }
