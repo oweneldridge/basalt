@@ -21,7 +21,7 @@ scope (Basalt gets its own plugin API in Phase 5).
 | 3.5 | Tabs, split panes, workspaces | shipped |
 | 3.7 | Reading mode; PDF/HTML export | shipped |
 | 4a | JSON Canvas viewer (read-only): pan/zoom world, text/file/link/group node cards, SVG edges; data-safety-reviewed (read-only contract, write_note/export_file backstops, tolerant parser) | **shipped** |
-| 4b | Bases views over YAML (parse Obsidian .base read-only); canvas editing later | next |
+| 4b | Bases views over YAML (read-only): full .base engine (expression language, filters, formulas, views/table+cards, summaries, groupBy), DoS-hardened (ReDoS + value-growth budgets); canvas editing later | **shipped** |
 | 4.5 | Multi-vault switcher polish; multi-window (watchers keyed per vault root) | planned |
 | 5 | Basalt plugin API + first-party must-have workflows (Dataview-style queries, templater, tasks) | planned |
 
