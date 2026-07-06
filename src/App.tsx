@@ -55,6 +55,7 @@ import {
 } from "./lib/plugins";
 import { listPlugins, writePluginData, type PluginInfo } from "./lib/vault";
 import type { EditorApi } from "./components/EditorPane";
+import type { NoteRef } from "./editor/wikilink";
 import { clearImageCache, resolveImage } from "./lib/assets";
 import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
@@ -1435,7 +1436,12 @@ export default function App() {
   );
 
   const getNotes = useCallback(
-    () => notesRef.current.map((n) => ({ name: n.name, rel: n.rel })),
+    (): NoteRef[] => [
+      ...notesRef.current.map((n) => ({ name: n.name, rel: n.rel })),
+      // Frontmatter aliases as their own completions (picking one inserts the
+      // alias text, which resolves via the index).
+      ...index.current.allAliases().map((a) => ({ name: a.alias, rel: a.rel, alias: a.name })),
+    ],
     [],
   );
   const getLinkFormat = useCallback((): LinkFormat => {
@@ -2255,9 +2261,14 @@ export default function App() {
         // (shortest: bare name unless another note shares the new basename;
         // relative: per-SOURCE `./`/`../` path; absolute: full vault path).
         const fmt = getLinkFormat();
-        const taken = preNotes.some(
-          (n) => n.path !== oldPath && normalizeName(n.name) === normalizeName(newBase),
-        );
+        // "shortest" format emits a bare `[[NewName]]` only when the name is
+        // unambiguous. Another note that has NewName as a basename OR as an
+        // ALIAS makes it ambiguous — force the folder-qualified form so rewritten
+        // links keep resolving to the renamed note, not the alias owner.
+        const newBaseKey = normalizeName(newBase);
+        const taken =
+          preNotes.some((n) => n.path !== oldPath && normalizeName(n.name) === newBaseKey) ||
+          preIndex.allAliases().some((a) => a.rel !== newRel && normalizeName(a.alias) === newBaseKey);
         const newRelNoExt = newRel.replace(/\.md$/i, "");
 
         // The renamed note's own content, from disk (authoritative), with its
@@ -2268,10 +2279,15 @@ export default function App() {
         } catch {
           renamedContent = oldNote.content; // disk read failed; best effort
         }
+        const selfAliases = new Set(preIndex.aliasesOf(oldPath).map((a) => normalizeName(a)));
         const ownMap = (raw: string): string | null => {
           const dest = preIndex.resolve(raw, oldPath);
           if (!dest) return null;
           if (dest === oldPath) {
+            // A self-link via an alias still resolves post-rename — leave it.
+            const last = normalizeName(targetPathPart(raw).split(/[/\\]/).pop() ?? "");
+            if (selfAliases.has(last) && last !== normalizeName(newBase) && last !== normalizeName(oldNote.name))
+              return null;
             return linkTargetForFormat(fmt, newRelNoExt, taken, newRel); // self-link
           }
           const pathPart = targetPathPart(raw);
@@ -2331,8 +2347,16 @@ export default function App() {
         // snapshot (cheap), but each rewrite reads DISK content so a fresher
         // external edit is never reverted. The replacement text is per-source:
         // "relative" format needs the SOURCE note's folder.
+        // Links that reach the note via one of its ALIASES still resolve after
+        // the rename (aliases live in the target's frontmatter, unchanged), so
+        // leave them — rewriting would needlessly destroy the alias usage.
+        const aliasSet = new Set(preIndex.aliasesOf(oldPath).map((a) => normalizeName(a)));
+        const viaAlias = (raw: string): boolean => {
+          const last = normalizeName(targetPathPart(raw).split(/[/\\]/).pop() ?? "");
+          return aliasSet.has(last) && last !== normalizeName(newBase) && last !== normalizeName(oldNote.name);
+        };
         const sourceMap = (notePath: string, noteRel: string) => (raw: string) =>
-          preIndex.resolve(raw, notePath) === oldPath
+          preIndex.resolve(raw, notePath) === oldPath && !viaAlias(raw)
             ? linkTargetForFormat(fmt, newRelNoExt, taken, noteRel)
             : null;
         const updates: VaultNote[] = [];
