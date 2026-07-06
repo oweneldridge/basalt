@@ -139,3 +139,11 @@ describe("stripComments (Obsidian %% comments)", () => {
     expect(renderMarkdown("```\n%%kept%%\n```")).toContain("%%kept%%");
   });
 });
+
+describe("stripBlockIds (^block markers)", () => {
+  it("conceals inline and own-line block ids", () => {
+    expect(renderMarkdown("a paragraph ^abc")).not.toContain("^abc");
+    expect(renderMarkdown("a paragraph ^abc")).toContain("a paragraph");
+    expect(renderMarkdown("para\n^xyz\nmore")).not.toContain("^xyz");
+  });
+});

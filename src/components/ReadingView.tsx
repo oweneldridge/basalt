@@ -3,6 +3,7 @@ import { renderMarkdown } from "../lib/render";
 import { renderMermaid } from "../lib/mermaid";
 import { renderQuerySource } from "../lib/queryHost";
 import { codeBlockProcessor } from "../lib/plugins";
+import { renderEmbedSource } from "../lib/transclude";
 import { internalMdHref } from "../lib/markdown";
 
 interface Props {
@@ -41,6 +42,12 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
       const pre = code.parentElement;
       if (!pre) return;
       pre.replaceWith(renderQuerySource(code.textContent ?? "", selfRel));
+    });
+
+    // Transclude ![[Note]] / ![[Note#Heading]] / ![[Note#^block]] embeds inline.
+    el.querySelectorAll<HTMLElement>("span.md-embed-ref[data-basalt-embed]").forEach((marker) => {
+      const target = marker.dataset.basaltEmbed ?? "";
+      marker.replaceWith(renderEmbedSource(target, selfRel));
     });
 
     // Render fenced blocks a PLUGIN registered a processor for.
