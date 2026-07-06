@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitSubpath, stripFrontmatter, extractSection } from "./transclude";
+import { splitSubpath, stripFrontmatter, extractSection, subpathToLine, extractHeadings } from "./transclude";
 
 describe("splitSubpath", () => {
   it("splits target and subpath on the first #", () => {
@@ -108,5 +108,21 @@ describe("extractSection", () => {
     const doc = "## C#\ncsharp notes\n## D\nx";
     expect(extractSection(doc, "C#")).toBe("## C#\ncsharp notes");
     expect(extractSection(doc, "C")).toBe(""); // 'C' must NOT match '## C#'
+  });
+});
+
+describe("subpathToLine + extractHeadings", () => {
+  const doc = ["---", "a: 1", "---", "# Intro", "text", "## Details", "more ^b1", "final"].join("\n");
+  it("finds the 1-based line of a heading (frontmatter included)", () => {
+    expect(subpathToLine(doc, "Intro")).toBe(4);
+    expect(subpathToLine(doc, "Details")).toBe(6);
+    expect(subpathToLine(doc, "Nope")).toBeNull();
+  });
+  it("finds the line of a ^block id", () => {
+    expect(subpathToLine(doc, "^b1")).toBe(7);
+    expect(subpathToLine(doc, "^missing")).toBeNull();
+  });
+  it("lists headings in order", () => {
+    expect(extractHeadings(doc)).toEqual(["Intro", "Details"]);
   });
 });

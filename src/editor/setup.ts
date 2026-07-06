@@ -105,6 +105,8 @@ export interface EditorCallbacks {
   getLinkFormat: () => LinkFormat;
   /** Rel (with .md) of the note being edited — for "relative" link format. */
   getActiveRel: () => string | null;
+  /** Headings of a note (by name/alias) — for `[[Note#…` autocomplete. */
+  getHeadings: (name: string) => string[];
   /** Open the target of a clicked wikilink / note embed. */
   onOpenWikilink: (target: string) => void;
   /** Open an external URL from a clicked Markdown link. */
@@ -243,6 +245,7 @@ export function createEditorState(
       getNotes: cb.getNotes,
       getLinkFormat: cb.getLinkFormat,
       getActiveRel: cb.getActiveRel,
+      getHeadings: cb.getHeadings,
     }),
     // Cmd/Ctrl-click follows a raw [[link]] — the only navigation affordance
     // that must survive source mode (Obsidian behaves the same).
