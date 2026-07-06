@@ -86,6 +86,7 @@ import { attachments } from "./attachments";
 import { wikilinkAutocomplete, wikilinkDecorations, wikilinkModClickFollow, type NoteRef } from "./wikilink";
 import { headingFold, foldKeymap } from "./headingFold";
 import { mermaid } from "./mermaid";
+import { query, notePathFacet } from "./query";
 import type { LinkFormat } from "../lib/rename";
 
 // Marks a transaction as an external-content reconcile (a live-reload from disk)
@@ -131,6 +132,7 @@ function renderExtensions(cb: EditorCallbacks): Extension[] {
     frontmatter,
     tables,
     mermaid,
+    query,
     codeBlocks,
     callouts,
     highlight,
@@ -179,8 +181,10 @@ export function createEditorState(
   cb: EditorCallbacks,
   sourceMode = false,
   dark = true,
+  selfRel = "",
 ): EditorState {
   const extensions: Extension[] = [
+    notePathFacet.of(selfRel),
     history(),
     drawSelection(),
     rectangularSelection(),

@@ -9,6 +9,9 @@ import type { LinkFormat } from "../lib/rename";
 interface Props {
   /** Active note path — changing this rebuilds the editor with fresh content. */
   path: string;
+  /** Vault-relative path (with .md) of this note — the self/`this` note for
+   * any query block rendered in it. */
+  selfRel: string;
   /** Document content for `path`; changing it (same path) reconciles in-place. */
   doc: string;
   getNotes: () => NoteRef[];
@@ -30,6 +33,7 @@ interface Props {
 
 export function EditorPane({
   path,
+  selfRel,
   doc,
   getNotes,
   getLinkFormat,
@@ -67,12 +71,14 @@ export function EditorPane({
   sourceModeRef.current = sourceMode;
   const darkRef = useRef(dark);
   darkRef.current = dark;
+  const selfRelRef = useRef(selfRel);
+  selfRelRef.current = selfRel;
 
   // Build the editor when the note (path) changes.
   useEffect(() => {
     if (!host.current) return;
     const v = new EditorView({
-      state: createEditorState(doc, adapter.current, sourceModeRef.current, darkRef.current),
+      state: createEditorState(doc, adapter.current, sourceModeRef.current, darkRef.current, selfRelRef.current),
       parent: host.current,
     });
     view.current = v;

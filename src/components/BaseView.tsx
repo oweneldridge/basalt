@@ -10,7 +10,7 @@ import {
   type CellPart,
   type EvalCtx,
 } from "../lib/bases";
-import { parseProperties } from "../lib/bases";
+import { noteRow, attachmentRow } from "../lib/vaultRows";
 import type { VaultNote, Attachment } from "../lib/vault";
 
 /** Rows rendered before a "show more" step-up. Bounds DOM node count and
@@ -35,63 +35,6 @@ interface Props {
   onOpenFile: (rel: string) => void;
   /** Resolve a vault image target to a URL, relative to `rel`. */
   resolveImageRel: (target: string, rel: string) => Promise<string | null>;
-}
-
-// Per-note row cache. Keyed by the note OBJECT (saves replace only the edited
-// note's object, so unchanged notes skip re-parsing their frontmatter), and
-// stamped with the indexVersion it was built at (tags/links come from the
-// index, which mutates in place).
-const rowCache = new WeakMap<object, { v: number; row: BaseRow }>();
-
-function folderOf(rel: string): string {
-  const i = rel.lastIndexOf("/");
-  return i < 0 ? "" : rel.slice(0, i);
-}
-
-function noteRow(
-  n: VaultNote,
-  v: number,
-  tagsOf: (p: string) => string[],
-  linkKeysOf: (p: string) => string[],
-): BaseRow {
-  const hit = rowCache.get(n);
-  if (hit && hit.v === v) return hit.row;
-  const row: BaseRow = {
-    name: n.rel.split("/").pop() ?? n.rel,
-    basename: n.name,
-    path: n.rel,
-    folder: folderOf(n.rel),
-    ext: "md",
-    size: n.size ?? 0,
-    ctime: n.ctime ?? 0,
-    mtime: n.mtime ?? 0,
-    tags: tagsOf(n.path).map((t) => t.replace(/^#/, "").toLowerCase()),
-    linkKeys: linkKeysOf(n.path),
-    properties: parseProperties(n.content),
-  };
-  rowCache.set(n, { v, row });
-  return row;
-}
-
-function attachmentRow(a: Attachment, v: number): BaseRow {
-  const hit = rowCache.get(a);
-  if (hit && hit.v === v) return hit.row;
-  const dot = a.name.lastIndexOf(".");
-  const row: BaseRow = {
-    name: a.name,
-    basename: dot > 0 ? a.name.slice(0, dot) : a.name,
-    path: a.rel,
-    folder: folderOf(a.rel),
-    ext: dot > 0 ? a.name.slice(dot + 1).toLowerCase() : "",
-    size: a.size ?? 0,
-    ctime: a.ctime ?? 0,
-    mtime: a.mtime ?? 0,
-    tags: [],
-    linkKeys: [],
-    properties: {},
-  };
-  rowCache.set(a, { v, row });
-  return row;
 }
 
 /** Async cell image: resolves a vault target to a data URL like embeds do. */

@@ -1,10 +1,13 @@
 import { useEffect, useRef } from "react";
 import { renderMarkdown } from "../lib/render";
 import { renderMermaid } from "../lib/mermaid";
+import { renderQuerySource } from "../lib/queryHost";
 import { internalMdHref } from "../lib/markdown";
 
 interface Props {
   doc: string;
+  /** Vault-relative path (with .md) of this note — the self note for query blocks. */
+  selfRel: string;
   /** Open a wikilink / internal target (bare note name or path). */
   onOpenInternal: (target: string) => void;
   onOpenUrl: (url: string) => void;
@@ -18,7 +21,7 @@ interface Props {
  * editor is virtualized, so it can't show or print the whole document). The
  * rendered HTML is built by the pure, escaped renderer in lib/render.ts; here
  * we resolve vault images and delegate link clicks to the app. */
-export function ReadingView({ doc, onOpenInternal, onOpenUrl, resolveImage, dark }: Props) {
+export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveImage, dark }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -29,6 +32,15 @@ export function ReadingView({ doc, onOpenInternal, onOpenUrl, resolveImage, dark
     el.scrollTop = 0;
 
     let cancelled = false;
+
+    // Render ```dataview / ```query blocks, replacing their <pre> with the result.
+    el.querySelectorAll<HTMLElement>(
+      "pre.md-code > code.language-dataview, pre.md-code > code.language-basalt-query, pre.md-code > code.language-query",
+    ).forEach((code) => {
+      const pre = code.parentElement;
+      if (!pre) return;
+      pre.replaceWith(renderQuerySource(code.textContent ?? "", selfRel));
+    });
 
     // Render ```mermaid blocks to SVG, replacing their <pre> with the diagram.
     el.querySelectorAll<HTMLElement>("pre.md-code > code.language-mermaid").forEach((code) => {
@@ -72,7 +84,7 @@ export function ReadingView({ doc, onOpenInternal, onOpenUrl, resolveImage, dark
     return () => {
       cancelled = true;
     };
-  }, [doc, resolveImage, dark]);
+  }, [doc, selfRel, resolveImage, dark]);
 
   const onClick = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
