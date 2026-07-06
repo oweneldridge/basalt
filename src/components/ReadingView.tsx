@@ -50,6 +50,13 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
       marker.replaceWith(renderEmbedSource(target, selfRel));
     });
 
+    // Render $…$ / $$…$$ math (lazy-load KaTeX only when a note actually has it).
+    if (el.querySelector("[data-math]")) {
+      void import("../lib/math").then((mod) => {
+        if (!cancelled && el.isConnected) mod.fillMath(el);
+      });
+    }
+
     // Render fenced blocks a PLUGIN registered a processor for.
     el.querySelectorAll<HTMLElement>("pre.md-code > code[class^='language-']").forEach((code) => {
       const lang = (code.className.match(/language-([\w-]+)/)?.[1] ?? "").toLowerCase();

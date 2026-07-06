@@ -1495,6 +1495,11 @@ export default function App() {
     const rel = note?.rel ?? "";
     try {
       const dom = new DOMParser().parseFromString(`<div>${renderMarkdown(pane.doc)}</div>`, "text/html");
+      // Render $…$ / $$…$$ math to KaTeX HTML in-place.
+      if (dom.querySelector("[data-math]")) {
+        const mathMod = await import("./lib/math");
+        mathMod.fillMath(dom.body);
+      }
       // Render mermaid diagrams to inline SVG.
       await Promise.all(
         [...dom.querySelectorAll("pre.md-code > code.language-mermaid")].map(async (code) => {

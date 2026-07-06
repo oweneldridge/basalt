@@ -86,6 +86,7 @@ import { attachments } from "./attachments";
 import { wikilinkAutocomplete, wikilinkDecorations, wikilinkModClickFollow, type NoteRef } from "./wikilink";
 import { headingFold, foldKeymap } from "./headingFold";
 import { mermaid } from "./mermaid";
+import { math } from "./math";
 import { query, notePathFacet } from "./query";
 import { pluginBlocks } from "./pluginBlocks";
 import { transcludeBlocks } from "./transcludeBlocks";
@@ -149,6 +150,7 @@ function renderExtensions(cb: EditorCallbacks): Extension[] {
     frontmatter,
     tables,
     mermaid,
+    math,
     query,
     pluginBlocks,
     transcludeBlocks,

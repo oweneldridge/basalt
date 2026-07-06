@@ -147,3 +147,27 @@ describe("stripBlockIds (^block markers)", () => {
     expect(renderMarkdown("para\n^xyz\nmore")).not.toContain("^xyz");
   });
 });
+
+describe("math placeholders", () => {
+  it("emits inline $…$ and display $$…$$ placeholders with the TeX", () => {
+    const inl = renderMarkdown("energy is $E = mc^2$ here");
+    expect(inl).toContain('data-math="inline"');
+    expect(inl).toContain('data-tex="E = mc^2"');
+    const disp = renderMarkdown("$$\\int_0^1 x\\,dx$$");
+    expect(disp).toContain('data-math="block"');
+  });
+  it("does NOT treat prose dollar amounts as math", () => {
+    const out = renderMarkdown("it costs $5 and $10 total");
+    expect(out).not.toContain("data-math");
+  });
+  it("renders a multi-line $$ block", () => {
+    const out = renderMarkdown("before\n$$\na = b + c\n$$\nafter");
+    expect(out).toContain('data-math="block"');
+    expect(out).toContain("before");
+    expect(out).toContain("after");
+  });
+  it("leaves $…$ inside code untouched", () => {
+    expect(renderMarkdown("`$x$`")).toContain("<code");
+    expect(renderMarkdown("`$x$`")).not.toContain("data-math");
+  });
+});
