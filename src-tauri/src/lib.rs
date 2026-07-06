@@ -807,6 +807,8 @@ struct ObsidianConfig {
     daily_notes_folder: Option<String>,
     daily_notes_format: Option<String>,
     daily_notes_template: Option<String>,
+    /// Folder holding templates (core Templates plugin, or Templater's setting).
+    templates_folder: Option<String>,
 }
 
 #[tauri::command]
@@ -847,6 +849,20 @@ fn read_obsidian_config(window: tauri::Window, state: State<VaultState>) -> Resu
             }
         }
     }
+    // Templates folder: prefer Templater's setting, then the core Templates
+    // plugin's. Basalt reuses whichever the vault already configured.
+    cfg.templates_folder = fs::read_to_string(root.join(".obsidian/plugins/templater-obsidian/data.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|v| v.get("templates_folder").and_then(|x| x.as_str()).map(String::from))
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            fs::read_to_string(root.join(".obsidian/templates.json"))
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                .and_then(|v| v.get("folder").and_then(|x| x.as_str()).map(String::from))
+                .filter(|s| !s.is_empty())
+        });
     Ok(cfg)
 }
 

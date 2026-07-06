@@ -37,6 +37,8 @@ import {
 import { setQueryHost } from "./lib/queryHost";
 import { noteRow, tasksForNote } from "./lib/vaultRows";
 import { parseQuery, runQuery, type Task } from "./lib/query";
+import { applyTemplate, type TemplateCtx } from "./lib/templates";
+import type { EditorApi } from "./components/EditorPane";
 import { clearImageCache, resolveImage } from "./lib/assets";
 import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
@@ -124,7 +126,7 @@ interface Pane {
   scrollToLine?: number;
 }
 
-type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | null;
+type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | "templates" | null;
 
 interface AppCommand {
   id: string;
@@ -248,6 +250,14 @@ export default function App() {
   const [conflicts, setConflicts] = useState<Set<string>>(() => new Set());
   const [modal, setModal] = useState<ModalKind>(null);
   const [recentVaults, setRecentVaults] = useState<RecentVault[]>(() => loadRecentVaults());
+  // A pending template prompt (tp.system.prompt) awaiting user input.
+  const [templatePrompt, setTemplatePrompt] = useState<{
+    message: string;
+    def: string;
+    resolve: (v: string | null) => void;
+  } | null>(null);
+  // Imperative handle to the FOCUSED editor (for inserting a template at the caret).
+  const editorApiRef = useRef<EditorApi | null>(null);
   const [graphOpen, setGraphOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<"global" | "local">("global");
   const [sourceMode, setSourceMode] = useState(false);
@@ -1133,6 +1143,55 @@ export default function App() {
     setModal("vaults");
   }, []);
 
+  // The configured templates folder (Templater / core Templates plugin), else
+  // "Templates". Notes under it are offered by the "Insert template" command.
+  const templatesFolder = useCallback(
+    () => (obsConfigRef.current?.templatesFolder || "Templates").replace(/\/+$/, ""),
+    [],
+  );
+  const templateNotes = useCallback((): VaultNote[] => {
+    const folder = templatesFolder().toLowerCase();
+    return notesRef.current.filter((n) => n.rel.toLowerCase().startsWith(folder + "/"));
+  }, [templatesFolder]);
+
+  const askTemplatePrompt = useCallback(
+    (message: string, def?: string) =>
+      new Promise<string | null>((resolve) => setTemplatePrompt({ message, def: def ?? "", resolve })),
+    [],
+  );
+
+  // Apply a template and insert it at the caret of the focused editor.
+  const insertTemplate = useCallback(
+    async (tpl: VaultNote) => {
+      const api = editorApiRef.current;
+      if (!api) {
+        setSaveError("Open a note in the editor to insert a template");
+        return;
+      }
+      try {
+        const text = await readNote(tpl.path);
+        const focused = focusedIdRef.current ? panesRef.current[focusedIdRef.current] : null;
+        const targetPath = focused?.active ?? "";
+        const target = notesRef.current.find((n) => n.path === targetPath);
+        const rel = target?.rel ?? "";
+        const ctx: TemplateCtx = {
+          title: target?.name ?? basename(targetPath).replace(/\.md$/i, ""),
+          folder: rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "",
+          path: rel,
+          ctime: target?.ctime ?? Date.now(),
+          now: Date.now(),
+          prompt: askTemplatePrompt,
+        };
+        const res = await applyTemplate(text, ctx);
+        if (res.errors.length) setSaveError(res.errors[0]);
+        api.insertAtCursor(res.text, res.cursor ?? undefined);
+      } catch (e) {
+        setSaveError(`Couldn't insert template: ${e}`);
+      }
+    },
+    [askTemplatePrompt],
+  );
+
   // Conflict resolution (focused pane): take the on-disk version, discarding
   // local edits.
   const handleReloadFromDisk = useCallback(async () => {
@@ -1974,6 +2033,7 @@ export default function App() {
           setGraphOpen(true);
         },
       },
+      { id: "insert-template", label: "Insert template…", hint: "apply a template at the cursor", run: () => setModal("templates") },
       { id: "switch-vault", label: "Switch vault…", hint: "recent vaults / open a folder", run: openVaultSwitcher },
       { id: "new-window", label: "New window", hint: "open another window", run: () => void handleOpenInNewWindow() },
       { id: "settings", label: "Open settings", hint: "appearance, vault info (⌘,)", run: () => setModal("settings") },
@@ -2091,6 +2151,7 @@ export default function App() {
               key={`${id}:${path}`}
               path={path}
               selfRel={rel}
+              apiRef={id === focusedId ? editorApiRef : undefined}
               doc={pane.doc}
               scrollToLine={pane.scrollToLine}
               getNotes={getNotes}
@@ -2312,6 +2373,40 @@ export default function App() {
             void handleOpenVault();
           }}
           onClose={() => setModal(null)}
+        />
+      )}
+      {modal === "templates" && (
+        <Palette<VaultNote>
+          placeholder="Insert template…"
+          getItems={(q) => fuzzyRank(q, templateNotes(), (n) => [n.name, n.rel])}
+          itemKey={(n) => n.path}
+          renderItem={(n) => (
+            <>
+              <span className="palette-name">{n.name}</span>
+              <span className="palette-sub">{n.rel}</span>
+            </>
+          )}
+          onSelect={(n) => {
+            setModal(null);
+            void insertTemplate(n);
+          }}
+          onClose={() => setModal(null)}
+          emptyText={`No templates in "${templatesFolder()}/"`}
+        />
+      )}
+      {templatePrompt && (
+        <PromptModal
+          title={templatePrompt.message}
+          defaultValue={templatePrompt.def}
+          confirmLabel="OK"
+          onConfirm={(v) => {
+            templatePrompt.resolve(v);
+            setTemplatePrompt(null);
+          }}
+          onClose={() => {
+            templatePrompt.resolve(null);
+            setTemplatePrompt(null);
+          }}
         />
       )}
       {fileMenu && (
