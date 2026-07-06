@@ -19,6 +19,7 @@ import {
   startWatching,
   writeNote,
   writeCanvas,
+  writeBase,
   readObsidianConfig,
   readObsidianBookmarks,
   exportFile,
@@ -481,15 +482,16 @@ export default function App() {
     [bumpIndex, rememberSelfWrite],
   );
 
-  // Flush ONE canvas's pending edit. Same pending/conflict discipline as
-  // flushSave, but writes via the .canvas-gated writeCanvas and updates the
-  // attachment (not the note index).
-  const flushCanvas = useCallback(
+  // Flush ONE editable viewer's (.canvas / .base) pending edit. Same
+  // pending/conflict discipline as flushSave, but writes via the extension-gated
+  // writeCanvas/writeBase and updates the attachment (not the note index).
+  const flushViewer = useCallback(
     async (path: string, doc: string) => {
       setSaving(true);
       try {
         const att = attachmentsRef.current.find((a) => a.path === path);
         const rel = att?.rel;
+        const write = /\.base$/i.test(path) ? writeBase : writeCanvas;
         // Pre-write conflict guard (closes the race where an external edit lands
         // during the async rescan window): if disk has diverged from the last
         // content Basalt knew was there — and isn't already what we're writing —
@@ -503,7 +505,7 @@ export default function App() {
             return;
           }
         }
-        await writeCanvas(path, doc);
+        await write(path, doc);
         setSaveError(null);
         if (rel !== undefined) rememberSelfWrite(rel, doc); // AFTER a successful write
         if (conflictsRef.current.has(path)) {
@@ -526,9 +528,9 @@ export default function App() {
     [rememberSelfWrite, addConflict],
   );
 
-  // A canvas edit from the editable CanvasView: same debounced, conflict-safe,
-  // sibling-syncing path as note autosave (pending/saveTimers keyed by path).
-  const handleCanvasChange = useCallback(
+  // An edit from an editable viewer (CanvasView / BaseView): same debounced,
+  // conflict-safe, sibling-syncing path as note autosave (keyed by path).
+  const handleViewerChange = useCallback(
     (paneId: string, path: string, doc: string) => {
       pending.current.set(path, doc);
       patchPane(paneId, { doc }); // keep the pane's doc current (restore/rescan)
@@ -544,11 +546,11 @@ export default function App() {
           if (conflictsRef.current.has(path)) return;
           const d = pending.current.get(path);
           if (d === undefined) return;
-          void flushCanvas(path, d);
+          void flushViewer(path, d);
         }, SAVE_DEBOUNCE_MS),
       );
     },
-    [flushCanvas, patchPane],
+    [flushViewer, patchPane],
   );
 
   // Debounced per-note autosave. `pending`/`saveTimers` are keyed by note PATH
@@ -591,10 +593,10 @@ export default function App() {
       if (conflictsRef.current.has(path) && !force) return;
       const doc = pending.current.get(path);
       if (doc === undefined) return;
-      if (/\.canvas$/i.test(path)) await flushCanvas(path, doc);
+      if (isViewerPath(path)) await flushViewer(path, doc);
       else await flushSave(path, doc); // both delete `pending` on success
     },
-    [flushSave, flushCanvas],
+    [flushSave, flushViewer],
   );
 
   // Flush EVERY pending note (app close / vault switch / focus loss). Respects
@@ -2431,7 +2433,7 @@ export default function App() {
                 resolveImage={(target) =>
                   vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null)
                 }
-                onChange={(json) => handleCanvasChange(id, path, json)}
+                onChange={(json) => handleViewerChange(id, path, json)}
               />
             </ErrorBoundary>
           ) : /\.base$/i.test(path) ? (
@@ -2447,6 +2449,7 @@ export default function App() {
                   linkKeysOf={linkKeysOf}
                   onOpenFile={openViewerFile}
                   resolveImageRel={resolveImageRel}
+                  onChange={(yaml) => handleViewerChange(id, path, yaml)}
                 />
               </Suspense>
             </ErrorBoundary>

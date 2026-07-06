@@ -416,6 +416,31 @@ fn write_canvas(
     atomic_write(&resolved, content.as_bytes())
 }
 
+/// Atomically write a `.base` file (the editable Bases definition YAML), only
+/// within the vault. Extension-gated like write_canvas so this pipeline can only
+/// ever touch a `.base`.
+#[tauri::command]
+fn write_base(
+    path: String,
+    content: String,
+    window: tauri::Window,
+    state: State<VaultState>,
+) -> Result<(), String> {
+    let root = current_root(&state, window.label())?;
+    let resolved = ensure_in_vault(&root, &path)?;
+    let is_base = resolved
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("base"));
+    if !is_base {
+        return Err(format!("write_base refuses a non-.base path: {}", resolved.display()));
+    }
+    if !resolved.is_file() {
+        return Err("base file does not exist".into());
+    }
+    atomic_write(&resolved, content.as_bytes())
+}
+
 /// Build `<root>/<name>.md` from a folder-qualified note name, sanitizing each
 /// segment and rejecting `..`/absolute/dot-leading/reserved segments.
 fn build_note_path(root: &Path, name: &str) -> Result<PathBuf, String> {
@@ -1306,6 +1331,7 @@ pub fn run() {
             read_note,
             write_note,
             write_canvas,
+            write_base,
             create_note,
             delete_note,
             rename_note,

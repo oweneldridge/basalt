@@ -1,10 +1,14 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   parseBase,
+  serializeBase,
+  normalizeKey,
   runView,
   cellParts,
   columnValue,
   toText,
+  type BaseDef,
+  type BaseViewDef,
   type BaseRow,
   type ViewResult,
   type CellPart,
@@ -35,6 +39,9 @@ interface Props {
   onOpenFile: (rel: string) => void;
   /** Resolve a vault image target to a URL, relative to `rel`. */
   resolveImageRel: (target: string, rel: string) => Promise<string | null>;
+  /** When provided, the base is EDITABLE: view/column/sort/filter edits are
+   * serialized to YAML and passed here (autosaved by the parent). */
+  onChange?: (yaml: string) => void;
 }
 
 /** Async cell image: resolves a vault target to a data URL like embeds do. */
@@ -103,10 +110,12 @@ export const BaseView = memo(function BaseView({
   linkKeysOf,
   onOpenFile,
   resolveImageRel,
+  onChange,
 }: Props) {
   const def = useMemo(() => parseBase(doc), [doc]);
   const [viewIdx, setViewIdx] = useState(0);
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   // Stable per-pane image resolver (bound to this base's own rel).
   const resolveImage = useCallback(
@@ -138,6 +147,33 @@ export const BaseView = memo(function BaseView({
 
   // Reset the expand toggle whenever the shown view or data changes.
   useEffect(() => setExpanded(false), [viewIdx, doc]);
+
+  // Property keys the user can add as columns / sort by (row properties +
+  // formulas + the file.* builtins). Only computed for the editor.
+  const availableKeys = useMemo(() => {
+    const keys = new Set<string>([
+      "file.name", "file.path", "file.folder", "file.ext",
+      "file.size", "file.ctime", "file.mtime", "file.tags", "file.links",
+    ]);
+    for (const r of rows) for (const k of Object.keys(r.properties)) keys.add(k);
+    for (const k of Object.keys(def?.formulas ?? {})) keys.add(`formula.${k}`);
+    return [...keys].sort();
+  }, [rows, def]);
+
+  const activeIdxSafe = def ? Math.min(viewIdx, def.views.length - 1) : 0;
+
+  // Emit a whole new def as YAML (the parent autosaves it; doc re-parses).
+  const emitDef = useCallback(
+    (next: BaseDef) => onChange?.(serializeBase(next)),
+    [onChange],
+  );
+  const patchView = useCallback(
+    (patch: Partial<BaseViewDef>) => {
+      if (!def) return;
+      emitDef({ ...def, views: def.views.map((v, i) => (i === activeIdxSafe ? { ...v, ...patch } : v)) });
+    },
+    [def, activeIdxSafe, emitDef],
+  );
 
   if (!def) {
     return <div className="base-view base-empty">Not a valid .base file (YAML parse failed).</div>;
@@ -171,7 +207,34 @@ export const BaseView = memo(function BaseView({
           {result.truncated ? `${result.rows.length} of ${result.total}` : `${result.total}`}{" "}
           {result.total === 1 ? "result" : "results"}
         </span>
+        {onChange && (
+          <button
+            className={editing ? "base-edit-btn active" : "base-edit-btn"}
+            onClick={() => setEditing((v) => !v)}
+            title="Edit this view"
+          >
+            ✎ Edit
+          </button>
+        )}
       </div>
+      {editing && onChange && (
+        <BaseEditor
+          def={def}
+          view={def.views[activeIdx]}
+          columns={result.columns.map((c) => c.key)}
+          availableKeys={availableKeys}
+          onPatchView={patchView}
+          onAddView={() => {
+            emitDef({ ...def, views: [...def.views, { type: "table", name: `View ${def.views.length + 1}` }] });
+            setViewIdx(def.views.length);
+          }}
+          onDeleteView={() => {
+            if (def.views.length <= 1) return;
+            emitDef({ ...def, views: def.views.filter((_, i) => i !== activeIdx) });
+            setViewIdx(Math.max(0, activeIdx - 1));
+          }}
+        />
+      )}
       {result.errors.length > 0 && (
         <div className="base-errors" title={result.errors.join("\n")}>
           ⚠ {result.errors.length} expression {result.errors.length === 1 ? "error" : "errors"} —{" "}
@@ -191,6 +254,141 @@ export const BaseView = memo(function BaseView({
     </div>
   );
 });
+
+/** Compact per-view editor: name / type / limit, columns (add/remove/reorder),
+ * a single sort key, and a raw filter expression. Structural edits only —
+ * formulas, display names, and nested filters round-trip untouched. */
+function BaseEditor({
+  def,
+  view,
+  columns,
+  availableKeys,
+  onPatchView,
+  onAddView,
+  onDeleteView,
+}: {
+  def: BaseDef;
+  view: BaseViewDef;
+  columns: string[];
+  availableKeys: string[];
+  onPatchView: (patch: Partial<BaseViewDef>) => void;
+  onAddView: () => void;
+  onDeleteView: () => void;
+}) {
+  // Text fields keep LOCAL draft state and commit on blur/Enter — otherwise
+  // every keystroke would re-emit the whole YAML and re-run the view over the
+  // entire vault. Re-sync when the underlying view changes (e.g. tab switch).
+  const [nameDraft, setNameDraft] = useState(view.name);
+  const [filterDraft, setFilterDraft] = useState(typeof view.filters === "string" ? view.filters : "");
+  useEffect(() => setNameDraft(view.name), [view.name]);
+  useEffect(() => setFilterDraft(typeof view.filters === "string" ? view.filters : ""), [view.filters]);
+
+  // The column list to edit: the explicit order, or the currently-shown columns
+  // materialized so the first edit is non-destructive.
+  const order = view.order && view.order.length ? view.order : columns;
+  // Normalize both sides: an order key may be `note.status` while availableKeys
+  // lists the bare `status` — the same property, so it must not be re-offered.
+  const orderNorm = new Set(order.map(normalizeKey));
+  const unused = availableKeys.filter((k) => !orderNorm.has(normalizeKey(k)));
+  const moveCol = (i: number, d: number) => {
+    const next = [...order];
+    const j = i + d;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    onPatchView({ order: next });
+  };
+  const addCol = (k: string) => {
+    if (!k || orderNorm.has(normalizeKey(k))) return;
+    onPatchView({ order: [...order, k] });
+  };
+  // A filter is text-editable only when it's a simple string (or absent); a
+  // nested and/or/not tree is preserved but shown read-only.
+  const filterIsSimple = view.filters === undefined || typeof view.filters === "string";
+
+  return (
+    <div className="base-editor">
+      <div className="base-editor-row">
+        <label>
+          Name
+          <input
+            type="text"
+            value={nameDraft}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onBlur={() => nameDraft !== view.name && nameDraft.trim() && onPatchView({ name: nameDraft.trim() })}
+            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+          />
+        </label>
+        <label>
+          Type
+          <select value={view.type} onChange={(e) => onPatchView({ type: e.target.value })}>
+            <option value="table">Table</option>
+            <option value="cards">Cards</option>
+          </select>
+        </label>
+        <label>
+          Limit
+          <input
+            type="number"
+            min={0}
+            value={view.limit ?? ""}
+            placeholder="none"
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              onPatchView({ limit: Number.isFinite(n) && n > 0 ? n : undefined });
+            }}
+          />
+        </label>
+      </div>
+
+      <div className="base-editor-section">
+        <div className="base-editor-title">Columns</div>
+        <ul className="base-col-list">
+          {order.map((k, i) => (
+            <li key={k}>
+              <span className="base-col-key" title={k}>{def.display[k] ?? k}</span>
+              <button title="Move up" disabled={i === 0} onClick={() => moveCol(i, -1)}>↑</button>
+              <button title="Move down" disabled={i === order.length - 1} onClick={() => moveCol(i, 1)}>↓</button>
+              <button title="Remove column" onClick={() => onPatchView({ order: order.filter((c) => c !== k) })}>✕</button>
+            </li>
+          ))}
+        </ul>
+        {unused.length > 0 && (
+          <select className="base-add-col" value="" onChange={(e) => addCol(e.target.value)}>
+            <option value="">+ Add column…</option>
+            {unused.map((k) => (
+              <option key={k} value={k}>{def.display[k] ?? k}</option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      <div className="base-editor-section">
+        <div className="base-editor-title">Filter</div>
+        {filterIsSimple ? (
+          <input
+            type="text"
+            className="base-filter-input"
+            value={filterDraft}
+            placeholder='e.g. status != "done"'
+            onChange={(e) => setFilterDraft(e.target.value)}
+            onBlur={() => {
+              const next = filterDraft.trim() ? filterDraft : undefined;
+              if (next !== view.filters) onPatchView({ filters: next });
+            }}
+            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+          />
+        ) : (
+          <div className="base-filter-readonly">Nested filter (edit in the .base file directly)</div>
+        )}
+      </div>
+
+      <div className="base-editor-actions">
+        <button onClick={onAddView}>+ Add view</button>
+        <button onClick={onDeleteView} disabled={def.views.length <= 1}>Delete view</button>
+      </div>
+    </div>
+  );
+}
 
 function Table({
   result,

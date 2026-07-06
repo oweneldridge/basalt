@@ -89,6 +89,8 @@ export interface BaseViewDef {
   summaries?: Record<string, string>;
   /** cards view: property whose value is the card image */
   image?: string;
+  /** Original parsed view object — preserves unmodeled keys on save. */
+  raw?: Record<string, unknown>;
 }
 
 export interface BaseDef {
@@ -99,6 +101,13 @@ export interface BaseDef {
   /** custom summary formulas (receive `values`) */
   summaries: Record<string, string>;
   views: BaseViewDef[];
+  /** Original parsed root — everything Basalt's editor doesn't touch
+   * (formulas, properties, top-level filters, unknown keys) round-trips
+   * through here so a save never drops it. */
+  raw?: Record<string, unknown>;
+  /** The exact source text, so serializeBase can edit through a YAML Document
+   * and preserve comments/formatting Basalt only rewrites the `views` of. */
+  rawText?: string;
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -178,11 +187,61 @@ export function parseBase(text: string): BaseDef | null {
       groupBy: sortSpec(r.groupBy),
       summaries: Object.keys(viewSummaries).length ? viewSummaries : undefined,
       image: typeof r.image === "string" ? r.image : undefined,
+      raw: r,
     });
   }
   if (views.length === 0) views.push({ type: "table", name: "Table" });
 
-  return { filters: filterNode(root.filters), formulas, display, summaries, views };
+  return { filters: filterNode(root.filters), formulas, display, summaries, views, raw: root, rawText: text };
+}
+
+/** Rebuild the plain `views` array Basalt writes. Only the keys in Obsidian's
+ * documented .base view schema are written from the model; `groupBy` and
+ * anything else round-trips through each view's `raw`. Obsidian has no per-view
+ * `sort` key, so we never emit one (a legacy Basalt `sort` survives via raw).
+ * A nested/unchanged filter is left in raw verbatim — only a simple string
+ * filter (the only kind the editor edits) is re-written. */
+function buildViews(def: BaseDef): Record<string, unknown>[] {
+  const put = (o: Record<string, unknown>, k: string, v: unknown) => {
+    if (v === undefined || v === null) delete o[k];
+    else o[k] = v;
+  };
+  return def.views.map((v) => {
+    const o: Record<string, unknown> = { ...(v.raw ?? {}) };
+    o.type = v.type;
+    o.name = v.name;
+    put(o, "limit", v.limit);
+    put(o, "order", v.order && v.order.length ? v.order : undefined);
+    put(o, "image", v.image);
+    // filters: rewrite only when it's a simple string (editable); a nested
+    // and/or/not tree stays as raw (re-serializing the parsed FilterNode could
+    // drop shapes filterNode() didn't model).
+    if (typeof v.filters === "string") o.filters = v.filters;
+    else if (v.filters === undefined) delete o.filters;
+    return o;
+  });
+}
+
+/** Serialize a BaseDef back to `.base` YAML. Basalt only edits VIEW-level
+ * fields, so — to preserve comments, blank lines, and formatting on the live
+ * shared file — it edits through a YAML Document and replaces ONLY the `views`
+ * node; everything else (top-level filters, formulas, properties, comments)
+ * stays exactly as authored. Falls back to a fresh stringify if the original
+ * text isn't a usable YAML map. */
+export function serializeBase(def: BaseDef): string {
+  const views = buildViews(def);
+  if (def.rawText !== undefined) {
+    try {
+      const doc = YAML.parseDocument(def.rawText);
+      if (doc.errors.length === 0 && YAML.isMap(doc.contents)) {
+        doc.set("views", views);
+        return doc.toString();
+      }
+    } catch {
+      /* fall through to a fresh serialize */
+    }
+  }
+  return YAML.stringify({ ...(def.raw ?? {}), views });
 }
 
 // ---------------------------------------------------------------------------

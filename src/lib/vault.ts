@@ -71,6 +71,11 @@ export function writeCanvas(path: string, content: string): Promise<void> {
   return invoke<void>("write_canvas", { path, content });
 }
 
+/** Atomically write an existing `.base` file (extension-gated in Rust). */
+export function writeBase(path: string, content: string): Promise<void> {
+  return invoke<void>("write_base", { path, content });
+}
+
 export function createNote(name: string): Promise<string> {
   return invoke<string>("create_note", { name });
 }
