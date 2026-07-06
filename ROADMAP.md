@@ -23,7 +23,9 @@ scope (Basalt gets its own plugin API in Phase 5).
 | 4a | JSON Canvas viewer (read-only): pan/zoom world, text/file/link/group node cards, SVG edges; data-safety-reviewed (read-only contract, write_note/export_file backstops, tolerant parser) | **shipped** |
 | 4b | Bases views over YAML (read-only): full .base engine (expression language, filters, formulas, views/table+cards, summaries, groupBy), DoS-hardened (ReDoS + value-growth budgets); canvas editing later | **shipped** |
 | 4.5 | Multi-vault switcher (recent vaults) + multi-window: per-window vault state (Rust security boundary keyed by window label), per-window watchers, ?vault URL restore | **shipped** |
-| 5 | Basalt plugin API + first-party must-have workflows (Dataview-style queries, templater, tasks) | planned |
+| 5a | Dataview-style query engine (```dataview TABLE/LIST/TASK + FROM/WHERE/SORT/GROUP BY/LIMIT/FLATTEN) + tasks; DoS-hardened; live in editor + reading | **shipped** |
+| 5b | Templater-style templates (variables, dates, cursor, prompts) | next |
+| 5c | Basalt plugin API — Obsidian-style in-webview plugins (manifest, loader, app API, enable/disable, settings) | planned |
 
 ## Ground rules (carried forward from the audit)
 
