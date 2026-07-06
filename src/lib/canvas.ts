@@ -14,6 +14,10 @@ interface NodeBase {
   height: number;
   /** Preset "1".."6" or a "#rrggbb" hex. */
   color?: string;
+  /** The original parsed object, so serializeCanvas can round-trip fields
+   * Basalt doesn't model (Obsidian extensions like styleAttributes, future
+   * JSON Canvas fields) instead of silently dropping them on save. */
+  raw?: Record<string, unknown>;
 }
 export interface CanvasTextNode extends NodeBase {
   type: "text";
@@ -44,11 +48,72 @@ export interface CanvasEdge {
   toEnd?: End;
   color?: string;
   label?: string;
+  /** Original parsed object — preserves unmodeled fields on save (see NodeBase.raw). */
+  raw?: Record<string, unknown>;
 }
 
 export interface CanvasData {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
+  /** Source nodes/edges Basalt can't model (unknown/future/plugin node types,
+   * malformed payloads). Kept verbatim and re-emitted on save so editing a
+   * canvas never deletes entries Basalt merely doesn't understand. Not rendered. */
+  passNodes?: unknown[];
+  passEdges?: unknown[];
+  /** Top-level canvas keys other than nodes/edges, preserved on save. */
+  topRaw?: Record<string, unknown>;
+}
+
+/** Serialize a CanvasData back to JSON Canvas text (tab-indented, like
+ * Obsidian). Fields Basalt models are written from the live node/edge; any OTHER
+ * field present in the original file (`raw`) is preserved so an edit never
+ * silently drops Obsidian extensions or future spec fields. Geometry is rounded
+ * so drags don't produce noisy sub-pixel diffs. */
+export function serializeCanvas(data: CanvasData): string {
+  const r = (n: number) => Math.round(n);
+  // Set `k` to `v` when defined, else delete it (so removing an optional value —
+  // e.g. clearing a node's color — actually drops the key rather than letting a
+  // stale value from `raw` survive).
+  const put = (o: Record<string, unknown>, k: string, v: unknown) => {
+    if (v === undefined || v === null || v === "") delete o[k];
+    else o[k] = v;
+  };
+  const nodes = data.nodes.map((n) => {
+    const o: Record<string, unknown> = { ...(n.raw ?? {}) };
+    o.id = n.id;
+    o.type = n.type;
+    o.x = r(n.x);
+    o.y = r(n.y);
+    o.width = r(n.width);
+    o.height = r(n.height);
+    put(o, "color", n.color);
+    if (n.type === "text") put(o, "text", n.text);
+    else if (n.type === "file") {
+      put(o, "file", n.file);
+      put(o, "subpath", n.subpath);
+    } else if (n.type === "link") put(o, "url", n.url);
+    else if (n.type === "group") put(o, "label", n.label);
+    return o;
+  });
+  const edges = data.edges.map((e) => {
+    const o: Record<string, unknown> = { ...(e.raw ?? {}) };
+    o.id = e.id;
+    o.fromNode = e.fromNode;
+    o.toNode = e.toNode;
+    put(o, "fromSide", e.fromSide);
+    put(o, "toSide", e.toSide);
+    put(o, "fromEnd", e.fromEnd);
+    put(o, "toEnd", e.toEnd);
+    put(o, "color", e.color);
+    put(o, "label", e.label);
+    return o;
+  });
+  // Re-append verbatim the entries Basalt didn't model, and preserve any
+  // top-level keys, so a save is non-destructive.
+  const top: Record<string, unknown> = { ...(data.topRaw ?? {}) };
+  top.nodes = [...nodes, ...(data.passNodes ?? [])];
+  top.edges = [...edges, ...(data.passEdges ?? [])];
+  return JSON.stringify(top, null, "\t");
 }
 
 function num(v: unknown, fallback = 0): number {
@@ -77,15 +142,20 @@ export function parseCanvas(json: string): CanvasData | null {
   const d = data as { nodes?: unknown; edges?: unknown };
 
   const nodes: CanvasNode[] = [];
+  const passNodes: unknown[] = [];
   const seenNodes = new Set<string>();
+  // ids the edge validation accepts as endpoints — modeled nodes AND preserved
+  // unknown nodes (so an edge touching a plugin node is kept, not deleted).
+  const knownIds = new Set<string>();
   for (const raw of Array.isArray(d.nodes) ? d.nodes : []) {
-    if (!raw || typeof raw !== "object") continue;
+    if (!raw || typeof raw !== "object") {
+      passNodes.push(raw);
+      continue;
+    }
     const n = raw as Record<string, unknown>;
     const id = str(n.id);
-    if (!id || seenNodes.has(id)) continue; // ids must be unique (dup → bad React keys)
-    seenNodes.add(id);
     const base = {
-      id,
+      id: id ?? "",
       x: num(n.x),
       y: num(n.y),
       // Clamp to a positive minimum: negative w/h would invert canvasBounds and
@@ -93,29 +163,46 @@ export function parseCanvas(json: string): CanvasData | null {
       width: Math.max(1, num(n.width, 200)),
       height: Math.max(1, num(n.height, 60)),
       color: str(n.color),
+      raw: n, // keep the original so a later save preserves unmodeled fields
     };
-    if (n.type === "text" && typeof n.text === "string") {
-      nodes.push({ ...base, type: "text", text: n.text });
-    } else if (n.type === "file" && typeof n.file === "string") {
-      nodes.push({ ...base, type: "file", file: n.file, subpath: str(n.subpath) });
-    } else if (n.type === "link" && typeof n.url === "string") {
-      nodes.push({ ...base, type: "link", url: n.url });
-    } else if (n.type === "group") {
-      nodes.push({ ...base, type: "group", label: str(n.label) });
+    // A node Basalt can model AND with a unique id becomes interactive; anything
+    // else (unknown type, bad payload, missing/duplicate id) is preserved
+    // verbatim so a save never deletes it.
+    if (id && !seenNodes.has(id)) {
+      if (n.type === "text" && typeof n.text === "string") {
+        nodes.push({ ...base, type: "text", text: n.text });
+      } else if (n.type === "file" && typeof n.file === "string") {
+        nodes.push({ ...base, type: "file", file: n.file, subpath: str(n.subpath) });
+      } else if (n.type === "link" && typeof n.url === "string") {
+        nodes.push({ ...base, type: "link", url: n.url });
+      } else if (n.type === "group") {
+        nodes.push({ ...base, type: "group", label: str(n.label) });
+      } else {
+        passNodes.push(raw); // unknown/future/plugin node type
+      }
+      seenNodes.add(id);
+      knownIds.add(id); // its edges are still valid endpoints
+    } else {
+      passNodes.push(raw); // missing or duplicate id
     }
   }
 
-  const ids = new Set(nodes.map((n) => n.id));
   const edges: CanvasEdge[] = [];
+  const passEdges: unknown[] = [];
   const seenEdges = new Set<string>();
   for (const raw of Array.isArray(d.edges) ? d.edges : []) {
-    if (!raw || typeof raw !== "object") continue;
+    if (!raw || typeof raw !== "object") {
+      passEdges.push(raw);
+      continue;
+    }
     const e = raw as Record<string, unknown>;
     const id = str(e.id);
     const fromNode = str(e.fromNode);
     const toNode = str(e.toNode);
-    if (!id || seenEdges.has(id) || !fromNode || !toNode || !ids.has(fromNode) || !ids.has(toNode))
+    if (!id || seenEdges.has(id) || !fromNode || !toNode || !knownIds.has(fromNode) || !knownIds.has(toNode)) {
+      passEdges.push(raw); // malformed or dangling — keep verbatim, don't delete
       continue;
+    }
     seenEdges.add(id);
     edges.push({
       id,
@@ -127,9 +214,16 @@ export function parseCanvas(json: string): CanvasData | null {
       toEnd: end(e.toEnd),
       color: str(e.color),
       label: str(e.label),
+      raw: e,
     });
   }
-  return { nodes, edges };
+
+  // Preserve any top-level keys besides nodes/edges (Obsidian metadata, etc.).
+  const topRaw: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(d as Record<string, unknown>)) {
+    if (k !== "nodes" && k !== "edges") topRaw[k] = v;
+  }
+  return { nodes, edges, passNodes, passEdges, topRaw };
 }
 
 /** Bounding box over all nodes (for fit-to-view). Null when empty. */
