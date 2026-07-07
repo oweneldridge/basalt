@@ -13,6 +13,10 @@ interface Props {
   onOpenAttachment: (path: string) => void;
   /** Open the file context menu (Rename / Delete) for a note. */
   onContextMenu: (path: string, x: number, y: number) => void;
+  /** Open the folder context menu (New note here) for a folder rel path. */
+  onFolderContextMenu: (folderRel: string, x: number, y: number) => void;
+  /** Move a note (by path) into a folder (rel, "" = vault root). */
+  onMoveToFolder: (notePath: string, folderRel: string) => void;
 }
 
 const expandKey = (vault: string | null) => `basalt.tree.expanded.${vault ?? ""}`;
@@ -35,7 +39,9 @@ function saveExpanded(vault: string | null, set: Set<string>): void {
   }
 }
 
-export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onNewNote, onOpenAttachment, onContextMenu }: Props) {
+const DND_MIME = "application/x-basalt-note";
+
+export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onNewNote, onOpenAttachment, onContextMenu, onFolderContextMenu, onMoveToFolder }: Props) {
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -161,6 +167,22 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
                 className="tree-row folder"
                 style={{ paddingLeft: 8 + depth * 14 }}
                 onClick={() => toggle(node.path)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  onFolderContextMenu(node.path, e.clientX, e.clientY);
+                }}
+                onDragOver={(e) => {
+                  if (e.dataTransfer.types.includes(DND_MIME)) {
+                    e.preventDefault();
+                    e.currentTarget.classList.add("drop-target");
+                  }
+                }}
+                onDragLeave={(e) => e.currentTarget.classList.remove("drop-target")}
+                onDrop={(e) => {
+                  e.currentTarget.classList.remove("drop-target");
+                  const p = e.dataTransfer.getData(DND_MIME);
+                  if (p) onMoveToFolder(p, node.path);
+                }}
               >
                 <span className={`chevron${expanded.has(node.path) ? " open" : ""}`}>▸</span>
                 <span className="tree-name">{node.name}</span>
@@ -170,6 +192,8 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
                 key={`f:${node.path}`}
                 className={`tree-row file${node.attachment ? " attachment" : ""}${node.path === activePath ? " active" : ""}`}
                 style={{ paddingLeft: 22 + depth * 14 }}
+                draggable={!node.attachment}
+                onDragStart={(e) => e.dataTransfer.setData(DND_MIME, node.path)}
                 onClick={() => (node.attachment ? onOpenAttachment(node.path) : onOpen(node.path))}
                 onContextMenu={(e) => {
                   if (node.attachment) return;

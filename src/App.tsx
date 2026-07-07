@@ -315,6 +315,9 @@ export default function App() {
   // Seeds the search palette when opened from a tag / search bookmark.
   const [searchSeed, setSearchSeed] = useState("");
   const [fileMenu, setFileMenu] = useState<{ path: string; x: number; y: number } | null>(null);
+  const [folderMenu, setFolderMenu] = useState<{ folderRel: string; x: number; y: number } | null>(null);
+  // Parent rel for a pending "New folder…" prompt ("" = vault root).
+  const [subfolderParent, setSubfolderParent] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ path: string; rel: string } | null>(null);
 
   const index = useRef(new VaultIndex());
@@ -2089,18 +2092,24 @@ export default function App() {
     };
   }, [vault, refreshPlugins]);
 
-  const handleNewNote = useCallback(async () => {
-    if (!vaultRef.current) return;
-    const existing = new Set(notesRef.current.map((n) => normalizeName(n.name)));
-    let name = "Untitled";
-    let i = 1;
-    while (existing.has(normalizeName(name))) name = `Untitled ${i++}`;
-    try {
-      await createAndOpen(name);
-    } catch (e) {
-      setSaveError(`Couldn't create note: ${e}`);
-    }
-  }, [createAndOpen]);
+  // Create "Untitled" (uniquified) inside `folderRel` ("" = vault root).
+  const handleNewNoteIn = useCallback(
+    async (folderRel: string) => {
+      if (!vaultRef.current) return;
+      const prefix = folderRel ? `${folderRel}/` : "";
+      const existingRels = new Set(notesRef.current.map((n) => normalizeName(n.rel.replace(/\.md$/i, ""))));
+      let base = "Untitled";
+      let i = 1;
+      while (existingRels.has(normalizeName(prefix + base))) base = `Untitled ${i++}`;
+      try {
+        await createAndOpen(prefix + base);
+      } catch (e) {
+        setSaveError(`Couldn't create note: ${e}`);
+      }
+    },
+    [createAndOpen],
+  );
+  const handleNewNote = useCallback(() => handleNewNoteIn(""), [handleNewNoteIn]);
 
   const activePath = active?.path ?? null;
   const activeNote = useMemo(
@@ -2421,6 +2430,19 @@ export default function App() {
     [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane],
   );
 
+  // Move a note into a folder (rel, "" = root) by renaming — reuses the
+  // link-rewriting rename path. No-op if it's already there.
+  const handleMoveToFolder = useCallback(
+    (notePath: string, folderRel: string) => {
+      const note = notesRef.current.find((n) => n.path === notePath);
+      if (!note) return;
+      const curFolder = note.rel.includes("/") ? note.rel.slice(0, note.rel.lastIndexOf("/")) : "";
+      if (normalizeName(curFolder) === normalizeName(folderRel)) return;
+      void handleRenameNote(notePath, (folderRel ? `${folderRel}/` : "") + note.name);
+    },
+    [handleRenameNote],
+  );
+
   // Blank-query switcher shows recently opened notes first.
   const switcherItems = useCallback(
     (q: string) => {
@@ -2469,6 +2491,7 @@ export default function App() {
       { id: "toggle-theme", label: "Toggle light/dark theme", hint: "switch appearance", run: toggleTheme },
       { id: "toggle-readable-width", label: "Toggle readable line length", hint: "constrain content width", run: () => setReadableWidth((v) => !v) },
       { id: "reveal-in-finder", label: "Reveal current note in file manager", hint: "show the file on disk", run: () => { const p = focusedIdRef.current ? panesRef.current[focusedIdRef.current]?.active : null; if (p) void revealItemInDir(p).catch((e) => setSaveError(`Couldn't reveal: ${e}`)); } },
+      { id: "new-folder", label: "New folder…", hint: "create a folder at the vault root", run: () => setSubfolderParent("") },
       { id: "split-right", label: "Split right", hint: "open the current note in a vertical split", run: () => splitFocused("row") },
       { id: "split-down", label: "Split down", hint: "open the current note in a horizontal split", run: () => splitFocused("col") },
       {
@@ -2629,6 +2652,8 @@ export default function App() {
           vaultName={basename(vault)}
           onOpen={(path) => openNoteByPath(path)}
           onNewNote={handleNewNote}
+          onFolderContextMenu={(folderRel, x, y) => setFolderMenu({ folderRel, x, y })}
+          onMoveToFolder={handleMoveToFolder}
           onOpenAttachment={handleOpenAttachment}
           onContextMenu={(path, x, y) => setFileMenu({ path, x, y })}
         />
@@ -2918,6 +2943,51 @@ export default function App() {
             </button>
           </div>
         </div>
+      )}
+      {folderMenu && (
+        <div className="ctx-overlay" onMouseDown={() => setFolderMenu(null)} onContextMenu={(e) => e.preventDefault()}>
+          <div className="ctx-menu" style={{ left: folderMenu.x, top: folderMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const folder = folderMenu.folderRel;
+                setFolderMenu(null);
+                void handleNewNoteIn(folder);
+              }}
+            >
+              New note here
+            </button>
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const folder = folderMenu.folderRel;
+                setFolderMenu(null);
+                setSubfolderParent(folder);
+              }}
+            >
+              New folder…
+            </button>
+          </div>
+        </div>
+      )}
+      {subfolderParent !== null && (
+        <PromptModal
+          title="New folder name"
+          defaultValue=""
+          confirmLabel="Create"
+          onConfirm={(value) => {
+            const parent = subfolderParent;
+            setSubfolderParent(null);
+            const folder = value.trim().replace(/[\\/]+$/, "");
+            if (!folder || /[#^[\]|]/.test(folder)) {
+              if (folder) setSaveError("Folder names cannot contain # ^ [ ] |");
+              return;
+            }
+            const full = (parent ? `${parent}/` : "") + folder;
+            void handleNewNoteIn(full); // a starter note makes the new folder appear
+          }}
+          onClose={() => setSubfolderParent(null)}
+        />
       )}
       {renameTarget && (
         <PromptModal
