@@ -55,10 +55,13 @@ zoom, `%%comments%%`, paste-URL→link, outgoing-links pane):
   snippets** (`.basalt/snippets/*.css`); **tab pinning**; per-command **hotkey
   assignment** UI; **folder rename/delete** (trash tree / batch-rename, data-
   safety-reviewed). **The medium/small backlog is now clear.**
-- **Follow-ups (small, deferred):** Math export-font inlining; Live-Preview
-  footnotes/callout-folding; Properties null / YAML-1.1-bool inference; single-
-  pass batching for very large folder renames; attachment context menus; a
-  status-bar ribbon; drag-tabs-between-panes; per-snippet toggles.
+- **Polish batch shipped (2026-07):** self-contained **MathML export**;
+  **Live-Preview footnotes & callout-folding**; **YAML-1.1 bool** Properties
+  (yes/no/on/off → checkbox); **per-snippet toggles**; **attachment context
+  menu** (reveal/delete); **drag tabs** to reorder / move between panes.
+- **Remaining (genuinely optional):** single-pass batching for very large
+  folder renames (per-note today, with a progress notice); a status-bar
+  ribbon; folder-rename basename normalization for FS-hostile names.
 - **Large — all shipped (2026-07):** **note/heading/block transclusion**
   (`![[Note#h]]`, editor + reading, DoS-hardened); **Canvas editing** (drag/
   resize/create/edit/delete/colour nodes, draw edges — atomic write_canvas,
