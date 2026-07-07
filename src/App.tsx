@@ -40,6 +40,7 @@ import {
 import { setQueryHost } from "./lib/queryHost";
 import { setTranscludeHost, splitSubpath, subpathToLine, extractHeadings } from "./lib/transclude";
 import { recordSnapshot, listSnapshots, clearSnapshots, renameSnapshots, type Snapshot } from "./lib/snapshots";
+import { installHoverPreview } from "./lib/hoverPreview";
 import { noteRow, tasksForNote } from "./lib/vaultRows";
 import { parseQuery, runQuery, type Task } from "./lib/query";
 import { applyTemplate, type TemplateCtx } from "./lib/templates";
@@ -1949,6 +1950,9 @@ export default function App() {
     });
     return () => setTranscludeHost(null);
   }, []);
+
+  // Hover page-preview (reuses the transclude host). Install once.
+  useEffect(() => installHoverPreview(), []);
 
   // A transient toast (used by plugins' Notice + a few app messages). Capped so
   // a plugin spamming Notice() can't accumulate unbounded toasts.

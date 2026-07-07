@@ -140,5 +140,5 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
     }
   };
 
-  return <div className="reading-view" ref={host} onClick={onClick} />;
+  return <div className="reading-view" data-self-rel={selfRel} ref={host} onClick={onClick} />;
 }
