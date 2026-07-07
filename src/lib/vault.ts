@@ -116,6 +116,12 @@ export function createFolder(rel: string): Promise<void> {
   return invoke<void>("create_folder", { rel });
 }
 
+/** Move a whole folder to `toRel` in one fs::rename (contents + basenames
+ * preserved). Returns the canonical new absolute path. */
+export function renameFolder(fromRel: string, toRel: string): Promise<string> {
+  return invoke<string>("rename_folder", { fromRel, toRel });
+}
+
 /** List every attachment (supported non-md file) in the open vault. */
 export function listAttachments(): Promise<Attachment[]> {
   return invoke<Attachment[]>("list_attachments");

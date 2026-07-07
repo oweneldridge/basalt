@@ -56,7 +56,7 @@ import {
   saveEnabled,
   type HostDeps,
 } from "./lib/plugins";
-import { listPlugins, writePluginData, listCssSnippets, deleteFolder, removeEmptyFolder, listForeignFiles, listSubfolders, createFolder, type PluginInfo, type CssSnippet } from "./lib/vault";
+import { listPlugins, writePluginData, listCssSnippets, deleteFolder, renameFolder, type PluginInfo, type CssSnippet } from "./lib/vault";
 import type { EditorApi } from "./components/EditorPane";
 import type { NoteRef } from "./editor/wikilink";
 import { clearImageCache, resolveImage } from "./lib/assets";
@@ -100,7 +100,7 @@ import {
   watchSystemTheme,
   type ThemeMode,
 } from "./lib/theme";
-import { linkTargetForFormat, rewriteLinks } from "./lib/rename";
+import { linkTargetForFormat, rewriteLinks, folderMoveMapper } from "./lib/rename";
 import { looksLikeAttachment, resolveAttachment } from "./lib/attachments";
 import { fillTemplate, formatMoment, UnsupportedTokenError } from "./lib/daily";
 import type { LinkFormat } from "./lib/rename";
@@ -2673,63 +2673,224 @@ export default function App() {
     [bumpStructure, clearConflict, flushPath],
   );
 
-  // Rename a folder by renaming every note inside (each rename rewrites links
-  // vault-wide, so backlinks stay correct), recreating empty subfolders under
-  // the new name. Refused for case-only renames and when the folder holds any
-  // non-note file on disk — either would silently split the folder.
+  // Rename/move a whole folder in ONE fs::rename (Rust rename_folder moves the
+  // entire subtree — notes, attachments, empty subfolders — preserving every
+  // basename), then a SINGLE vault-wide link-rewrite pass fixes the links whose
+  // resolution the move changed. O(vault) instead of O(notes × vault), and
+  // FS-hostile basenames survive because the move never re-sanitizes them.
   const handleRenameFolder = useCallback(
     async (folderRel: string, newFolderRel: string) => {
-      const prefix = `${folderRel}/`;
-      if (newFolderRel === folderRel || !newFolderRel) return;
-      if (`${newFolderRel}/`.startsWith(prefix)) {
+      const root = vaultRef.current;
+      if (!root || !newFolderRel || newFolderRel === folderRel) return;
+      const oldPrefix = `${folderRel}/`;
+      const newPrefix = `${newFolderRel}/`;
+      if (newPrefix.startsWith(oldPrefix)) {
         setSaveError("Cannot move a folder into itself");
         return;
       }
-      // Case-only rename (notes → Notes): on a case-insensitive filesystem the
-      // per-note moves silently no-op — refuse with a workable recipe.
+      // Case-only rename (Notes → notes): fs::rename to a name differing only
+      // in case collides on a case-insensitive FS. Refuse with a recipe.
       if (normalizeName(newFolderRel) === normalizeName(folderRel)) {
         setSaveError("Case-only folder renames aren't supported — rename to a different name first, then back");
         return;
       }
-      // Refuse when the folder holds ANY non-Markdown file (checked on DISK,
-      // not just the attachment registry) — a rename that moved only the notes
-      // would silently split the folder in two.
-      const foreign = await listForeignFiles(folderRel).catch(() => [] as string[]);
-      if (foreign.length > 0) {
-        setSaveError(
-          `This folder contains non-note files (${foreign
-            .slice(0, 3)
-            .map((f) => f.split("/").pop())
-            .join(", ")}${foreign.length > 3 ? ", …" : ""}) — move them first, then rename the folder`,
-        );
+      // Every note/viewer under the folder must be flushed first, then the
+      // WHOLE operation aborts if anything is still unsaved — a mid-move
+      // pending write to a now-moved path would be lost.
+      await flushAll();
+      const movingNotes = notesRef.current.filter((n) => n.rel.startsWith(oldPrefix));
+      const movingAtts = attachmentsRef.current.filter((a) => a.rel.startsWith(oldPrefix));
+      for (const f of [...movingNotes, ...movingAtts]) {
+        if (conflictsRef.current.has(f.path)) {
+          setSaveError(`Resolve the "Changed on disk" conflict in ${f.name} before moving this folder`);
+          return;
+        }
+        if (pending.current.has(f.path)) {
+          setSaveError("Couldn't move folder: unsaved changes failed to save");
+          return;
+        }
+      }
+
+      // Pre-move resolver — link decisions read the OLD vault shape.
+      const preIndex = new VaultIndex();
+      preIndex.build(notesRef.current);
+      const preNotes = notesRef.current;
+
+      // Map every moving note old→new (prefix swap; content unchanged; paths
+      // are root-based like every other note path — root is already canonical).
+      const oldRelByPath = new Map(preNotes.map((n) => [n.path, n.rel]));
+      const swap = (rel: string) => newFolderRel + rel.slice(folderRel.length);
+      const movedByOld = new Map<string, VaultNote>(); // oldPath → renamed VaultNote
+      const postToOld = new Map<string, string>(); // newPath → oldPath
+      for (const n of movingNotes) {
+        const newRel = swap(n.rel);
+        const newPath = `${root}/${newRel}`;
+        movedByOld.set(n.path, { ...n, path: newPath, rel: newRel, name: nameFromRel(newRel) });
+        postToOld.set(newPath, n.path);
+      }
+
+      // Pre-move attachment list + old→new mapping (attachments move with the
+      // directory; the note index doesn't cover them, so rewrite their links
+      // via a parallel resolver — see FolderMoveCtx.att* in lib/rename.ts).
+      const preAtts = attachmentsRef.current;
+      const postAtts: Attachment[] = preAtts.map((a) =>
+        a.rel.startsWith(oldPrefix) ? { ...a, rel: swap(a.rel), path: `${root}/${swap(a.rel)}` } : a,
+      );
+      const movedAttNewPathByOld = new Map<string, string>();
+      for (const a of movingAtts) movedAttNewPathByOld.set(a.path, `${root}/${swap(a.rel)}`);
+      const postAttByPath = new Map(postAtts.map((a) => [a.path, a]));
+
+      // Do the move. One syscall relocates the whole tree.
+      try {
+        await renameFolder(folderRel, newFolderRel);
+      } catch (e) {
+        setSaveError(`Couldn't move folder: ${e}`);
         return;
       }
-      // Snapshot subfolder structure so EMPTY subfolders survive the rename.
-      const subs = await listSubfolders(folderRel).catch(() => [] as string[]);
-      const inside = notesRef.current.filter((n) => n.rel.startsWith(prefix));
-      if (inside.length > 3) showNotice(`Renaming ${inside.length} notes…`);
-      for (const n of inside) {
-        const rest = n.rel.slice(prefix.length).replace(/\.md$/i, "");
-        // Sequential on purpose: each rename flushes + rewrites links.
-        await handleRenameNote(n.path, `${newFolderRel}/${rest}`);
+
+      // Migrate any pending edit / save timer keyed by a moving OLD path to its
+      // new path — a keystroke landing during the renameFolder IPC would else
+      // be lost (its flush would target the now-gone old path). Attachments too.
+      const oldToNewPath = new Map<string, string>();
+      for (const [oldP, nn] of movedByOld) oldToNewPath.set(oldP, nn.path);
+      for (const a of movingAtts) oldToNewPath.set(a.path, `${root}/${swap(a.rel)}`);
+      for (const [oldP, newP] of oldToNewPath) {
+        const p = pending.current.get(oldP);
+        if (p !== undefined) {
+          pending.current.delete(oldP);
+          pending.current.set(newP, p);
+        }
+        const t = saveTimers.current.get(oldP);
+        if (t !== undefined) {
+          saveTimers.current.delete(oldP);
+          saveTimers.current.set(newP, t);
+        }
       }
-      // Recreate subfolders (now possibly empty) under the new name.
-      for (const sub of subs) {
-        const rest = sub.slice(prefix.length - 1).replace(/^[/\\]+/, "");
-        if (rest) await createFolder(`${newFolderRel}/${rest}`).catch(() => {});
+
+      // Post-move note list + resolver (same content, new rel/path/name).
+      const postNotes: VaultNote[] = preNotes.map((n) => movedByOld.get(n.path) ?? n);
+      const postIndex = new VaultIndex();
+      postIndex.build(postNotes);
+      const fmt = getLinkFormat();
+
+      // Shared context for the resolver-based link rewrite (see lib/rename.ts).
+      const movedNewPathByOld = new Map([...movedByOld].map(([o, n]) => [o, n.path]));
+      const postByPath = new Map(postNotes.map((n) => [n.path, n]));
+      const attNorm = (s: string) => normalizeName(s);
+      const moveCtx = {
+        resolvePre: (raw: string, from: string) => preIndex.resolve(raw, from),
+        resolvePost: (raw: string, from: string) => postIndex.resolve(raw, from),
+        movedNewPathByOld,
+        noteAt: (path: string) => postByPath.get(path),
+        nameTaken: (name: string, except: string) =>
+          postNotes.some((n) => n.path !== except && normalizeName(n.name) === normalizeName(name)),
+        format: fmt,
+        resolveAttPre: (raw: string) => resolveAttachment(preAtts, raw)?.path ?? null,
+        resolveAttPost: (raw: string) => resolveAttachment(postAtts, raw)?.path ?? null,
+        movedAttNewPathByOld,
+        attAt: (path: string) => postAttByPath.get(path),
+        attNameTaken: (name: string, except: string) =>
+          postAtts.some((a) => a.path !== except && attNorm(a.name) === attNorm(name)),
+      };
+      const makeMapper = (post: VaultNote) =>
+        folderMoveMapper(moveCtx, postToOld.get(post.path) ?? post.path, post.path, post.rel);
+
+      // One pass: rewrite affected notes (moved and unmoved), reading DISK so a
+      // fresher external edit is never reverted. Cheap in-memory pre-filter.
+      const updates = new Map<string, VaultNote>();
+      const failures: string[] = [];
+      for (const post of postNotes) {
+        const mapper = makeMapper(post);
+        if (rewriteLinks(post.content, mapper) === null) continue; // unaffected
+        try {
+          const disk = await readNote(post.path);
+          const next = rewriteLinks(disk, mapper);
+          if (next === null) continue;
+          await writeNote(post.path, next);
+          rememberSelfWrite(post.rel, next);
+          updates.set(post.path, { ...post, content: next });
+        } catch (e) {
+          failures.push(post.rel);
+          console.error("[basalt] folder-move link rewrite failed", post.rel, e);
+        }
       }
-      // handleRenameNote reports its own errors without throwing — check the
-      // outcome and say so if some notes could not be moved (half-renamed).
-      const left = notesRef.current.filter((n) => n.rel.startsWith(prefix)).length;
-      if (left > 0) {
-        setSaveError(`Folder partially renamed — ${left} ${left === 1 ? "note" : "notes"} could not be moved (see the error above)`);
-      } else {
-        // The old folder should now be empty — clean it up (no-op if not).
-        void removeEmptyFolder(folderRel).catch(() => {});
+
+      // Commit index/notes/attachments/recents/snapshots/panes in bulk.
+      for (const [oldPath, nn] of movedByOld) {
+        index.current.removeNote(oldPath);
+        const finalNote = updates.get(nn.path) ?? nn;
+        index.current.setNote(finalNote);
+        const oldRel = oldRelByPath.get(oldPath);
+        if (oldRel !== undefined) {
+          selfWrites.current.delete(oldRel);
+          void renameSnapshots(root, oldRel, nn.rel);
+        }
+        // Seed the new-rel baseline so the watcher's create-event for the moved
+        // file (fs::rename fires delete+create) isn't seen as an external edit.
+        rememberSelfWrite(nn.rel, finalNote.content);
       }
+      // Unmoved notes whose links were rewritten (their path is unchanged).
+      for (const [path, u] of updates) if (!postToOld.has(path)) index.current.setNote(u);
+      setNotes(() =>
+        postNotes
+          .map((n) => updates.get(n.path) ?? n)
+          .sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
+      );
+      setAttachmentsList((prev) =>
+        prev.map((a) =>
+          a.rel.startsWith(oldPrefix)
+            ? { ...a, rel: swap(a.rel), path: `${root}/${swap(a.rel)}` }
+            : a,
+        ),
+      );
+      // Moved attachments' self-write baselines follow their new rel.
+      for (const a of movingAtts) {
+        const nrel = swap(a.rel);
+        const base = selfWrites.current.get(a.rel);
+        if (base !== undefined) {
+          selfWrites.current.delete(a.rel);
+          selfWrites.current.set(nrel, base);
+        }
+      }
+      recents.current = recents.current.map((r) => (r.startsWith(oldPrefix) ? swap(r) : r));
+      try {
+        localStorage.setItem(recentKey(root), JSON.stringify(recents.current));
+      } catch {
+        /* quota — non-fatal */
+      }
+
+      // Repoint every moved note/viewer path in every pane (tabs/active/pinned)
+      // AND reconcile the doc of any pane whose active note's links were
+      // rewritten — INCLUDING panes with no moved tab (an unmoved note whose
+      // outbound links changed), else the editor keeps stale content and the
+      // next keystroke reverts the on-disk link fix.
+      const pathMap = new Map<string, string>();
+      for (const [oldPath, nn] of movedByOld) pathMap.set(oldPath, nn.path);
+      for (const a of movingAtts) pathMap.set(a.path, `${root}/${swap(a.rel)}`);
+      const repoint = (pane: Pane): Pane => {
+        const hasMoved = pane.tabs.some((p) => pathMap.has(p));
+        const newActive = pane.active ? (pathMap.get(pane.active) ?? pane.active) : pane.active;
+        const activeUpdate = newActive ? updates.get(newActive) : undefined;
+        if (!hasMoved && !activeUpdate) return pane; // nothing to change
+        const map = (p: string) => pathMap.get(p) ?? p;
+        return {
+          ...pane,
+          tabs: hasMoved ? pane.tabs.map(map) : pane.tabs,
+          active: newActive,
+          doc: activeUpdate ? activeUpdate.content : pane.doc,
+          pinned: hasMoved ? pane.pinned?.map(map) : pane.pinned,
+        };
+      };
+      panesRef.current = Object.fromEntries(
+        Object.entries(panesRef.current).map(([id, pane]) => [id, repoint(pane)]),
+      );
+      setPanes((ps) => Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, repoint(pane)])));
       bumpStructure();
+      setSaveError(
+        failures.length > 0 ? `Folder moved, but link updates failed in: ${failures.join(", ")}` : null,
+      );
     },
-    [handleRenameNote, bumpStructure, showNotice],
+    [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat],
   );
 
   // Move a note into a folder (rel, "" = root) by renaming — reuses the

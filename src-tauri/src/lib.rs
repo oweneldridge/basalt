@@ -724,6 +724,75 @@ fn create_folder(rel: String, window: tauri::Window, state: State<VaultState>) -
     fs::create_dir_all(&target).map_err(|e| format!("mkdir: {e}"))
 }
 
+/// Move a whole FOLDER to a new vault-relative path in ONE `fs::rename` — every
+/// note, attachment, and (empty or not) subfolder moves together with its
+/// basename preserved verbatim, so a single link-rewrite pass on the frontend
+/// fixes cross-folder links. Refuses the root, dot-folders, moving into itself,
+/// and overwriting an existing target. Returns the canonical new absolute path.
+#[tauri::command]
+fn rename_folder(from_rel: String, to_rel: String, window: tauri::Window, state: State<VaultState>) -> Result<String, String> {
+    let root = current_root(&state, window.label())?;
+    let clean = |r: &str| -> Result<PathBuf, String> {
+        let t = r.trim().trim_matches(['/', '\\']);
+        if t.is_empty() {
+            return Err("cannot name the vault root".into());
+        }
+        let rp = Path::new(t);
+        if rp.components().any(|c| !matches!(c, Component::Normal(_)))
+            || rp.components().any(|c| matches!(c, Component::Normal(s) if s.to_string_lossy().starts_with('.')))
+        {
+            return Err("invalid folder path".into());
+        }
+        Ok(rp.to_path_buf())
+    };
+    let fromp = clean(&from_rel)?;
+    let top = clean(&to_rel)?;
+    // Refuse moving a folder into itself or its own descendant. Compare case-
+    // insensitively too so a self-nesting rename on a case-insensitive FS gives
+    // our clear error rather than the kernel's.
+    let lower = |p: &Path| p.to_string_lossy().to_lowercase();
+    if top == fromp || top.starts_with(&fromp) || lower(&top).starts_with(&lower(&fromp)) {
+        return Err("cannot move a folder into itself".into());
+    }
+    let from_abs = root.join(&fromp);
+    let from_canon = fs::canonicalize(&from_abs).map_err(|e| e.to_string())?;
+    if !from_canon.starts_with(&root) || !from_canon.is_dir() {
+        return Err("not a folder in the vault".into());
+    }
+    let to_abs = root.join(&top);
+    // Confirm the destination's nearest EXISTING ancestor is inside the vault
+    // BEFORE creating any directories — a symlinked ancestor in `to_rel` must
+    // not let create_dir_all scatter folders outside the vault.
+    let mut anc = to_abs.parent();
+    while let Some(a) = anc {
+        match fs::canonicalize(a) {
+            Ok(canon) => {
+                if !canon.starts_with(&root) {
+                    return Err("path escapes vault".into());
+                }
+                break;
+            }
+            Err(_) => anc = a.parent(),
+        }
+    }
+    // Refuse overwriting anything already at the destination (a case-only rename
+    // on a case-insensitive FS resolves to the same dir — the frontend routes
+    // those away, so a hit here is a genuine collision).
+    if to_abs.symlink_metadata().is_ok() {
+        return Err("a file or folder already exists at the destination".into());
+    }
+    // Create the destination's PARENT (now known contained), then move.
+    let parent = to_abs.parent().ok_or("invalid path")?;
+    fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
+    let cparent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
+    if !cparent.starts_with(&root) {
+        return Err("path escapes vault".into());
+    }
+    fs::rename(&from_canon, &to_abs).map_err(|e| format!("move folder: {e}"))?;
+    let final_canon = fs::canonicalize(&to_abs).map_err(|e| e.to_string())?;
+    Ok(final_canon.to_string_lossy().to_string())
+}
+
 /// Rename/move a note to a new folder-qualified name (no `.md`), creating
 /// parent folders. Refuses to overwrite. Returns the canonical new path.
 #[tauri::command]
@@ -1566,6 +1635,7 @@ pub fn run() {
             list_foreign_files,
             list_subfolders,
             create_folder,
+            rename_folder,
             create_note,
             delete_note,
             rename_note,
