@@ -44,6 +44,7 @@ export function buildHtmlDocument(title: string, bodyHtml: string): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; font-src data:" />
 <title>${escapeHtml(title)}</title>
 <style>${EXPORT_CSS}</style>
 </head>

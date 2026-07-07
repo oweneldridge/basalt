@@ -41,6 +41,7 @@ function inlineRe(): RegExp {
       /(\$(?!\s)(?:\\.|[^$\n\\])+?(?<!\s)\$)/, // 12 inline math $…$ (no leading/trailing space)
       /(\^\[[^\][\n]+?\])/, // 13 inline footnote ^[text]
       /(\[\^[^\][\s]+?\])/, // 14 footnote reference [^id]
+      /(<\/?(?:br|hr|sup|sub|kbd|mark|u|s|abbr|cite|small|ins|del|wbr)\s*\/?>)/i, // 15 safe inline HTML
     ]
       .map((r) => r.source)
       .join("|"),
@@ -165,6 +166,9 @@ export function renderInline(text: string, depth = 0): string {
       out += inlineFootnote(tok.slice(2, -1)); // ^[inline footnote]
     } else if (m[14]) {
       out += footnoteRef(tok.slice(2, -1)); // [^id]
+    } else if (m[15]) {
+      // Safe attribute-free inline tag → pass through; normalize to lowercase.
+      out += INLINE_HTML.test(tok) ? tok.toLowerCase() : escapeHtml(tok);
     }
     last = m.index + tok.length;
   }
@@ -180,6 +184,13 @@ const ORDERED = /^(\s*)(\d{1,9})[.)]\s+(.*)$/;
 const TASK = /^\[([ xX])\]\s+(.*)$/;
 const QUOTE = /^ {0,3}>\s?(.*)$/;
 const CALLOUT = /^\[!([A-Za-z]+)\]([+-]?)\s*(.*)$/;
+// A line opening a BLOCK-LEVEL HTML tag (CommonMark type-6-ish list). Inline
+// tags (`<sup>`, `<span>`, `<a>`) at line start stay a paragraph; a
+// `<scheme:…>` autolink isn't matched (no block tag name).
+const HTML_BLOCK =
+  /^<\/?(?:div|table|thead|tbody|tfoot|tr|td|th|colgroup|col|section|article|aside|header|footer|nav|figure|figcaption|blockquote|details|summary|dl|dt|dd|ul|ol|li|p|h[1-6]|hr|pre|form|fieldset|video|audio|canvas|main|address|center)(?:[\s/>]|$)/i;
+// Safe, attribute-free inline tags passed through literally (no XSS surface).
+const INLINE_HTML = /^<\/?(?:br|hr|sup|sub|kbd|mark|u|s|abbr|cite|small|ins|del|wbr)\s*\/?>$/i;
 const TABLE_DELIM = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/;
 
 function splitRow(line: string): string[] {
@@ -303,6 +314,23 @@ export function renderMarkdown(src: string): string {
         i++;
       }
       parts.push(mathPlaceholder(body.join("\n").trim(), true));
+      continue;
+    }
+    // Raw HTML block: a line that opens a block-level HTML tag AND contains a
+    // `>` (so prose like `<address of note` isn't misread as HTML). Gathered to
+    // the matching close tag or a blank line, then emitted as a placeholder the
+    // reader / export fills with DOMPurify-sanitized HTML.
+    if (HTML_BLOCK.test(trimmed) && trimmed.includes(">")) {
+      const tag = /^<\/?([a-zA-Z][a-zA-Z0-9-]*)/.exec(trimmed)?.[1].toLowerCase() ?? "";
+      const closeRe = new RegExp(`</${tag}\\s*>`, "i");
+      const html: string[] = [];
+      while (i < lines.length && lines[i].trim() !== "") {
+        html.push(lines[i]);
+        const closed = closeRe.test(lines[i]);
+        i++;
+        if (closed) break; // stop after the matching close tag → following markdown renders
+      }
+      parts.push(`<div class="raw-html" data-basalt-html="${escapeHtml(html.join("\n"))}"></div>`);
       continue;
     }
     // Fenced code.

@@ -78,9 +78,12 @@ async function show(anchor: HTMLElement, rawTarget: string, sourceRel: string): 
     if (/^[a-z][a-z0-9+.-]*:/i.test(t) || t.startsWith("//")) img.src = t;
     else void host.resolveImage(t, resolved.rel).then((u) => u && (img.src = u));
   });
-  // Render math if present.
+  // Render math + sanitize raw HTML if present.
   if (body.querySelector("[data-math]")) {
     void import("./math").then((m) => my === token && m.fillMath(body));
+  }
+  if (body.querySelector("[data-basalt-html]")) {
+    void import("./sanitize").then((m) => my === token && m.fillRawHtml(body));
   }
   position(el, anchor);
 }
