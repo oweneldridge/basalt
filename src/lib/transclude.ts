@@ -92,6 +92,32 @@ export function subpathToLine(content: string, subpath: string): number | null {
   return null;
 }
 
+/** All block ids in a note (in document order, no `^`), each with a snippet of
+ * its line — for `[[Note#^…` completion. */
+export function extractBlockIds(content: string): { id: string; snippet: string }[] {
+  const lines = content.split("\n");
+  const mask = proseMask(lines);
+  const out: { id: string; snippet: string }[] = [];
+  const inlineRe = /\s\^([A-Za-z0-9-]+)\s*$/;
+  const ownRe = /^\^([A-Za-z0-9-]+)\s*$/;
+  for (let i = 0; i < lines.length; i++) {
+    if (!mask[i]) continue;
+    const l = lines[i].replace(/\r$/, "");
+    const m = inlineRe.exec(l);
+    if (m) {
+      out.push({ id: m[1], snippet: l.replace(inlineRe, "").trim().slice(0, 60) });
+      continue;
+    }
+    const o = ownRe.exec(l.trim());
+    if (o) {
+      // an own-line id anchors the previous non-blank line
+      const prev = lines[i - 1]?.trim() ?? "";
+      out.push({ id: o[1], snippet: prev.slice(0, 60) });
+    }
+  }
+  return out;
+}
+
 /** All heading texts in a note (in document order) — for `[[Note#…` completion. */
 export function extractHeadings(content: string): string[] {
   const lines = content.split("\n");

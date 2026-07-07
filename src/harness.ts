@@ -41,6 +41,7 @@ const cb: EditorCallbacks = {
   getLinkFormat: () => linkFormat,
   getActiveRel: () => activeRel,
   getHeadings: (name) => (name === "Beta Note" ? ["Overview", "Details", "Summary"] : []),
+  getBlockIds: (name) => (name === "Beta Note" ? [{ id: "b1", snippet: "first block" }, { id: "quote2", snippet: "second block" }] : []),
   onOpenWikilink: (t) => opened.push(t),
   onOpenUrl: (u) => urls.push(u),
   resolveImage: () => Promise.resolve(null),

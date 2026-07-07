@@ -38,7 +38,7 @@ import {
   type RecentVault,
 } from "./lib/recentVaults";
 import { setQueryHost } from "./lib/queryHost";
-import { setTranscludeHost, splitSubpath, subpathToLine, extractHeadings } from "./lib/transclude";
+import { setTranscludeHost, splitSubpath, subpathToLine, extractHeadings, extractBlockIds } from "./lib/transclude";
 import { recordSnapshot, listSnapshots, clearSnapshots, renameSnapshots, type Snapshot } from "./lib/snapshots";
 import { installHoverPreview } from "./lib/hoverPreview";
 import { noteRow, tasksForNote } from "./lib/vaultRows";
@@ -1465,6 +1465,12 @@ export default function App() {
     const note = path ? notesRef.current.find((n) => n.path === path) : null;
     return note ? extractHeadings(note.content) : [];
   }, []);
+  // Block ids of the note a `[[Name#^…` completion targets.
+  const getBlockIds = useCallback((name: string): { id: string; snippet: string }[] => {
+    const path = index.current.resolve(name, activePathRef.current ?? "");
+    const note = path ? notesRef.current.find((n) => n.path === path) : null;
+    return note ? extractBlockIds(note.content) : [];
+  }, []);
   const getLinkFormat = useCallback((): LinkFormat => {
     const f = obsConfigRef.current?.newLinkFormat;
     return f === "relative" || f === "absolute" ? f : "shortest";
@@ -2641,6 +2647,7 @@ export default function App() {
               getLinkFormat={getLinkFormat}
               getActiveRel={() => rel || null}
               getHeadings={getHeadings}
+              getBlockIds={getBlockIds}
               sourceMode={sourceMode}
               dark={dark}
               spellcheck={spellcheck}

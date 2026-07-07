@@ -47,6 +47,8 @@ export interface WikilinkCompletionOptions {
   getActiveRel: () => string | null;
   /** Headings of the note named/aliased `name` — for `[[Note#…` completion. */
   getHeadings: (name: string) => string[];
+  /** Block ids (id + line snippet) of a note — for `[[Note#^…` completion. */
+  getBlockIds: (name: string) => { id: string; snippet: string }[];
 }
 
 class WikilinkWidget extends WidgetType {
@@ -111,12 +113,37 @@ function wikilinkCompletions(opts: WikilinkCompletionOptions) {
     // Don't pop up on a bare `[[` unless the user is actively there.
     if (before.from + 2 > context.pos) return null;
 
-    // `[[Note#…` → suggest Note's headings (from the `#` onward).
+    // `[[Note#…` → suggest Note's headings; `[[Note#^…` → its block ids.
     const hash = before.text.indexOf("#");
     if (hash >= 0) {
       const noteName = before.text.slice(2, hash).trim();
       const partial = before.text.slice(hash + 1);
-      if (partial.startsWith("^")) return null; // block ids: no suggestion list
+      // Shared apply: replace the completed span with `text]]` (absorbing any
+      // closer already present, same as the note-name path).
+      const applyText = (text: string) =>
+        (view: EditorView, _c: unknown, from: number, to: number) => {
+          const after = view.state.sliceDoc(to, to + 2);
+          const closeLen = after === "]]" ? 2 : after.startsWith("]") ? 1 : 0;
+          view.dispatch({
+            changes: { from, to: to + closeLen, insert: `${text}]]` },
+            selection: { anchor: from + text.length + 2 },
+            userEvent: "input.complete",
+          });
+        };
+      if (partial.startsWith("^")) {
+        const blocks = opts.getBlockIds(noteName);
+        if (blocks.length === 0) return null;
+        return {
+          from: before.from + hash + 2, // after `#^`
+          options: blocks.map((b) => ({
+            label: b.id,
+            detail: b.snippet,
+            type: "text",
+            apply: applyText(b.id),
+          })),
+          filter: true,
+        };
+      }
       const headings = opts.getHeadings(noteName);
       if (headings.length === 0) return null;
       return {
@@ -124,15 +151,7 @@ function wikilinkCompletions(opts: WikilinkCompletionOptions) {
         options: headings.map((h) => ({
           label: h,
           type: "text",
-          apply: (view: EditorView, _c: unknown, from: number, to: number) => {
-            const after = view.state.sliceDoc(to, to + 2);
-            const closeLen = after === "]]" ? 2 : after.startsWith("]") ? 1 : 0;
-            view.dispatch({
-              changes: { from, to: to + closeLen, insert: `${h}]]` },
-              selection: { anchor: from + h.length + 2 },
-              userEvent: "input.complete",
-            });
-          },
+          apply: applyText(h),
         })),
         filter: true,
       };
