@@ -41,6 +41,7 @@ import { setQueryHost } from "./lib/queryHost";
 import { setTranscludeHost, splitSubpath, subpathToLine, extractHeadings, extractBlockIds } from "./lib/transclude";
 import { recordSnapshot, listSnapshots, clearSnapshots, renameSnapshots, type Snapshot } from "./lib/snapshots";
 import { installHoverPreview } from "./lib/hoverPreview";
+import { reorderTabs, insertTab } from "./lib/tabs";
 import { loadBindings, saveBindings, matchChord, type Bindings } from "./lib/hotkeys";
 import { noteRow, tasksForNote } from "./lib/vaultRows";
 import { parseQuery, runQuery, type Task } from "./lib/query";
@@ -800,6 +801,32 @@ export default function App() {
       patchPane(id, { tabs, active: neighbor, doc, scrollToLine: undefined });
     },
     [flushPath, patchPane, removePaneFromWorkspace],
+  );
+
+  // Drag a tab to reorder it within its pane, or move it to another pane. A
+  // cross-pane move reuses openInPane (safe content load) + closeTab (safe
+  // flush), so the note-content path stays protected; only tab placement moves.
+  const handleTabDrop = useCallback(
+    async (fromId: string, path: string, toId: string, toIndex: number) => {
+      if (fromId === toId) {
+        const pane = panesRef.current[toId];
+        if (!pane || !pane.tabs.includes(path)) return;
+        patchPane(toId, { tabs: reorderTabs(pane.tabs, path, toIndex) });
+        return;
+      }
+      // Moving out of the source: a pinned tab can't be closed, so unpin it
+      // there first (the move implies it's no longer pinned in the origin).
+      const src = panesRef.current[fromId];
+      if (src?.pinned?.includes(path)) {
+        const pinned = src.pinned.filter((p) => p !== path);
+        patchPane(fromId, { pinned: pinned.length ? pinned : undefined });
+      }
+      await openInPane(toId, path); // loads content, activates in target, focuses it
+      const tp = panesRef.current[toId];
+      if (tp) patchPane(toId, { tabs: insertTab(tp.tabs, path, toIndex) });
+      await closeTab(fromId, path); // removes the origin tab (note stays open in target)
+    },
+    [openInPane, closeTab, patchPane],
   );
 
   // Split the focused pane along `dir`, opening the same note in the new pane
@@ -2852,11 +2879,13 @@ export default function App() {
       >
         {pane.tabs.length > 0 && (
           <TabBar
+            paneId={id}
             tabs={tabItemsFor(pane.tabs).map((t) => ({ ...t, pinned: pane.pinned?.includes(t.path) }))}
             activePath={pane.active}
             onSelect={(p) => void openInPane(id, p)}
             onClose={(p) => void closeTab(id, p)}
             onTogglePin={(p) => togglePin(id, p)}
+            onTabDrop={(fromId, p, toIndex) => void handleTabDrop(fromId, p, id, toIndex)}
             onNew={() => {
               focusPane(id);
               setModal("switcher");
