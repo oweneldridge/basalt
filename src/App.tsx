@@ -62,6 +62,7 @@ import type { NoteRef } from "./editor/wikilink";
 import { clearImageCache, resolveImage } from "./lib/assets";
 import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
+import { Ribbon } from "./components/Ribbon";
 import { EditorPane } from "./components/EditorPane";
 import { RightPanel, type RightTab } from "./components/RightPanel";
 import { TabBar, type TabItem } from "./components/TabBar";
@@ -3131,6 +3132,17 @@ export default function App() {
 
   return (
     <div className={readableWidth ? "app readable-width" : "app"}>
+      <Ribbon
+        onToggleSidebar={() => setLeftOpen((v) => !v)}
+        onQuickSwitcher={() => setModal("switcher")}
+        onSearch={() => {
+          setSearchSeed("");
+          setModal("search");
+        }}
+        onCommandPalette={() => setModal("commands")}
+        onGraph={() => setGraphOpen(true)}
+        onSettings={() => setModal("settings")}
+      />
       {leftOpen && (
         <Sidebar
           notes={notes}
