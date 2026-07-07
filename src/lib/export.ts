@@ -35,6 +35,9 @@ table.md-properties th{color:var(--muted);font-weight:600}
 .md-callout-title{font-weight:700;color:var(--accent)}
 .md-mermaid{text-align:center;margin:12px 0}
 .md-mermaid svg{max-width:100%;height:auto}
+math{font-size:1.05em}
+.math-block math,math[display="block"]{display:block;text-align:center;margin:10px 0;overflow-x:auto}
+.math-error{color:#c0392b;font-family:monospace}
 `.trim();
 
 /** Wrap rendered note HTML in a standalone, styled HTML document. */

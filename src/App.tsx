@@ -1564,10 +1564,11 @@ export default function App() {
     const rel = note?.rel ?? "";
     try {
       const dom = new DOMParser().parseFromString(`<div>${renderMarkdown(pane.doc)}</div>`, "text/html");
-      // Render $…$ / $$…$$ math to KaTeX HTML in-place.
+      // Render $…$ / $$…$$ math as MathML in-place (self-contained — browsers
+      // render it with their own math fonts, no KaTeX assets to inline).
       if (dom.querySelector("[data-math]")) {
         const mathMod = await import("./lib/math");
-        mathMod.fillMath(dom.body);
+        mathMod.fillMath(dom.body, true);
       }
       // Sanitize + insert raw HTML blocks.
       if (dom.querySelector("[data-basalt-html]")) {
