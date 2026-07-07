@@ -260,3 +260,15 @@ describe("raw HTML — review fixes", () => {
     expect(out).toContain("&lt;address"); // escaped as prose
   });
 });
+
+describe("media embeds", () => {
+  it("emits a media marker for audio/video/pdf, not a transclusion", () => {
+    const audio = renderMarkdown("![[song.mp3]]");
+    expect(audio).toContain('data-basalt-media="song.mp3"');
+    expect(audio).not.toContain("data-basalt-embed");
+    expect(renderMarkdown("![[paper.pdf]]")).toContain("data-basalt-media");
+    // notes still transclude, images still img
+    expect(renderMarkdown("![[Some Note]]")).toContain("data-basalt-embed");
+    expect(renderMarkdown("![[pic.png]]")).toContain("data-basalt-img");
+  });
+});

@@ -1090,6 +1090,16 @@ fn mime_for(path: &Path) -> &'static str {
         Some("bmp") => "image/bmp",
         Some("avif") => "image/avif",
         Some("ico") => "image/x-icon",
+        // Media embeds (audio/video/PDF players in notes).
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("ogg") | Some("oga") => "audio/ogg",
+        Some("m4a") => "audio/mp4",
+        Some("flac") => "audio/flac",
+        Some("mp4") | Some("m4v") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("mov") => "video/quicktime",
+        Some("pdf") => "application/pdf",
         _ => "application/octet-stream",
     }
 }

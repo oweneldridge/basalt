@@ -4,6 +4,8 @@ import { EditorView } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
 import { startCompletion, currentCompletions } from "@codemirror/autocomplete";
 import { createEditorState, setSourceMode } from "./editor/setup";
+import { setTranscludeHost } from "./lib/transclude";
+import type { TranscludeHost } from "./lib/transclude";
 import type { EditorCallbacks } from "./editor/setup";
 import type { LinkFormat } from "./lib/rename";
 import "./styles.css";
@@ -22,6 +24,7 @@ declare global {
       setActiveRel: (rel: string | null) => void;
       startCompletion: () => void;
       completions: () => string[];
+      setTranscludeHost: (h: TranscludeHost | null) => void;
     };
   }
 }
@@ -78,4 +81,5 @@ window.__harness = {
   },
   startCompletion: () => startCompletion(view),
   completions: () => currentCompletions(view.state).map((c) => c.label),
+  setTranscludeHost,
 };

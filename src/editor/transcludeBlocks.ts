@@ -7,12 +7,44 @@ import type { EditorState, Extension } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { isInExcludedRegion } from "./regions";
-import { renderEmbedSource } from "../lib/transclude";
+import { renderEmbedSource, getTranscludeHost } from "../lib/transclude";
+import { mediaKind, buildMediaElement, type MediaKind } from "../lib/media";
 import { targetPathPart } from "../lib/markdown";
 import { notePathFacet } from "./query";
 
 const EMBED_RE = /!\[\[([^\]\[\n|]+?)(?:\|([^\]\[\n]+))?\]\]/g;
 const IMAGE_EXT = /\.(png|jpe?g|gif|svg|webp|bmp|avif|ico)$/i;
+
+class MediaWidget extends WidgetType {
+  constructor(
+    readonly rawTarget: string,
+    readonly kind: MediaKind,
+    readonly notePath: string,
+  ) {
+    super();
+  }
+  eq(o: MediaWidget): boolean {
+    return o.rawTarget === this.rawTarget && o.kind === this.kind && o.notePath === this.notePath;
+  }
+  toDOM(): HTMLElement {
+    const wrap = document.createElement("div");
+    wrap.className = "cm-embed cm-media";
+    const host = getTranscludeHost();
+    if (!host) return wrap;
+    void host.resolveImage(this.rawTarget, this.notePath).then((url) => {
+      if (!wrap.isConnected) return;
+      if (url) wrap.append(buildMediaElement(this.kind, url));
+      else {
+        wrap.textContent = `🎬 ${this.rawTarget} (not found)`;
+        wrap.classList.add("md-media-missing");
+      }
+    });
+    return wrap;
+  }
+  ignoreEvent(): boolean {
+    return true; // let the player's own controls handle events
+  }
+}
 
 class TranscludeWidget extends WidgetType {
   constructor(
@@ -46,10 +78,21 @@ function compute(state: EditorState): DecorationSet {
     const start = m.index;
     const end = start + m[0].length;
     const rawTarget = m[1].trim();
-    if (IMAGE_EXT.test(targetPathPart(rawTarget))) continue; // images → embeds.ts
+    const pathPart = targetPathPart(rawTarget);
+    if (IMAGE_EXT.test(pathPart)) continue; // images → embeds.ts
     if (isInExcludedRegion(state, start)) continue;
     if (sel.ranges.some((r) => r.from <= end && r.to >= start)) continue; // editing → raw
-    builder.add(start, end, Decoration.replace({ widget: new TranscludeWidget(rawTarget, notePath), block: true }));
+    const media = mediaKind(pathPart);
+    builder.add(
+      start,
+      end,
+      Decoration.replace({
+        widget: media
+          ? new MediaWidget(rawTarget, media, notePath)
+          : new TranscludeWidget(rawTarget, notePath),
+        block: true,
+      }),
+    );
   }
   return builder.finish();
 }

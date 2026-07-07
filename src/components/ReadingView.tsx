@@ -64,6 +64,13 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
       });
     }
 
+    // Audio / video / PDF embeds → players (resolved like images).
+    if (el.querySelector("[data-basalt-media]")) {
+      void import("../lib/media").then((mod) => {
+        if (!cancelled && el.isConnected) mod.fillMedia(el, resolveImage);
+      });
+    }
+
     // Render fenced blocks a PLUGIN registered a processor for.
     el.querySelectorAll<HTMLElement>("pre.md-code > code[class^='language-']").forEach((code) => {
       const lang = (code.className.match(/language-([\w-]+)/)?.[1] ?? "").toLowerCase();

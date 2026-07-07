@@ -118,10 +118,13 @@ export function renderInline(text: string, depth = 0): string {
       out += `<code class="md-code-inline">${escapeHtml(tok.slice(1, -1))}</code>`;
     } else if (m[2]) {
       const inner = tok.slice(3, -2).split("|")[0].trim();
-      // An image file → <img>; anything else → a note transclusion marker the
-      // reader resolves and renders inline.
-      if (/\.(png|jpe?g|gif|svg|webp|bmp|avif|ico)$/i.test(inner.split("#")[0])) {
+      const pathPart = inner.split("#")[0];
+      // An image → <img>; audio/video/pdf → a media-player marker; anything
+      // else → a note transclusion marker the reader resolves inline.
+      if (/\.(png|jpe?g|gif|svg|webp|bmp|avif|ico)$/i.test(pathPart)) {
         out += `<img class="md-embed" data-basalt-img="${escapeHtml(inner)}" alt="${escapeHtml(inner)}" />`;
+      } else if (/\.(mp3|wav|ogg|oga|m4a|flac|mp4|m4v|webm|mov|pdf)$/i.test(pathPart)) {
+        out += `<span class="md-media-ref" data-basalt-media="${escapeHtml(inner)}"></span>`;
       } else {
         out += `<span class="md-embed-ref" data-basalt-embed="${escapeHtml(inner)}"></span>`;
       }
