@@ -10,12 +10,14 @@ import type { Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
-import { parseMarkdownLink } from "../lib/markdown";
+import { parseMarkdownLink, internalMdHref } from "../lib/markdown";
 import { frontmatterRange, treeChanged } from "./regions";
 
 export interface LivePreviewOptions {
   /** Open an external URL (a clicked Markdown link). */
   onOpenUrl: (url: string) => void;
+  /** Open an internal note target (a clicked `[text](Note.md#heading)` link). */
+  onOpenInternal: (target: string) => void;
   /** Resolve an image reference to a displayable URL (or null if missing). */
   resolveImage: (target: string) => Promise<string | null>;
 }
@@ -334,7 +336,11 @@ export function livePreview(opts: LivePreviewOptions): Extension {
     mousedown: (event) => {
       const el = (event.target as HTMLElement | null)?.closest(".cm-md-link") as HTMLElement | null;
       if (el && el.dataset.href) {
-        opts.onOpenUrl(el.dataset.href);
+        // An internal `[text](Note.md#h)` link navigates within the vault; only
+        // a true external URL goes to the opener (matching ReadingView).
+        const internal = internalMdHref(el.dataset.href);
+        if (internal) opts.onOpenInternal(internal.path + internal.fragment);
+        else opts.onOpenUrl(el.dataset.href);
         event.preventDefault();
         return true;
       }

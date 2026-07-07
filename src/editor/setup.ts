@@ -178,7 +178,7 @@ function renderExtensions(cb: EditorCallbacks): Extension[] {
     highlight,
     tags,
     embeds({ resolveImage: cb.resolveImage, onOpen: cb.onOpenWikilink }),
-    livePreview({ onOpenUrl: cb.onOpenUrl, resolveImage: cb.resolveImage }),
+    livePreview({ onOpenUrl: cb.onOpenUrl, onOpenInternal: cb.onOpenWikilink, resolveImage: cb.resolveImage }),
     wikilinkDecorations({ onOpen: cb.onOpenWikilink }),
   ];
 }
