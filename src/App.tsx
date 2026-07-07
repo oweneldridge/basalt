@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { confirm, save } from "@tauri-apps/plugin-dialog";
 import {
   createNote,
@@ -2468,6 +2468,7 @@ export default function App() {
       { id: "settings", label: "Open settings", hint: "appearance, vault info (⌘,)", run: () => setModal("settings") },
       { id: "toggle-theme", label: "Toggle light/dark theme", hint: "switch appearance", run: toggleTheme },
       { id: "toggle-readable-width", label: "Toggle readable line length", hint: "constrain content width", run: () => setReadableWidth((v) => !v) },
+      { id: "reveal-in-finder", label: "Reveal current note in file manager", hint: "show the file on disk", run: () => { const p = focusedIdRef.current ? panesRef.current[focusedIdRef.current]?.active : null; if (p) void revealItemInDir(p).catch((e) => setSaveError(`Couldn't reveal: ${e}`)); } },
       { id: "split-right", label: "Split right", hint: "open the current note in a vertical split", run: () => splitFocused("row") },
       { id: "split-down", label: "Split down", hint: "open the current note in a horizontal split", run: () => splitFocused("col") },
       {
@@ -2894,6 +2895,16 @@ export default function App() {
               }}
             >
               Rename…
+            </button>
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const path = fileMenu.path;
+                setFileMenu(null);
+                void revealItemInDir(path).catch((e) => setSaveError(`Couldn't reveal: ${e}`));
+              }}
+            >
+              Reveal in file manager
             </button>
             <button
               className="ctx-item danger"
