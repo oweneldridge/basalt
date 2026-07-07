@@ -32,10 +32,16 @@ export interface FmProp {
 export function scalarType(rawVal: string): PropType {
   const t = rawVal.trim();
   if (/^["']/.test(t)) return "text";
-  if (/^(true|false)$/i.test(t)) return "boolean";
+  // YAML 1.1 booleans (Obsidian normalizes these to true/false on toggle).
+  if (/^(true|false|yes|no|on|off)$/i.test(t)) return "boolean";
   if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(t)) return "number";
   if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return "date";
   return "text";
+}
+
+/** True when a bare YAML boolean scalar is truthy (true/yes/on). */
+export function boolValue(rawVal: string): boolean {
+  return /^(true|yes|on)$/i.test(rawVal.trim());
 }
 
 export interface ParsedFm {

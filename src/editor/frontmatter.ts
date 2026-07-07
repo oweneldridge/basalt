@@ -14,7 +14,7 @@ import type { EditorState, EditorSelection, Extension } from "@codemirror/state"
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { frontmatterRange } from "./regions";
-import { parseFm, setProp, deleteProp, type FmProp } from "../lib/frontmatter";
+import { parseFm, setProp, deleteProp, boolValue, type FmProp } from "../lib/frontmatter";
 
 // Values safe to render in a native number/date control AND to write UNQUOTED.
 // Numbers reject leading zeros (a `007`/zip must stay a string, not lose them);
@@ -140,7 +140,7 @@ class PropertiesWidget extends WidgetType {
       const box = document.createElement("input");
       box.type = "checkbox";
       box.className = "cm-prop-check";
-      box.checked = /^true$/i.test(p.values[0] ?? "");
+      box.checked = boolValue(p.values[0] ?? "");
       box.onchange = () =>
         this.commit(view, (src) => setProp(src, p.key, [box.checked ? "true" : "false"], false, true));
       values.append(box);

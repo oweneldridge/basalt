@@ -9,10 +9,13 @@ import "katex/dist/katex.min.css";
 const cache = new Map<string, string>();
 const MAX_CACHE = 500;
 
-/** Render TeX to an HTML string. Never throws — a malformed formula renders as
- * an inline error (like Obsidian), so one bad formula can't blank a note. */
-export function renderMath(tex: string, display: boolean): string {
-  const key = (display ? "d:" : "i:") + tex;
+/** Render TeX to a string. Never throws — a malformed formula renders as an
+ * inline error (like Obsidian), so one bad formula can't blank a note. The app
+ * uses KaTeX "html" (its CSS + fonts are loaded); export uses "mathml" so the
+ * file is self-contained (browsers render MathML with their own math fonts, no
+ * KaTeX CSS/fonts to inline). */
+export function renderMath(tex: string, display: boolean, output: "html" | "mathml" = "html"): string {
+  const key = (output === "mathml" ? "m" : "") + (display ? "d:" : "i:") + tex;
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
   let html: string;
@@ -20,7 +23,7 @@ export function renderMath(tex: string, display: boolean): string {
     html = katex.renderToString(tex, {
       displayMode: display,
       throwOnError: false,
-      output: "html",
+      output,
       strict: false,
     });
   } catch (e) {
@@ -36,12 +39,13 @@ export function renderMath(tex: string, display: boolean): string {
 }
 
 /** Fill every `[data-math]` placeholder under `root` with rendered KaTeX. The
- * placeholder's text is the (HTML-unescaped by the DOM) TeX source. */
-export function fillMath(root: HTMLElement): void {
+ * placeholder's text is the (HTML-unescaped by the DOM) TeX source. Pass
+ * `mathml` for a self-contained export (no KaTeX CSS/fonts needed). */
+export function fillMath(root: HTMLElement, mathml = false): void {
   root.querySelectorAll<HTMLElement>("[data-math]").forEach((el) => {
     if (el.dataset.mathDone) return;
     const tex = el.getAttribute("data-tex") ?? "";
-    el.innerHTML = renderMath(tex, el.dataset.math === "block");
+    el.innerHTML = renderMath(tex, el.dataset.math === "block", mathml ? "mathml" : "html");
     el.dataset.mathDone = "1";
   });
 }

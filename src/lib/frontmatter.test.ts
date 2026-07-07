@@ -17,6 +17,8 @@ describe("scalarType (typed properties)", () => {
   it("infers bool / number / date; a quoted value stays text", () => {
     expect(scalarType("true")).toBe("boolean");
     expect(scalarType("false")).toBe("boolean");
+    expect(scalarType("yes")).toBe("boolean");
+    expect(scalarType("Off")).toBe("boolean");
     expect(scalarType("42")).toBe("number");
     expect(scalarType("-3.14")).toBe("number");
     expect(scalarType("2026-07-10")).toBe("date");
