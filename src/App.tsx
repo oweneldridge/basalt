@@ -41,6 +41,7 @@ import { setQueryHost } from "./lib/queryHost";
 import { setTranscludeHost, splitSubpath, subpathToLine, extractHeadings, extractBlockIds } from "./lib/transclude";
 import { recordSnapshot, listSnapshots, clearSnapshots, renameSnapshots, type Snapshot } from "./lib/snapshots";
 import { installHoverPreview } from "./lib/hoverPreview";
+import { loadBindings, saveBindings, matchChord, type Bindings } from "./lib/hotkeys";
 import { noteRow, tasksForNote } from "./lib/vaultRows";
 import { parseQuery, runQuery, type Task } from "./lib/query";
 import { applyTemplate, type TemplateCtx } from "./lib/templates";
@@ -137,6 +138,8 @@ interface ActiveNote {
 
 /** One editor pane: its own tab set, the live (active) note, and that note's
  * loaded content. Multiple panes = multiple independently-live editors. */
+const isMac = /Mac/.test(navigator.platform);
+
 interface Pane {
   id: string;
   tabs: string[]; // open note paths, in tab order
@@ -316,6 +319,9 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("basalt-spellcheck", String(spellcheck));
   }, [spellcheck]);
+  // User-assigned command hotkeys (global preference; see lib/hotkeys.ts).
+  const [hotkeys, setHotkeys] = useState<Bindings>(() => loadBindings());
+  useEffect(() => saveBindings(hotkeys), [hotkeys]);
   const [rightTab, setRightTab] = useState<RightTab>("backlinks");
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   // Seeds the search palette when opened from a tag / search bookmark.
@@ -1238,7 +1244,6 @@ export default function App() {
 
   // Quick switcher (Cmd/Ctrl-O) and vault search (Cmd/Ctrl-Shift-F).
   useEffect(() => {
-    const isMac = /Mac/.test(navigator.platform);
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return; // CodeMirror already handled it (e.g. mac Ctrl-o)
       const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
@@ -1279,7 +1284,6 @@ export default function App() {
   // Tab keyboard (focused pane): Mod-W closes the active tab; Ctrl-Tab /
   // Ctrl-Shift-Tab cycle.
   useEffect(() => {
-    const isMac = /Mac/.test(navigator.platform);
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || !vaultRef.current) return;
       const pane = focusedIdRef.current ? panesRef.current[focusedIdRef.current] : null;
@@ -2599,6 +2603,24 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf, pluginVersion],
   );
+  const commandsRef = useRef(commands);
+  commandsRef.current = commands;
+
+  // Run user-assigned hotkeys (checked before nothing else claims the event;
+  // built-in shortcuts still win because they preventDefault first).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !vaultRef.current) return;
+      const id = matchChord(e, hotkeys, isMac);
+      if (!id) return;
+      const cmd = commandsRef.current.find((c) => c.id === id);
+      if (!cmd) return;
+      e.preventDefault();
+      cmd.run();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [hotkeys]);
 
   if (!vault) {
     return (
@@ -2910,6 +2932,18 @@ export default function App() {
           onReadableWidth={setReadableWidth}
           spellcheck={spellcheck}
           onSpellcheck={setSpellcheck}
+          commands={commands.map((c) => ({ id: c.id, label: c.label }))}
+          hotkeys={hotkeys}
+          onSetHotkey={(id, chord) =>
+            setHotkeys((prev) => {
+              const next = { ...prev };
+              // one command per chord: unbind any other command using it
+              if (chord) for (const [k, v] of Object.entries(next)) if (v === chord && k !== id) delete next[k];
+              if (chord) next[id] = chord;
+              else delete next[id];
+              return next;
+            })
+          }
           onClose={() => setModal(null)}
         />
       )}
