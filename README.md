@@ -2,9 +2,13 @@
 
 **An open-source, local-first Markdown knowledge base — vault-compatible with Obsidian, built so it can never be taken away from you.**
 
+[![CI](https://github.com/oweneldridge/basalt/actions/workflows/ci.yml/badge.svg)](https://github.com/oweneldridge/basalt/actions/workflows/ci.yml)
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](./LICENSE)
+![Platforms: macOS · Windows · Linux](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-lightgrey.svg)
+
 Basalt reads and writes the *same plain-Markdown vault* you already use in Obsidian: a folder of `.md` files with `[[wikilinks]]`, YAML frontmatter, and an untouched `.obsidian/` config. You can run Basalt and Obsidian over the same vault and switch between them freely — your notes are just files.
 
-> **Status:** usable alpha — Live Preview editing, backlinks + unlinked mentions, graph view, quick switcher, full-text search, folder tree, images/embeds, and live-reload alongside Obsidian on the same vault. See the [roadmap](#roadmap).
+> **Status:** broad core-app parity, alpha. Live Preview editing, backlinks + unlinked mentions, graph view, search, tabs/splits, Canvas + Bases, transclusion, math, Dataview-style queries, templates, and a plugin API — all over the same vault as Obsidian, live. See the [changelog](./CHANGELOG.md) and [roadmap](#roadmap).
 
 ## Why this exists
 
@@ -27,20 +31,46 @@ Obsidian is excellent, free, and stores your data in open plain text. But it is 
 - **Editor:** [CodeMirror 6](https://codemirror.dev) — the same editor engine Obsidian uses, so Live Preview can match exactly.
 - **Frontend:** React 19 + TypeScript + Vite (chosen for the largest contributor pool, to maximize the odds someone can continue the project).
 
+## Install
+
+Download the installer for your platform from the [latest release](https://github.com/oweneldridge/basalt/releases/latest):
+
+- **macOS** — `.dmg` (Apple Silicon or Intel).
+- **Windows** — `.msi` or `.exe` (NSIS) installer.
+- **Linux** — `.AppImage` or `.deb`.
+
+Builds are currently **unsigned**, so the OS may warn on first launch:
+
+- macOS: right-click the app → **Open** (once), or `xattr -dr com.apple.quarantine /Applications/Basalt.app`.
+- Windows: **More info → Run anyway** on the SmartScreen prompt.
+
 ## Develop
 
-Prerequisites: [Rust](https://rustup.rs), Node 18+, and your platform's [Tauri prerequisites](https://tauri.app/start/prerequisites/).
+Prerequisites: [Rust](https://rustup.rs), Node 20+, and your platform's [Tauri prerequisites](https://tauri.app/start/prerequisites/).
 
 ```sh
 npm install
 npm run tauri dev      # launch the desktop app (first Rust build takes a few minutes)
+npm run typecheck      # tsc --noEmit
+npm test               # vitest unit tests
 npm run build          # typecheck + build the frontend
-npm run tauri build    # produce a distributable bundle
+npm run tauri build    # produce a distributable bundle in src-tauri/target/release/bundle/
 ```
+
+## Releasing
+
+Releases are built and published by GitHub Actions ([`.github/workflows/release.yml`](./.github/workflows/release.yml)) on a version-tag push, across macOS (Apple Silicon + Intel), Windows, and Linux:
+
+```sh
+npm version patch          # bumps the version + creates a git tag
+git push --follow-tags     # triggers the release workflow → a draft GitHub Release
+```
+
+Review the draft release's installers and notes, then publish it. Signing is optional and off by default; the workflow consumes Apple/Windows signing secrets if you add them.
 
 ## Roadmap
 
-Basalt is built in phases so each phase is independently useful — see [ROADMAP.md](./ROADMAP.md) for the full table (shipped: vault editor with Live Preview, backlinks + unlinked mentions, live-reload watcher, path-based link resolution, quick switcher + full-text search, graph view, folder tree, images/embeds, and the 2026-06 hardening pass with the first test suite).
+Basalt is built in phases so each phase is independently useful — see [ROADMAP.md](./ROADMAP.md) for the full phase table and the [CHANGELOG](./CHANGELOG.md) for what's shipped. The Obsidian core-app parity backlog is complete; out of scope by design are Obsidian Sync/Publish, the mobile app, and running Obsidian's own community plugins.
 
 ## License
 

@@ -1,0 +1,92 @@
+name: Release
+
+# Cut a release by pushing a version tag, e.g.:
+#   npm version patch        # bumps package.json + tauri.conf.json version, tags
+#   git push --follow-tags
+# (or tag manually: git tag v0.1.0 && git push origin v0.1.0)
+on:
+  push:
+    tags:
+      - "v*"
+  # Allow a manual dry run from the Actions tab (builds, no publish).
+  workflow_dispatch:
+
+permissions:
+  contents: write # tauri-action creates the GitHub Release + uploads installers
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+            rust-target: aarch64-apple-darwin
+          # Intel macOS
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin"
+            rust-target: x86_64-apple-darwin
+          # Linux (x86_64)
+          - platform: ubuntu-22.04
+            args: ""
+            rust-target: ""
+          # Windows (x86_64)
+          - platform: windows-latest
+            args: ""
+            rust-target: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux WebKit / Tauri deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build + release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # --- macOS signing + notarization (optional; set these secrets to enable) ---
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # --- Windows signing (optional) ---
+          # Configure via tauri.conf.json bundle.windows.certificateThumbprint
+          # once you have a cert; no env needed for that path.
+        with:
+          # A draft release so you can review installers + write notes before publishing.
+          tagName: ${{ github.ref_name }}
+          releaseName: "Basalt ${{ github.ref_name }}"
+          releaseBody: "See CHANGELOG.md for details."
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
