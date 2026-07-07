@@ -143,6 +143,8 @@ interface Pane {
   active: string | null; // the live note path
   doc: string; // content of the active note (initial/reconciled for its editor)
   scrollToLine?: number;
+  /** Pinned tab paths — a pinned tab can't be closed until unpinned. */
+  pinned?: string[];
 }
 
 type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | "templates" | "history" | null;
@@ -164,7 +166,7 @@ const workspaceKey = (vault: string) => wsKey(vault, WINDOW_LABEL);
 /** The serializable shape of a workspace (no live doc — restored from disk). */
 interface SavedWorkspace {
   layout: LayoutNode;
-  panes: Record<string, { tabs: string[]; active: string | null }>;
+  panes: Record<string, { tabs: string[]; active: string | null; pinned?: string[] }>;
   focusedId: string | null;
 }
 
@@ -730,10 +732,26 @@ export default function App() {
 
   // User-initiated close of one pane's tab. Saves first; blocks while that note
   // has an unresolved conflict; removes the pane when its last tab closes.
+  // Pin/unpin a tab in a pane (a pinned tab can't be closed).
+  const togglePin = useCallback(
+    (id: string, path: string) => {
+      const pane = panesRef.current[id];
+      if (!pane) return;
+      const cur = pane.pinned ?? [];
+      const next = cur.includes(path) ? cur.filter((p) => p !== path) : [...cur, path];
+      patchPane(id, { pinned: next.length ? next : undefined });
+    },
+    [patchPane],
+  );
+
   const closeTab = useCallback(
     async (id: string, path: string) => {
       const pane = panesRef.current[id];
       if (!pane) return;
+      if (pane.pinned?.includes(path)) {
+        setSaveError("Unpin the tab before closing it");
+        return;
+      }
       const isActive = pane.active === path;
       if (isActive && conflictsRef.current.has(path)) {
         setSaveError("Resolve the “Changed on disk” conflict before closing this note");
@@ -829,7 +847,8 @@ export default function App() {
         } catch {
           doc = "";
         }
-        rebuilt[id] = { id, tabs, active, doc };
+        const pinned = (saved?.pinned ?? []).filter((p) => tabs.includes(p));
+        rebuilt[id] = { id, tabs, active, doc, pinned: pinned.length ? pinned : undefined };
       }
       // Drop layout leaves with no surviving pane.
       let lay: LayoutNode | null = ws.layout;
@@ -935,7 +954,7 @@ export default function App() {
     const v = vaultRef.current;
     if (!v) return;
     const projected: SavedWorkspace["panes"] = {};
-    for (const [id, p] of Object.entries(panes)) projected[id] = { tabs: p.tabs, active: p.active };
+    for (const [id, p] of Object.entries(panes)) projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned };
     const json = JSON.stringify({ layout, panes: projected, focusedId });
     if (json === lastSavedWs.current) return;
     lastSavedWs.current = json;
@@ -2608,10 +2627,11 @@ export default function App() {
       >
         {pane.tabs.length > 0 && (
           <TabBar
-            tabs={tabItemsFor(pane.tabs)}
+            tabs={tabItemsFor(pane.tabs).map((t) => ({ ...t, pinned: pane.pinned?.includes(t.path) }))}
             activePath={pane.active}
             onSelect={(p) => void openInPane(id, p)}
             onClose={(p) => void closeTab(id, p)}
+            onTogglePin={(p) => togglePin(id, p)}
             onNew={() => {
               focusPane(id);
               setModal("switcher");
