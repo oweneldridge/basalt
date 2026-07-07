@@ -21,6 +21,10 @@ interface Props {
   commands: { id: string; label: string }[];
   hotkeys: Bindings;
   onSetHotkey: (commandId: string, chord: string | null) => void;
+  /** CSS snippet names discovered in .basalt/snippets/. */
+  cssSnippets: string[];
+  disabledSnippets: Set<string>;
+  onToggleSnippet: (name: string, enabled: boolean) => void;
   onClose: () => void;
 }
 
@@ -55,6 +59,9 @@ export function SettingsModal({
   commands,
   hotkeys,
   onSetHotkey,
+  cssSnippets,
+  disabledSnippets,
+  onToggleSnippet,
   onClose,
 }: Props) {
   // Command id currently recording a chord (next keydown is captured).
@@ -182,6 +189,34 @@ export function SettingsModal({
           <p className="settings-hint">
             Click a binding, then press the combination. One command per chord; built-in
             shortcuts (⌘O, ⌘P, …) take precedence.
+          </p>
+        </section>
+
+        <section className="settings-section">
+          <div className="settings-label">CSS snippets</div>
+          {cssSnippets.length === 0 ? (
+            <p className="settings-hint">
+              No snippets found. Add <code>.css</code> files under{" "}
+              <code>.basalt/snippets/</code> to restyle Basalt.
+            </p>
+          ) : (
+            <div className="plugin-list">
+              {cssSnippets.map((name) => (
+                <div key={name} className="plugin-row">
+                  <label className="plugin-toggle">
+                    <input
+                      type="checkbox"
+                      checked={!disabledSnippets.has(name)}
+                      onChange={(e) => onToggleSnippet(name, e.target.checked)}
+                    />
+                    <span className="plugin-name">{name}</span>
+                  </label>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="settings-hint">
+            Enabled per-vault on this device. CSS can restyle, never run code.
           </p>
         </section>
 

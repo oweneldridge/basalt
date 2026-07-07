@@ -55,7 +55,7 @@ import {
   saveEnabled,
   type HostDeps,
 } from "./lib/plugins";
-import { listPlugins, writePluginData, listCssSnippets, deleteFolder, removeEmptyFolder, listForeignFiles, listSubfolders, createFolder, type PluginInfo } from "./lib/vault";
+import { listPlugins, writePluginData, listCssSnippets, deleteFolder, removeEmptyFolder, listForeignFiles, listSubfolders, createFolder, type PluginInfo, type CssSnippet } from "./lib/vault";
 import type { EditorApi } from "./components/EditorPane";
 import type { NoteRef } from "./editor/wikilink";
 import { clearImageCache, resolveImage } from "./lib/assets";
@@ -333,6 +333,7 @@ export default function App() {
   // Seeds the search palette when opened from a tag / search bookmark.
   const [searchSeed, setSearchSeed] = useState("");
   const [fileMenu, setFileMenu] = useState<{ path: string; x: number; y: number } | null>(null);
+  const [attMenu, setAttMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const [folderMenu, setFolderMenu] = useState<{ folderRel: string; x: number; y: number } | null>(null);
   // Parent rel for a pending "New folder…" prompt ("" = vault root).
   const [subfolderParent, setSubfolderParent] = useState<string | null>(null);
@@ -2144,31 +2145,61 @@ export default function App() {
     };
   }, [vault, refreshPlugins]);
 
-  // Load the vault's CSS snippets (.basalt/snippets/*.css) into <style> tags,
-  // like Obsidian's snippets. CSS only — it can style, never execute. Replaced
-  // wholesale per vault; removed on switch/close.
+  // The vault's available CSS snippets + the set the user has DISABLED (per
+  // vault, on this device). CSS only — it can style, never execute.
+  const [cssSnippets, setCssSnippets] = useState<CssSnippet[]>([]);
+  const [disabledSnippets, setDisabledSnippets] = useState<Set<string>>(new Set());
+  // Reload the snippet list + disabled set when the vault changes.
   useEffect(() => {
-    if (!vault) return;
+    if (!vault) {
+      setCssSnippets([]);
+      setDisabledSnippets(new Set());
+      return;
+    }
     let cancelled = false;
+    try {
+      const raw = localStorage.getItem(`basalt.disabledSnippets.${vault}`);
+      const arr = raw ? (JSON.parse(raw) as unknown) : [];
+      setDisabledSnippets(new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : []));
+    } catch {
+      setDisabledSnippets(new Set());
+    }
     void listCssSnippets()
       .then((snips) => {
-        if (cancelled) return;
-        document.querySelectorAll("style[data-basalt-snippet]").forEach((el) => el.remove());
-        for (const s of snips) {
-          const style = document.createElement("style");
-          style.dataset.basaltSnippet = s.name;
-          style.textContent = s.css;
-          document.head.append(style);
-        }
+        if (!cancelled) setCssSnippets(snips);
       })
       .catch(() => {
-        /* no snippets / read error — fine */
+        if (!cancelled) setCssSnippets([]);
       });
     return () => {
       cancelled = true;
-      document.querySelectorAll("style[data-basalt-snippet]").forEach((el) => el.remove());
     };
   }, [vault]);
+  // Inject the ENABLED snippets as <style> tags; re-runs when the list or the
+  // disabled set changes. Removed wholesale on switch/close.
+  useEffect(() => {
+    document.querySelectorAll("style[data-basalt-snippet]").forEach((el) => el.remove());
+    for (const s of cssSnippets) {
+      if (disabledSnippets.has(s.name)) continue;
+      const style = document.createElement("style");
+      style.dataset.basaltSnippet = s.name;
+      style.textContent = s.css;
+      document.head.append(style);
+    }
+    return () => {
+      document.querySelectorAll("style[data-basalt-snippet]").forEach((el) => el.remove());
+    };
+  }, [cssSnippets, disabledSnippets]);
+  const toggleSnippet = useCallback((name: string, enabled: boolean) => {
+    setDisabledSnippets((prev) => {
+      const next = new Set(prev);
+      if (enabled) next.delete(name);
+      else next.add(name);
+      const v = vaultRef.current;
+      if (v) localStorage.setItem(`basalt.disabledSnippets.${v}`, JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
 
   // Create "Untitled" (uniquified) inside `folderRel` ("" = vault root).
   const handleNewNoteIn = useCallback(
@@ -2336,6 +2367,48 @@ export default function App() {
       }
     },
     [bumpStructure, clearConflict],
+  );
+
+  /** Move an ATTACHMENT (image / PDF / audio / video / canvas / base) to
+   * .trash. Editable viewers (.canvas/.base) get the flush-then-abort-if-
+   * pending discipline so an unsaved edit is never trashed over. */
+  const handleDeleteAttachment = useCallback(
+    async (path: string) => {
+      const att = attachmentsRef.current.find((a) => a.path === path);
+      if (!att) return;
+      const viewer = isViewerPath(path);
+      const ok = await confirm(`Move "${att.name}" to the vault trash?`, {
+        title: "Delete attachment",
+        kind: "warning",
+      });
+      if (!ok) return;
+      try {
+        if (viewer) {
+          if (conflictsRef.current.has(path)) {
+            setSaveError(`Resolve the "Changed on disk" conflict in ${att.name} before deleting it`);
+            return;
+          }
+          await flushPath(path);
+          if (pending.current.has(path)) {
+            setSaveError("Couldn't delete: unsaved changes failed to save");
+            return;
+          }
+          const t = saveTimers.current.get(path);
+          if (t !== undefined) window.clearTimeout(t);
+          saveTimers.current.delete(path);
+          pending.current.delete(path);
+          clearConflict(path);
+        }
+        await deleteNote(path); // trashes any vault file (must-exist, contained)
+        selfWrites.current.delete(att.rel);
+        if (viewer && vaultRef.current) void clearSnapshots(vaultRef.current, att.rel);
+        setAttachmentsList((prev) => prev.filter((a) => a.path !== path));
+        bumpStructure(); // the prune effect closes any viewer tab
+      } catch (e) {
+        setSaveError(`Couldn't delete: ${e}`);
+      }
+    },
+    [bumpStructure, clearConflict, flushPath],
   );
 
   /** Rename/move a note and rewrite every link to it across the vault.
@@ -2880,6 +2953,7 @@ export default function App() {
           onMoveToFolder={handleMoveToFolder}
           onOpenAttachment={handleOpenAttachment}
           onContextMenu={(path, x, y) => setFileMenu({ path, x, y })}
+          onAttachmentContextMenu={(path, x, y) => setAttMenu({ path, x, y })}
         />
       )}
       <main className="main">
@@ -3062,6 +3136,9 @@ export default function App() {
           onReadableWidth={setReadableWidth}
           spellcheck={spellcheck}
           onSpellcheck={setSpellcheck}
+          cssSnippets={cssSnippets.map((s) => s.name)}
+          disabledSnippets={disabledSnippets}
+          onToggleSnippet={toggleSnippet}
           commands={commands.map((c) => ({ id: c.id, label: c.label }))}
           hotkeys={hotkeys}
           onSetHotkey={(id, chord) =>
@@ -3180,6 +3257,36 @@ export default function App() {
                 const path = fileMenu.path;
                 setFileMenu(null);
                 void handleDeleteNote(path);
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+      {attMenu && (
+        <div className="ctx-overlay" onMouseDown={() => setAttMenu(null)} onContextMenu={(e) => e.preventDefault()}>
+          <div
+            className="ctx-menu"
+            style={{ left: attMenu.x, top: attMenu.y }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const path = attMenu.path;
+                setAttMenu(null);
+                void revealItemInDir(path).catch((e) => setSaveError(`Couldn't reveal: ${e}`));
+              }}
+            >
+              Reveal in file manager
+            </button>
+            <button
+              className="ctx-item danger"
+              onClick={() => {
+                const path = attMenu.path;
+                setAttMenu(null);
+                void handleDeleteAttachment(path);
               }}
             >
               Delete
