@@ -310,6 +310,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("basalt-readable-width", String(readableWidth));
   }, [readableWidth]);
+  const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem("basalt-spellcheck") !== "false");
+  useEffect(() => {
+    localStorage.setItem("basalt-spellcheck", String(spellcheck));
+  }, [spellcheck]);
   const [rightTab, setRightTab] = useState<RightTab>("backlinks");
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   // Seeds the search palette when opened from a tag / search bookmark.
@@ -2130,6 +2134,14 @@ export default function App() {
     [notes],
   );
 
+  // Word/char count for the status bar (from the saved content — updates within
+  // the autosave debounce of typing). Only for editable notes.
+  const docStats = useMemo(() => {
+    if (!active || activeIsViewer || !activeNote) return null;
+    const text = activeNote.content;
+    return { words: (text.match(/\S+/g) ?? []).length, chars: text.length };
+  }, [active, activeIsViewer, activeNote]);
+
   // Backlinks of the active note can only change when OTHER notes change, so
   // this keys off structureVersion — a local autosave doesn't re-resolve the vault.
   const backlinks = useMemo(() => {
@@ -2492,6 +2504,7 @@ export default function App() {
       { id: "toggle-readable-width", label: "Toggle readable line length", hint: "constrain content width", run: () => setReadableWidth((v) => !v) },
       { id: "reveal-in-finder", label: "Reveal current note in file manager", hint: "show the file on disk", run: () => { const p = focusedIdRef.current ? panesRef.current[focusedIdRef.current]?.active : null; if (p) void revealItemInDir(p).catch((e) => setSaveError(`Couldn't reveal: ${e}`)); } },
       { id: "new-folder", label: "New folder…", hint: "create a folder at the vault root", run: () => setSubfolderParent("") },
+      { id: "toggle-spellcheck", label: "Toggle spellcheck", hint: "native browser spellcheck in the editor", run: () => setSpellcheck((v) => !v) },
       { id: "split-right", label: "Split right", hint: "open the current note in a vertical split", run: () => splitFocused("row") },
       { id: "split-down", label: "Split down", hint: "open the current note in a horizontal split", run: () => splitFocused("col") },
       {
@@ -2625,6 +2638,7 @@ export default function App() {
               getHeadings={getHeadings}
               sourceMode={sourceMode}
               dark={dark}
+              spellcheck={spellcheck}
               onOpenWikilink={handleOpenWikilink}
               onOpenUrl={handleOpenUrl}
               resolveImage={(target) =>
@@ -2709,6 +2723,11 @@ export default function App() {
             </span>
           )}
           <span className="spacer" />
+          {docStats && (
+            <span className="status-count" title={`${docStats.chars} characters`}>
+              {docStats.words} {docStats.words === 1 ? "word" : "words"}
+            </span>
+          )}
           <span className={saveError ? "status status-error" : "status"} title={saveError ?? ""}>
             {saveError
               ? `⚠ ${saveError}`
@@ -2831,6 +2850,8 @@ export default function App() {
           onTogglePlugin={(info, on) => void setPluginEnabled(info, on)}
           readableWidth={readableWidth}
           onReadableWidth={setReadableWidth}
+          spellcheck={spellcheck}
+          onSpellcheck={setSpellcheck}
           onClose={() => setModal(null)}
         />
       )}

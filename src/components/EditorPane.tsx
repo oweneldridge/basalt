@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { createEditorState, externalReload, reconfigurePlugins, setEditorTheme, setSourceMode } from "../editor/setup";
+import { createEditorState, externalReload, reconfigurePlugins, setEditorTheme, setSourceMode, setSpellcheck } from "../editor/setup";
 import type { EditorCallbacks } from "../editor/setup";
 import type { NoteRef } from "../editor/wikilink";
 import type { LinkFormat } from "../lib/rename";
@@ -30,6 +30,7 @@ interface Props {
   sourceMode: boolean;
   /** True = dark editor theme (CM6 dark flag); colors come from CSS vars. */
   dark: boolean;
+  spellcheck: boolean;
   /** Bumps when the plugin registry changes → re-apply plugin editor extensions
    * and re-render plugin code-blocks in this live editor. */
   pluginVersion: number;
@@ -61,6 +62,7 @@ export function EditorPane({
   scrollToLine,
   sourceMode,
   dark,
+  spellcheck,
   pluginVersion,
   apiRef,
 }: Props) {
@@ -88,6 +90,8 @@ export function EditorPane({
   sourceModeRef.current = sourceMode;
   const darkRef = useRef(dark);
   darkRef.current = dark;
+  const spellcheckRef = useRef(spellcheck);
+  spellcheckRef.current = spellcheck;
   const selfRelRef = useRef(selfRel);
   selfRelRef.current = selfRel;
 
@@ -95,7 +99,7 @@ export function EditorPane({
   useEffect(() => {
     if (!host.current) return;
     const v = new EditorView({
-      state: createEditorState(doc, adapter.current, sourceModeRef.current, darkRef.current, selfRelRef.current),
+      state: createEditorState(doc, adapter.current, sourceModeRef.current, darkRef.current, selfRelRef.current, spellcheckRef.current),
       parent: host.current,
     });
     view.current = v;
@@ -179,6 +183,11 @@ export function EditorPane({
     if (!v) return;
     setEditorTheme(v, dark);
   }, [dark]);
+
+  // Toggle spellcheck in place.
+  useEffect(() => {
+    if (view.current) setSpellcheck(view.current, spellcheck);
+  }, [spellcheck]);
 
   return <div className="editor-host" data-self-rel={selfRel} ref={host} />;
 }

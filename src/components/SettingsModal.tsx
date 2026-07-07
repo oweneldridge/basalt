@@ -14,6 +14,8 @@ interface Props {
   onTogglePlugin: (info: PluginInfo, enabled: boolean) => void;
   readableWidth: boolean;
   onReadableWidth: (on: boolean) => void;
+  spellcheck: boolean;
+  onSpellcheck: (on: boolean) => void;
   onClose: () => void;
 }
 
@@ -43,6 +45,8 @@ export function SettingsModal({
   onTogglePlugin,
   readableWidth,
   onReadableWidth,
+  spellcheck,
+  onSpellcheck,
   onClose,
 }: Props) {
   const enabled = new Set(enabledPlugins);
@@ -96,6 +100,10 @@ export function SettingsModal({
               checked={readableWidth}
               onChange={(e) => onReadableWidth(e.target.checked)}
             />
+          </div>
+          <div className="settings-row">
+            <span className="settings-row-label">Spellcheck</span>
+            <input type="checkbox" checked={spellcheck} onChange={(e) => onSpellcheck(e.target.checked)} />
           </div>
           <p className="settings-hint">
             “System” follows your OS appearance. Stored per app, not in the vault.
