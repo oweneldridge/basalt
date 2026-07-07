@@ -540,6 +540,190 @@ fn delete_note(path: String, window: tauri::Window, state: State<VaultState>) ->
     fs::rename(&resolved, &dest).map_err(|e| format!("trash move: {e}"))
 }
 
+/// Move a whole FOLDER (by vault-relative path) to the vault trash —
+/// recoverable, like note deletion. Refuses the root and dot-folders
+/// (.obsidian/.basalt/.trash live outside the note tree).
+#[tauri::command]
+fn delete_folder(rel: String, window: tauri::Window, state: State<VaultState>) -> Result<(), String> {
+    let root = current_root(&state, window.label())?;
+    let r = rel.trim().trim_matches(['/', '\\']);
+    if r.is_empty() {
+        return Err("cannot delete the vault root".into());
+    }
+    let rp = Path::new(r);
+    if rp.components().any(|c| !matches!(c, Component::Normal(_)))
+        || rp.components().any(|c| {
+            matches!(c, Component::Normal(s) if s.to_string_lossy().starts_with('.'))
+        })
+    {
+        return Err("invalid folder path".into());
+    }
+    let resolved = root.join(rp);
+    let canon = fs::canonicalize(&resolved).map_err(|e| e.to_string())?;
+    if !canon.starts_with(&root) || !canon.is_dir() {
+        return Err("not a folder in the vault".into());
+    }
+    // Re-validate the RESOLVED location too (a symlink could alias a dot-folder).
+    let crel = canon.strip_prefix(&root).map_err(|_| "path escapes vault")?;
+    if crel.as_os_str().is_empty()
+        || crel.components().any(|c| {
+            matches!(c, Component::Normal(s) if s.to_string_lossy().starts_with('.'))
+        })
+    {
+        return Err("invalid folder path".into());
+    }
+    let trash = root.join(".trash");
+    fs::create_dir_all(&trash).map_err(|e| format!("trash: {e}"))?;
+    let name = canon.file_name().ok_or("invalid path")?.to_string_lossy().to_string();
+    let mut dest = trash.join(&name);
+    if occupied(&dest) {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        dest = trash.join(format!("{name} {nanos}"));
+    }
+    fs::rename(&canon, &dest).map_err(|e| format!("trash move: {e}"))
+}
+
+/// Remove a folder ONLY if it is empty (recursively: empty subfolders count as
+/// empty). Used to clean up after a folder rename moved every note out.
+#[tauri::command]
+fn remove_empty_folder(rel: String, window: tauri::Window, state: State<VaultState>) -> Result<(), String> {
+    let root = current_root(&state, window.label())?;
+    let r = rel.trim().trim_matches(['/', '\\']);
+    if r.is_empty() {
+        return Err("cannot remove the vault root".into());
+    }
+    let rp = Path::new(r);
+    if rp.components().any(|c| !matches!(c, Component::Normal(_))) {
+        return Err("invalid folder path".into());
+    }
+    let canon = fs::canonicalize(root.join(rp)).map_err(|e| e.to_string())?;
+    if !canon.starts_with(&root) || !canon.is_dir() {
+        return Err("not a folder in the vault".into());
+    }
+    // Bottom-up remove_dir: each removal fails atomically with ENOTEMPTY if
+    // anything appeared since we looked — no TOCTOU window can delete content.
+    fn remove_if_empty(dir: &Path) -> Result<(), String> {
+        let entries = fs::read_dir(dir).map_err(|e| e.to_string())?;
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                remove_if_empty(&p)?;
+            } else {
+                return Err("folder is not empty".into());
+            }
+        }
+        fs::remove_dir(dir).map_err(|e| format!("remove: {e}"))
+    }
+    remove_if_empty(&canon)
+}
+
+/// Every file under `rel` that is NOT a Markdown note (any extension, dotfiles
+/// included; .DS_Store ignored) — a folder rename must refuse when these exist,
+/// or the rename would silently split the folder. Capped at 20 entries.
+#[tauri::command]
+fn list_foreign_files(rel: String, window: tauri::Window, state: State<VaultState>) -> Result<Vec<String>, String> {
+    let root = current_root(&state, window.label())?;
+    let r = rel.trim().trim_matches(['/', '\\']);
+    if r.is_empty() {
+        return Err("invalid folder path".into());
+    }
+    let rp = Path::new(r);
+    if rp.components().any(|c| !matches!(c, Component::Normal(_))) {
+        return Err("invalid folder path".into());
+    }
+    let canon = fs::canonicalize(root.join(rp)).map_err(|e| e.to_string())?;
+    if !canon.starts_with(&root) || !canon.is_dir() {
+        return Err("not a folder in the vault".into());
+    }
+    let mut out = Vec::new();
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            if out.len() >= 20 {
+                return;
+            }
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if p.is_dir() {
+                walk(&p, root, out);
+            } else if name != ".DS_Store"
+                && !p.extension().and_then(|x| x.to_str()).is_some_and(|x| x.eq_ignore_ascii_case("md"))
+            {
+                if let Ok(rp) = p.strip_prefix(root) {
+                    out.push(rp.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    walk(&canon, &root, &mut out);
+    Ok(out)
+}
+
+/// Empty-inclusive list of every subfolder under `rel` (vault-relative paths),
+/// so a folder rename can recreate structure the note moves alone wouldn't.
+#[tauri::command]
+fn list_subfolders(rel: String, window: tauri::Window, state: State<VaultState>) -> Result<Vec<String>, String> {
+    let root = current_root(&state, window.label())?;
+    let r = rel.trim().trim_matches(['/', '\\']);
+    if r.is_empty() {
+        return Err("invalid folder path".into());
+    }
+    let rp = Path::new(r);
+    if rp.components().any(|c| !matches!(c, Component::Normal(_))) {
+        return Err("invalid folder path".into());
+    }
+    let canon = fs::canonicalize(root.join(rp)).map_err(|e| e.to_string())?;
+    if !canon.starts_with(&root) || !canon.is_dir() {
+        return Err("not a folder in the vault".into());
+    }
+    let mut out = Vec::new();
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if let Ok(rp) = p.strip_prefix(root) {
+                    out.push(rp.to_string_lossy().to_string());
+                }
+                walk(&p, root, out);
+            }
+        }
+    }
+    walk(&canon, &root, &mut out);
+    Ok(out)
+}
+
+/// Create a folder (validated, vault-contained). Used to preserve empty
+/// subfolder structure across a folder rename.
+#[tauri::command]
+fn create_folder(rel: String, window: tauri::Window, state: State<VaultState>) -> Result<(), String> {
+    let root = current_root(&state, window.label())?;
+    let r = rel.trim().trim_matches(['/', '\\']);
+    if r.is_empty() {
+        return Err("invalid folder path".into());
+    }
+    let rp = Path::new(r);
+    if rp.components().any(|c| !matches!(c, Component::Normal(_)))
+        || rp.components().any(|c| {
+            matches!(c, Component::Normal(s) if s.to_string_lossy().starts_with('.'))
+        })
+    {
+        return Err("invalid folder path".into());
+    }
+    let target = root.join(rp);
+    // Parent-canonicalized containment (the dir may not exist yet).
+    let parent = target.parent().ok_or("invalid path")?;
+    fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
+    let cparent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
+    if !cparent.starts_with(&root) {
+        return Err("path escapes vault".into());
+    }
+    fs::create_dir_all(&target).map_err(|e| format!("mkdir: {e}"))
+}
+
 /// Rename/move a note to a new folder-qualified name (no `.md`), creating
 /// parent folders. Refuses to overwrite. Returns the canonical new path.
 #[tauri::command]
@@ -1377,6 +1561,11 @@ pub fn run() {
             write_canvas,
             write_base,
             list_css_snippets,
+            delete_folder,
+            remove_empty_folder,
+            list_foreign_files,
+            list_subfolders,
+            create_folder,
             create_note,
             delete_note,
             rename_note,

@@ -90,6 +90,32 @@ export function renameNote(path: string, newName: string): Promise<string> {
   return invoke<string>("rename_note", { path, newName });
 }
 
+/** Move a whole folder (vault-relative path) to the vault's .trash/. */
+export function deleteFolder(rel: string): Promise<void> {
+  return invoke<void>("delete_folder", { rel });
+}
+
+/** Remove a folder only if it's (recursively) empty — post-rename cleanup. */
+export function removeEmptyFolder(rel: string): Promise<void> {
+  return invoke<void>("remove_empty_folder", { rel });
+}
+
+/** Non-Markdown files under a folder (any type; capped at 20) — a folder
+ * rename refuses when these exist rather than silently splitting the folder. */
+export function listForeignFiles(rel: string): Promise<string[]> {
+  return invoke<string[]>("list_foreign_files", { rel });
+}
+
+/** Every subfolder under `rel` (vault-relative), including empty ones. */
+export function listSubfolders(rel: string): Promise<string[]> {
+  return invoke<string[]>("list_subfolders", { rel });
+}
+
+/** Create a folder (validated, vault-contained). */
+export function createFolder(rel: string): Promise<void> {
+  return invoke<void>("create_folder", { rel });
+}
+
 /** List every attachment (supported non-md file) in the open vault. */
 export function listAttachments(): Promise<Attachment[]> {
   return invoke<Attachment[]>("list_attachments");
