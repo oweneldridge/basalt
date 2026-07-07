@@ -1997,3 +1997,7 @@ button.primary:hover {
   font-size: 12px;
   margin-right: 12px;
 }
+
+/* ------- Typed property widgets ------- */
+.cm-prop-check { width: 16px; height: 16px; cursor: pointer; margin: 3px 0; }
+.cm-prop-typed { max-width: 180px; }

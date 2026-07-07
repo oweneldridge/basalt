@@ -13,14 +13,29 @@
 // "complex" = a value the simple model can't safely round-trip (block scalar
 // `|`/`>`, nested map, flow map, anchor/alias/tag). The UI shows it read-only.
 export type PropKind = "scalar" | "inline" | "list" | "empty" | "complex";
+/** Inferred YAML type of a scalar value — drives the typed Properties widget. */
+export type PropType = "boolean" | "number" | "date" | "text";
 
 export interface FmProp {
   key: string;
   values: string[];
   kind: PropKind;
+  /** For scalar props: the value's inferred YAML type (checkbox/number/date/text). */
+  type?: PropType;
   /** 0-based line indices within the BODY (between the `---` fences), inclusive. */
   start: number;
   end: number;
+}
+
+/** Infer a scalar's YAML type from its RAW (pre-unquote) text: an explicitly
+ * quoted value is text; otherwise a bare bool / number / ISO date is typed. */
+export function scalarType(rawVal: string): PropType {
+  const t = rawVal.trim();
+  if (/^["']/.test(t)) return "text";
+  if (/^(true|false)$/i.test(t)) return "boolean";
+  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(t)) return "number";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return "date";
+  return "text";
 }
 
 export interface ParsedFm {
@@ -186,6 +201,7 @@ export function parseFm(source: string): ParsedFm | null {
     } else {
       prop.kind = "scalar";
       prop.values = [unquote(val)];
+      prop.type = scalarType(val);
     }
     props.push(prop);
   }
@@ -228,11 +244,12 @@ export function serializeScalar(v: string): string {
 
 /** The body line(s) for a property, in Obsidian's style: a single value is a
  * scalar; multiple values are a block list. An empty value is `key:` (null). */
-export function serializeProp(key: string, values: string[], multi: boolean): string[] {
+export function serializeProp(key: string, values: string[], multi: boolean, raw = false): string[] {
   const clean = values.filter((v) => v.length > 0);
   if (clean.length === 0) return [`${key}:`];
-  if (!multi && clean.length === 1) return [`${key}: ${serializeScalar(clean[0])}`];
-  return [`${key}:`, ...clean.map((v) => `  - ${serializeScalar(v)}`)];
+  const scalar = (v: string) => (raw ? v : serializeScalar(v));
+  if (!multi && clean.length === 1) return [`${key}: ${scalar(clean[0])}`];
+  return [`${key}:`, ...clean.map((v) => `  - ${scalar(v)}`)];
 }
 
 function rebuild(parsed: ParsedFm, body: string[]): string {
@@ -249,10 +266,11 @@ export function setProp(
   key: string,
   values: string[],
   multi = false,
+  raw = false,
 ): string {
   const parsed = parseFm(source);
   if (!parsed) return source;
-  const newLines = serializeProp(key, values, multi);
+  const newLines = serializeProp(key, values, multi, raw);
   const existing = parsed.props.find((p) => p.key === key);
   const body = parsed.body.slice();
   if (existing) {
