@@ -302,6 +302,13 @@ export default function App() {
   const [dark, setDark] = useState<boolean>(
     () => document.documentElement.dataset.theme !== "light",
   );
+  // Readable line length (Obsidian default ON): constrains editor/reading width.
+  const [readableWidth, setReadableWidth] = useState(
+    () => localStorage.getItem("basalt-readable-width") !== "false",
+  );
+  useEffect(() => {
+    localStorage.setItem("basalt-readable-width", String(readableWidth));
+  }, [readableWidth]);
   const [rightTab, setRightTab] = useState<RightTab>("backlinks");
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   // Seeds the search palette when opened from a tag / search bookmark.
@@ -2456,6 +2463,7 @@ export default function App() {
       { id: "new-window", label: "New window", hint: "open another window", run: () => void handleOpenInNewWindow() },
       { id: "settings", label: "Open settings", hint: "appearance, vault info (⌘,)", run: () => setModal("settings") },
       { id: "toggle-theme", label: "Toggle light/dark theme", hint: "switch appearance", run: toggleTheme },
+      { id: "toggle-readable-width", label: "Toggle readable line length", hint: "constrain content width", run: () => setReadableWidth((v) => !v) },
       { id: "split-right", label: "Split right", hint: "open the current note in a vertical split", run: () => splitFocused("row") },
       { id: "split-down", label: "Split down", hint: "open the current note in a horizontal split", run: () => splitFocused("col") },
       {
@@ -2607,7 +2615,7 @@ export default function App() {
   };
 
   return (
-    <div className="app">
+    <div className={readableWidth ? "app readable-width" : "app"}>
       {leftOpen && (
         <Sidebar
           notes={notes}
@@ -2791,6 +2799,8 @@ export default function App() {
           plugins={installedPlugins}
           enabledPlugins={vault ? loadEnabled(vault) : []}
           onTogglePlugin={(info, on) => void setPluginEnabled(info, on)}
+          readableWidth={readableWidth}
+          onReadableWidth={setReadableWidth}
           onClose={() => setModal(null)}
         />
       )}

@@ -1940,3 +1940,24 @@ button.primary:hover {
 .footnotes ol { padding-left: 1.4em; }
 .footnotes li { margin: 3px 0; }
 .footnote-backref { text-decoration: none; margin-left: 4px; }
+
+/* ------- Foldable callouts ------- */
+.md-callout-foldable > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.md-callout-foldable > summary::-webkit-details-marker { display: none; }
+.md-callout-foldable > summary::before {
+  content: "▾";
+  font-size: 0.8em;
+  transition: transform 0.12s ease;
+  color: var(--text-muted);
+}
+.md-callout-foldable:not([open]) > summary::before { transform: rotate(-90deg); }
+
+/* ------- Readable line length (Obsidian default) ------- */
+.readable-width .cm-content { max-width: 720px; margin-left: auto; margin-right: auto; }
+.readable-width .reading-view { max-width: 760px; margin-left: auto; margin-right: auto; }
