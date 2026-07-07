@@ -18,6 +18,7 @@ interface Props {
   getLinkFormat: () => LinkFormat;
   getActiveRel: () => string | null;
   getHeadings: (name: string) => string[];
+  getBlockIds: (name: string) => { id: string; snippet: string }[];
   onOpenWikilink: (target: string) => void;
   onOpenUrl: (url: string) => void;
   resolveImage: (target: string) => Promise<string | null>;
@@ -53,6 +54,7 @@ export function EditorPane({
   getLinkFormat,
   getActiveRel,
   getHeadings,
+  getBlockIds,
   onOpenWikilink,
   onOpenUrl,
   resolveImage,
@@ -70,8 +72,8 @@ export function EditorPane({
   const view = useRef<EditorView | null>(null);
   // Keep the latest callbacks in refs so the editor (rebuilt only per `path`)
   // always calls through to fresh closures without being torn down on every render.
-  const cbs = useRef({ getNotes, getLinkFormat, getActiveRel, getHeadings, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange });
-  cbs.current = { getNotes, getLinkFormat, getActiveRel, getHeadings, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange };
+  const cbs = useRef({ getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange });
+  cbs.current = { getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange };
   // A stable adapter that always calls through to the freshest closures — used
   // for both editor construction and source-mode reconfiguration.
   const adapter = useRef<EditorCallbacks>({
@@ -79,6 +81,7 @@ export function EditorPane({
     getLinkFormat: () => cbs.current.getLinkFormat(),
     getActiveRel: () => cbs.current.getActiveRel(),
     getHeadings: (name: string) => cbs.current.getHeadings(name),
+    getBlockIds: (name: string) => cbs.current.getBlockIds(name),
     onOpenWikilink: (t) => cbs.current.onOpenWikilink(t),
     onOpenUrl: (u) => cbs.current.onOpenUrl(u),
     resolveImage: (t) => cbs.current.resolveImage(t),

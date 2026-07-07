@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitSubpath, stripFrontmatter, extractSection, subpathToLine, extractHeadings } from "./transclude";
+import { splitSubpath, stripFrontmatter, extractSection, subpathToLine, extractHeadings, extractBlockIds } from "./transclude";
 
 describe("splitSubpath", () => {
   it("splits target and subpath on the first #", () => {
@@ -124,5 +124,15 @@ describe("subpathToLine + extractHeadings", () => {
   });
   it("lists headings in order", () => {
     expect(extractHeadings(doc)).toEqual(["Intro", "Details"]);
+  });
+});
+
+describe("extractBlockIds", () => {
+  it("lists inline and own-line block ids with snippets (fence-aware)", () => {
+    const doc = "para one ^a1\n\ncontinued\n^b2\n\n```\nnot ^c3\n```\n";
+    const ids = extractBlockIds(doc);
+    expect(ids.map((b) => b.id)).toEqual(["a1", "b2"]);
+    expect(ids[0].snippet).toBe("para one");
+    expect(ids[1].snippet).toBe("continued");
   });
 });
