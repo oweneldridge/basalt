@@ -79,6 +79,7 @@ import { tables } from "./tables";
 import { frontmatter } from "./frontmatter";
 import { codeBlocks } from "./codeBlocks";
 import { callouts } from "./callouts";
+import { calloutFold } from "./calloutFold";
 import { highlight } from "./highlight";
 import { tags } from "./tags";
 import { embeds } from "./embeds";
@@ -171,6 +172,7 @@ function renderExtensions(cb: EditorCallbacks): Extension[] {
     transcludeBlocks,
     codeBlocks,
     callouts,
+    calloutFold,
     highlight,
     tags,
     embeds({ resolveImage: cb.resolveImage, onOpen: cb.onOpenWikilink }),
