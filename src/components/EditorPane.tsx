@@ -180,5 +180,5 @@ export function EditorPane({
     setEditorTheme(v, dark);
   }, [dark]);
 
-  return <div className="editor-host" ref={host} />;
+  return <div className="editor-host" data-self-rel={selfRel} ref={host} />;
 }
