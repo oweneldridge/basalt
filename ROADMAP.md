@@ -59,9 +59,12 @@ zoom, `%%comments%%`, paste-URL→link, outgoing-links pane):
   **Live-Preview footnotes & callout-folding**; **YAML-1.1 bool** Properties
   (yes/no/on/off → checkbox); **per-snippet toggles**; **attachment context
   menu** (reveal/delete); **drag tabs** to reorder / move between panes.
-- **Remaining (genuinely optional):** single-pass batching for very large
-  folder renames (per-note today, with a progress notice); a status-bar
-  ribbon; folder-rename basename normalization for FS-hostile names.
+- **Final items shipped (2026-07):** **single-pass folder rename** (one Rust
+  `fs::rename` of the subtree + one resolver-based link-rewrite pass —
+  O(vault) not O(notes×vault), preserves FS-hostile basenames verbatim, moves
+  attachments + empty subfolders, attachment-link-aware; data-safety-reviewed,
+  8 fixed incl. 2 HIGH); left **ribbon** (quick-action icons). **The entire
+  parity backlog is now clear.**
 - **Large — all shipped (2026-07):** **note/heading/block transclusion**
   (`![[Note#h]]`, editor + reading, DoS-hardened); **Canvas editing** (drag/
   resize/create/edit/delete/colour nodes, draw edges — atomic write_canvas,
