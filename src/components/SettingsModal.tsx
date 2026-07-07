@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ThemeMode } from "../lib/theme";
+import { chordOf, chordLabel, type Bindings } from "../lib/hotkeys";
 import type { ObsidianConfig, PluginInfo } from "../lib/vault";
 
 interface Props {
@@ -16,6 +17,10 @@ interface Props {
   onReadableWidth: (on: boolean) => void;
   spellcheck: boolean;
   onSpellcheck: (on: boolean) => void;
+  /** Palette commands (id + label) for hotkey assignment. */
+  commands: { id: string; label: string }[];
+  hotkeys: Bindings;
+  onSetHotkey: (commandId: string, chord: string | null) => void;
   onClose: () => void;
 }
 
@@ -47,8 +52,31 @@ export function SettingsModal({
   onReadableWidth,
   spellcheck,
   onSpellcheck,
+  commands,
+  hotkeys,
+  onSetHotkey,
   onClose,
 }: Props) {
+  // Command id currently recording a chord (next keydown is captured).
+  const [recording, setRecording] = useState<string | null>(null);
+  const isMac = /Mac/.test(navigator.platform);
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setRecording(null);
+        return;
+      }
+      const chord = chordOf(e, isMac);
+      if (!chord) return; // lone modifier / unmodified key — keep listening
+      onSetHotkey(recording, chord);
+      setRecording(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [recording, onSetHotkey, isMac]);
   const enabled = new Set(enabledPlugins);
   // Esc closes (the overlay handles click-away).
   useEffect(() => {
@@ -125,6 +153,35 @@ export function SettingsModal({
           )}
           <p className="settings-hint">
             Basalt reads these from <code>.obsidian/</code> and never writes them.
+          </p>
+        </section>
+
+        <section className="settings-section">
+          <div className="settings-label">Hotkeys</div>
+          <div className="hotkey-list">
+            {commands.map((c) => (
+              <div key={c.id} className="hotkey-row">
+                <span className="hotkey-label" title={c.id}>
+                  {c.label}
+                </span>
+                <button
+                  className={recording === c.id ? "hotkey-chord recording" : "hotkey-chord"}
+                  onClick={() => setRecording(recording === c.id ? null : c.id)}
+                  title={recording === c.id ? "Press a key combination (Esc to cancel)" : "Click to record a hotkey"}
+                >
+                  {recording === c.id ? "Press keys…" : hotkeys[c.id] ? chordLabel(hotkeys[c.id], isMac) : "—"}
+                </button>
+                {hotkeys[c.id] && recording !== c.id && (
+                  <button className="hotkey-clear" title="Remove hotkey" onClick={() => onSetHotkey(c.id, null)}>
+                    ✕
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <p className="settings-hint">
+            Click a binding, then press the combination. One command per chord; built-in
+            shortcuts (⌘O, ⌘P, …) take precedence.
           </p>
         </section>
 
