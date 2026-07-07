@@ -46,12 +46,16 @@ zoom, `%%comments%%`, paste-URL→link, outgoing-links pane):
 - **Medium — also shipped (2026-07):** **hover page-preview** (wikilink →
   target popup); foldable **callouts** (`[!x]±`); **readable line length**
   toggle; **reveal in file manager** (context menu + command).
-- **Medium — remaining**: **block-id autocomplete** (`[[Note#^…`); raw **HTML in
-  Markdown** (needs sanitizer); inline **audio/video/PDF embed players**; **new
-  folder** + folder/attachment context menus + **drag-drop** file tree; typed
-  **Properties** widgets; per-command **hotkey assignment**; **CSS snippets**;
-  status bar / ribbon; tab pinning + drag-between-panes; spellcheck toggle. Math
-  export-font inlining + Live-Preview footnotes/callout-folding are follow-ups.
+- **Medium — also shipped (2026-07):** raw **HTML in Markdown** (DOMPurify-
+  sanitized, XSS-reviewed); typed **Properties** widgets (checkbox/number/date,
+  data-safety-reviewed); **file-tree ops** (new note/folder, drag-to-move);
+  **word count** status bar; **spellcheck toggle**.
+- **Medium — remaining**: **block-id autocomplete** (`[[Note#^…`); inline
+  **audio/video/PDF embed players**; folder **rename/delete** + attachment
+  context menus; per-command **hotkey assignment** UI; **CSS snippets**; ribbon;
+  tab pinning + drag-between-panes. Math export-font inlining, Live-Preview
+  footnotes/callout-folding, and Properties null / YAML-1.1-bool inference are
+  small follow-ups.
 - **Large — all shipped (2026-07):** **note/heading/block transclusion**
   (`![[Note#h]]`, editor + reading, DoS-hardened); **Canvas editing** (drag/
   resize/create/edit/delete/colour nodes, draw edges — atomic write_canvas,
