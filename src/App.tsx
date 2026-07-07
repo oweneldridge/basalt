@@ -54,7 +54,7 @@ import {
   saveEnabled,
   type HostDeps,
 } from "./lib/plugins";
-import { listPlugins, writePluginData, type PluginInfo } from "./lib/vault";
+import { listPlugins, writePluginData, listCssSnippets, type PluginInfo } from "./lib/vault";
 import type { EditorApi } from "./components/EditorPane";
 import type { NoteRef } from "./editor/wikilink";
 import { clearImageCache, resolveImage } from "./lib/assets";
@@ -2106,6 +2106,32 @@ export default function App() {
       void unloadAll();
     };
   }, [vault, refreshPlugins]);
+
+  // Load the vault's CSS snippets (.basalt/snippets/*.css) into <style> tags,
+  // like Obsidian's snippets. CSS only — it can style, never execute. Replaced
+  // wholesale per vault; removed on switch/close.
+  useEffect(() => {
+    if (!vault) return;
+    let cancelled = false;
+    void listCssSnippets()
+      .then((snips) => {
+        if (cancelled) return;
+        document.querySelectorAll("style[data-basalt-snippet]").forEach((el) => el.remove());
+        for (const s of snips) {
+          const style = document.createElement("style");
+          style.dataset.basaltSnippet = s.name;
+          style.textContent = s.css;
+          document.head.append(style);
+        }
+      })
+      .catch(() => {
+        /* no snippets / read error — fine */
+      });
+    return () => {
+      cancelled = true;
+      document.querySelectorAll("style[data-basalt-snippet]").forEach((el) => el.remove());
+    };
+  }, [vault]);
 
   // Create "Untitled" (uniquified) inside `folderRel` ("" = vault root).
   const handleNewNoteIn = useCallback(
