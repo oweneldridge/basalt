@@ -50,12 +50,15 @@ zoom, `%%comments%%`, paste-URL→link, outgoing-links pane):
   sanitized, XSS-reviewed); typed **Properties** widgets (checkbox/number/date,
   data-safety-reviewed); **file-tree ops** (new note/folder, drag-to-move);
   **word count** status bar; **spellcheck toggle**.
-- **Medium — remaining**: **block-id autocomplete** (`[[Note#^…`); inline
-  **audio/video/PDF embed players**; folder **rename/delete** + attachment
-  context menus; per-command **hotkey assignment** UI; **CSS snippets**; ribbon;
-  tab pinning + drag-between-panes. Math export-font inlining, Live-Preview
-  footnotes/callout-folding, and Properties null / YAML-1.1-bool inference are
-  small follow-ups.
+- **Medium — final batch shipped (2026-07):** **block-id autocomplete**
+  (`[[Note#^…`); inline **audio/video/PDF players** (`![[file.mp3]]`); **CSS
+  snippets** (`.basalt/snippets/*.css`); **tab pinning**; per-command **hotkey
+  assignment** UI; **folder rename/delete** (trash tree / batch-rename, data-
+  safety-reviewed). **The medium/small backlog is now clear.**
+- **Follow-ups (small, deferred):** Math export-font inlining; Live-Preview
+  footnotes/callout-folding; Properties null / YAML-1.1-bool inference; single-
+  pass batching for very large folder renames; attachment context menus; a
+  status-bar ribbon; drag-tabs-between-panes; per-snippet toggles.
 - **Large — all shipped (2026-07):** **note/heading/block transclusion**
   (`![[Note#h]]`, editor + reading, DoS-hardened); **Canvas editing** (drag/
   resize/create/edit/delete/colour nodes, draw edges — atomic write_canvas,
