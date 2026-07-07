@@ -162,6 +162,36 @@ fn ensure_in_vault(root: &Path, path: &str) -> Result<PathBuf, String> {
 /// Atomically replace `path` with `content`: write a hidden non-`.md` temp in
 /// the same directory, fsync it, then rename over the target. A crash mid-write
 /// can no longer truncate the note, and we never write through a symlink.
+/// Normalize a file's line endings to LF for the in-memory / editor
+/// representation (CodeMirror does this anyway — its Text always joins with LF —
+/// so the whole frontend works in LF and content comparisons stay consistent).
+/// Disk fidelity is preserved separately: `write_note` re-applies the file's
+/// existing EOL, so a CRLF file round-trips CRLF on disk.
+fn to_lf(s: &str) -> String {
+    if s.contains('\r') {
+        s.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        s.to_string()
+    }
+}
+
+/// The dominant line ending of an existing file (`"\r\n"` vs `"\n"`), read
+/// cheaply from a prefix. LF when the file is absent, has no break in the
+/// prefix, or is unreadable — so new notes are created LF (Obsidian's default).
+fn existing_eol(path: &Path) -> &'static str {
+    use std::io::Read;
+    let Ok(mut f) = fs::File::open(path) else {
+        return "\n";
+    };
+    let mut buf = [0u8; 8192];
+    let n = f.read(&mut buf).unwrap_or(0);
+    let bytes = &buf[..n];
+    match bytes.iter().position(|&b| b == b'\n') {
+        Some(i) if i > 0 && bytes[i - 1] == b'\r' => "\r\n",
+        _ => "\n",
+    }
+}
+
 fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
     if fs::symlink_metadata(path)
         .map(|m| m.file_type().is_symlink())
@@ -240,7 +270,8 @@ fn collect_vault(dir: &Path, root: &Path, out: &mut Vec<VaultNote>) {
                 String::new()
             } else {
                 match fs::read(&path) {
-                    Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                    // Normalize to LF for the index (consistent with read_note).
+                    Ok(bytes) => to_lf(&String::from_utf8_lossy(&bytes)),
                     Err(_) => continue,
                 }
             };
@@ -360,7 +391,9 @@ fn debug_log(msg: String) {
 fn read_note(path: String, window: tauri::Window, state: State<VaultState>) -> Result<String, String> {
     let root = current_root(&state, window.label())?;
     let resolved = ensure_in_vault(&root, &path)?;
-    fs::read_to_string(&resolved).map_err(|e| format!("read {}: {e}", resolved.display()))
+    let raw = fs::read_to_string(&resolved).map_err(|e| format!("read {}: {e}", resolved.display()))?;
+    // Normalize to LF for the editor; write_note re-applies the file's EOL.
+    Ok(to_lf(&raw))
 }
 
 /// Atomically write a note's contents, only within the vault.
@@ -383,7 +416,16 @@ fn write_note(path: String, content: String, window: tauri::Window, state: State
             resolved.display()
         ));
     }
-    atomic_write(&resolved, content.as_bytes())
+    // Preserve the file's existing line endings: the editor works in LF, so a
+    // CRLF note would otherwise be silently rewritten to LF on first save. Read
+    // the current EOL and re-apply it (new/LF files stay LF).
+    let lf = to_lf(&content);
+    let out = if existing_eol(&resolved) == "\r\n" {
+        lf.replace('\n', "\r\n")
+    } else {
+        lf
+    };
+    atomic_write(&resolved, out.as_bytes())
 }
 
 /// Atomically write a `.canvas` file (the editable JSON Canvas), only within the
@@ -1657,6 +1699,36 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn to_lf_normalizes_crlf_and_lone_cr() {
+        assert_eq!(to_lf("a\r\nb\r\nc"), "a\nb\nc");
+        assert_eq!(to_lf("a\rb"), "a\nb"); // classic-Mac lone CR
+        assert_eq!(to_lf("a\nb\nc"), "a\nb\nc"); // pure LF untouched
+        assert_eq!(to_lf("no breaks"), "no breaks");
+    }
+
+    #[test]
+    fn eol_detect_and_preserve_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("basalt-eol-{}", WRITE_COUNTER.fetch_add(1, Ordering::Relaxed)));
+        let _ = fs::create_dir_all(&dir);
+        let crlf = dir.join("crlf.md");
+        fs::write(&crlf, b"one\r\ntwo\r\nthree").unwrap();
+        let lf = dir.join("lf.md");
+        fs::write(&lf, b"one\ntwo").unwrap();
+        assert_eq!(existing_eol(&crlf), "\r\n");
+        assert_eq!(existing_eol(&lf), "\n");
+        assert_eq!(existing_eol(&dir.join("absent.md")), "\n"); // new note → LF
+
+        // Simulate write_note's re-apply: LF editor content -> preserved on disk.
+        let edited = "one\ntwo\nthree\nfour"; // what the editor (always LF) produces
+        let out = if existing_eol(&crlf) == "\r\n" { to_lf(edited).replace('\n', "\r\n") } else { to_lf(edited).into() };
+        fs::write(&crlf, out.as_bytes()).unwrap();
+        let back = fs::read_to_string(&crlf).unwrap();
+        assert!(back.contains("\r\n") && !back.contains("\n\n"), "CRLF preserved: {back:?}");
+        assert_eq!(to_lf(&back), edited); // and read_note normalizes it back to LF
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn percent_encode_escapes_url_significant_and_reserved_chars() {
