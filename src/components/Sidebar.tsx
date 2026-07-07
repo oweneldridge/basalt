@@ -13,6 +13,8 @@ interface Props {
   onOpenAttachment: (path: string) => void;
   /** Open the file context menu (Rename / Delete) for a note. */
   onContextMenu: (path: string, x: number, y: number) => void;
+  /** Right-click an attachment (image / PDF / canvas / base). */
+  onAttachmentContextMenu: (path: string, x: number, y: number) => void;
   /** Open the folder context menu (New note here) for a folder rel path. */
   onFolderContextMenu: (folderRel: string, x: number, y: number) => void;
   /** Move a note (by path) into a folder (rel, "" = vault root). */
@@ -41,7 +43,7 @@ function saveExpanded(vault: string | null, set: Set<string>): void {
 
 const DND_MIME = "application/x-basalt-note";
 
-export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onNewNote, onOpenAttachment, onContextMenu, onFolderContextMenu, onMoveToFolder }: Props) {
+export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onNewNote, onOpenAttachment, onContextMenu, onAttachmentContextMenu, onFolderContextMenu, onMoveToFolder }: Props) {
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -150,6 +152,10 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
                 key={a.path}
                 className="note-item attachment tree-row"
                 onClick={() => onOpenAttachment(a.path)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  onAttachmentContextMenu(a.path, e.clientX, e.clientY);
+                }}
                 title={a.rel}
               >
                 {a.name}
@@ -196,9 +202,9 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
                 onDragStart={(e) => e.dataTransfer.setData(DND_MIME, node.path)}
                 onClick={() => (node.attachment ? onOpenAttachment(node.path) : onOpen(node.path))}
                 onContextMenu={(e) => {
-                  if (node.attachment) return;
                   e.preventDefault();
-                  onContextMenu(node.path, e.clientX, e.clientY);
+                  if (node.attachment) onAttachmentContextMenu(node.path, e.clientX, e.clientY);
+                  else onContextMenu(node.path, e.clientX, e.clientY);
                 }}
                 title={node.name}
               >
