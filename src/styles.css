@@ -2073,3 +2073,31 @@ button.primary:hover {
 .tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
 .tab-drop-end { display: inline-block; width: 0; }
 .tab-drop-end.active { width: 2px; align-self: stretch; background: var(--accent); margin: 4px 0; }
+
+/* ------- Left ribbon ------- */
+.ribbon {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  width: 40px;
+  flex-shrink: 0;
+  padding: 8px 0;
+  background: var(--bg-elev, var(--elev));
+  border-right: 1px solid var(--border);
+}
+.ribbon-top, .ribbon-bottom { display: flex; flex-direction: column; gap: 2px; }
+.ribbon-btn {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.ribbon-btn:hover { background: var(--hover, rgba(127,127,127,0.15)); color: var(--text); }
