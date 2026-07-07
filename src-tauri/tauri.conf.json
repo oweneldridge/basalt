@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Basalt",
-  "version": "0.1.0",
+  "version": "../package.json",
   "identifier": "dev.basalt.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -29,6 +29,11 @@
     "targets": "all",
     "category": "Productivity",
     "shortDescription": "Local-first Markdown knowledge base",
+    "longDescription": "Basalt is an open-source, local-first Markdown knowledge base that reads and writes the same plain-Markdown vault as Obsidian. AGPL-3.0-or-later.",
+    "copyright": "Copyright © 2026 Owen Eldridge and contributors",
+    "publisher": "Owen Eldridge",
+    "homepage": "https://github.com/oweneldridge/basalt",
+    "licenseFile": "../LICENSE",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

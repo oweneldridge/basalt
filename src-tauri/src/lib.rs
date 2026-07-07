@@ -341,7 +341,7 @@ async fn read_vault(window: tauri::Window, state: State<'_, VaultState>) -> Resu
     let root = current_root(&state, window.label())?;
     let mut out = Vec::new();
     collect_vault(&root, &root, &mut out);
-    out.sort_by(|a, b| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()));
+    out.sort_by_key(|a| a.rel.to_lowercase());
     Ok(out)
 }
 
@@ -914,7 +914,7 @@ async fn list_attachments(window: tauri::Window, state: State<'_, VaultState>) -
     let root = current_root(&state, window.label())?;
     let mut out = Vec::new();
     collect_attachments(&root, &root, &mut out, 0);
-    out.sort_by(|a, b| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()));
+    out.sort_by_key(|a| a.rel.to_lowercase());
     Ok(out)
 }
 
@@ -1565,7 +1565,7 @@ fn list_plugins(window: tauri::Window, state: State<VaultState>) -> Result<Vec<P
             data: fs::read_to_string(pdir.join("data.json")).ok(),
         });
     }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     Ok(out)
 }
 
