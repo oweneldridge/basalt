@@ -1,7 +1,8 @@
 // Blockquotes and Obsidian callouts (`> [!type] Title`). lezer already tags
 // Blockquote; we add per-line decorations (a left border / tinted box) and, for
-// callouts, conceal the `[!type]` token on the title line. Fold (+/-) is not
-// implemented yet. Line decorations are legal from a ViewPlugin.
+// callouts, conceal the `[!type]` token on the title line. Folding (+/-) lives
+// in calloutFold.ts (a StateField, since it needs replace decorations). Line
+// decorations are legal from a ViewPlugin.
 import { RangeSetBuilder } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin } from "@codemirror/view";

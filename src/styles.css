@@ -2047,3 +2047,15 @@ button.primary:hover {
   padding: 2px;
 }
 .hotkey-clear:hover { color: var(--danger); }
+
+/* ------- Foldable callouts (Live Preview) ------- */
+.cm-callout-fold {
+  display: inline-block;
+  cursor: pointer;
+  color: var(--text-muted);
+  margin-right: 2px;
+  transition: transform 0.1s;
+  user-select: none;
+}
+.cm-callout-fold.folded { transform: rotate(-90deg); }
+.cm-callout-fold:hover { color: var(--text); }
