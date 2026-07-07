@@ -533,6 +533,8 @@ function CanvasNodeView({
     if (!el || editing) return;
     if (node.type === "text") {
       el.innerHTML = renderMarkdown(node.text); // escaped + fixed tags = safe
+      if (el.querySelector("[data-math]")) void import("../lib/math").then((m) => m.fillMath(el));
+      if (el.querySelector("[data-basalt-html]")) void import("../lib/sanitize").then((m) => m.fillRawHtml(el));
     } else if (node.type === "file" && IMAGE_EXT.test(node.file)) {
       let cancelled = false;
       void resolveImage(node.file).then((url) => {

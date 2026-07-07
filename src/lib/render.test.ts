@@ -222,3 +222,41 @@ describe("foldable callouts", () => {
     expect(out).not.toContain("<details");
   });
 });
+
+describe("raw HTML", () => {
+  it("emits a block-HTML placeholder (filled/sanitized by the reader)", () => {
+    const out = renderMarkdown('<div class="box">\nhello\n</div>');
+    expect(out).toContain("raw-html");
+    expect(out).toContain('data-basalt-html="');
+    // the raw HTML is escaped INTO the attribute (not live in the output)
+    expect(out).not.toContain('<div class="box">');
+  });
+  it("passes safe attribute-free inline tags through", () => {
+    expect(renderMarkdown("x<br>y")).toContain("<br>");
+    expect(renderMarkdown("H<sub>2</sub>O")).toContain("<sub>2</sub>");
+    expect(renderMarkdown("a<sup>2</sup>")).toContain("<sup>2</sup>");
+  });
+  it("does NOT treat an inline tag at line start as a block", () => {
+    const out = renderMarkdown("<sup>note</sup> text");
+    expect(out).not.toContain("raw-html"); // stays a paragraph
+    expect(out).toContain("<sup>");
+  });
+  it("escapes arbitrary inline HTML that isn't on the safe list", () => {
+    const out = renderMarkdown("hi <span onclick=alert(1)>x</span>");
+    expect(out).not.toContain("<span onclick");
+    expect(out).toContain("&lt;span");
+  });
+});
+
+describe("raw HTML — review fixes", () => {
+  it("stops the HTML block at the matching close tag so following markdown renders", () => {
+    const out = renderMarkdown("<div>box</div>\n# Heading after");
+    expect(out).toContain("raw-html");
+    expect(out).toContain("<h1"); // heading after </div> still rendered
+  });
+  it("does not misfire on prose starting with <word (no >)", () => {
+    const out = renderMarkdown("<address of the sender is unknown");
+    expect(out).not.toContain("raw-html");
+    expect(out).toContain("&lt;address"); // escaped as prose
+  });
+});

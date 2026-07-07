@@ -1527,6 +1527,11 @@ export default function App() {
         const mathMod = await import("./lib/math");
         mathMod.fillMath(dom.body);
       }
+      // Sanitize + insert raw HTML blocks.
+      if (dom.querySelector("[data-basalt-html]")) {
+        const sanMod = await import("./lib/sanitize");
+        sanMod.fillRawHtml(dom.body);
+      }
       // Render mermaid diagrams to inline SVG.
       await Promise.all(
         [...dom.querySelectorAll("pre.md-code > code.language-mermaid")].map(async (code) => {

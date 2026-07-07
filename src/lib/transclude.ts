@@ -283,6 +283,9 @@ export function renderEmbedElement(
         else img.replaceWith(box("md-image-missing", `🖼 ${target}`));
       });
     });
+    // Render math + sanitize raw HTML inside the embed (lazy, like the reader).
+    if (body.querySelector("[data-math]")) void import("./math").then((m) => m.fillMath(body));
+    if (body.querySelector("[data-basalt-html]")) void import("./sanitize").then((m) => m.fillRawHtml(body));
     // Recurse into nested embeds (breadth-capped via the shared budget).
     body.querySelectorAll<HTMLElement>("[data-basalt-embed]").forEach((marker) => {
       if (budget.n > MAX_TOTAL_EMBEDS) {

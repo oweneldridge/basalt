@@ -57,6 +57,13 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
       });
     }
 
+    // Sanitize + insert any raw HTML blocks (lazy-load DOMPurify on demand).
+    if (el.querySelector("[data-basalt-html]")) {
+      void import("../lib/sanitize").then((mod) => {
+        if (!cancelled && el.isConnected) mod.fillRawHtml(el);
+      });
+    }
+
     // Render fenced blocks a PLUGIN registered a processor for.
     el.querySelectorAll<HTMLElement>("pre.md-code > code[class^='language-']").forEach((code) => {
       const lang = (code.className.match(/language-([\w-]+)/)?.[1] ?? "").toLowerCase();
