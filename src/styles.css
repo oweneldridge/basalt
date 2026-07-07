@@ -2059,3 +2059,11 @@ button.primary:hover {
 }
 .cm-callout-fold.folded { transform: rotate(-90deg); }
 .cm-callout-fold:hover { color: var(--text); }
+
+/* ------- Footnote references (Live Preview) ------- */
+.cm-footnote-ref {
+  color: var(--accent);
+  font-size: 0.75em;
+  cursor: default;
+  padding: 0 1px;
+}
