@@ -119,6 +119,15 @@ export function readObsidianConfig(): Promise<ObsidianConfig> {
   return invoke<ObsidianConfig>("read_obsidian_config");
 }
 
+/** A CSS snippet from `.basalt/snippets/*.css`. */
+export interface CssSnippet {
+  name: string;
+  css: string;
+}
+export function listCssSnippets(): Promise<CssSnippet[]> {
+  return invoke<CssSnippet[]>("list_css_snippets");
+}
+
 /** Raw plugin as read from `.basalt/plugins/<id>/`. */
 export interface PluginInfo {
   id: string;

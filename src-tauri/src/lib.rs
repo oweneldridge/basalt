@@ -1226,6 +1226,40 @@ fn valid_plugin_id(id: &str) -> bool {
         && !id.starts_with('.')
 }
 
+/// A CSS snippet from `.basalt/snippets/*.css` (name = the file stem).
+#[derive(Serialize)]
+struct CssSnippet {
+    name: String,
+    css: String,
+}
+
+/// List the vault's CSS snippets (each capped at 1MB; non-.css files skipped).
+#[tauri::command]
+fn list_css_snippets(window: tauri::Window, state: State<VaultState>) -> Result<Vec<CssSnippet>, String> {
+    let root = current_root(&state, window.label())?;
+    let dir = root.join(".basalt").join("snippets");
+    let mut out = Vec::new();
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Ok(out); // no snippets folder yet
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() || path.extension().and_then(|e| e.to_str()).map(|e| !e.eq_ignore_ascii_case("css")).unwrap_or(true) {
+            continue;
+        }
+        if fs::metadata(&path).map(|m| m.len() > 1_000_000).unwrap_or(true) {
+            continue;
+        }
+        let Ok(css) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        out.push(CssSnippet { name, css });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
 /// List installed Basalt plugins (each folder under `.basalt/plugins/` with a
 /// manifest.json + main.js). Missing/malformed plugins are skipped, not fatal.
 #[tauri::command]
@@ -1342,6 +1376,7 @@ pub fn run() {
             write_note,
             write_canvas,
             write_base,
+            list_css_snippets,
             create_note,
             delete_note,
             rename_note,
