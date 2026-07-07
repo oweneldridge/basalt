@@ -16,6 +16,20 @@ import type { DecorationSet } from "@codemirror/view";
 import { frontmatterRange } from "./regions";
 import { parseFm, setProp, deleteProp, type FmProp } from "../lib/frontmatter";
 
+// Values safe to render in a native number/date control AND to write UNQUOTED.
+// Numbers reject leading zeros (a `007`/zip must stay a string, not lose them);
+// dates must be a REAL calendar date (the native picker can't hold 2026-02-30).
+export function isValidNumber(v: string): boolean {
+  return /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/.test(v) && Number.isFinite(Number(v));
+}
+export function isValidDate(v: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (!m) return false;
+  const [y, mo, d] = [+m[1], +m[2], +m[3]];
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
 class PropertiesWidget extends WidgetType {
   constructor(readonly source: string) {
     super();
@@ -121,8 +135,53 @@ class PropertiesWidget extends WidgetType {
         item.querySelector("input")?.focus();
       };
       values.append(add);
+    } else if (p.kind === "scalar" && p.type === "boolean") {
+      // Typed checkbox — writes an unquoted YAML bool.
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.className = "cm-prop-check";
+      box.checked = /^true$/i.test(p.values[0] ?? "");
+      box.onchange = () =>
+        this.commit(view, (src) => setProp(src, p.key, [box.checked ? "true" : "false"], false, true));
+      values.append(box);
+    } else if (
+      p.kind === "scalar" &&
+      ((p.type === "number" && isValidNumber(p.values[0] ?? "")) ||
+        (p.type === "date" && isValidDate(p.values[0] ?? "")))
+    ) {
+      // Typed number / date input — but ONLY when the stored value is one the
+      // native control can actually hold (an invalid date like 2026-02-30 falls
+      // to the text input below, so the control never renders empty and nulls it).
+      const isDate = p.type === "date";
+      const input = this.valueInput(p.values[0] ?? "");
+      input.type = isDate ? "date" : "number";
+      if (!isDate) input.step = "any";
+      input.classList.add("cm-prop-typed");
+      // Dirty-track so merely tabbing THROUGH the field can't clear the value;
+      // and never write an unvalidated value RAW (WebKitGTK renders type=date as
+      // a free-text field → arbitrary text must be QUOTED, not written verbatim).
+      let dirty = false;
+      input.oninput = () => (dirty = true);
+      const fire = () => {
+        if (!dirty) return;
+        const v = input.value.trim();
+        if (!v) {
+          this.commit(view, (src) => setProp(src, p.key, [], false));
+          return;
+        }
+        const valid = isDate ? isValidDate(v) : isValidNumber(v);
+        this.commit(view, (src) => setProp(src, p.key, [v], false, valid)); // raw iff valid, else quoted
+      };
+      input.onblur = fire;
+      input.onkeydown = (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          input.blur();
+        }
+      };
+      values.append(input);
     } else {
-      // scalar / empty: a single editable value
+      // text scalar / empty: a single editable (quoted) value
       const input = this.valueInput(p.values[0] ?? "");
       const fire = () => this.commit(view, (src) => setProp(src, p.key, [input.value], false));
       input.onblur = fire;

@@ -10,7 +10,58 @@ import {
   setProp,
   deleteProp,
   hasFrontmatter,
+  scalarType,
 } from "./frontmatter";
+
+describe("scalarType (typed properties)", () => {
+  it("infers bool / number / date; a quoted value stays text", () => {
+    expect(scalarType("true")).toBe("boolean");
+    expect(scalarType("false")).toBe("boolean");
+    expect(scalarType("42")).toBe("number");
+    expect(scalarType("-3.14")).toBe("number");
+    expect(scalarType("2026-07-10")).toBe("date");
+    expect(scalarType("hello")).toBe("text");
+    expect(scalarType('"true"')).toBe("text"); // explicitly quoted → string
+    expect(scalarType("'42'")).toBe("text");
+  });
+
+  it("parseFm tags scalar props with their type", () => {
+    const fm = parseFm('---\ndone: true\ncount: 7\ndue: 2026-07-10\nname: "true"\n---\nx')!;
+    const byKey = Object.fromEntries(fm.props.map((p) => [p.key, p.type]));
+    expect(byKey).toEqual({ done: "boolean", count: "number", due: "date", name: "text" });
+  });
+
+  it("setProp raw writes an UNQUOTED typed value (bool/number)", () => {
+    const src = "---\ndone: false\n---\nx";
+    expect(setProp(src, "done", ["true"], false, true)).toContain("done: true");
+    expect(setProp(src, "done", ["true"], false, false)).toContain('done: "true"'); // non-raw quotes it
+  });
+
+  it("a typed edit round-trips: the written value re-parses to the same type", () => {
+    for (const [val, type] of [["true", "boolean"], ["42", "number"], ["2026-07-10", "date"]] as const) {
+      const out = setProp("---\nk: x\n---\nbody", "k", [val], false, true);
+      const p = parseFm(out)!.props.find((pr) => pr.key === "k")!;
+      expect(p.type).toBe(type); // stable widget across the round-trip
+      expect(p.values[0]).toBe(val);
+    }
+  });
+
+  it("a typed edit preserves other keys, comments, and the note body", () => {
+    const src = "---\n# my notes\ndone: false\ntags:\n  - a\n  - b\ntitle: Hello\n---\nBody text";
+    const out = setProp(src, "done", ["true"], false, true);
+    expect(out).toContain("# my notes"); // comment kept
+    expect(out).toContain("title: Hello");
+    expect(out).toContain("  - a"); // list untouched
+    expect(out).toContain("Body text");
+    expect(out).toContain("done: true");
+  });
+
+  it("clearing a typed value writes `key:` (null), not a stray quote", () => {
+    const out = setProp("---\ncount: 7\n---\nx", "count", [], false);
+    expect(out).toContain("count:");
+    expect(out).not.toMatch(/count:\s*["']/);
+  });
+});
 
 describe("parseFm", () => {
   it("parses scalar, inline-array, and block-list props with line spans", () => {
