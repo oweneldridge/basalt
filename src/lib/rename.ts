@@ -171,3 +171,68 @@ export function linkTargetForFormat(
   if (format === "relative" && fromRel) return relativeLinkTarget(fromRel, toRelNoExt);
   return linkTargetFor(toRelNoExt, basenameTaken);
 }
+
+/** Context for a single-pass folder move's link rewrite. The resolvers answer
+ * "what note does this link text point to" in the PRE- and POST-move vault
+ * (both share the SAME content — only paths moved). The optional `att*` fields
+ * mirror this for ATTACHMENTS (image/PDF/etc. targets), which the note index
+ * doesn't cover — needed because a folder RENAME changes the folder segment, so
+ * a folder-qualified `![[proj/pic.png]]` stops resolving once proj is renamed. */
+export interface FolderMoveCtx {
+  resolvePre: (raw: string, fromPath: string) => string | null;
+  resolvePost: (raw: string, fromPath: string) => string | null;
+  /** oldPath → newPath for every note the move relocated. */
+  movedNewPathByOld: Map<string, string>;
+  /** The post-move note at a path (rel + name), or undefined. */
+  noteAt: (path: string) => { rel: string; name: string } | undefined;
+  /** Whether another note (≠ exceptPath) shares `name` in the post-move vault. */
+  nameTaken: (name: string, exceptPath: string) => boolean;
+  format: LinkFormat;
+  // --- attachments (optional) ---
+  resolveAttPre?: (raw: string) => string | null;
+  resolveAttPost?: (raw: string) => string | null;
+  movedAttNewPathByOld?: Map<string, string>;
+  attAt?: (path: string) => { rel: string; name: string } | undefined;
+  attNameTaken?: (name: string, exceptPath: string) => boolean;
+}
+
+/** Build the per-source link mapper for a folder move. It rewrites EXACTLY the
+ * links whose resolution the move changed (the resolver decides — so relative /
+ * absolute / bare / alias forms are handled uniformly; a link that still
+ * resolves to its intended note, e.g. an intra-folder relative link or a bare
+ * shortest link, is left untouched). `sourceOldPath`/`sourcePostPath` are the
+ * source note's pre/post paths; `sourcePostRel` seeds the relative format. */
+export function folderMoveMapper(
+  ctx: FolderMoveCtx,
+  sourceOldPath: string,
+  sourcePostPath: string,
+  sourcePostRel: string,
+): (raw: string) => string | null {
+  return (raw: string): string | null => {
+    const destOld = ctx.resolvePre(raw, sourceOldPath);
+    if (destOld) {
+      const destPost = ctx.movedNewPathByOld.get(destOld) ?? destOld;
+      if (ctx.resolvePost(raw, sourcePostPath) === destPost) return null; // still resolves
+      const dest = ctx.noteAt(destPost);
+      if (!dest) return null;
+      return linkTargetForFormat(
+        ctx.format,
+        dest.rel.replace(/\.md$/i, ""),
+        ctx.nameTaken(dest.name, destPost),
+        sourcePostRel,
+      );
+    }
+    // Not a note target — maybe an attachment (image/PDF/audio/video) that moved.
+    if (ctx.resolveAttPre && ctx.resolveAttPost && ctx.movedAttNewPathByOld && ctx.attAt && ctx.attNameTaken) {
+      const attOld = ctx.resolveAttPre(raw);
+      if (!attOld) return null;
+      const attPost = ctx.movedAttNewPathByOld.get(attOld) ?? attOld;
+      if (ctx.resolveAttPost(raw) === attPost) return null; // still resolves
+      const att = ctx.attAt(attPost);
+      if (!att) return null;
+      // Attachments keep their extension — pass the full rel as the "toRel".
+      return linkTargetForFormat(ctx.format, att.rel, ctx.attNameTaken(att.name, attPost), sourcePostRel);
+    }
+    return null;
+  };
+}
