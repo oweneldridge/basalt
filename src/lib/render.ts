@@ -350,13 +350,22 @@ export function renderMarkdown(src: string): string {
       const callout = CALLOUT.exec(inner[0] ?? "");
       if (callout) {
         const type = callout[1].toLowerCase();
+        const fold = callout[2]; // "", "+" (foldable-open) or "-" (foldable-closed)
         const titleText = callout[3].trim() || callout[1];
         const bodyMd = inner.slice(1).join("\n");
-        parts.push(
-          `<div class="md-callout md-callout-${escapeHtml(type)}"><div class="md-callout-title">${renderInline(
-            titleText,
-          )}</div>${bodyMd.trim() ? `<div class="md-callout-body">${renderMarkdown(bodyMd)}</div>` : ""}</div>`,
-        );
+        const title = `<div class="md-callout-title">${renderInline(titleText)}</div>`;
+        const body = bodyMd.trim() ? `<div class="md-callout-body">${renderMarkdown(bodyMd)}</div>` : "";
+        const cls = `md-callout md-callout-${escapeHtml(type)}`;
+        if (fold) {
+          // Foldable → native <details>; `-` starts collapsed, `+` open.
+          parts.push(
+            `<details class="${cls} md-callout-foldable"${fold === "-" ? "" : " open"}><summary class="md-callout-title">${renderInline(
+              titleText,
+            )}</summary>${body}</details>`,
+          );
+        } else {
+          parts.push(`<div class="${cls}">${title}${body}</div>`);
+        }
       } else {
         parts.push(`<blockquote>${renderMarkdown(inner.join("\n"))}</blockquote>`);
       }

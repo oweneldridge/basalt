@@ -204,3 +204,21 @@ describe("footnotes", () => {
     expect(renderMarkdown("plain text")).not.toContain("footnotes");
   });
 });
+
+describe("foldable callouts", () => {
+  it("renders [!note]- as a collapsed <details> and [!note]+ as open", () => {
+    const closed = renderMarkdown("> [!note]- Title\n> body text");
+    expect(closed).toContain("<details");
+    expect(closed).toContain("md-callout-foldable");
+    expect(closed).not.toMatch(/<details[^>]*\sopen/); // collapsed
+    expect(closed).toContain("<summary");
+
+    const open = renderMarkdown("> [!tip]+ Heads up\n> content");
+    expect(open).toMatch(/<details[^>]*\sopen/);
+  });
+  it("a plain callout (no +/-) stays a non-foldable div", () => {
+    const out = renderMarkdown("> [!info] Note\n> body");
+    expect(out).toContain('class="md-callout md-callout-info"');
+    expect(out).not.toContain("<details");
+  });
+});

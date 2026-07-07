@@ -12,6 +12,8 @@ interface Props {
   /** Currently-enabled plugin ids. */
   enabledPlugins: string[];
   onTogglePlugin: (info: PluginInfo, enabled: boolean) => void;
+  readableWidth: boolean;
+  onReadableWidth: (on: boolean) => void;
   onClose: () => void;
 }
 
@@ -39,6 +41,8 @@ export function SettingsModal({
   plugins,
   enabledPlugins,
   onTogglePlugin,
+  readableWidth,
+  onReadableWidth,
   onClose,
 }: Props) {
   const enabled = new Set(enabledPlugins);
@@ -84,6 +88,14 @@ export function SettingsModal({
                 </button>
               ))}
             </div>
+          </div>
+          <div className="settings-row">
+            <span className="settings-row-label">Readable line length</span>
+            <input
+              type="checkbox"
+              checked={readableWidth}
+              onChange={(e) => onReadableWidth(e.target.checked)}
+            />
           </div>
           <p className="settings-hint">
             “System” follows your OS appearance. Stored per app, not in the vault.
