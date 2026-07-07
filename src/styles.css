@@ -2067,3 +2067,9 @@ button.primary:hover {
   cursor: default;
   padding: 0 1px;
 }
+
+/* ------- Tab drag & drop ------- */
+.tab[draggable="true"] { cursor: grab; }
+.tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
+.tab-drop-end { display: inline-block; width: 0; }
+.tab-drop-end.active { width: 2px; align-self: stretch; background: var(--accent); margin: 4px 0; }
