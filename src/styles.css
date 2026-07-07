@@ -1990,3 +1990,10 @@ button.primary:hover {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
+
+/* ------- Status bar word count ------- */
+.status-count {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-right: 12px;
+}

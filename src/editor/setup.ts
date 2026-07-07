@@ -131,6 +131,17 @@ const themeCompartment = new Compartment();
 // Plugin-contributed CM6 extensions live in a compartment so enabling/disabling
 // a plugin can add/remove them from LIVE editors without a remount.
 const pluginCompartment = new Compartment();
+// Spellcheck lives in its own compartment so it can be toggled without a remount.
+const spellcheckCompartment = new Compartment();
+
+/** Toggle native spellcheck on a live editor. */
+export function setSpellcheck(view: EditorView, on: boolean): void {
+  view.dispatch({
+    effects: spellcheckCompartment.reconfigure(
+      EditorView.contentAttributes.of({ spellcheck: on ? "true" : "false" }),
+    ),
+  });
+}
 
 /** Swap the editor theme between dark and light without rebuilding the editor. */
 export function setEditorTheme(view: EditorView, dark: boolean): void {
@@ -205,6 +216,7 @@ export function createEditorState(
   sourceMode = false,
   dark = true,
   selfRel = "",
+  spellcheck = true,
 ): EditorState {
   const extensions: Extension[] = [
     notePathFacet.of(selfRel),
@@ -226,12 +238,12 @@ export function createEditorState(
     indentUnit.of("\t"),
     wrapSelectionOnType,
     pasteLink,
-    // Native spellcheck/autocorrect in the editor, like Obsidian.
-    EditorView.contentAttributes.of({
-      spellcheck: "true",
-      autocorrect: "on",
-      autocapitalize: "on",
-    }),
+    // Native autocorrect/-capitalize (static); spellcheck is in a compartment
+    // so it can be toggled live.
+    EditorView.contentAttributes.of({ autocorrect: "on", autocapitalize: "on" }),
+    spellcheckCompartment.of(
+      EditorView.contentAttributes.of({ spellcheck: spellcheck ? "true" : "false" }),
+    ),
     markdown({ base: markdownLanguage, codeLanguages: languages, extensions: GFM }),
     basaltHighlight,
     themeCompartment.of(basaltThemeFor(dark)),
