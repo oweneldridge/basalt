@@ -55,7 +55,7 @@ import {
   saveEnabled,
   type HostDeps,
 } from "./lib/plugins";
-import { listPlugins, writePluginData, listCssSnippets, type PluginInfo } from "./lib/vault";
+import { listPlugins, writePluginData, listCssSnippets, deleteFolder, removeEmptyFolder, listForeignFiles, listSubfolders, createFolder, type PluginInfo } from "./lib/vault";
 import type { EditorApi } from "./components/EditorPane";
 import type { NoteRef } from "./editor/wikilink";
 import { clearImageCache, resolveImage } from "./lib/assets";
@@ -139,6 +139,12 @@ interface ActiveNote {
 /** One editor pane: its own tab set, the live (active) note, and that note's
  * loaded content. Multiple panes = multiple independently-live editors. */
 const isMac = /Mac/.test(navigator.platform);
+
+/** Keep only pins whose tab survived; drop the field when none did. */
+function prunePins(pane: Pane, keep: string[]): string[] | undefined {
+  const p = pane.pinned?.filter((x) => keep.includes(x));
+  return p && p.length ? p : undefined;
+}
 
 interface Pane {
   id: string;
@@ -330,6 +336,8 @@ export default function App() {
   const [folderMenu, setFolderMenu] = useState<{ folderRel: string; x: number; y: number } | null>(null);
   // Parent rel for a pending "New folder…" prompt ("" = vault root).
   const [subfolderParent, setSubfolderParent] = useState<string | null>(null);
+  // Folder rel pending a "Rename folder…" prompt.
+  const [renameFolderTarget, setRenameFolderTarget] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<{ path: string; rel: string } | null>(null);
 
   const index = useRef(new VaultIndex());
@@ -502,8 +510,11 @@ export default function App() {
         }
       } catch (e) {
         // Keep the edit pending — but never clobber a NEWER edit typed during
-        // the failed write.
-        if (!pending.current.has(path)) pending.current.set(path, doc);
+        // the failed write, and never resurrect pending for a note that has
+        // been deleted meanwhile (a phantom entry would block vault switches).
+        if (!pending.current.has(path) && notesRef.current.some((n) => n.path === path)) {
+          pending.current.set(path, doc);
+        }
         setSaveError(String(e));
       } finally {
         setSaving(false);
@@ -549,7 +560,9 @@ export default function App() {
           }
         }
       } catch (e) {
-        if (!pending.current.has(path)) pending.current.set(path, doc);
+        if (!pending.current.has(path) && attachmentsRef.current.some((a) => a.path === path)) {
+          pending.current.set(path, doc);
+        }
         setSaveError(String(e));
       } finally {
         setSaving(false);
@@ -1002,9 +1015,9 @@ export default function App() {
         // truncate on disk).
         const idx = pane.tabs.indexOf(pane.active);
         toLoad.push({ id, neighbor: keep[Math.min(idx, keep.length - 1)] });
-        nextPanes[id] = { ...pane, tabs: keep, active: null, doc: "", scrollToLine: undefined };
+        nextPanes[id] = { ...pane, tabs: keep, pinned: prunePins(pane, keep), active: null, doc: "", scrollToLine: undefined };
       } else {
-        nextPanes[id] = { ...pane, tabs: keep };
+        nextPanes[id] = { ...pane, tabs: keep, pinned: prunePins(pane, keep) };
       }
     }
     if (!changed) return;
@@ -2439,6 +2452,7 @@ export default function App() {
             tabs: pane.tabs.map((p) => (p === oldPath ? newPath : p)),
             active: pane.active === oldPath ? newPath : pane.active,
             doc: pane.active === oldPath ? renamedContent : pane.doc,
+            pinned: pane.pinned?.map((p) => (p === oldPath ? newPath : p)),
           };
         };
         panesRef.current = Object.fromEntries(
@@ -2500,6 +2514,121 @@ export default function App() {
       }
     },
     [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane],
+  );
+
+  // Delete a whole folder to the vault trash (recoverable). All notes under it
+  // leave the index/state; the prune effect closes their tabs.
+  const handleDeleteFolder = useCallback(
+    async (folderRel: string) => {
+      const prefix = `${folderRel}/`;
+      const inside = notesRef.current.filter((n) => n.rel.startsWith(prefix));
+      // Editable viewers (.canvas/.base) share the pending/conflict machinery —
+      // they get the SAME flush/conflict discipline as notes.
+      const viewers = attachmentsRef.current.filter((a) => a.rel.startsWith(prefix) && isViewerPath(a.path));
+      const all = [...inside, ...viewers];
+      const ok = await confirm(
+        `Move the folder "${folderRel}" (${inside.length} ${inside.length === 1 ? "note" : "notes"} + any attachments) to the vault trash?`,
+        { title: "Delete folder", kind: "warning" },
+      );
+      if (!ok) return;
+      try {
+        // Flush unsaved edits FIRST so the trashed copies hold the latest
+        // content (delete is recoverable; a dropped pending edit is not).
+        for (const f of all) {
+          if (conflictsRef.current.has(f.path)) {
+            setSaveError(`Resolve the "Changed on disk" conflict in ${f.name} before deleting this folder`);
+            return;
+          }
+          await flushPath(f.path);
+        }
+        // flushPath never throws on a failed write — it leaves the doc in
+        // `pending`. ABORT if anything is still unsaved (incl. edits typed
+        // during the flushes) rather than trash a stale copy.
+        if (all.some((f) => pending.current.has(f.path))) {
+          setSaveError("Couldn't delete folder: unsaved changes failed to save");
+          return;
+        }
+        for (const f of all) {
+          const t = saveTimers.current.get(f.path);
+          if (t !== undefined) window.clearTimeout(t);
+          saveTimers.current.delete(f.path);
+          pending.current.delete(f.path);
+          clearConflict(f.path);
+        }
+        await deleteFolder(folderRel);
+        for (const f of all) {
+          selfWrites.current.delete(f.rel);
+          if (vaultRef.current) void clearSnapshots(vaultRef.current, f.rel);
+        }
+        for (const n of inside) index.current.removeNote(n.path);
+        setNotes((prev) => prev.filter((n) => !n.rel.startsWith(prefix)));
+        setAttachmentsList((prev) => prev.filter((a) => !a.rel.startsWith(prefix)));
+        recents.current = recents.current.filter((r) => !r.startsWith(prefix));
+        bumpStructure();
+      } catch (e) {
+        setSaveError(`Couldn't delete folder: ${e}`);
+      }
+    },
+    [bumpStructure, clearConflict, flushPath],
+  );
+
+  // Rename a folder by renaming every note inside (each rename rewrites links
+  // vault-wide, so backlinks stay correct), recreating empty subfolders under
+  // the new name. Refused for case-only renames and when the folder holds any
+  // non-note file on disk — either would silently split the folder.
+  const handleRenameFolder = useCallback(
+    async (folderRel: string, newFolderRel: string) => {
+      const prefix = `${folderRel}/`;
+      if (newFolderRel === folderRel || !newFolderRel) return;
+      if (`${newFolderRel}/`.startsWith(prefix)) {
+        setSaveError("Cannot move a folder into itself");
+        return;
+      }
+      // Case-only rename (notes → Notes): on a case-insensitive filesystem the
+      // per-note moves silently no-op — refuse with a workable recipe.
+      if (normalizeName(newFolderRel) === normalizeName(folderRel)) {
+        setSaveError("Case-only folder renames aren't supported — rename to a different name first, then back");
+        return;
+      }
+      // Refuse when the folder holds ANY non-Markdown file (checked on DISK,
+      // not just the attachment registry) — a rename that moved only the notes
+      // would silently split the folder in two.
+      const foreign = await listForeignFiles(folderRel).catch(() => [] as string[]);
+      if (foreign.length > 0) {
+        setSaveError(
+          `This folder contains non-note files (${foreign
+            .slice(0, 3)
+            .map((f) => f.split("/").pop())
+            .join(", ")}${foreign.length > 3 ? ", …" : ""}) — move them first, then rename the folder`,
+        );
+        return;
+      }
+      // Snapshot subfolder structure so EMPTY subfolders survive the rename.
+      const subs = await listSubfolders(folderRel).catch(() => [] as string[]);
+      const inside = notesRef.current.filter((n) => n.rel.startsWith(prefix));
+      if (inside.length > 3) showNotice(`Renaming ${inside.length} notes…`);
+      for (const n of inside) {
+        const rest = n.rel.slice(prefix.length).replace(/\.md$/i, "");
+        // Sequential on purpose: each rename flushes + rewrites links.
+        await handleRenameNote(n.path, `${newFolderRel}/${rest}`);
+      }
+      // Recreate subfolders (now possibly empty) under the new name.
+      for (const sub of subs) {
+        const rest = sub.slice(prefix.length - 1).replace(/^[/\\]+/, "");
+        if (rest) await createFolder(`${newFolderRel}/${rest}`).catch(() => {});
+      }
+      // handleRenameNote reports its own errors without throwing — check the
+      // outcome and say so if some notes could not be moved (half-renamed).
+      const left = notesRef.current.filter((n) => n.rel.startsWith(prefix)).length;
+      if (left > 0) {
+        setSaveError(`Folder partially renamed — ${left} ${left === 1 ? "note" : "notes"} could not be moved (see the error above)`);
+      } else {
+        // The old folder should now be empty — clean it up (no-op if not).
+        void removeEmptyFolder(folderRel).catch(() => {});
+      }
+      bumpStructure();
+    },
+    [handleRenameNote, bumpStructure, showNotice],
   );
 
   // Move a note into a folder (rel, "" = root) by renaming — reuses the
@@ -3080,8 +3209,46 @@ export default function App() {
             >
               New folder…
             </button>
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const folder = folderMenu.folderRel;
+                setFolderMenu(null);
+                setRenameFolderTarget(folder);
+              }}
+            >
+              Rename folder…
+            </button>
+            <button
+              className="ctx-item danger"
+              onClick={() => {
+                const folder = folderMenu.folderRel;
+                setFolderMenu(null);
+                void handleDeleteFolder(folder);
+              }}
+            >
+              Delete folder
+            </button>
           </div>
         </div>
+      )}
+      {renameFolderTarget !== null && (
+        <PromptModal
+          title="Rename folder (edit the path to move it)"
+          defaultValue={renameFolderTarget}
+          confirmLabel="Rename"
+          onConfirm={(value) => {
+            const from = renameFolderTarget;
+            setRenameFolderTarget(null);
+            const to = value.trim().replace(/^[\\/]+|[\\/]+$/g, "");
+            if (!to || /[#^\[\]|]/.test(to)) {
+              if (to) setSaveError("Folder names cannot contain # ^ [ ] |");
+              return;
+            }
+            void handleRenameFolder(from, to);
+          }}
+          onClose={() => setRenameFolderTarget(null)}
+        />
       )}
       {subfolderParent !== null && (
         <PromptModal
