@@ -99,3 +99,31 @@ test("editor right-click menu: Bold wraps the selection; Cut/Copy gate on select
   await expect(page.locator(".ctx-item", { hasText: "Cut" })).toBeDisabled();
   await expect(page.locator(".ctx-item", { hasText: "Paste" })).toBeEnabled();
 });
+
+test("appearance settings change editor font size and accent color", async ({ page }) => {
+  await page.evaluate(() => {
+    Object.keys(localStorage).filter((k) => k.includes("font") || k.includes("accent")).forEach((k) => localStorage.removeItem(k));
+  });
+  await page.reload();
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  await expect(page.locator(".cm-editor")).toBeVisible();
+  await page.keyboard.press("Meta+,");
+  await expect(page.locator(".settings")).toBeVisible();
+  // Font size → the editor scales.
+  await page.locator('input[aria-label="Font size"]').fill("22");
+  await expect(page.locator(".cm-editor")).toHaveCSS("font-size", "22px");
+  // Accent → the --accent custom property updates (native setter so React sees it).
+  await page.locator('input[aria-label="Accent color"]').evaluate((el: HTMLInputElement) => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    setter.call(el, "#ff0000");
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect
+    .poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()))
+    .toBe("#ff0000");
+  // Reset clears the override.
+  await page.locator(".settings-reset").click();
+  await expect
+    .poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()))
+    .not.toBe("#ff0000");
+});

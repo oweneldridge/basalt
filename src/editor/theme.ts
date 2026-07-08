@@ -13,7 +13,7 @@ const themeSpec = {
       color: "var(--text)",
       backgroundColor: "var(--bg-editor)",
       height: "100%",
-      fontSize: "16px",
+      fontSize: "var(--font-size, 16px)",
     },
     // NOTE: never set max-width/margin on .cm-content — it desyncs CodeMirror's
     // click→position mapping (posAtCoords). And keep horizontal padding here at 0,

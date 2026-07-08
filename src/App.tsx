@@ -387,6 +387,22 @@ export default function App() {
   useEffect(() => localStorage.setItem("basalt-vim", String(vim)), [vim]);
   const [rtl, setRtl] = useState(() => localStorage.getItem("basalt-rtl") === "true");
   useEffect(() => localStorage.setItem("basalt-rtl", String(rtl)), [rtl]);
+  // Appearance: base font size (px) + accent override ("" = theme default).
+  const [fontSize, setFontSize] = useState(() => Number(localStorage.getItem("basalt-font-size")) || 16);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--font-size", `${fontSize}px`);
+    localStorage.setItem("basalt-font-size", String(fontSize));
+  }, [fontSize]);
+  const [accent, setAccent] = useState(() => localStorage.getItem("basalt-accent") ?? "");
+  useEffect(() => {
+    if (accent) {
+      document.documentElement.style.setProperty("--accent", accent);
+      localStorage.setItem("basalt-accent", accent);
+    } else {
+      document.documentElement.style.removeProperty("--accent");
+      localStorage.removeItem("basalt-accent");
+    }
+  }, [accent]);
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem("basalt-spellcheck") !== "false");
   useEffect(() => {
     localStorage.setItem("basalt-spellcheck", String(spellcheck));
@@ -3966,6 +3982,10 @@ export default function App() {
           onVim={setVim}
           rtl={rtl}
           onRtl={setRtl}
+          fontSize={fontSize}
+          onFontSize={setFontSize}
+          accent={accent || getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#a98be0"}
+          onAccent={setAccent}
           cssSnippets={cssSnippets.map((s) => s.name)}
           disabledSnippets={disabledSnippets}
           onToggleSnippet={toggleSnippet}
