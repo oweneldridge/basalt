@@ -2276,3 +2276,18 @@ button.primary:hover {
 .stacked-col.active .stacked-col-head { color: var(--text); }
 .stacked-col-head:hover { background: var(--bg-elev); color: var(--text); }
 .stacked-col-body { flex: 1; overflow-y: auto; min-height: 0; }
+
+/* ------- Slides / presentation ------- */
+.slides-overlay { position: fixed; inset: 0; z-index: 60; background: var(--bg); display: flex; flex-direction: column; }
+.slides-bar { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+.slides-count { font-size: 13px; color: var(--text-muted); }
+.slides-close { background: transparent; border: none; color: var(--text-muted); font-size: 16px; cursor: pointer; }
+.slides-close:hover { color: var(--text); }
+.slides-stage { flex: 1; display: flex; align-items: stretch; min-height: 0; }
+.slides-nav { flex: 0 0 auto; background: transparent; border: none; color: var(--text-faint); font-size: 40px; width: 64px; cursor: pointer; }
+.slides-nav:hover:not(:disabled) { color: var(--accent); }
+.slides-nav:disabled { opacity: 0.25; cursor: default; }
+.slides-content { flex: 1; overflow-y: auto; min-height: 0; display: flex; justify-content: center; }
+.slides-content .reading-view, .slides-content > * { max-width: 900px; width: 100%; padding: 3vh 4vw; font-size: 1.35rem; }
+.slides-content h1 { font-size: 2.4em; }
+.slides-content h2 { font-size: 1.9em; }

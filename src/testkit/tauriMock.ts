@@ -19,6 +19,7 @@ function seed(rel: string, content: string) {
 seed("Welcome.md", "# Welcome\n\nThis is the mock vault used for automated UI tests.\n\nSee [[Ideas]] and the [[Projects/Roadmap]].\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n");
 seed("Ideas.md", "# Ideas\n\n- first\n- second\n  - nested\n\n#tag/one\n");
 seed("Projects/Roadmap.md", "# Roadmap\n\n- [ ] ship v0.1.1\n- [x] release v0.1.0\n");
+seed("Deck.md", "# Slide One\n\nintro\n\n---\n\n# Slide Two\n\nbody\n\n---\n\n# Slide Three\n\nend\n");
 
 const config: ObsidianConfig = { newLinkFormat: "shortest" };
 
