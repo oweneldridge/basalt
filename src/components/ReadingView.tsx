@@ -15,6 +15,9 @@ interface Props {
   onOpenUrl: (url: string) => void;
   /** Resolve a vault image reference to a displayable URL. */
   resolveImage: (target: string) => Promise<string | null>;
+  /** Toggle the task checkbox on the given 0-based source line (interactive
+   * checkboxes in reading mode, like Obsidian). */
+  onToggleTask: (line: number) => void;
   /** Re-render (e.g. mermaid theme) when the appearance flips. */
   dark: boolean;
 }
@@ -23,7 +26,7 @@ interface Props {
  * editor is virtualized, so it can't show or print the whole document). The
  * rendered HTML is built by the pure, escaped renderer in lib/render.ts; here
  * we resolve vault images and delegate link clicks to the app. */
-export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveImage, dark }: Props) {
+export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveImage, onToggleTask, dark }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -136,6 +139,15 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
 
   const onClick = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
+    // Interactive task checkbox: toggle the source line (Obsidian behavior).
+    if (target instanceof HTMLInputElement && target.classList.contains("md-task-check")) {
+      const line = Number(target.dataset.taskLine);
+      if (Number.isInteger(line)) {
+        e.preventDefault();
+        onToggleTask(line);
+      }
+      return;
+    }
     const wiki = target.closest<HTMLElement>(".md-wikilink");
     if (wiki) {
       e.preventDefault();

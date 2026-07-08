@@ -19,7 +19,7 @@ import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import {
   autocompletion,
 } from "@codemirror/autocomplete";
-import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
+import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { normalizeName, wikilinkRegex } from "../lib/markdown";
 import { linkTargetForFormat, type LinkFormat } from "../lib/rename";
 import { isInExcludedRegion, treeChanged } from "./regions";
@@ -158,36 +158,40 @@ function wikilinkCompletions(opts: WikilinkCompletionOptions) {
     }
 
     const notes = opts.getNotes();
-    // NOTE: do NOT return a `to` past the cursor — CodeMirror silently rejects
-    // such results and the popup never shows. Any closer already present (from
-    // closeBrackets auto-closing `[[` to `[[]]`, or editing an existing link)
-    // is absorbed at APPLY time instead, so `Name]]` can't become `[[Name]]]]`.
-    return {
-      from: before.from + 2,
-      options: notes.map((note) => ({
-        label: note.name,
-        detail: note.alias ? `alias of ${note.alias}` : note.rel,
-        type: note.alias ? "keyword" : "text",
-        apply: (view: EditorView, _completion: unknown, from: number, to: number) => {
-          // An alias resolves by its own text — insert it verbatim. Otherwise
-          // compute the link per the vault's newLinkFormat (read at apply time).
-          const relNoExt = note.rel.replace(/\.md$/i, "");
-          const taken =
-            notes.filter((n) => normalizeName(n.name) === normalizeName(note.name)).length > 1;
-          const target = note.alias
-            ? note.name
-            : linkTargetForFormat(opts.getLinkFormat(), relNoExt, taken, opts.getActiveRel());
-          const after = view.state.sliceDoc(to, to + 2);
-          const closeLen = after === "]]" ? 2 : after.startsWith("]") ? 1 : 0;
-          view.dispatch({
-            changes: { from, to: to + closeLen, insert: `${target}]]` },
-            selection: { anchor: from + target.length + 2 },
-            userEvent: "input.complete",
-          });
-        },
-      })),
-      filter: true,
+    // Insert `target]]`, absorbing any closer already present at APPLY time
+    // (so `Name]]` can't become `[[Name]]]]`). NOTE: never return a `to` past
+    // the cursor — CodeMirror silently rejects such results (popup never shows).
+    const insert = (target: string) => (view: EditorView, _c: unknown, from: number, to: number) => {
+      const after = view.state.sliceDoc(to, to + 2);
+      const closeLen = after === "]]" ? 2 : after.startsWith("]") ? 1 : 0;
+      view.dispatch({
+        changes: { from, to: to + closeLen, insert: `${target}]]` },
+        selection: { anchor: from + target.length + 2 },
+        userEvent: "input.complete",
+      });
     };
+    const options: Completion[] = notes.map((note) => ({
+      label: note.name,
+      detail: note.alias ? `alias of ${note.alias}` : note.rel,
+      type: note.alias ? "keyword" : "text",
+      apply: (view: EditorView, _completion: unknown, from: number, to: number) => {
+        // An alias resolves by its own text — insert it verbatim. Otherwise
+        // compute the link per the vault's newLinkFormat (read at apply time).
+        const relNoExt = note.rel.replace(/\.md$/i, "");
+        const taken = notes.filter((n) => normalizeName(n.name) === normalizeName(note.name)).length > 1;
+        const target = note.alias
+          ? note.name
+          : linkTargetForFormat(opts.getLinkFormat(), relNoExt, taken, opts.getActiveRel());
+        insert(target)(view, _completion, from, to);
+      },
+    }));
+    // Offer "Create <typed name>" when nothing matches exactly (Obsidian). The
+    // note is created lazily when the inserted `[[name]]` link is clicked.
+    const typed = before.text.slice(2).trim();
+    if (typed && !notes.some((n) => normalizeName(n.name) === normalizeName(typed))) {
+      options.push({ label: typed, detail: "Create new note", type: "text", boost: -99, apply: insert(typed) });
+    }
+    return { from: before.from + 2, options, filter: true };
   };
 }
 

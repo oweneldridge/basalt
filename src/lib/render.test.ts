@@ -1,3 +1,4 @@
+import { toggleTaskLine } from "./render";
 // Markdown→HTML rendering for Reading mode / export. Output is inserted via
 // innerHTML, so escaping is security-critical and gets first-class coverage.
 import { describe, expect, it } from "vitest";
@@ -94,8 +95,8 @@ describe("blocks", () => {
   it("bullet list with task checkboxes", () => {
     const html = renderMarkdown("- a\n- [ ] todo\n- [x] done");
     expect(html).toContain("<ul><li>a</li>");
-    expect(html).toContain('<li class="md-task"><input type="checkbox" disabled /> todo</li>');
-    expect(html).toContain('<input type="checkbox" disabled checked /> done');
+    expect(html).toContain('<li class="md-task"><input type="checkbox" class="md-task-check" data-task-line="1" /> todo</li>');
+    expect(html).toContain('data-task-line="2" checked /> done');
   });
   it("nested lists", () => {
     const html = renderMarkdown("- a\n  - b\n- c");
@@ -270,5 +271,18 @@ describe("media embeds", () => {
     // notes still transclude, images still img
     expect(renderMarkdown("![[Some Note]]")).toContain("data-basalt-embed");
     expect(renderMarkdown("![[pic.png]]")).toContain("data-basalt-img");
+  });
+});
+
+describe("toggleTaskLine", () => {
+  it("flips an unchecked task to checked and back, on the exact line", () => {
+    const doc = "# H\n\n- [ ] one\n- [x] two\nplain";
+    const a = toggleTaskLine(doc, 2)!;
+    expect(a.split("\n")[2]).toBe("- [x] one");
+    expect(toggleTaskLine(a, 3)!.split("\n")[3]).toBe("- [ ] two");
+  });
+  it("returns null for a non-task line or out of range", () => {
+    expect(toggleTaskLine("- [ ] a", 1)).toBeNull();
+    expect(toggleTaskLine("plain text", 0)).toBeNull();
   });
 });
