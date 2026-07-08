@@ -80,9 +80,14 @@ A follow-up pass closed ~17 more MEDIUM/LOW gaps from the list below:
   (A `sort` control was deliberately NOT shipped — Obsidian documents no
   per-view `sort` key, so writing one would corrupt the shared `.base`.)
 
+- **Linked panes** — a 🔗 per-pane toggle; a linked pane follows notes opened
+  in other panes.
+- **Stacked tab groups** — a ▤ toggle spreads a pane's open tabs as read-only
+  reading-view columns (the "see all open notes" overview).
+
 Still open (larger): bookmarks create/edit (deferred by design — writes
 `.obsidian/`), search `line:` operator, deeper Bases editing (nested filters,
-formulas, multi-key), linked panes, stacked tabs, slides, audio recorder.
+formulas, multi-key), inline-editable stacked columns, slides, audio recorder.
 
 ## Scored matrix
 
