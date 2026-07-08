@@ -47,6 +47,12 @@ interface Props {
   onVim: (on: boolean) => void;
   rtl: boolean;
   onRtl: (on: boolean) => void;
+  fontSize: number;
+  onFontSize: (px: number) => void;
+  /** Current accent color as a hex string (the effective value for the picker). */
+  accent: string;
+  /** Set the accent override; "" resets to the theme default. */
+  onAccent: (hex: string) => void;
   /** Palette commands (id + label) for hotkey assignment. */
   commands: { id: string; label: string }[];
   hotkeys: Bindings;
@@ -90,6 +96,10 @@ export function SettingsModal({
   onVim,
   rtl,
   onRtl,
+  fontSize,
+  onFontSize,
+  accent,
+  onAccent,
   commands,
   hotkeys,
   onSetHotkey,
@@ -183,6 +193,35 @@ export function SettingsModal({
           <div className="settings-row">
             <span className="settings-row-label">Right-to-left (RTL)</span>
             <input type="checkbox" checked={rtl} onChange={(e) => onRtl(e.target.checked)} />
+          </div>
+          <div className="settings-row">
+            <span className="settings-row-label">Font size</span>
+            <span className="settings-inline">
+              <input
+                type="range"
+                min={12}
+                max={24}
+                step={1}
+                value={fontSize}
+                onChange={(e) => onFontSize(Number(e.target.value))}
+                aria-label="Font size"
+              />
+              <span className="settings-num">{fontSize}px</span>
+            </span>
+          </div>
+          <div className="settings-row">
+            <span className="settings-row-label">Accent color</span>
+            <span className="settings-inline">
+              <input
+                type="color"
+                value={accent}
+                onChange={(e) => onAccent(e.target.value)}
+                aria-label="Accent color"
+              />
+              <button className="settings-reset" onClick={() => onAccent("")}>
+                Reset
+              </button>
+            </span>
           </div>
           <p className="settings-hint">
             “System” follows your OS appearance. Stored per app, not in the vault.
