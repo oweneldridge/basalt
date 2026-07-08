@@ -64,6 +64,7 @@ import { clearImageCache, resolveImage } from "./lib/assets";
 import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { Ribbon } from "./components/Ribbon";
+import { WorkspacesModal } from "./components/WorkspacesModal";
 import { EditorPane } from "./components/EditorPane";
 import { RightPanel, type RightTab } from "./components/RightPanel";
 import { TabBar, type TabItem } from "./components/TabBar";
@@ -160,7 +161,7 @@ interface Pane {
   pinned?: string[];
 }
 
-type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | "templates" | "history" | null;
+type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | "templates" | "history" | "workspaces" | null;
 
 interface AppCommand {
   id: string;
@@ -177,12 +178,27 @@ const rightTabKey = (vault: string) => `basalt.rightTab.${vault}`;
 // Layout is per-WINDOW so two windows on the same vault don't clobber each
 // other's tabs (see lib/recentVaults.ts::workspaceKey).
 const workspaceKey = (vault: string) => wsKey(vault, WINDOW_LABEL);
+/** Named saved workspaces (Obsidian's Workspaces plugin), per vault. */
+const namedWsKey = (vault: string) => `basalt.workspaces.${vault}`;
 
 /** The serializable shape of a workspace (no live doc — restored from disk). */
 interface SavedWorkspace {
   layout: LayoutNode;
   panes: Record<string, { tabs: string[]; active: string | null; pinned?: string[] }>;
   focusedId: string | null;
+}
+
+function loadNamedWorkspaces(vault: string): Record<string, SavedWorkspace> {
+  try {
+    const raw = localStorage.getItem(namedWsKey(vault));
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, SavedWorkspace>;
+    }
+  } catch {
+    /* corrupted — start fresh */
+  }
+  return {};
 }
 
 function loadRecents(vault: string): string[] {
@@ -1020,6 +1036,57 @@ export default function App() {
       /* ignore */
     }
   }, [layout, panes, focusedId]);
+
+  // Named workspaces (save/switch layouts) — Obsidian's Workspaces plugin.
+  const [namedWorkspaces, setNamedWorkspaces] = useState<Record<string, SavedWorkspace>>({});
+  useEffect(() => {
+    setNamedWorkspaces(vault ? loadNamedWorkspaces(vault) : {});
+  }, [vault]);
+  const persistNamedWorkspaces = useCallback((next: Record<string, SavedWorkspace>) => {
+    setNamedWorkspaces(next);
+    const v = vaultRef.current;
+    if (v) {
+      try {
+        localStorage.setItem(namedWsKey(v), JSON.stringify(next));
+      } catch {
+        /* quota — non-fatal */
+      }
+    }
+  }, []);
+  /** The current layout as a serializable workspace. */
+  const captureWorkspace = useCallback((): SavedWorkspace | null => {
+    if (!layoutRef.current) return null;
+    const projected: SavedWorkspace["panes"] = {};
+    for (const [id, p] of Object.entries(panesRef.current)) {
+      projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned };
+    }
+    return { layout: layoutRef.current, panes: projected, focusedId: focusedIdRef.current };
+  }, []);
+  const saveWorkspaceAs = useCallback(
+    (name: string) => {
+      const ws = captureWorkspace();
+      if (!name.trim() || !ws) return;
+      persistNamedWorkspaces({ ...namedWorkspaces, [name.trim()]: ws });
+    },
+    [captureWorkspace, namedWorkspaces, persistNamedWorkspaces],
+  );
+  const deleteWorkspace = useCallback(
+    (name: string) => {
+      const next = { ...namedWorkspaces };
+      delete next[name];
+      persistNamedWorkspaces(next);
+    },
+    [namedWorkspaces, persistNamedWorkspaces],
+  );
+  const loadWorkspace = useCallback(
+    async (name: string) => {
+      const ws = namedWorkspaces[name];
+      if (!ws) return;
+      await flushAll(); // don't lose unsaved edits from the current layout
+      await restoreWorkspace(JSON.stringify(ws), notesRef.current, attachmentsRef.current);
+    },
+    [namedWorkspaces, flushAll, restoreWorkspace],
+  );
 
   // Prune tabs whose note no longer exists (deleted/moved) across ALL panes; a
   // pane that empties is removed from the layout. A pane's active note is kept
@@ -3059,6 +3126,7 @@ export default function App() {
         if (all.length) void openNoteByPath(all[Math.floor(Math.random() * all.length)].path);
       } },
       { id: "daily-note", label: "Open today's daily note", hint: "creates it from your template if missing", run: () => void openDailyNote() },
+      { id: "workspaces", label: "Manage workspaces…", hint: "save / switch named layouts", run: () => setModal("workspaces") },
       { id: "source-mode", label: "Toggle Source mode", hint: "raw Markdown ↔ Live Preview", run: toggleSourceMode },
       { id: "reading-mode", label: "Toggle Reading view", hint: "rendered, read-only ↔ edit", run: toggleReading },
       { id: "export-html", label: "Export note as HTML…", hint: "self-contained file", run: () => void handleExportHtml() },
@@ -3513,6 +3581,18 @@ export default function App() {
               return next;
             })
           }
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === "workspaces" && (
+        <WorkspacesModal
+          names={Object.keys(namedWorkspaces).sort((a, b) => a.localeCompare(b))}
+          onSave={saveWorkspaceAs}
+          onLoad={(name) => {
+            setModal(null);
+            void loadWorkspace(name);
+          }}
+          onDelete={deleteWorkspace}
           onClose={() => setModal(null)}
         />
       )}
