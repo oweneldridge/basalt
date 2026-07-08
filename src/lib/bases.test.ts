@@ -3,6 +3,7 @@ import {
   parseProperties,
   parseBase,
   serializeBase,
+  validateExpr,
   asFlatFilter,
   fromFlat,
   evalExpr,
@@ -727,5 +728,23 @@ describe("Bases formula authoring", () => {
     const def = parseBase(src)!;
     def.views[0] = { ...def.views[0], name: "Renamed" }; // edit something else
     expect(serializeBase(def)).toContain("# keep me");
+  });
+});
+
+describe("validateExpr", () => {
+  it("passes valid expressions (empty = valid)", () => {
+    expect(validateExpr("")).toBeNull();
+    expect(validateExpr("price / quantity")).toBeNull();
+    expect(validateExpr('if(file.size > 0, "big", "empty")')).toBeNull();
+    expect(validateExpr("file.name.contains(\"x\")")).toBeNull();
+  });
+  it("flags a syntax error", () => {
+    expect(validateExpr("1 +")).toBeTruthy();
+    expect(validateExpr("(1 + 2")).toBeTruthy();
+    expect(validateExpr("1 2")).toBeTruthy();
+  });
+  it("flags an unknown top-level function", () => {
+    expect(validateExpr("frobnicate(1)")).toMatch(/unknown function/);
+    expect(validateExpr("date(now())")).toBeNull(); // known fns nest fine
   });
 });
