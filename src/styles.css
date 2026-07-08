@@ -147,11 +147,13 @@ button.primary:hover {
   cursor: default;
 }
 
+/* The file explorer now lives inside a left dock leaf — fill it, no fixed width
+   or border (the leaf's tab bar + the split resizer provide the chrome). */
 .sidebar {
-  width: var(--left-w, 260px);
-  flex: 0 0 auto;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
   background: var(--bg-sidebar);
-  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   min-height: 0;

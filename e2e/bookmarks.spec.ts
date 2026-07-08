@@ -14,11 +14,11 @@ test("bookmark a note, see it in the panel, then remove it", async ({ page }) =>
   await page.locator('.ribbon-btn[title^="Command palette"]').click();
   await page.locator(".palette-input").first().fill("Bookmark");
   await page.keyboard.press("Enter");
-  await page.locator(".pane.dock .tab.view-tab", { hasText: "Bookmarks" }).click();
-  await expect(page.locator(".pane.dock .leaf-view")).toContainText("Ideas");
+  await page.locator(".pane.dock-right .tab.view-tab", { hasText: "Bookmarks" }).click();
+  await expect(page.locator(".pane.dock-right .leaf-view")).toContainText("Ideas");
   // Context menu reflects state + removes.
   await page.locator(".tree-row.file", { hasText: "Ideas" }).click({ button: "right" });
   await expect(page.locator(".ctx-item", { hasText: "Remove bookmark" })).toBeVisible();
   await page.locator(".ctx-item", { hasText: "Remove bookmark" }).click();
-  await expect(page.locator(".pane.dock .leaf-view")).not.toContainText("Ideas");
+  await expect(page.locator(".pane.dock-right .leaf-view")).not.toContainText("Ideas");
 });

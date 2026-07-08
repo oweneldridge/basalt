@@ -38,7 +38,7 @@ test("a fresh vault has a right dock of view leaves that tracks the active note"
   await page.reload();
   await page.waitForSelector(".sidebar");
   // The dock is a pane in the tree holding the built-in views as tabs.
-  await expect(page.locator(".pane.dock .tab.view-tab .tab-name")).toContainText([
+  await expect(page.locator(".pane.dock-right .tab.view-tab .tab-name")).toContainText([
     "Backlinks",
     "Outline",
     "Properties",
@@ -47,11 +47,11 @@ test("a fresh vault has a right dock of view leaves that tracks the active note"
   ]);
   // Its Outline tracks the active note.
   await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
-  await page.locator(".pane.dock .tab.view-tab", { hasText: "Outline" }).click();
-  await expect(page.locator(".pane.dock .leaf-view")).toContainText("Welcome");
+  await page.locator(".pane.dock-right .tab.view-tab", { hasText: "Outline" }).click();
+  await expect(page.locator(".pane.dock-right .leaf-view")).toContainText("Welcome");
   // Toggling the right sidebar removes the dock pane.
   await page.keyboard.press("Meta+p");
   await page.locator(".palette-input").first().fill("Toggle right sidebar");
   await page.keyboard.press("Enter");
-  await expect(page.locator(".pane.dock")).toHaveCount(0);
+  await expect(page.locator(".pane.dock-right")).toHaveCount(0);
 });
