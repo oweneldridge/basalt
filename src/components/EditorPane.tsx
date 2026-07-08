@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { createEditorState, externalReload, reconfigurePlugins, setEditorTheme, setSourceMode, setSpellcheck, setVimMode } from "../editor/setup";
+import { createEditorState, externalReload, reconfigurePlugins, setEditorTheme, setSourceMode, setSpellcheck, setVimMode, setRtl } from "../editor/setup";
 import type { EditorCallbacks } from "../editor/setup";
 import type { NoteRef } from "../editor/wikilink";
 import type { LinkFormat } from "../lib/rename";
@@ -33,6 +33,7 @@ interface Props {
   dark: boolean;
   spellcheck: boolean;
   vim: boolean;
+  rtl: boolean;
   /** Bumps when the plugin registry changes → re-apply plugin editor extensions
    * and re-render plugin code-blocks in this live editor. */
   pluginVersion: number;
@@ -67,6 +68,7 @@ export function EditorPane({
   dark,
   spellcheck,
   vim,
+  rtl,
   pluginVersion,
   apiRef,
 }: Props) {
@@ -99,6 +101,8 @@ export function EditorPane({
   spellcheckRef.current = spellcheck;
   const vimRef = useRef(vim);
   vimRef.current = vim;
+  const rtlRef = useRef(rtl);
+  rtlRef.current = rtl;
   const selfRelRef = useRef(selfRel);
   selfRelRef.current = selfRel;
 
@@ -106,7 +110,7 @@ export function EditorPane({
   useEffect(() => {
     if (!host.current) return;
     const v = new EditorView({
-      state: createEditorState(doc, adapter.current, sourceModeRef.current, darkRef.current, selfRelRef.current, spellcheckRef.current, vimRef.current),
+      state: createEditorState(doc, adapter.current, sourceModeRef.current, darkRef.current, selfRelRef.current, spellcheckRef.current, vimRef.current, rtlRef.current),
       parent: host.current,
     });
     view.current = v;
@@ -200,6 +204,11 @@ export function EditorPane({
   useEffect(() => {
     if (view.current) setVimMode(view.current, vim);
   }, [vim]);
+
+  // Toggle right-to-left text direction in place.
+  useEffect(() => {
+    if (view.current) setRtl(view.current, rtl);
+  }, [rtl]);
 
   return <div className="editor-host" data-self-rel={selfRel} ref={host} />;
 }

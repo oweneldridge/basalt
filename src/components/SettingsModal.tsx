@@ -19,6 +19,8 @@ interface Props {
   onSpellcheck: (on: boolean) => void;
   vim: boolean;
   onVim: (on: boolean) => void;
+  rtl: boolean;
+  onRtl: (on: boolean) => void;
   /** Palette commands (id + label) for hotkey assignment. */
   commands: { id: string; label: string }[];
   hotkeys: Bindings;
@@ -60,6 +62,8 @@ export function SettingsModal({
   onSpellcheck,
   vim,
   onVim,
+  rtl,
+  onRtl,
   commands,
   hotkeys,
   onSetHotkey,
@@ -147,6 +151,10 @@ export function SettingsModal({
           <div className="settings-row">
             <span className="settings-row-label">Vim key bindings</span>
             <input type="checkbox" checked={vim} onChange={(e) => onVim(e.target.checked)} />
+          </div>
+          <div className="settings-row">
+            <span className="settings-row-label">Right-to-left (RTL)</span>
+            <input type="checkbox" checked={rtl} onChange={(e) => onRtl(e.target.checked)} />
           </div>
           <p className="settings-hint">
             “System” follows your OS appearance. Stored per app, not in the vault.
