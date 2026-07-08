@@ -7,6 +7,9 @@ import {
   cellParts,
   columnValue,
   toText,
+  asFlatFilter,
+  fromFlat,
+  rawFilterIsFlat,
   type BaseDef,
   type BaseViewDef,
   type BaseRow,
@@ -279,9 +282,21 @@ function BaseEditor({
   // every keystroke would re-emit the whole YAML and re-run the view over the
   // entire vault. Re-sync when the underlying view changes (e.g. tab switch).
   const [nameDraft, setNameDraft] = useState(view.name);
-  const [filterDraft, setFilterDraft] = useState(typeof view.filters === "string" ? view.filters : "");
   useEffect(() => setNameDraft(view.name), [view.name]);
-  useEffect(() => setFilterDraft(typeof view.filters === "string" ? view.filters : ""), [view.filters]);
+  // Filter builder: a flat and/or list of string conditions (a deeper/`not`
+  // tree — or one whose raw had an unmodeled element — stays read-only, so an
+  // edit can't silently drop what parse couldn't represent). Local draft,
+  // committed on blur/add/remove.
+  const flat = rawFilterIsFlat(view.raw?.filters) ? asFlatFilter(view.filters) : null;
+  const [conds, setConds] = useState<string[]>(flat?.conditions ?? []);
+  const [combinator, setCombinator] = useState<"and" | "or">(flat?.combinator ?? "and");
+  useEffect(() => {
+    const f = asFlatFilter(view.filters);
+    setConds(f?.conditions ?? []);
+    setCombinator(f?.combinator ?? "and");
+  }, [view.filters]);
+  const commitFilter = (nextConds: string[], nextComb: "and" | "or") =>
+    onPatchView({ filters: fromFlat({ combinator: nextComb, conditions: nextConds }) });
 
   // The column list to edit: the explicit order, or the currently-shown columns
   // materialized so the first edit is non-destructive.
@@ -303,7 +318,6 @@ function BaseEditor({
   };
   // A filter is text-editable only when it's a simple string (or absent); a
   // nested and/or/not tree is preserved but shown read-only.
-  const filterIsSimple = view.filters === undefined || typeof view.filters === "string";
 
   return (
     <div className="base-editor">
@@ -364,19 +378,52 @@ function BaseEditor({
 
       <div className="base-editor-section">
         <div className="base-editor-title">Filter</div>
-        {filterIsSimple ? (
-          <input
-            type="text"
-            className="base-filter-input"
-            value={filterDraft}
-            placeholder='e.g. status != "done"'
-            onChange={(e) => setFilterDraft(e.target.value)}
-            onBlur={() => {
-              const next = filterDraft.trim() ? filterDraft : undefined;
-              if (next !== view.filters) onPatchView({ filters: next });
-            }}
-            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-          />
+        {flat ? (
+          <div className="base-filter-builder">
+            {conds.length > 1 && (
+              <label className="base-filter-combinator">
+                Match
+                <select
+                  value={combinator}
+                  onChange={(e) => {
+                    const c = e.target.value as "and" | "or";
+                    setCombinator(c);
+                    commitFilter(conds, c);
+                  }}
+                >
+                  <option value="and">all</option>
+                  <option value="or">any</option>
+                </select>
+                of:
+              </label>
+            )}
+            {conds.map((c, i) => (
+              <div className="base-filter-cond" key={i}>
+                <input
+                  type="text"
+                  className="base-filter-input"
+                  value={c}
+                  placeholder='e.g. status != "done"'
+                  onChange={(e) => setConds((prev) => prev.map((x, j) => (j === i ? e.target.value : x)))}
+                  onBlur={() => commitFilter(conds, combinator)}
+                  onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                />
+                <button
+                  title="Remove condition"
+                  onClick={() => {
+                    const next = conds.filter((_, j) => j !== i);
+                    setConds(next);
+                    commitFilter(next, combinator);
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button className="base-filter-add" onClick={() => setConds((prev) => [...prev, ""])}>
+              + Add condition
+            </button>
+          </div>
         ) : (
           <div className="base-filter-readonly">Nested filter (edit in the .base file directly)</div>
         )}
