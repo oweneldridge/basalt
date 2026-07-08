@@ -160,6 +160,9 @@ interface Pane {
   scrollToLine?: number;
   /** Pinned tab paths — a pinned tab can't be closed until unpinned. */
   pinned?: string[];
+  /** Linked pane: follows the note navigated in another pane (Obsidian's
+   * "Link with pane"). */
+  linked?: boolean;
 }
 
 type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | "templates" | "history" | "workspaces" | null;
@@ -185,7 +188,7 @@ const namedWsKey = (vault: string) => `basalt.workspaces.${vault}`;
 /** The serializable shape of a workspace (no live doc — restored from disk). */
 interface SavedWorkspace {
   layout: LayoutNode;
-  panes: Record<string, { tabs: string[]; active: string | null; pinned?: string[] }>;
+  panes: Record<string, { tabs: string[]; active: string | null; pinned?: string[]; linked?: boolean }>;
   focusedId: string | null;
 }
 
@@ -730,11 +733,20 @@ export default function App() {
   }, []);
 
   // Open `path` in a specific pane (adds the tab, loads the doc, focuses it).
+  // `mirror` marks a follow-open into a linked pane: it doesn't steal focus and
+  // doesn't re-mirror, so a linked pair can't ping-pong.
   const openInPane = useCallback(
-    async (id: string, path: string, line?: number) => {
+    async (id: string, path: string, line?: number, mirror = false) => {
       const pane = panesRef.current[id];
       if (!pane) return;
-      focusPane(id);
+      // A linked pane follows the note the user opens elsewhere, so mirror BEFORE
+      // the same-active early return (the source pane may already show `path`).
+      if (!mirror) {
+        for (const p of Object.values(panesRef.current)) {
+          if (p.id !== id && p.linked && p.active !== path && !isViewerPath(path)) void openInPane(p.id, path, undefined, true);
+        }
+      }
+      if (!mirror) focusPane(id);
       if (pane.active === path) {
         if (line !== undefined) patchPane(id, { scrollToLine: line });
         return;
@@ -796,6 +808,12 @@ export default function App() {
       const next = cur.includes(path) ? cur.filter((p) => p !== path) : [...cur, path];
       patchPane(id, { pinned: next.length ? next : undefined });
     },
+    [patchPane],
+  );
+
+  // Toggle "linked" on a pane — a linked pane follows notes opened elsewhere.
+  const toggleLink = useCallback(
+    (id: string) => patchPane(id, { linked: !panesRef.current[id]?.linked }),
     [patchPane],
   );
 
@@ -929,7 +947,7 @@ export default function App() {
           doc = "";
         }
         const pinned = (saved?.pinned ?? []).filter((p) => tabs.includes(p));
-        rebuilt[id] = { id, tabs, active, doc, pinned: pinned.length ? pinned : undefined };
+        rebuilt[id] = { id, tabs, active, doc, pinned: pinned.length ? pinned : undefined, linked: saved?.linked };
       }
       // Drop layout leaves with no surviving pane.
       let lay: LayoutNode | null = ws.layout;
@@ -1035,7 +1053,7 @@ export default function App() {
     const v = vaultRef.current;
     if (!v) return;
     const projected: SavedWorkspace["panes"] = {};
-    for (const [id, p] of Object.entries(panes)) projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned };
+    for (const [id, p] of Object.entries(panes)) projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned, linked: p.linked };
     const json = JSON.stringify({ layout, panes: projected, focusedId });
     if (json === lastSavedWs.current) return;
     lastSavedWs.current = json;
@@ -1067,7 +1085,7 @@ export default function App() {
     if (!layoutRef.current) return null;
     const projected: SavedWorkspace["panes"] = {};
     for (const [id, p] of Object.entries(panesRef.current)) {
-      projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned };
+      projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned, linked: p.linked };
     }
     return { layout: layoutRef.current, panes: projected, focusedId: focusedIdRef.current };
   }, []);
@@ -3258,6 +3276,8 @@ export default function App() {
             onClose={(p) => void closeTab(id, p)}
             onTogglePin={(p) => togglePin(id, p)}
             onTabDrop={(fromId, p, toIndex) => void handleTabDrop(fromId, p, id, toIndex)}
+            linked={pane.linked ?? false}
+            onToggleLink={() => toggleLink(id)}
             onNew={() => {
               focusPane(id);
               setModal("switcher");

@@ -42,3 +42,24 @@ test("opening a note shows an editor + tab, and a pane can split", async ({ page
   await expect(page.locator(".cm-editor")).toHaveCount(2);
   await expect(page.locator(".pane-resizer")).toHaveCount(1);
 });
+
+test("a linked pane follows notes opened in another pane", async ({ page }) => {
+  // Clean workspace so we start from a single pane.
+  await page.evaluate(() => {
+    const v = localStorage.getItem("basalt.lastVault");
+    localStorage.clear();
+    if (v) localStorage.setItem("basalt.lastVault", v);
+  });
+  await page.reload();
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+  await expect(page.locator(".cm-editor")).toHaveCount(1);
+  await page.locator('button:has-text("⊟")').first().click();
+  await expect(page.locator(".cm-editor")).toHaveCount(2);
+  // Link the second pane, then open a different note in the first.
+  await page.locator(".tab-link").nth(1).click();
+  await expect(page.locator(".tab-link").nth(1)).toHaveClass(/active/);
+  await page.locator(".pane").first().locator(".cm-content").click();
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  // Both panes now show Ideas.
+  await expect(page.locator(".pane .tab.active .tab-name")).toHaveText(["Ideas", "Ideas"]);
+});
