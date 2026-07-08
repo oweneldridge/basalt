@@ -103,9 +103,16 @@ A follow-up pass closed ~17 more MEDIUM/LOW gaps from the list below:
 - **Inline-editable stacked columns** — stacked-tab columns are now live editors
   that save back per-note.
 
-**The parity backlog is cleared.** Only genuinely-out-of-scope Obsidian pieces
-remain (formulas authoring in Bases, and the by-design exclusions: Sync/Publish,
-mobile, community-plugin/theme marketplaces).
+**The parity backlog is cleared.** The by-design exclusions remain out of scope
+(Sync/Publish, mobile, community-plugin/theme marketplaces).
+
+One capability gap is NOT excluded, just unbuilt: **Bases formula authoring**.
+Formulas are already parsed, evaluated, usable as columns, and preserved on
+save — the only missing piece is a UI to write/edit a formula's expression
+(today done by editing the raw `.base` `formulas:` section). It's the next
+tractable Bases increment; it needs an expression-language input (ideally with
+validation) and `serializeBase` extended to write the document-level `formulas`
+map.
 
 ## Scored matrix
 
