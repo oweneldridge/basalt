@@ -126,6 +126,13 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
       const name = String(a.name);
       return ok({ path: `${VAULT}/${name}`, rel: name, name, mtime: now, ctime: now, size: 0 });
     }
+    case "open_new_window": {
+      // Can't spawn a real window in the harness — record the call so tests can
+      // assert the vault + note passed to "move tab to new window".
+      (globalThis as unknown as { __newWindows: unknown[] }).__newWindows ??= [];
+      (globalThis as unknown as { __newWindows: unknown[] }).__newWindows.push({ vault: a.vault, note: a.note });
+      return ok("w1");
+    }
     // Fire-and-forget / no-op side effects.
     case "start_watching":
     case "debug_log":
@@ -136,7 +143,6 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
     case "remove_empty_folder":
     case "rename_folder":
     case "export_file":
-    case "open_new_window":
       return ok(undefined);
     default:
       // Surface anything unmocked so tests fail loudly rather than hang.

@@ -23,6 +23,7 @@ test("tab context menu: close others keeps the right-clicked tab", async ({ page
     "Close to the right",
     "Pin",
     "Split right",
+    "Move to new window",
   ]);
   await page.locator(".ctx-item", { hasText: "Close others" }).click();
   await expect(page.locator(".pane:not(.dock) .tab")).toHaveCount(1);
