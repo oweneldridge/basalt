@@ -46,6 +46,33 @@ export function headingSectionAt(
   return end > from ? { from, to: end } : null;
 }
 
+const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s/;
+
+/** If `lineStart` begins a list item that HAS children (deeper-indented lines
+ * beneath it), the fold range covering those children; otherwise null. A blank
+ * line or a same/less-indented line ends the item (Obsidian's "fold indent"). */
+export function listItemSectionAt(state: EditorState, lineStart: number): { from: number; to: number } | null {
+  const line = state.doc.lineAt(lineStart);
+  const m = LIST_ITEM.exec(line.text);
+  if (!m) return null;
+  const indent = m[1].length;
+  let end = line.to;
+  for (let n = line.number + 1; n <= state.doc.lines; n++) {
+    const l = state.doc.line(n);
+    if (l.text.trim() === "") break; // blank line ends the item
+    const childIndent = (/^\s*/.exec(l.text)?.[0].length ?? 0);
+    if (childIndent <= indent) break; // sibling or dedent
+    end = l.to;
+  }
+  return end > line.to ? { from: line.to, to: end } : null;
+}
+
+/** The foldable range a line begins — a heading section or a list item's
+ * children — or null. */
+function foldableAt(state: EditorState, lineStart: number): { from: number; to: number } | null {
+  return headingSectionAt(state, lineStart) ?? listItemSectionAt(state, lineStart);
+}
+
 function isFolded(state: EditorState, range: { from: number; to: number }): boolean {
   let folded = false;
   foldedRanges(state).between(range.from, range.to, (from, to) => {
@@ -76,7 +103,7 @@ const headingFoldGutter = gutter({
   // Only heading lines with a section get a marker; open markers are muted
   // until gutter hover (theme.ts), a folded heading's marker stays visible.
   lineMarker(view, line) {
-    const range = headingSectionAt(view.state, line.from);
+    const range = foldableAt(view.state, line.from);
     if (!range) return null;
     return isFolded(view.state, range) ? CLOSED : OPEN;
   },
@@ -86,7 +113,7 @@ const headingFoldGutter = gutter({
   initialSpacer: () => OPEN,
   domEventHandlers: {
     click(view, line) {
-      const range = headingSectionAt(view.state, line.from);
+      const range = foldableAt(view.state, line.from);
       if (!range) return false;
       const effect = (isFolded(view.state, range) ? unfoldEffect : foldEffect).of(range);
       view.dispatch({ effects: effect });
