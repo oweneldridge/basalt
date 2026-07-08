@@ -106,6 +106,7 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
             '    item.textContent = "demo-plugin-ok";',
             "    globalThis.__demoRibbon = 0;",
             '    this.addRibbonIcon("★", "Demo action", () => { globalThis.__demoRibbon++; });',
+            '    this.addCommand({ id: "meta", name: "Dump Ideas metadata", callback: () => { globalThis.__ideasMeta = this.app.metadataCache.getFileCache("Ideas.md"); } });',
             '    this.registerEvent(this.app.vault.on("modify", () => {}));',
             "  }",
             "};",

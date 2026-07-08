@@ -46,6 +46,8 @@ function fakeHost(over: Partial<HostDeps> = {}): { host: HostDeps; notices: stri
       saved[id] = json;
     },
     notice: (m) => notices.push(m),
+    getFileCache: (path) =>
+      path === "A.md" ? { tags: ["todo"], links: ["B"], headings: [{ heading: "H", level: 1 }], frontmatter: { title: "A" } } : null,
     onRegistryChanged: () => {},
     ...over,
   };
@@ -259,5 +261,26 @@ describe("plugin settings tabs", () => {
     expect(pluginSettingTabs()[0].name).toBe("ST");
     await unloadPlugin("st");
     expect(pluginSettingTabs()).toEqual([]);
+  });
+});
+
+describe("plugin metadata cache", () => {
+  it("exposes app.metadataCache.getFileCache", async () => {
+    const { host } = fakeHost();
+    installHost(host);
+    (globalThis as any).__cache = null;
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() { globalThis.__cache = this.app.metadataCache.getFileCache("A.md"); }
+      };
+    `;
+    await loadPlugin(info({ id: "mc", code }));
+    expect((globalThis as any).__cache).toEqual({
+      tags: ["todo"],
+      links: ["B"],
+      headings: [{ heading: "H", level: 1 }],
+      frontmatter: { title: "A" },
+    });
   });
 });

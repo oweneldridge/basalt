@@ -48,6 +48,7 @@ import { loadBindings, saveBindings, matchChord, type Bindings } from "./lib/hot
 import { noteRow, tasksForNote } from "./lib/vaultRows";
 import { parseQuery, runQuery, type Task } from "./lib/query";
 import { applyTemplate, type TemplateCtx } from "./lib/templates";
+import { parseProperties } from "./lib/bases";
 import {
   installHost,
   loadPlugin,
@@ -2374,6 +2375,39 @@ export default function App() {
       vaultName: () => vaultName(vaultRef.current ?? ""),
       savePluginData: (id, json) => writePluginData(id, json),
       notice: (msg, timeoutMs) => showNotice(msg, timeoutMs),
+      getFileCache: (rel) => {
+        const note = notesRef.current.find((n) => n.rel === rel || n.path === rel);
+        if (!note) return null;
+        // Headings in document order, skipping frontmatter + fenced code.
+        const lines = note.content.split("\n");
+        const headings: { heading: string; level: number }[] = [];
+        let inCode = false;
+        let inFm = false;
+        for (let i = 0; i < lines.length; i++) {
+          const t = lines[i].trim();
+          if (i === 0 && t === "---") {
+            inFm = true;
+            continue;
+          }
+          if (inFm) {
+            if (t === "---" || t === "...") inFm = false;
+            continue;
+          }
+          if (t.startsWith("```") || t.startsWith("~~~")) {
+            inCode = !inCode;
+            continue;
+          }
+          if (inCode) continue;
+          const m = /^(#{1,6})\s+(.+?)\s*#*$/.exec(lines[i]);
+          if (m) headings.push({ heading: m[2], level: m[1].length });
+        }
+        return {
+          tags: index.current.tagsOf(note.path).map((t) => t.replace(/^#/, "")),
+          links: index.current.linkKeysOf(note.path),
+          headings,
+          frontmatter: parseProperties(note.content),
+        };
+      },
       onRegistryChanged: () => setPluginVersion((v) => v + 1),
     };
     installHost(deps);

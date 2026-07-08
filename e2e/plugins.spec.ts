@@ -32,4 +32,11 @@ test("a plugin can register a settings tab that renders in Settings", async ({ p
   await expect(page.locator(".settings")).toHaveCount(0);
   await page.locator(".ribbon-plugin-btn").click();
   expect(await page.evaluate(() => (window as unknown as { __demoRibbon: number }).__demoRibbon)).toBe(1);
+  // metadataCache.getFileCache returns parsed tags/headings for a real note.
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").first().fill("Dump Ideas metadata");
+  await page.keyboard.press("Enter");
+  const meta = await page.evaluate(() => (window as unknown as { __ideasMeta: { tags: string[]; headings: { heading: string }[] } }).__ideasMeta);
+  expect(meta.tags).toContain("tag/one");
+  expect(meta.headings.map((h) => h.heading)).toContain("Ideas");
 });
