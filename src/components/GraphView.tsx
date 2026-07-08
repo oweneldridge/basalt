@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   forceCenter,
   forceCollide,
@@ -8,6 +8,26 @@ import {
 } from "d3-force";
 import type { SimulationNodeDatum } from "d3-force";
 import type { GraphData } from "../lib/vaultIndex";
+
+const idOf = (x: string | { id: string }): string => (typeof x === "string" ? x : x.id);
+
+/** Filter graph data by a name-search substring and/or hiding orphan nodes
+ * (no links after the search filter). Pure — used by GraphView's filter UI. */
+export function filterGraph(data: GraphData, search: string, hideOrphans: boolean): GraphData {
+  const q = search.trim().toLowerCase();
+  let nodes = q ? data.nodes.filter((n) => n.name.toLowerCase().includes(q)) : data.nodes;
+  const keep = new Set(nodes.map((n) => n.id));
+  const links = data.links.filter((l) => keep.has(idOf(l.source)) && keep.has(idOf(l.target)));
+  if (hideOrphans) {
+    const connected = new Set<string>();
+    for (const l of links) {
+      connected.add(idOf(l.source));
+      connected.add(idOf(l.target));
+    }
+    nodes = nodes.filter((n) => connected.has(n.id));
+  }
+  return { nodes, links };
+}
 
 interface GNode extends SimulationNodeDatum {
   id: string;
@@ -37,6 +57,9 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const activePathRef = useRef(activePath);
   activePathRef.current = activePath;
+  const [search, setSearch] = useState("");
+  const [hideOrphans, setHideOrphans] = useState(false);
+  const filtered = useMemo(() => filterGraph(data, search, hideOrphans), [data, search, hideOrphans]);
   const redrawRef = useRef<() => void>(() => {});
   // Layout + viewport survive data rebuilds (autosave/watcher refresh): known
   // nodes keep their positions (only new ids are randomized) and pan/zoom is
@@ -66,7 +89,7 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
     resize();
 
     let newCount = 0;
-    const nodes: GNode[] = data.nodes.map((n) => {
+    const nodes: GNode[] = filtered.nodes.map((n) => {
       const prev = posCache.current.get(n.id);
       if (!prev) newCount++;
       return {
@@ -77,7 +100,7 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
       };
     });
     const byId = new Map(nodes.map((n) => [n.id, n]));
-    const links: GLink[] = data.links
+    const links: GLink[] = filtered.links
       .filter((l) => byId.has(l.source) && byId.has(l.target))
       .map((l) => ({ source: l.source, target: l.target }));
 
@@ -308,7 +331,7 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
       canvas.removeEventListener("wheel", onWheel);
       window.removeEventListener("resize", resize);
     };
-  }, [data, onOpenNode]);
+  }, [filtered, onOpenNode]);
 
   // Redraw (highlight) when the active note changes, without resetting layout.
   useEffect(() => {
@@ -345,8 +368,19 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
             </label>
           )}
         </div>
+        <input
+          className="graph-search"
+          type="search"
+          placeholder="Filter notes…"
+          value={search}
+          onChange={(e) => setSearch(e.currentTarget.value)}
+        />
+        <label className="graph-orphans" title="Hide notes with no links">
+          <input type="checkbox" checked={hideOrphans} onChange={(e) => setHideOrphans(e.currentTarget.checked)} />
+          Hide orphans
+        </label>
         <span className="graph-count">
-          {data.nodes.length} notes · {data.links.length} links
+          {filtered.nodes.length} notes · {filtered.links.length} links
         </span>
         <button className="graph-close" onClick={onClose} title="Close (Esc)">
           ✕
