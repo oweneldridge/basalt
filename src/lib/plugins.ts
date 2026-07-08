@@ -154,6 +154,13 @@ export function pluginSettingTabs(): { pluginId: string; name: string; tab: Sett
   }));
 }
 
+// Plugin-owned status bar items (a <span> per addStatusBarItem call). The status
+// bar mounts them; the plugin fills/updates them.
+const statusBarItems: { pluginId: string; el: HTMLElement }[] = [];
+export function pluginStatusBarItems(): HTMLElement[] {
+  return statusBarItems.map((s) => s.el);
+}
+
 // ---------------------------------------------------------------------------
 // Host.
 
@@ -272,6 +279,20 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
         if (settingTabs.get(ctx.info.id) === tab) settingTabs.delete(ctx.info.id);
       });
       host.onRegistryChanged();
+    }
+    /** Add an item to the status bar; returns the element to fill. */
+    addStatusBarItem(): HTMLElement {
+      const el = document.createElement("span");
+      el.className = "status-bar-item plugin-status-item";
+      const entry = { pluginId: ctx.info.id, el };
+      statusBarItems.push(entry);
+      ctx.cleanups.push(() => {
+        const i = statusBarItems.indexOf(entry);
+        if (i >= 0) statusBarItems.splice(i, 1);
+        el.remove();
+      });
+      host.onRegistryChanged();
+      return el;
     }
     /** Register an arbitrary cleanup run on unload. */
     register(cleanup: () => void) {

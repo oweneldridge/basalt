@@ -102,6 +102,8 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
             "    const tab = new PluginSettingTab(this.app, this);",
             '    tab.display = function () { this.containerEl.textContent = "Hello from the demo plugin settings"; };',
             "    this.addSettingTab(tab);",
+            "    const item = this.addStatusBarItem();",
+            '    item.textContent = "demo-plugin-ok";',
             '    this.registerEvent(this.app.vault.on("modify", () => {}));',
             "  }",
             "};",

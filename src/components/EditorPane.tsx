@@ -25,6 +25,7 @@ interface Props {
   saveAttachment: (file: File) => Promise<string | null>;
   replacePlaceholder: (placeholder: string, replacement: string) => void;
   onChange: (doc: string) => void;
+  onCursor?: (line: number, col: number, selChars: number) => void;
   /** 1-based line to scroll to / place the caret on (from search or backlinks). */
   scrollToLine?: number;
   /** True = raw Markdown (Live Preview rendering off). */
@@ -63,6 +64,7 @@ export function EditorPane({
   saveAttachment,
   replacePlaceholder,
   onChange,
+  onCursor,
   scrollToLine,
   sourceMode,
   dark,
@@ -76,8 +78,8 @@ export function EditorPane({
   const view = useRef<EditorView | null>(null);
   // Keep the latest callbacks in refs so the editor (rebuilt only per `path`)
   // always calls through to fresh closures without being torn down on every render.
-  const cbs = useRef({ getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange });
-  cbs.current = { getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange };
+  const cbs = useRef({ getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange, onCursor });
+  cbs.current = { getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange, onCursor };
   // A stable adapter that always calls through to the freshest closures — used
   // for both editor construction and source-mode reconfiguration.
   const adapter = useRef<EditorCallbacks>({
@@ -92,6 +94,7 @@ export function EditorPane({
     saveAttachment: (f) => cbs.current.saveAttachment(f),
     replacePlaceholder: (ph, rep) => cbs.current.replacePlaceholder(ph, rep),
     onChange: (d) => cbs.current.onChange(d),
+    onCursor: (l, c, s) => cbs.current.onCursor?.(l, c, s),
   });
   const sourceModeRef = useRef(sourceMode);
   sourceModeRef.current = sourceMode;

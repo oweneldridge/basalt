@@ -24,4 +24,6 @@ test("a plugin can register a settings tab that renders in Settings", async ({ p
   await expect(page.locator(".plugin-settings-toggle")).toHaveCount(1);
   await page.locator(".plugin-settings-toggle").click();
   await expect(page.locator(".plugin-settings-mount")).toContainText("Hello from the demo plugin settings");
+  // The plugin's addStatusBarItem shows in the bottom status bar.
+  await expect(page.locator(".status-bar .plugin-status-item")).toContainText("demo-plugin-ok");
 });

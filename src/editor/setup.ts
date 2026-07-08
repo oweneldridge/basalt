@@ -127,6 +127,8 @@ export interface EditorCallbacks {
   replacePlaceholder: (placeholder: string, replacement: string) => void;
   /** Fired (on every edit) with the full document text. */
   onChange: (doc: string) => void;
+  /** Fired when the caret moves: 1-based line, 1-based column, selection length. */
+  onCursor?: (line: number, col: number, selChars: number) => void;
 }
 
 // Source mode: all Live Preview rendering lives in one Compartment so it can
@@ -308,10 +310,16 @@ export function createEditorState(
       ...foldKeymap, // Ctrl/Cmd-Shift-[ fold, -] unfold; Ctrl-Alt-[/] fold/unfold all
     ]),
     EditorView.updateListener.of((update) => {
-      if (!update.docChanged) return;
-      // Ignore reconciles (external reloads) — only user edits should autosave.
-      if (update.transactions.some((t) => t.annotation(externalReload))) return;
-      cb.onChange(update.state.doc.toString());
+      // Autosave on a user edit (ignore reconciles — external reloads).
+      if (update.docChanged && !update.transactions.some((t) => t.annotation(externalReload))) {
+        cb.onChange(update.state.doc.toString());
+      }
+      // Report the caret line/column (1-based) + selection length to the status bar.
+      if (update.docChanged || update.selectionSet) {
+        const sel = update.state.selection.main;
+        const line = update.state.doc.lineAt(sel.head);
+        cb.onCursor?.(line.number, sel.head - line.from + 1, Math.abs(sel.to - sel.from));
+      }
     }),
   ];
   return EditorState.create({ doc, selection: { anchor: initialCursor(doc) }, extensions });
