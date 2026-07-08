@@ -65,6 +65,12 @@ export interface HostDeps {
   readNote: (path: string) => Promise<string>;
   createNote: (path: string, content: string) => Promise<void>;
   modifyNote: (path: string, content: string) => Promise<void>;
+  /** Move a note (by vault-relative path) to the vault trash. */
+  deleteNote: (path: string) => Promise<void>;
+  /** Rename/move a note; `newPath` is a vault-relative path (with or without .md). */
+  renameNote: (path: string, newPath: string) => Promise<void>;
+  /** Create a folder (by vault-relative path). */
+  createFolder: (path: string) => Promise<void>;
   getActiveNotePath: () => string | null;
   openNote: (target: string) => void;
   vaultName: () => string;
@@ -262,6 +268,11 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       create: (path: string, content: string) => host.createNote(path, content),
       modify: (file: { path: string } | string, content: string) =>
         host.modifyNote(typeof file === "string" ? file : file.path, content),
+      delete: (file: { path: string } | string) =>
+        host.deleteNote(typeof file === "string" ? file : file.path),
+      rename: (file: { path: string } | string, newPath: string) =>
+        host.renameNote(typeof file === "string" ? file : file.path, newPath),
+      createFolder: (path: string) => host.createFolder(path),
       /** Subscribe to a vault event: create/delete/modify → (file); rename →
        * (file, oldPath). Pass the returned ref to plugin.registerEvent(). */
       on: (name: VaultEventName, cb: (...args: unknown[]) => void): EventRef =>

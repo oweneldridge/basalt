@@ -109,6 +109,7 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
             '    this.addRibbonIcon("★", "Demo action", () => { globalThis.__demoRibbon++; });',
             '    this.addCommand({ id: "meta", name: "Dump Ideas metadata", callback: () => { globalThis.__ideasMeta = this.app.metadataCache.getFileCache("Ideas.md"); } });',
             '    this.registerView("demo-view", "Demo View", (el) => { el.textContent = "demo-view-content"; return () => { globalThis.__demoViewClosed = true; }; });',
+            '    this.addCommand({ id: "vrename", name: "Vault rename Ideas", callback: () => { this.app.vault.rename("Ideas.md", "IdeasViaPlugin"); } });',
             '    this.registerEvent(this.app.vault.on("modify", () => {}));',
             "  }",
             "};",

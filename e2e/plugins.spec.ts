@@ -42,4 +42,9 @@ test("a plugin can register a settings tab that renders in Settings", async ({ p
   // registerView adds a right-panel tab that mounts the plugin's content.
   await page.getByRole("button", { name: "Demo View" }).click();
   await expect(page.locator(".plugin-view-mount")).toHaveText("demo-view-content");
+  // vault.rename mutates the vault through the host.
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").first().fill("Vault rename Ideas");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".tree-row.file", { hasText: "IdeasViaPlugin" })).toHaveCount(1);
 });

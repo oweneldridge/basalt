@@ -6,6 +6,7 @@ import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { confirm, save } from "@tauri-apps/plugin-dialog";
 import {
   createNote,
+  createFolder,
   deleteNote,
   listAttachments,
   nameFromRel,
@@ -2286,6 +2287,9 @@ export default function App() {
   handleToggleTaskRef.current = handleToggleTask;
   const openViewerFileRef = useRef(openViewerFile);
   openViewerFileRef.current = openViewerFile;
+  // Late-declared handlers the plugin host calls (assigned after their defs).
+  const handleDeleteNoteRef = useRef<(path: string, opts?: { skipConfirm?: boolean }) => Promise<void>>(async () => {});
+  const handleRenameNoteRef = useRef<(oldPath: string, newName: string) => Promise<void>>(async () => {});
   const structureVersionRef = useRef(structureVersion);
   structureVersionRef.current = structureVersion;
   useEffect(() => {
@@ -2411,6 +2415,18 @@ export default function App() {
         bumpStructure();
       },
       modifyNote: (rel, content) => pluginModifyNote(rel, content),
+      deleteNote: async (rel) => {
+        const note = notesRef.current.find((n) => n.rel === rel || n.path === rel);
+        if (note) await handleDeleteNoteRef.current(note.path, { skipConfirm: true });
+      },
+      renameNote: async (rel, newPath) => {
+        const note = notesRef.current.find((n) => n.rel === rel || n.path === rel);
+        if (note) await handleRenameNoteRef.current(note.path, newPath.replace(/\.md$/i, ""));
+      },
+      createFolder: async (rel) => {
+        await createFolder(rel);
+        bumpStructure();
+      },
       getActiveNotePath: () => {
         const p = focusedIdRef.current ? panesRef.current[focusedIdRef.current]?.active : null;
         if (!p) return null;
@@ -2457,7 +2473,7 @@ export default function App() {
     };
     installHost(deps);
     return () => installHost(null);
-  }, [pluginModifyNote, showNotice]);
+  }, [pluginModifyNote, showNotice, bumpStructure]);
 
   // Load the enabled plugins for a vault (called on open + on toggle).
   const refreshPlugins = useCallback(async () => {
@@ -2707,14 +2723,16 @@ export default function App() {
 
   /** Move a note to .trash (with confirmation) and drop it everywhere. */
   const handleDeleteNote = useCallback(
-    async (path: string) => {
+    async (path: string, opts?: { skipConfirm?: boolean }) => {
       const note = notesRef.current.find((n) => n.path === path);
       if (!note) return;
-      const ok = await confirm(`Move "${note.name}" to the vault trash?`, {
-        title: "Delete note",
-        kind: "warning",
-      });
-      if (!ok) return;
+      if (!opts?.skipConfirm) {
+        const ok = await confirm(`Move "${note.name}" to the vault trash?`, {
+          title: "Delete note",
+          kind: "warning",
+        });
+        if (!ok) return;
+      }
       try {
         // Never resurrect a deleted note via autosave / a stale conflict.
         const t = saveTimers.current.get(path);
@@ -2738,6 +2756,7 @@ export default function App() {
     },
     [bumpStructure, clearConflict],
   );
+  handleDeleteNoteRef.current = handleDeleteNote;
 
   /** Move an ATTACHMENT (image / PDF / audio / video / canvas / base) to
    * .trash. Editable viewers (.canvas/.base) get the flush-then-abort-if-
@@ -3001,6 +3020,7 @@ export default function App() {
     },
     [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs],
   );
+  handleRenameNoteRef.current = handleRenameNote;
 
   // Convert an unlinked mention into a `[[wikilink]]` in its SOURCE note (the
   // "Link" / "Link all" backlink actions). Reads disk (authoritative), edits
