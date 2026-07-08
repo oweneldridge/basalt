@@ -96,3 +96,29 @@ test("a view tab can be dragged across regions (dock → editor) and to a split"
   await expect(page.locator(".pane:not(.dock)")).toHaveCount(before + 1);
   await expect(page.locator(".pane:not(.dock) .tab.view-tab", { hasText: "Backlinks" })).toHaveCount(1);
 });
+
+test("move a note tab to a new window (menu records the call + closes the tab)", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await page.evaluate(() => { localStorage.clear(); (window as unknown as { __newWindows: unknown[] }).__newWindows = []; });
+  await page.reload();
+  await page.locator(".pane.dock-left .tree-row.file", { hasText: "Welcome" }).click();
+  await page.locator(".pane.dock-left .tree-row.file", { hasText: "Ideas" }).click();
+  await expect(page.locator(".pane:not(.dock) .tab")).toHaveCount(2);
+  await page.locator(".pane:not(.dock) .tab", { hasText: "Ideas" }).click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Move to new window" }).click();
+  // The backend was asked to open a window for this vault + note, and the tab closed here.
+  const calls = await page.evaluate(() => (window as unknown as { __newWindows: { vault: string; note: string }[] }).__newWindows);
+  expect(calls).toEqual([{ vault: "/mock/vault", note: "Ideas.md" }]);
+  await expect(page.locator(".pane:not(.dock) .tab .tab-name")).toHaveText(["Welcome"]);
+  // A view tab does NOT offer "Move to new window".
+  await page.locator(".pane.dock-right .tab.view-tab").first().click({ button: "right" });
+  await expect(page.locator(".ctx-menu .ctx-item", { hasText: "Move to new window" })).toHaveCount(0);
+});
+
+test("a window launched with ?vault=&note= opens that note", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await page.evaluate(() => localStorage.clear());
+  await page.goto("/app-harness.html?vault=" + encodeURIComponent("/mock/vault") + "&note=" + encodeURIComponent("Ideas.md"));
+  await expect(page.locator(".pane:not(.dock) .cm-editor")).toBeVisible();
+  await expect(page.locator(".pane:not(.dock) .tab.active .tab-name")).toHaveText("Ideas");
+});

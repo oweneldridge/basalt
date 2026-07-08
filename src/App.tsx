@@ -1267,7 +1267,7 @@ export default function App() {
   );
 
   const openVault = useCallback(
-    async (path: string) => {
+    async (path: string, openNoteRel?: string) => {
       await flushAll();
       clearImageCache();
       const root = await openVaultBackend(path); // canonical; sets managed state
@@ -1317,12 +1317,18 @@ export default function App() {
       index.current.build([]);
       const { notes: list, attachments: atts } = await loadVault();
       await restoreWorkspace(savedWs, list, atts);
+      // "Move tab to new window" spawns a window that opens the note directly —
+      // use the freshly loaded list (notesRef isn't updated until a render).
+      if (openNoteRel) {
+        const target = list.find((n) => n.rel === openNoteRel);
+        if (target) await openInPane(ensureWorkspace(), target.path);
+      }
       await listenerReady.current?.promise; // ensure we can hear events first
       startWatching().catch(() => {
         /* watcher unavailable — degrade gracefully */
       });
     },
-    [flushAll, loadVault, restoreWorkspace],
+    [flushAll, loadVault, restoreWorkspace, openInPane, ensureWorkspace],
   );
 
   // Restore the last vault on launch (once — StrictMode double-mounts effects).
@@ -1333,9 +1339,11 @@ export default function App() {
     // A window opened via "open in new window" carries its vault in ?vault=.
     // Otherwise the main window restores its last vault; a bare extra window
     // starts at the picker.
-    const fromUrl = new URLSearchParams(location.search).get("vault");
+    const params = new URLSearchParams(location.search);
+    const fromUrl = params.get("vault");
     if (fromUrl) {
-      openVault(fromUrl).catch((e) => setSaveError(`Couldn't open vault: ${e}`));
+      // A window spawned by "move tab to new window" also carries ?note=<rel>.
+      openVault(fromUrl, params.get("note") ?? undefined).catch((e) => setSaveError(`Couldn't open vault: ${e}`));
       return;
     }
     if (WINDOW_LABEL !== "main") return;
@@ -1778,13 +1786,25 @@ export default function App() {
   }, [openVault]);
 
   // Open a vault in a NEW window (or an empty new window if no vault given).
-  const handleOpenInNewWindow = useCallback(async (vaultPath?: string) => {
+  const handleOpenInNewWindow = useCallback(async (vaultPath?: string, note?: string) => {
     try {
-      await openNewWindow(vaultPath);
+      await openNewWindow(vaultPath, note);
     } catch (e) {
       setSaveError(`Couldn't open a new window: ${e}`);
     }
   }, []);
+
+  // Move a note tab out to a new window: open it there, then close it here.
+  const moveTabToNewWindow = useCallback(
+    async (paneId: string, path: string) => {
+      const v = vaultRef.current;
+      const rel = notesRef.current.find((n) => n.path === path)?.rel;
+      if (!v || !rel) return; // only real notes (not views/attachments) move out
+      await handleOpenInNewWindow(v, rel);
+      await closeTab(paneId, path);
+    },
+    [handleOpenInNewWindow, closeTab],
+  );
 
   const openVaultSwitcher = useCallback(() => {
     setRecentVaults(loadRecentVaults()); // freshen (another window may have opened one)
@@ -3633,6 +3653,16 @@ export default function App() {
       { id: "insert-template", label: "Insert template…", hint: "apply a template at the cursor", run: () => setModal("templates") },
       { id: "switch-vault", label: "Switch vault…", hint: "recent vaults / open a folder", run: openVaultSwitcher },
       { id: "new-window", label: "New window", hint: "open another window", run: () => void handleOpenInNewWindow() },
+      {
+        id: "move-to-new-window",
+        label: "Move note to new window",
+        hint: "pop the current note out",
+        run: () => {
+          const id = focusedIdRef.current;
+          const p = id ? panesRef.current[id]?.active : null;
+          if (id && p && !isViewPath(p)) void moveTabToNewWindow(id, p);
+        },
+      },
       { id: "settings", label: "Open settings", hint: "appearance, vault info (⌘,)", run: () => setModal("settings") },
       { id: "toggle-theme", label: "Toggle light/dark theme", hint: "switch appearance", run: toggleTheme },
       { id: "toggle-readable-width", label: "Toggle readable line length", hint: "constrain content width", run: () => setReadableWidth((v) => !v) },
@@ -3681,7 +3711,7 @@ export default function App() {
       })),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf, openNoteByPath, pluginVersion],
+    [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, moveTabToNewWindow, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf, openNoteByPath, pluginVersion],
   );
   const commandsRef = useRef(commands);
   commandsRef.current = commands;
@@ -4350,6 +4380,11 @@ export default function App() {
                 <button className="ctx-item" onClick={() => run(() => void splitTabRight(tabMenu.paneId, tabMenu.path))}>
                   Split right
                 </button>
+                {!isViewPath(tabMenu.path) && notes.some((n) => n.path === tabMenu.path) && (
+                  <button className="ctx-item" onClick={() => run(() => void moveTabToNewWindow(tabMenu.paneId, tabMenu.path))}>
+                    Move to new window
+                  </button>
+                )}
               </div>
             </div>
           );

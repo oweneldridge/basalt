@@ -348,7 +348,7 @@ fn open_vault(
 /// (via a `?vault=` URL param); otherwise the new window shows the vault picker.
 /// Each window gets a unique label and its own independent VaultState entry.
 #[tauri::command]
-fn open_new_window(app: AppHandle, vault: Option<String>) -> Result<String, String> {
+fn open_new_window(app: AppHandle, vault: Option<String>, note: Option<String>) -> Result<String, String> {
     // Lowest free `w<n>` label. Reusing labels keeps per-window localStorage keys
     // (workspace layouts) bounded by the max concurrent window count instead of
     // growing forever, and the capability glob `w*` (capabilities/default.json)
@@ -363,6 +363,10 @@ fn open_new_window(app: AppHandle, vault: Option<String>) -> Result<String, Stri
     if let Some(v) = vault {
         // percent-encode the path into the query so the frontend can read it.
         url = format!("index.html?vault={}", percent_encode(&v));
+        // Optionally tell the new window which note (vault-relative path) to open.
+        if let Some(n) = note {
+            url = format!("{url}&note={}", percent_encode(&n));
+        }
     }
     WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
         .title("Basalt")
