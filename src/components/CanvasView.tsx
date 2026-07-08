@@ -83,9 +83,27 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
     }
   }, [doc]);
 
-  const [selected, setSelected] = useState<string | null>(null);
+  // Multi-select: a set of selected node/edge ids (Obsidian canvas parity).
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const isSel = useCallback((id: string) => selected.has(id), [selected]);
+  const selectOne = useCallback((id: string) => setSelected(new Set([id])), []);
+  const toggleSel = useCallback(
+    (id: string) =>
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      }),
+    [],
+  );
+  const clearSel = useCallback(() => setSelected((prev) => (prev.size ? new Set() : prev)), []);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [drawingEdge, setDrawingEdge] = useState<{ from: string; side: Side; x: number; y: number } | null>(null);
+  // Rubber-band rectangle (world coords) while Shift-dragging empty space.
+  const [band, setBand] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
   const viewport = useRef<HTMLDivElement | null>(null);
   const world = useRef<HTMLDivElement | null>(null);
@@ -157,12 +175,22 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
     const vp = viewport.current;
     if (!vp) return;
     let panning = false;
+    let banding = false;
+    let bandStart = { x: 0, y: 0 };
     let lastX = 0;
     let lastY = 0;
     const onDown = (e: PointerEvent) => {
       const el = e.target as HTMLElement;
       if (el.closest(".canvas-node") || el.closest(".canvas-handle") || el.closest(".canvas-anchor")) return;
-      setSelected(null);
+      // Shift+drag on empty space = rubber-band select; plain drag = pan.
+      if (editable && e.shiftKey) {
+        banding = true;
+        bandStart = toWorld(e.clientX, e.clientY);
+        setBand({ x0: bandStart.x, y0: bandStart.y, x1: bandStart.x, y1: bandStart.y });
+        vp.setPointerCapture(e.pointerId);
+        return;
+      }
+      clearSel();
       panning = true;
       lastX = e.clientX;
       lastY = e.clientY;
@@ -170,6 +198,11 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
       vp.style.cursor = "grabbing";
     };
     const onMove = (e: PointerEvent) => {
+      if (banding) {
+        const p = toWorld(e.clientX, e.clientY);
+        setBand({ x0: bandStart.x, y0: bandStart.y, x1: p.x, y1: p.y });
+        return;
+      }
       if (!panning) return;
       t.current.x += e.clientX - lastX;
       t.current.y += e.clientY - lastY;
@@ -178,6 +211,21 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
       apply();
     };
     const onUp = (e: PointerEvent) => {
+      if (banding) {
+        banding = false;
+        const p = toWorld(e.clientX, e.clientY);
+        const x0 = Math.min(bandStart.x, p.x);
+        const y0 = Math.min(bandStart.y, p.y);
+        const x1 = Math.max(bandStart.x, p.x);
+        const y1 = Math.max(bandStart.y, p.y);
+        const hit = dataRef.current.nodes
+          .filter((n) => n.x < x1 && n.x + n.width > x0 && n.y < y1 && n.y + n.height > y0)
+          .map((n) => n.id);
+        setSelected(new Set(hit));
+        setBand(null);
+        vp.releasePointerCapture?.(e.pointerId);
+        return;
+      }
       panning = false;
       vp.releasePointerCapture?.(e.pointerId);
       vp.style.cursor = "grab";
@@ -209,56 +257,83 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
   useEffect(() => {
     if (!editable) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!selected || editingId) return;
+      const sel = selectedRef.current;
+      if (sel.size === 0 || editingId) return;
       if (e.key !== "Delete" && e.key !== "Backspace") return;
       const target = e.target as HTMLElement;
       if (target.isContentEditable || target.tagName === "TEXTAREA" || target.tagName === "INPUT") return;
       e.preventDefault();
       const d = dataRef.current;
-      if (d.nodes.some((n) => n.id === selected)) {
-        emit({
-          ...d, // keep passNodes/passEdges/topRaw
-          nodes: d.nodes.filter((n) => n.id !== selected),
-          edges: d.edges.filter((ed) => ed.fromNode !== selected && ed.toNode !== selected),
-        });
-      } else {
-        emit({ ...d, edges: d.edges.filter((ed) => ed.id !== selected) });
-      }
-      setSelected(null);
+      const nodeIds = new Set(d.nodes.filter((n) => sel.has(n.id)).map((n) => n.id));
+      emit({
+        ...d, // keep passNodes/passEdges/topRaw
+        nodes: d.nodes.filter((n) => !sel.has(n.id)),
+        // Drop selected edges AND edges touching a deleted node.
+        edges: d.edges.filter((ed) => !sel.has(ed.id) && !nodeIds.has(ed.fromNode) && !nodeIds.has(ed.toNode)),
+      });
+      setSelected(new Set());
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editable, selected, editingId, emit]);
+  }, [editable, editingId, emit]);
 
-  // Drag a node body → move (imperative during drag would need edge sync; state
-  // updates keep edges attached, throttled to animation frames).
+  // Drag a node body → move. If the node is part of a multi-selection, the
+  // whole selection moves together; otherwise it becomes the sole selection.
   const startNodeDrag = (e: React.PointerEvent, id: string) => {
     if (!editable) return;
     e.stopPropagation();
-    setSelected(id);
+    // Establish the selection this drag operates on.
+    const cur = selectedRef.current;
+    let moveIds: string[];
+    if (e.shiftKey) {
+      toggleSel(id);
+      moveIds = cur.has(id) ? [...cur].filter((s) => s !== id) : [...cur, id];
+    } else if (cur.has(id) && cur.size > 1) {
+      moveIds = [...cur]; // drag the existing group
+    } else {
+      selectOne(id);
+      moveIds = [id];
+    }
+    const moveNodeIds = new Set(dataRef.current.nodes.filter((n) => moveIds.includes(n.id)).map((n) => n.id));
     const node = dataRef.current.nodes.find((n) => n.id === id);
     if (!node) return;
     const start = toWorld(e.clientX, e.clientY);
-    const orig = { x: node.x, y: node.y };
+    // Original positions of every node moving in this drag.
+    const orig = new Map(dataRef.current.nodes.filter((n) => moveNodeIds.has(n.id)).map((n) => [n.id, { x: n.x, y: n.y }]));
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     let raf = 0;
-    let pending: { x: number; y: number } | null = null;
+    let delta: { dx: number; dy: number } | null = null;
     const move = (ev: PointerEvent) => {
       const p = toWorld(ev.clientX, ev.clientY);
-      pending = { x: orig.x + (p.x - start.x), y: orig.y + (p.y - start.y) };
+      delta = { dx: p.x - start.x, dy: p.y - start.y };
       if (!raf)
         raf = requestAnimationFrame(() => {
           raf = 0;
-          if (pending)
-            setData((d) => ({ ...d, nodes: d.nodes.map((n) => (n.id === id ? { ...n, ...pending } : n)) }));
+          if (delta)
+            setData((d) => ({
+              ...d,
+              nodes: d.nodes.map((n) => {
+                const o = orig.get(n.id);
+                return o && delta ? { ...n, x: o.x + delta.dx, y: o.y + delta.dy } : n;
+              }),
+            }));
         });
     };
-    const up = (ev: PointerEvent) => {
+    const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       if (raf) cancelAnimationFrame(raf);
-      if (pending) patchNode(id, pending); // commit (emits) the final position
-      void ev;
+      if (delta) {
+        // Commit all moved nodes in one emit (single undo step).
+        const d = dataRef.current;
+        emit({
+          ...d,
+          nodes: d.nodes.map((n) => {
+            const o = orig.get(n.id);
+            return o && delta ? { ...n, x: Math.round(o.x + delta.dx), y: Math.round(o.y + delta.dy) } : n;
+          }),
+        });
+      }
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -347,7 +422,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
       height: 60,
     };
     emit({ ...dataRef.current, nodes: [...dataRef.current.nodes, node] });
-    setSelected(node.id);
+    selectOne(node.id);
     setEditingId(node.id);
   };
 
@@ -358,7 +433,8 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
     return <div className="canvas-view canvas-empty">Empty canvas</div>;
   }
 
-  const selNode = selected ? byId.get(selected) : undefined;
+  const selectedNodes = data.nodes.filter((n) => selected.has(n.id));
+  const colorRef = selectedNodes[0];
 
   return (
     <div className="canvas-view" ref={viewport} onDoubleClick={onDoubleClick}>
@@ -380,21 +456,28 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
                 height: 60,
               };
               emit({ ...dataRef.current, nodes: [...dataRef.current.nodes, node] });
-              setSelected(node.id);
+              selectOne(node.id);
               setEditingId(node.id);
             }}
           >
             + Card
           </button>
-          {selNode && (
+          {colorRef && (
             <div className="canvas-colors">
+              {selectedNodes.length > 1 && <span className="canvas-selcount">{selectedNodes.length} selected</span>}
               {COLORS.map((c, i) => (
                 <button
                   key={i}
-                  className={`canvas-color-dot${selNode.color === c ? " active" : ""}`}
+                  className={`canvas-color-dot${colorRef.color === c ? " active" : ""}`}
                   style={{ background: canvasColor(c, "var(--border)") }}
                   title={c ? `Color ${c}` : "No color"}
-                  onClick={() => patchNode(selNode.id, { color: c } as Partial<CanvasNode>)}
+                  onClick={() => {
+                    const ids = new Set(selectedNodes.map((n) => n.id));
+                    emit({
+                      ...dataRef.current,
+                      nodes: dataRef.current.nodes.map((n) => (ids.has(n.id) ? ({ ...n, color: c } as CanvasNode) : n)),
+                    });
+                  }}
                 />
               ))}
             </div>
@@ -425,12 +508,12 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
               const q = anchor(to, ts);
               const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
               return (
-                <g key={e.id} onClick={() => editable && setSelected(e.id)} style={{ cursor: editable ? "pointer" : "default" }}>
+                <g key={e.id} onClick={(ev) => editable && (ev.shiftKey ? toggleSel(e.id) : selectOne(e.id))} style={{ cursor: editable ? "pointer" : "default" }}>
                   <path
                     d={edgePath(p, fs, q, ts)}
                     fill="none"
-                    stroke={selected === e.id ? "var(--accent)" : canvasColor(e.color, "var(--text-muted)")}
-                    strokeWidth={selected === e.id ? 3 : 2}
+                    stroke={isSel(e.id) ? "var(--accent)" : canvasColor(e.color, "var(--text-muted)")}
+                    strokeWidth={isSel(e.id) ? 3 : 2}
                     markerEnd={(e.toEnd ?? "arrow") === "arrow" ? "url(#cv-arrow)" : undefined}
                     markerStart={e.fromEnd === "arrow" ? "url(#cv-arrow)" : undefined}
                   />
@@ -457,6 +540,15 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
                   />
                 );
               })()}
+            {band && (
+              <rect
+                className="canvas-band"
+                x={Math.min(band.x0, band.x1)}
+                y={Math.min(band.y0, band.y1)}
+                width={Math.abs(band.x1 - band.x0)}
+                height={Math.abs(band.y1 - band.y0)}
+              />
+            )}
           </svg>
         )}
         {data.nodes.map((n) => (
@@ -464,12 +556,12 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
             key={n.id}
             node={n}
             editable={editable}
-            selected={selected === n.id}
+            selected={isSel(n.id)}
             editing={editingId === n.id}
             onOpenFile={onOpenFile}
             onOpenUrl={onOpenUrl}
             resolveImage={resolveImage}
-            onSelect={() => editable && setSelected(n.id)}
+            onSelect={() => {}}
             onStartDrag={(e) => startNodeDrag(e, n.id)}
             onStartResize={(e) => startResize(e, n.id)}
             onStartEdge={(e, side) => startEdge(e, n.id, side)}
