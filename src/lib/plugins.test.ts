@@ -10,6 +10,8 @@ import {
   isLoaded,
   loadEnabled,
   saveEnabled,
+  emitVaultEvent,
+  emitWorkspaceEvent,
   type HostDeps,
   type PluginInfo,
 } from "./plugins";
@@ -185,5 +187,58 @@ describe("enabled-plugin persistence", () => {
     expect(loadEnabled("/v").sort()).toEqual(["a", "b"]);
     expect(loadEnabled("/other")).toEqual([]);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("plugin events", () => {
+  it("delivers vault + workspace events to a subscribed plugin and cleans up on unload", async () => {
+    const { host } = fakeHost();
+    installHost(host);
+    (globalThis as any).__events = [];
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          this.registerEvent(this.app.vault.on("modify", (f) => globalThis.__events.push(["modify", f.path])));
+          this.registerEvent(this.app.vault.on("rename", (f, old) => globalThis.__events.push(["rename", f.path, old])));
+          this.registerEvent(this.app.workspace.on("file-open", (f) => globalThis.__events.push(["open", f && f.path])));
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "ev", code }));
+    emitVaultEvent("modify", { path: "A.md", name: "A" });
+    emitVaultEvent("rename", { path: "B.md", name: "B" }, "A.md");
+    emitWorkspaceEvent("file-open", { path: "C.md", name: "C" });
+    expect((globalThis as any).__events).toEqual([
+      ["modify", "A.md"],
+      ["rename", "B.md", "A.md"],
+      ["open", "C.md"],
+    ]);
+    // Unload removes the subscriptions.
+    await unloadPlugin("ev");
+    (globalThis as any).__events = [];
+    emitVaultEvent("modify", { path: "A.md", name: "A" });
+    expect((globalThis as any).__events).toEqual([]);
+  });
+
+  it("registerInterval + registerDomEvent are cleared on unload", async () => {
+    const { host } = fakeHost();
+    installHost(host);
+    (globalThis as any).__domhits = 0;
+    (globalThis as any).__el = new EventTarget();
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          this.registerDomEvent(globalThis.__el, "basalt-test-evt", () => globalThis.__domhits++);
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "iv", code }));
+    (globalThis as any).__el.dispatchEvent(new Event("basalt-test-evt"));
+    expect((globalThis as any).__domhits).toBe(1);
+    await unloadPlugin("iv");
+    (globalThis as any).__el.dispatchEvent(new Event("basalt-test-evt"));
+    expect((globalThis as any).__domhits).toBe(1); // no further hits after unload
   });
 });
