@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import type { Attachment, VaultNote } from "../lib/vault";
 import { ancestorFolders, buildTree, type TreeNode, type SortOrder } from "../lib/tree";
 
@@ -46,6 +46,20 @@ const DND_MIME = "application/x-basalt-note";
 export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onNewNote, onOpenAttachment, onContextMenu, onAttachmentContextMenu, onFolderContextMenu, onMoveToFolder }: Props) {
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const noteListRef = useRef<HTMLDivElement | null>(null);
+  // Expand the active note's ancestor folders and scroll it into view.
+  const revealActive = () => {
+    if (!activePath) return;
+    const note = notes.find((n) => n.path === activePath);
+    if (note) {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        for (const f of ancestorFolders(note.rel)) next.add(f);
+        return next;
+      });
+    }
+    requestAnimationFrame(() => noteListRef.current?.querySelector(".active")?.scrollIntoView({ block: "center" }));
+  };
   const [sort, setSort] = useState<SortOrder>(
     () => (localStorage.getItem("basalt.fileSort") as SortOrder | null) ?? "name-asc",
   );
@@ -139,6 +153,12 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
         <span className="vault-name" title={vaultName ?? ""}>
           {vaultName ?? "No vault"}
         </span>
+        <button className="icon-btn" onClick={revealActive} title="Reveal active file" disabled={!activePath}>
+          ⊙
+        </button>
+        <button className="icon-btn" onClick={() => setExpanded(new Set())} title="Collapse all">
+          ⇈
+        </button>
         <button className="icon-btn" onClick={onNewNote} title="New note">
           +
         </button>
@@ -163,7 +183,7 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
           <option value="ctime-desc">Created (newest)</option>
         </select>
       </div>
-      <div className="note-list">
+      <div className="note-list" ref={noteListRef}>
         {filtered ? (
           <>
             {filtered.notes.map((n) => (
