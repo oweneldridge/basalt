@@ -3326,6 +3326,7 @@ export default function App() {
           onSelectTag={handleSelectTag}
           bookmarks={bookmarks}
           onOpenBookmark={handleOpenBookmark}
+          onOpenUnresolved={(target) => void handleOpenWikilink(target)}
           onSearch={(query) => {
             setSearchSeed(query);
             setModal("search");

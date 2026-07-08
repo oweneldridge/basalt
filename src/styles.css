@@ -2101,3 +2101,6 @@ button.primary:hover {
   cursor: pointer;
 }
 .ribbon-btn:hover { background: var(--hover, rgba(127,127,127,0.15)); color: var(--text); }
+
+/* ------- %% comments (Live Preview) ------- */
+.cm-comment { color: var(--text-faint, var(--text-muted)); opacity: 0.6; }

@@ -39,6 +39,8 @@ interface Props {
   bookmarks: Bookmark[];
   onOpenBookmark: (b: Bookmark) => void;
   onSearch: (query: string) => void;
+  /** Open-or-create an unresolved outgoing link's target (Obsidian: click to create). */
+  onOpenUnresolved: (target: string) => void;
 }
 
 export function RightPanel({
@@ -55,6 +57,7 @@ export function RightPanel({
   onSelectTag,
   bookmarks,
   onOpenBookmark,
+  onOpenUnresolved,
   onSearch,
 }: Props) {
   return (
@@ -93,9 +96,14 @@ export function RightPanel({
               <>
                 <div className="outgoing-head">Unresolved</div>
                 {outgoing.unresolved.map((t, i) => (
-                  <div key={`u${i}`} className="outgoing-item unresolved">
+                  <button
+                    key={`u${i}`}
+                    className="outgoing-item unresolved"
+                    onClick={() => onOpenUnresolved(t)}
+                    title={`Create “${t}”`}
+                  >
                     {t}
-                  </div>
+                  </button>
                 ))}
               </>
             )}
