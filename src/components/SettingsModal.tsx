@@ -17,6 +17,8 @@ interface Props {
   onReadableWidth: (on: boolean) => void;
   spellcheck: boolean;
   onSpellcheck: (on: boolean) => void;
+  vim: boolean;
+  onVim: (on: boolean) => void;
   /** Palette commands (id + label) for hotkey assignment. */
   commands: { id: string; label: string }[];
   hotkeys: Bindings;
@@ -56,6 +58,8 @@ export function SettingsModal({
   onReadableWidth,
   spellcheck,
   onSpellcheck,
+  vim,
+  onVim,
   commands,
   hotkeys,
   onSetHotkey,
@@ -139,6 +143,10 @@ export function SettingsModal({
           <div className="settings-row">
             <span className="settings-row-label">Spellcheck</span>
             <input type="checkbox" checked={spellcheck} onChange={(e) => onSpellcheck(e.target.checked)} />
+          </div>
+          <div className="settings-row">
+            <span className="settings-row-label">Vim key bindings</span>
+            <input type="checkbox" checked={vim} onChange={(e) => onVim(e.target.checked)} />
           </div>
           <p className="settings-hint">
             “System” follows your OS appearance. Stored per app, not in the vault.

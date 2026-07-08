@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { createEditorState, externalReload, reconfigurePlugins, setEditorTheme, setSourceMode, setSpellcheck } from "../editor/setup";
+import { createEditorState, externalReload, reconfigurePlugins, setEditorTheme, setSourceMode, setSpellcheck, setVimMode } from "../editor/setup";
 import type { EditorCallbacks } from "../editor/setup";
 import type { NoteRef } from "../editor/wikilink";
 import type { LinkFormat } from "../lib/rename";
@@ -32,6 +32,7 @@ interface Props {
   /** True = dark editor theme (CM6 dark flag); colors come from CSS vars. */
   dark: boolean;
   spellcheck: boolean;
+  vim: boolean;
   /** Bumps when the plugin registry changes → re-apply plugin editor extensions
    * and re-render plugin code-blocks in this live editor. */
   pluginVersion: number;
@@ -65,6 +66,7 @@ export function EditorPane({
   sourceMode,
   dark,
   spellcheck,
+  vim,
   pluginVersion,
   apiRef,
 }: Props) {
@@ -95,6 +97,8 @@ export function EditorPane({
   darkRef.current = dark;
   const spellcheckRef = useRef(spellcheck);
   spellcheckRef.current = spellcheck;
+  const vimRef = useRef(vim);
+  vimRef.current = vim;
   const selfRelRef = useRef(selfRel);
   selfRelRef.current = selfRel;
 
@@ -102,7 +106,7 @@ export function EditorPane({
   useEffect(() => {
     if (!host.current) return;
     const v = new EditorView({
-      state: createEditorState(doc, adapter.current, sourceModeRef.current, darkRef.current, selfRelRef.current, spellcheckRef.current),
+      state: createEditorState(doc, adapter.current, sourceModeRef.current, darkRef.current, selfRelRef.current, spellcheckRef.current, vimRef.current),
       parent: host.current,
     });
     view.current = v;
@@ -191,6 +195,11 @@ export function EditorPane({
   useEffect(() => {
     if (view.current) setSpellcheck(view.current, spellcheck);
   }, [spellcheck]);
+
+  // Toggle Vim keybindings in place.
+  useEffect(() => {
+    if (view.current) setVimMode(view.current, vim);
+  }, [vim]);
 
   return <div className="editor-host" data-self-rel={selfRel} ref={host} />;
 }
