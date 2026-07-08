@@ -72,16 +72,13 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # --- macOS signing + notarization (optional; set these secrets to enable) ---
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # --- Windows signing (optional) ---
-          # Configure via tauri.conf.json bundle.windows.certificateThumbprint
-          # once you have a cert; no env needed for that path.
+          # macOS signing + notarization is OFF by default: passing an EMPTY
+          # APPLE_CERTIFICATE makes tauri attempt (and fail) a keychain import,
+          # so we don't set the Apple env vars here. To enable signing later,
+          # add the secrets (APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+          # APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID) and
+          # re-add them under this `env:` block. Windows signing: set
+          # tauri.conf.json bundle.windows.certificateThumbprint (no env needed).
         with:
           # A draft release so you can review installers + write notes before publishing.
           tagName: ${{ github.ref_name }}
