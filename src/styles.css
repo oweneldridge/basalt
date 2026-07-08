@@ -2313,3 +2313,14 @@ button.primary:hover {
 .base-filter-cond button { border: 1px solid var(--border); background: var(--bg); color: var(--text-muted); border-radius: 5px; padding: 2px 7px; cursor: pointer; }
 .base-filter-cond button:hover { color: var(--danger); border-color: var(--danger); }
 .base-filter-add { align-self: flex-start; background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 2px 0; }
+
+/* ------- Bases formula editor ------- */
+.base-formula-list { display: flex; flex-direction: column; gap: 5px; }
+.base-formula-row { display: flex; align-items: center; gap: 5px; }
+.base-formula-name { flex: 0 0 30%; }
+.base-formula-eq { color: var(--text-faint); }
+.base-formula-expr { flex: 1; font-family: var(--font-mono, monospace); font-size: 0.85em; }
+.base-formula-row button { border: 1px solid var(--border); background: var(--bg); color: var(--text-muted); border-radius: 5px; padding: 2px 7px; cursor: pointer; }
+.base-formula-row button:hover { color: var(--danger); border-color: var(--danger); }
+.base-formula-hint { font-size: 11px; color: var(--text-faint); margin-top: 4px; }
+.base-formula-hint code { font-family: var(--font-mono, monospace); }
