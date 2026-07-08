@@ -67,3 +67,19 @@ test("inline title renames the note", async ({ page }) => {
   await expect(page.locator(".pane .tab.active .tab-name")).toHaveText("IdeasRenamed");
   await expect(page.locator(".tree-row.file", { hasText: "IdeasRenamed" })).toHaveCount(1);
 });
+
+test("dragging a tree note into the editor inserts a wikilink", async ({ page }) => {
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+  await expect(page.locator(".cm-editor")).toBeVisible();
+  const inserted = await page.evaluate(() => {
+    const content = document.querySelector(".pane .cm-content") as HTMLElement;
+    const rect = content.getBoundingClientRect();
+    const dt = new DataTransfer();
+    dt.setData("application/x-basalt-note", "/mock/vault/Ideas.md");
+    const opts = { dataTransfer: dt, clientX: rect.left + 40, clientY: rect.top + 15, bubbles: true, cancelable: true };
+    content.dispatchEvent(new DragEvent("dragover", opts));
+    content.dispatchEvent(new DragEvent("drop", opts));
+    return document.querySelector(".pane .cm-content")?.textContent ?? "";
+  });
+  expect(inserted).toContain("[[Ideas]]");
+});
