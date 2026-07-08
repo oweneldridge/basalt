@@ -2436,8 +2436,8 @@ button.primary:hover {
 /* Appearance settings inline controls */
 .settings-inline { display: inline-flex; align-items: center; gap: 8px; }
 .settings-num { font-variant-numeric: tabular-nums; color: var(--text-muted); min-width: 34px; }
-.settings-reset { background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); border-radius: 5px; padding: 2px 8px; cursor: pointer; font-size: 12px; }
-.settings-reset:hover { color: var(--text); }
+.settings-reset, .settings-import-btn { background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); border-radius: 5px; padding: 2px 8px; cursor: pointer; font-size: 12px; }
+.settings-reset:hover, .settings-import-btn:hover { color: var(--text); }
 
 /* ------- View leaves (a view rendered as a tab in the layout) ------- */
 .leaf-view { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
@@ -2447,3 +2447,8 @@ button.primary:hover {
 .pane.dock { background: var(--bg-sidebar); }
 .pane.dock .tab-bar { background: var(--bg-sidebar); }
 .pane.dock .leaf-view { font-size: 13px; }
+
+/* ------- Import from Obsidian report ------- */
+.import-report { font-size: 12px; color: var(--text-muted); padding: 6px 0; display: flex; flex-direction: column; gap: 4px; }
+.import-plugins ul { margin: 4px 0 0; padding-left: 18px; }
+.import-plugins li { color: var(--text); }

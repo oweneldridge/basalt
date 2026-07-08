@@ -1262,6 +1262,36 @@ fn read_obsidian_config(window: tauri::Window, state: State<VaultState>) -> Resu
     Ok(cfg)
 }
 
+/// Raw `.obsidian/` config for the "Import from Obsidian" flow: the appearance
+/// and hotkeys files verbatim (parsed on the frontend) + the enabled community
+/// plugin ids (a report — Basalt can't run Obsidian plugins).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ObsidianImport {
+    appearance: Option<String>,
+    hotkeys: Option<String>,
+    community_plugins: Vec<String>,
+}
+
+#[tauri::command]
+fn read_obsidian_import(
+    window: tauri::Window,
+    state: State<VaultState>,
+) -> Result<ObsidianImport, String> {
+    let root = current_root(&state, window.label())?;
+    let appearance = fs::read_to_string(root.join(".obsidian/appearance.json")).ok();
+    let hotkeys = fs::read_to_string(root.join(".obsidian/hotkeys.json")).ok();
+    let community_plugins = fs::read_to_string(root.join(".obsidian/community-plugins.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default();
+    Ok(ObsidianImport {
+        appearance,
+        hotkeys,
+        community_plugins,
+    })
+}
+
 /// One flattened entry from `.obsidian/bookmarks.json`. Obsidian nests
 /// bookmarks in `group` items; we flatten them, carrying the group title for
 /// display. `path` is vault-relative; `subpath` is a `#heading`/`#^block` ref.
@@ -1840,6 +1870,7 @@ pub fn run() {
             list_attachments,
             write_attachment,
             read_obsidian_config,
+            read_obsidian_import,
             read_obsidian_bookmarks,
             toggle_file_bookmark,
             export_file,
