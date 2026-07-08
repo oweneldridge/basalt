@@ -122,3 +122,44 @@ test("a window launched with ?vault=&note= opens that note", async ({ page }) =>
   await expect(page.locator(".pane:not(.dock) .cm-editor")).toBeVisible();
   await expect(page.locator(".pane:not(.dock) .tab.active .tab-name")).toHaveText("Ideas");
 });
+
+test("a closed dock stays closed across reload (v3 respects the saved layout)", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.waitForSelector(".sidebar");
+  await expect(page.locator(".pane.dock-left")).toHaveCount(1);
+  // Close the left dock.
+  await page.locator('[title^="Toggle sidebar"]').click();
+  await expect(page.locator(".pane.dock-left")).toHaveCount(0);
+  await page.waitForTimeout(400); // let the workspace save
+  await page.reload();
+  await page.waitForTimeout(400);
+  // It stays closed; the right dock is untouched.
+  await expect(page.locator(".pane.dock-left")).toHaveCount(0);
+  await expect(page.locator(".pane.dock-right")).toHaveCount(1);
+});
+
+test("Open in new window keeps the note open here; Reset restores the default layout", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await page.evaluate(() => { localStorage.clear(); (window as unknown as { __newWindows: unknown[] }).__newWindows = []; });
+  await page.reload();
+  await page.locator(".pane.dock-left .tree-row.file", { hasText: "Ideas" }).click();
+
+  // "Open in new window" from the file menu — opens a window but leaves the tab here.
+  await page.locator(".pane.dock-left .tree-row.file", { hasText: "Ideas" }).click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Open in new window" }).click();
+  const calls = await page.evaluate(() => (window as unknown as { __newWindows: { vault: string; note: string }[] }).__newWindows);
+  expect(calls).toEqual([{ vault: "/mock/vault", note: "Ideas.md" }]);
+  await expect(page.locator(".pane:not(.dock) .tab", { hasText: "Ideas" })).toHaveCount(1);
+
+  // Reset to default layout: close the left dock, then reset → both docks back, note kept.
+  await page.locator('[title^="Toggle sidebar"]').click();
+  await expect(page.locator(".pane.dock-left")).toHaveCount(0);
+  await page.keyboard.press("Meta+p");
+  await page.locator(".palette-input").first().fill("Reset to default layout");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".pane.dock-left")).toHaveCount(1);
+  await expect(page.locator(".pane.dock-right")).toHaveCount(1);
+  await expect(page.locator(".pane:not(.dock) .tab.active .tab-name")).toHaveText("Ideas");
+});
