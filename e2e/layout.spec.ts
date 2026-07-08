@@ -105,3 +105,36 @@ test("the status bar shows word count and a live cursor position", async ({ page
   await page.keyboard.press("ArrowDown");
   await expect(page.locator(".status-bar")).toContainText(/Ln \d+, Col \d+/);
 });
+
+test("dragging a tab to a pane edge splits the pane and moves the tab", async ({ page }) => {
+  await page.evaluate(() => {
+    Object.keys(localStorage).filter((k) => k.includes("workspace")).forEach((k) => localStorage.removeItem(k));
+  });
+  await page.reload();
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+  await expect(page.locator(".cm-editor")).toBeVisible();
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  await expect(page.locator(".pane .tab")).toHaveCount(2);
+  // Begin dragging the active tab → the edge drop-zones appear.
+  await page.evaluate(() => {
+    const tab = document.querySelector(".pane .tab.active") as HTMLElement;
+    (window as unknown as { __dt: DataTransfer }).__dt = new DataTransfer();
+    tab.dispatchEvent(new DragEvent("dragstart", { dataTransfer: (window as unknown as { __dt: DataTransfer }).__dt, bubbles: true }));
+  });
+  await expect(page.locator(".pane-dropzone")).toHaveCount(1);
+  // Drop it on the right edge.
+  await page.evaluate(() => {
+    const dt = (window as unknown as { __dt: DataTransfer }).__dt;
+    const zone = document.querySelector(".pane-dropzone") as HTMLElement;
+    const r = zone.getBoundingClientRect();
+    const o = { dataTransfer: dt, clientX: r.left + r.width * 0.9, clientY: r.top + r.height * 0.5, bubbles: true, cancelable: true };
+    zone.dispatchEvent(new DragEvent("dragover", o));
+    zone.dispatchEvent(new DragEvent("drop", o));
+  });
+  await expect(page.locator(".pane")).toHaveCount(2);
+  await expect(page.locator(".cm-editor")).toHaveCount(2);
+  await expect(page.locator(".pane-resizer")).toHaveCount(1);
+  // The dragged "Ideas" tab is alone in the new (focused) split.
+  await expect(page.locator(".pane.focused .tab")).toHaveCount(1);
+  await expect(page.locator(".pane.focused .tab .tab-name")).toHaveText("Ideas");
+});
