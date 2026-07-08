@@ -194,6 +194,12 @@ export function readObsidianBookmarks(): Promise<Bookmark[]> {
   return invoke<Bookmark[]>("read_obsidian_bookmarks");
 }
 
+/** Toggle a file bookmark in `.obsidian/bookmarks.json`; resolves to the new
+ * state (true = now bookmarked). Preserves all other bookmarks/groups. */
+export function toggleFileBookmark(path: string): Promise<boolean> {
+  return invoke<boolean>("toggle_file_bookmark", { path });
+}
+
 /** Write an export file to a user-chosen (save-dialog) path. */
 export function exportFile(path: string, content: string): Promise<void> {
   return invoke<void>("export_file", { path, content });
