@@ -40,6 +40,8 @@ export interface Backlink {
 export interface GraphNode {
   id: string; // note path
   name: string;
+  /** Top-level folder (vault-relative), "" for vault root — for color grouping. */
+  group: string;
 }
 export interface GraphLink {
   source: string;
@@ -486,7 +488,10 @@ export class VaultIndex {
   /** The whole vault as a graph: a node per note, an edge per resolved link. */
   graph(): GraphData {
     const nodes: GraphNode[] = [];
-    for (const [path, m] of this.meta) nodes.push({ id: path, name: m.name });
+    for (const [path, m] of this.meta) {
+      const slash = m.rel.indexOf("/");
+      nodes.push({ id: path, name: m.name, group: slash === -1 ? "" : m.rel.slice(0, slash) });
+    }
     const links: GraphLink[] = [];
     const seen = new Set<string>();
     for (const [sourcePath, occs] of this.occ) {
