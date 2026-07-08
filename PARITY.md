@@ -84,10 +84,15 @@ A follow-up pass closed ~17 more MEDIUM/LOW gaps from the list below:
   in other panes.
 - **Stacked tab groups** — a ▤ toggle spreads a pane's open tabs as read-only
   reading-view columns (the "see all open notes" overview).
+- **Search `line:`** — `line:(a b)` matches terms co-occurring on one line.
+- **Slides / presentation** — "Start presentation" splits on `---`, fullscreen
+  with ←/→/Esc navigation.
+- **Audio recorder** — "Record audio" captures from the mic, saves an
+  attachment, and embeds it at the cursor.
 
-Still open (larger): bookmarks create/edit (deferred by design — writes
-`.obsidian/`), search `line:` operator, deeper Bases editing (nested filters,
-formulas, multi-key), inline-editable stacked columns, slides, audio recorder.
+Still open: bookmarks create/edit (deferred by design — writes `.obsidian/`),
+deeper Bases editing (nested filters, formulas, multi-key sort), inline-editable
+stacked columns. The parity backlog is otherwise cleared.
 
 ## Scored matrix
 
