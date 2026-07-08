@@ -57,9 +57,32 @@ function tokenize(q: string): string[] {
   return out;
 }
 
-export function parseSearchQuery(query: string): Query {
+/** Split a query into OR-groups at a top-level, unquoted ` OR ` (Obsidian's
+ * uppercase OR keyword). `A B OR C D` → ["A B", "C D"]. */
+function splitOnOr(query: string): string[] {
+  const parts: string[] = [];
+  let cur = "";
+  let inQuote = false;
+  for (let i = 0; i < query.length; i++) {
+    const c = query[i];
+    if (c === '"') {
+      inQuote = !inQuote;
+      cur += c;
+    } else if (!inQuote && query.startsWith(" OR ", i)) {
+      parts.push(cur);
+      cur = "";
+      i += 3; // skip "OR " (the leading space was consumed)
+    } else {
+      cur += c;
+    }
+  }
+  parts.push(cur);
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
+function buildQuery(tokens: string[]): Query {
   const q: Query = { terms: [], negations: [], paths: [], files: [], tags: [], regex: null };
-  for (const tok of tokenize(query.trim())) {
+  for (const tok of tokens) {
     if (!tok) continue;
     const rx = /^\/(.+)\/([gimsuy]*)$/.exec(tok);
     if (rx && !q.regex && !looksCatastrophic(rx[1])) {
@@ -83,6 +106,14 @@ export function parseSearchQuery(query: string): Query {
   return q;
 }
 
+/** Parse a query into one Query per top-level OR-group. */
+export function parseSearchQuery(query: string): Query {
+  return buildQuery(tokenize(query.trim()));
+}
+export function parseSearchGroups(query: string): Query[] {
+  return splitOnOr(query.trim()).map((g) => buildQuery(tokenize(g)));
+}
+
 function noteMatchesFilters(note: VaultNote, q: Query, opts: SearchOpts): boolean {
   const rel = norm(note.rel);
   if (!q.paths.every((p) => rel.includes(p))) return false;
@@ -95,49 +126,66 @@ function noteMatchesFilters(note: VaultNote, q: Query, opts: SearchOpts): boolea
   return true;
 }
 
+/** Whether a group has anything to match on. */
+function groupHasContent(q: Query): boolean {
+  return q.terms.length > 0 || q.regex !== null;
+}
+function groupHasAny(q: Query): boolean {
+  return groupHasContent(q) || !!(q.paths.length || q.files.length || q.tags.length || q.negations.length);
+}
+/** A note satisfies a group's note-level filters + AND-terms + no-negation. */
+function noteMatchesGroup(note: VaultNote, q: Query, noteText: string, opts: SearchOpts): boolean {
+  if (!noteMatchesFilters(note, q, opts)) return false;
+  if (!q.terms.every((t) => noteText.includes(t))) return false;
+  if (q.negations.some((n) => noteText.includes(n))) return false;
+  return true;
+}
+
 export function searchVault(notes: VaultNote[], query: string, opts: SearchOpts = {}): SearchHit[] {
-  const q = parseSearchQuery(query);
-  const hasContentQuery = q.terms.length > 0 || q.regex !== null;
-  const hasAny = hasContentQuery || q.paths.length || q.files.length || q.tags.length || q.negations.length;
-  if (!hasAny) return [];
+  const groups = parseSearchGroups(query).filter(groupHasAny);
+  if (groups.length === 0) return [];
+  const anyContent = groups.some(groupHasContent);
 
   const scored: { hit: SearchHit; score: number }[] = [];
   for (const note of notes) {
-    if (!noteMatchesFilters(note, q, opts)) continue;
     const lines = normLines(note);
     const rawLines = note.content.split("\n");
     const noteText = lines.join("\n");
+    // The groups this note satisfies (OR: any is enough).
+    const matched = groups.filter((g) => noteMatchesGroup(note, g, noteText, opts));
+    if (matched.length === 0) continue;
 
-    // Note-level AND / NOT: every positive term must appear, no negation may.
-    if (!q.terms.every((t) => noteText.includes(t))) continue;
-    if (q.negations.some((n) => noteText.includes(n))) continue;
-
-    // Title match ranks first.
-    const nameHitIdx = q.terms.length ? norm(note.name).indexOf(q.terms[0]) : q.terms.length === 0 ? 0 : -1;
-    if (nameHitIdx !== -1 && (q.terms.length > 0 || !hasContentQuery)) {
+    // Title match ranks first (use the first positive term of any matched group).
+    const firstTerm = matched.map((g) => g.terms[0]).find((t) => t !== undefined);
+    const nameHitIdx = firstTerm ? norm(note.name).indexOf(firstTerm) : anyContent ? -1 : 0;
+    if (nameHitIdx !== -1 && (firstTerm !== undefined || !anyContent)) {
       scored.push({
         hit: { path: note.path, name: note.name, line: 1, lineText: note.name },
         score: 1000 - nameHitIdx - note.name.length * 0.01,
       });
     }
 
-    // Line hits: a line matching the regex, or containing ANY positive term.
+    // Line hits: a line matching ANY matched group's regex or positive terms.
+    const seenLine = new Set<number>();
     let inNote = 0;
     for (let i = 0; i < lines.length && inNote < MAX_HITS_PER_NOTE; i++) {
       let idx = -1;
-      if (q.regex) {
-        if (rawLines[i].length <= MAX_REGEX_LINE) {
-          q.regex.lastIndex = 0;
-          const m = q.regex.exec(rawLines[i]);
-          idx = m ? m.index : -1;
-        }
-      } else if (q.terms.length) {
-        for (const t of q.terms) {
-          const j = lines[i].indexOf(t);
-          if (j !== -1 && (idx === -1 || j < idx)) idx = j;
+      for (const g of matched) {
+        if (g.regex) {
+          if (rawLines[i].length <= MAX_REGEX_LINE) {
+            g.regex.lastIndex = 0;
+            const m = g.regex.exec(rawLines[i]);
+            if (m && (idx === -1 || m.index < idx)) idx = m.index;
+          }
+        } else {
+          for (const t of g.terms) {
+            const j = lines[i].indexOf(t);
+            if (j !== -1 && (idx === -1 || j < idx)) idx = j;
+          }
         }
       }
-      if (idx === -1) continue;
+      if (idx === -1 || seenLine.has(i)) continue;
+      seenLine.add(i);
       scored.push({
         hit: { path: note.path, name: note.name, line: i + 1, lineText: rawLines[i].trim() },
         score: 100 - idx * 0.1 - i * 0.001,
