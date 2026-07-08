@@ -116,7 +116,22 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-head">
+      <div
+        className="sidebar-head"
+        title="Drop a note here to move it to the vault root"
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes(DND_MIME)) {
+            e.preventDefault();
+            e.currentTarget.classList.add("drop-target");
+          }
+        }}
+        onDragLeave={(e) => e.currentTarget.classList.remove("drop-target")}
+        onDrop={(e) => {
+          e.currentTarget.classList.remove("drop-target");
+          const p = e.dataTransfer.getData(DND_MIME);
+          if (p) onMoveToFolder(p, ""); // "" = vault root
+        }}
+      >
         <span className="vault-name" title={vaultName ?? ""}>
           {vaultName ?? "No vault"}
         </span>

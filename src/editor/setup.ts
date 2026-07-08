@@ -81,6 +81,7 @@ import { codeBlocks } from "./codeBlocks";
 import { callouts } from "./callouts";
 import { calloutFold } from "./calloutFold";
 import { footnotes } from "./footnotes";
+import { comments } from "./comments";
 import { highlight } from "./highlight";
 import { tags } from "./tags";
 import { embeds } from "./embeds";
@@ -175,6 +176,7 @@ function renderExtensions(cb: EditorCallbacks): Extension[] {
     callouts,
     calloutFold,
     footnotes,
+    comments,
     highlight,
     tags,
     embeds({ resolveImage: cb.resolveImage, onOpen: cb.onOpenWikilink }),
