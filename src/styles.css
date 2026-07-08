@@ -2379,3 +2379,21 @@ button.primary:hover {
 
 /* Disabled context-menu item */
 .ctx-item:disabled { opacity: 0.4; cursor: default; }
+
+/* ------- Inline title (editable filename above the editor) ------- */
+.inline-title {
+  flex: 0 0 auto;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-text);
+  font-size: 1.7rem;
+  font-weight: 700;
+  padding: 12px 0 4px;
+  margin: 0 max(24px, 4%);
+  width: calc(100% - 2 * max(24px, 4%));
+}
+.readable-width .inline-title { max-width: 720px; margin: 0 auto; }
+.inline-title:focus { border-bottom: 1px solid var(--border); }
+.inline-title::placeholder { color: var(--text-faint); }
