@@ -5,7 +5,7 @@ import { EditorState } from "@codemirror/state";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
 import { ensureSyntaxTree } from "@codemirror/language";
-import { headingSectionAt } from "./headingFold";
+import { headingSectionAt, listItemSectionAt } from "./headingFold";
 
 function stateFor(doc: string): EditorState {
   const state = EditorState.create({
@@ -60,5 +60,23 @@ describe("headingSectionAt", () => {
     const doc = ["# Real", "```", "# not a heading", "still code", "```", "after"].join("\n");
     expect(foldLines(doc, 1)).toEqual([1, 6]); // real heading folds the code block + after
     expect(foldLines(doc, 3)).toBeNull(); // the '#' line inside the fence isn't a heading
+  });
+});
+
+describe("listItemSectionAt", () => {
+  const listFold = (doc: string, lineNo: number): [number, number] | null => {
+    const state = stateFor(doc);
+    const r = listItemSectionAt(state, state.doc.line(lineNo).from);
+    return r ? [state.doc.lineAt(r.from).number, state.doc.lineAt(r.to).number] : null;
+  };
+  it("folds a list item's deeper-indented children", () => {
+    expect(listFold("- parent\n  - a\n  - b\n- sibling", 1)).toEqual([1, 3]);
+  });
+  it("returns null for a childless item and stops at a blank line / dedent", () => {
+    expect(listFold("- solo\n- next", 1)).toBeNull();
+    expect(listFold("- p\n  - child\n\n- after", 1)).toEqual([1, 2]);
+  });
+  it("handles ordered lists and nested depth", () => {
+    expect(listFold("1. a\n   1. deep\n      - deeper\n2. b", 1)).toEqual([1, 3]);
   });
 });
