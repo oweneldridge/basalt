@@ -2262,3 +2262,17 @@ button.primary:hover {
 }
 .tab-link:hover { opacity: 0.7; }
 .tab-link.active { opacity: 1; filter: none; }
+
+/* ------- Stacked tab group (spread) ------- */
+.stacked-tabs { flex: 1; display: flex; overflow-x: auto; min-height: 0; gap: 1px; background: var(--border); }
+.stacked-col { flex: 0 0 min(420px, 70vw); display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.stacked-col.active { flex-basis: min(560px, 80vw); }
+.stacked-col-head {
+  flex: 0 0 auto; text-align: left; background: var(--bg-sidebar); border: none;
+  border-bottom: 1px solid var(--border); color: var(--text-muted);
+  padding: 6px 12px; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.stacked-col.active .stacked-col-head { color: var(--text); }
+.stacked-col-head:hover { background: var(--bg-elev); color: var(--text); }
+.stacked-col-body { flex: 1; overflow-y: auto; min-height: 0; }

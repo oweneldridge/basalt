@@ -63,3 +63,24 @@ test("a linked pane follows notes opened in another pane", async ({ page }) => {
   // Both panes now show Ideas.
   await expect(page.locator(".pane .tab.active .tab-name")).toHaveText(["Ideas", "Ideas"]);
 });
+
+test("stacking a tab group spreads all open notes as columns", async ({ page }) => {
+  await page.evaluate(() => {
+    Object.keys(localStorage).filter((k) => k.includes("workspace")).forEach((k) => localStorage.removeItem(k));
+  });
+  await page.reload();
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+  await expect(page.locator(".cm-editor")).toHaveCount(1);
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  await expect(page.locator(".pane .tab")).toHaveCount(2);
+  // Stack → a column per open note, read-only spread (no editors).
+  await page.locator(".tab-stack").click();
+  await expect(page.locator(".stacked-col")).toHaveCount(2);
+  await expect(page.locator(".stacked-col-head")).toHaveText(["Welcome", "Ideas"]);
+  await expect(page.locator(".cm-editor")).toHaveCount(0);
+  // Focus a column → back to the normal editor for that note.
+  await page.locator(".stacked-col-head", { hasText: "Ideas" }).click();
+  await expect(page.locator(".stacked-tabs")).toHaveCount(0);
+  await expect(page.locator(".cm-editor")).toHaveCount(1);
+  await expect(page.locator(".tab.active .tab-name")).toHaveText("Ideas");
+});
