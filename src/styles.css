@@ -2324,3 +2324,14 @@ button.primary:hover {
 .base-formula-row button:hover { color: var(--danger); border-color: var(--danger); }
 .base-formula-hint { font-size: 11px; color: var(--text-faint); margin-top: 4px; }
 .base-formula-hint code { font-family: var(--font-mono, monospace); }
+
+/* ------- Bases expression input (CM6) ------- */
+.base-formula-exprwrap { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.expr-input { border: 1px solid var(--border); border-radius: 5px; background: var(--bg); overflow: hidden; }
+.expr-input:focus-within { border-color: var(--accent); }
+.expr-input .cm-editor { font-family: var(--font-mono, monospace); font-size: 0.85em; }
+.expr-input .cm-content { padding: 4px 8px; }
+.expr-input .cm-line { padding: 0; }
+.expr-input .cm-editor.cm-focused { outline: none; }
+.expr-input .cm-scroller { overflow-x: auto; }
+.expr-error { font-size: 11px; color: var(--danger); }

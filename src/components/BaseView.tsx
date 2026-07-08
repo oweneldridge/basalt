@@ -10,6 +10,7 @@ import {
   asFlatFilter,
   fromFlat,
   rawFilterIsFlat,
+  validateExpr,
   type BaseDef,
   type BaseViewDef,
   type BaseRow,
@@ -18,6 +19,7 @@ import {
   type EvalCtx,
 } from "../lib/bases";
 import { noteRow, attachmentRow } from "../lib/vaultRows";
+import { ExprInput } from "./ExprInput";
 import type { VaultNote, Attachment } from "../lib/vault";
 
 /** Rows rendered before a "show more" step-up. Bounds DOM node count and
@@ -426,15 +428,16 @@ function BaseEditor({
             )}
             {conds.map((c, i) => (
               <div className="base-filter-cond" key={i}>
-                <input
-                  type="text"
-                  className="base-filter-input"
-                  value={c}
-                  placeholder='e.g. status != "done"'
-                  onChange={(e) => setConds((prev) => prev.map((x, j) => (j === i ? e.target.value : x)))}
-                  onBlur={() => commitFilter(conds, combinator)}
-                  onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-                />
+                <div className="base-formula-exprwrap">
+                  <ExprInput
+                    className="base-filter-input"
+                    value={c}
+                    placeholder='e.g. status != "done"'
+                    onChange={(v) => setConds((prev) => prev.map((x, j) => (j === i ? v : x)))}
+                    onBlur={() => commitFilter(conds, combinator)}
+                  />
+                  {validateExpr(c) && <div className="expr-error">⚠ {validateExpr(c)}</div>}
+                </div>
                 <button
                   title="Remove condition"
                   onClick={() => {
@@ -502,15 +505,16 @@ function BaseEditor({
                 onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
               />
               <span className="base-formula-eq">=</span>
-              <input
-                className="base-formula-expr"
-                type="text"
-                placeholder="e.g. price / quantity"
-                value={row.expr}
-                onChange={(e) => setFRows((prev) => prev.map((r, j) => (j === i ? { ...r, expr: e.target.value } : r)))}
-                onBlur={() => commitFormulas(fRows)}
-                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-              />
+              <div className="base-formula-exprwrap">
+                <ExprInput
+                  className="base-formula-expr"
+                  value={row.expr}
+                  placeholder="e.g. price / quantity"
+                  onChange={(v) => setFRows((prev) => prev.map((r, j) => (j === i ? { ...r, expr: v } : r)))}
+                  onBlur={() => commitFormulas(fRows)}
+                />
+                {validateExpr(row.expr) && <div className="expr-error">⚠ {validateExpr(row.expr)}</div>}
+              </div>
               <button
                 title="Remove formula"
                 onClick={() => {

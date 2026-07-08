@@ -702,6 +702,73 @@ function parseExpr(src: string): Ast {
   return ast;
 }
 
+// --- Expression vocabulary + validation (for the formula/filter editor UI) ---
+
+/** Global functions callable at the top level: `if(...)`, `date(...)`, etc. */
+export const EXPR_FUNCTIONS = [
+  "if", "date", "duration", "now", "today", "number", "min", "max", "list", "link", "file", "image", "icon",
+];
+/** Methods callable on a value with `.method(...)` (type-dependent at runtime). */
+export const EXPR_METHODS = [
+  "isTruthy", "isType", "toString", "isEmpty", "matches", "keys", "values",
+  "contains", "containsAll", "containsAny", "endsWith", "startsWith", "lower", "title", "trim",
+  "repeat", "reverse", "slice", "replace", "split",
+  "abs", "ceil", "floor", "round", "toFixed",
+  "join", "flat", "unique", "sort", "filter", "map", "reduce", "mean",
+  "date", "time", "format", "relative", "asFile", "linksTo", "length",
+];
+/** Root namespaces: `file`, `note`, `formula`. */
+export const EXPR_NAMESPACES = ["file", "note", "formula"];
+/** `file.*` members. */
+export const EXPR_FILE_MEMBERS = [
+  "name", "basename", "path", "folder", "ext", "size", "ctime", "mtime", "tags", "links", "properties",
+];
+/** Date members (on `file.ctime`, `date(...)`, …). */
+export const EXPR_DATE_MEMBERS = ["year", "month", "day", "hour", "minute", "second", "millisecond"];
+
+const KNOWN_FUNCTIONS = new Set(EXPR_FUNCTIONS);
+
+/** Validate a Bases expression WITHOUT data: parse it (syntax) and flag any
+ * unknown top-level function name. Returns an error message, or null when the
+ * expression is empty or valid. Methods are type-dependent, so left to eval. */
+export function validateExpr(src: string): string | null {
+  if (!src.trim()) return null;
+  let ast: Ast;
+  try {
+    ast = parseExpr(src);
+  } catch (e) {
+    return e instanceof Error ? e.message : "invalid expression";
+  }
+  let err: string | null = null;
+  const walk = (n: Ast): void => {
+    if (err) return;
+    switch (n.t) {
+      case "call":
+        if (n.target === null && !KNOWN_FUNCTIONS.has(n.name)) {
+          err = `unknown function "${n.name}"`;
+          return;
+        }
+        if (n.target) walk(n.target);
+        n.args.forEach(walk);
+        break;
+      case "member":
+        walk(n.obj);
+        break;
+      case "bin":
+        walk(n.l);
+        walk(n.r);
+        break;
+      case "un":
+        walk(n.e);
+        break;
+      default:
+        break; // lit / regex / ident
+    }
+  };
+  walk(ast);
+  return err;
+}
+
 // Parsed-expression cache — a base re-evaluates the same expressions for every
 // row, so parse once per distinct source string.
 const astCache = new Map<string, Ast | ExprError>();
