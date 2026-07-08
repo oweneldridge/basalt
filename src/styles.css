@@ -2397,3 +2397,15 @@ button.primary:hover {
 .readable-width .inline-title { max-width: 720px; margin: 0 auto; }
 .inline-title:focus { border-bottom: 1px solid var(--border); }
 .inline-title::placeholder { color: var(--text-faint); }
+
+/* ------- Properties panel ------- */
+.properties { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+.prop-row { display: flex; align-items: center; gap: 6px; }
+.prop-key { flex: 0 0 34%; font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prop-value { flex: 1; min-width: 0; background: var(--bg-elev); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 3px 6px; font-size: 12px; }
+.prop-value:focus { border-color: var(--accent); outline: none; }
+.prop-complex { flex: 1; font-size: 12px; color: var(--text-faint); font-style: italic; }
+.prop-del { background: none; border: none; color: var(--text-faint); cursor: pointer; padding: 0 4px; }
+.prop-del:hover { color: var(--danger); }
+.prop-add { display: flex; gap: 6px; margin-top: 4px; }
+.prop-add-btn { border: 1px solid var(--border); background: var(--bg); color: var(--text-muted); border-radius: 5px; padding: 0 8px; cursor: pointer; }
