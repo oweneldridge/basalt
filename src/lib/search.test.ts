@@ -90,3 +90,24 @@ describe("OR search groups", () => {
     expect(searchVault(withOr, '"zzz OR"').length).toBe(0);
   });
 });
+
+describe("line: same-line operator", () => {
+  const notes = [
+    { path: "/v/a.md", rel: "a.md", name: "a", content: "the quick brown fox\nlazy dog sleeps" },
+    { path: "/v/b.md", rel: "b.md", name: "b", content: "quick\nbrown\nfox" },
+  ] as any;
+  const paths = (q: string) => new Set(searchVault(notes, q).map((h) => h.path));
+  it("matches only notes where the terms share ONE line", () => {
+    const p = paths("line:(quick fox)");
+    expect(p.has("/v/a.md")).toBe(true);
+    expect(p.has("/v/b.md")).toBe(false);
+  });
+  it("single line:term matches a line containing the term", () => {
+    expect(paths("line:lazy").has("/v/a.md")).toBe(true);
+    expect(paths("line:lazy").has("/v/b.md")).toBe(false);
+  });
+  it("reports the matching line as the hit", () => {
+    const hits = searchVault(notes, "line:(lazy dog)");
+    expect(hits[0].lineText).toContain("lazy dog");
+  });
+});

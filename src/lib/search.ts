@@ -46,6 +46,25 @@ interface Query {
   files: string[];
   tags: string[];
   regex: RegExp | null;
+  /** `line:(a b)` groups — each inner array's terms must all appear on ONE line. */
+  lineGroups: string[][];
+}
+
+// `line:(a b)` (same-line group) or `line:word` (single term on a line).
+const LINE_RE = /line:\(([^)]*)\)|line:(\S+)/gi;
+
+/** Pull `line:(…)` clauses out of a group string into same-line term groups,
+ * returning the remaining query text (they can't survive plain tokenizing —
+ * the parens hold spaces). */
+function extractLineGroups(s: string): { lineGroups: string[][]; rest: string } {
+  const lineGroups: string[][] = [];
+  const rest = s.replace(LINE_RE, (_m, paren?: string, single?: string) => {
+    const body = paren !== undefined ? paren : (single ?? "");
+    const terms = body.split(/\s+/).map(norm).filter(Boolean);
+    if (terms.length) lineGroups.push(terms);
+    return " ";
+  });
+  return { lineGroups, rest };
 }
 
 /** Split a query on spaces, keeping "quoted phrases" intact. */
@@ -80,9 +99,10 @@ function splitOnOr(query: string): string[] {
   return parts.map((p) => p.trim()).filter(Boolean);
 }
 
-function buildQuery(tokens: string[]): Query {
-  const q: Query = { terms: [], negations: [], paths: [], files: [], tags: [], regex: null };
-  for (const tok of tokens) {
+function buildQuery(groupStr: string): Query {
+  const { lineGroups, rest } = extractLineGroups(groupStr);
+  const q: Query = { terms: [], negations: [], paths: [], files: [], tags: [], regex: null, lineGroups };
+  for (const tok of tokenize(rest)) {
     if (!tok) continue;
     const rx = /^\/(.+)\/([gimsuy]*)$/.exec(tok);
     if (rx && !q.regex && !looksCatastrophic(rx[1])) {
@@ -108,10 +128,10 @@ function buildQuery(tokens: string[]): Query {
 
 /** Parse a query into one Query per top-level OR-group. */
 export function parseSearchQuery(query: string): Query {
-  return buildQuery(tokenize(query.trim()));
+  return buildQuery(query.trim());
 }
 export function parseSearchGroups(query: string): Query[] {
-  return splitOnOr(query.trim()).map((g) => buildQuery(tokenize(g)));
+  return splitOnOr(query.trim()).map(buildQuery);
 }
 
 function noteMatchesFilters(note: VaultNote, q: Query, opts: SearchOpts): boolean {
@@ -128,16 +148,18 @@ function noteMatchesFilters(note: VaultNote, q: Query, opts: SearchOpts): boolea
 
 /** Whether a group has anything to match on. */
 function groupHasContent(q: Query): boolean {
-  return q.terms.length > 0 || q.regex !== null;
+  return q.terms.length > 0 || q.regex !== null || q.lineGroups.length > 0;
 }
 function groupHasAny(q: Query): boolean {
   return groupHasContent(q) || !!(q.paths.length || q.files.length || q.tags.length || q.negations.length);
 }
-/** A note satisfies a group's note-level filters + AND-terms + no-negation. */
-function noteMatchesGroup(note: VaultNote, q: Query, noteText: string, opts: SearchOpts): boolean {
+/** A note satisfies a group's note-level filters + AND-terms + no-negation +
+ * every `line:` group being satisfiable by some single line. */
+function noteMatchesGroup(note: VaultNote, q: Query, noteText: string, lines: string[], opts: SearchOpts): boolean {
   if (!noteMatchesFilters(note, q, opts)) return false;
   if (!q.terms.every((t) => noteText.includes(t))) return false;
   if (q.negations.some((n) => noteText.includes(n))) return false;
+  if (!q.lineGroups.every((lg) => lines.some((line) => lg.every((t) => line.includes(t))))) return false;
   return true;
 }
 
@@ -152,7 +174,7 @@ export function searchVault(notes: VaultNote[], query: string, opts: SearchOpts 
     const rawLines = note.content.split("\n");
     const noteText = lines.join("\n");
     // The groups this note satisfies (OR: any is enough).
-    const matched = groups.filter((g) => noteMatchesGroup(note, g, noteText, opts));
+    const matched = groups.filter((g) => noteMatchesGroup(note, g, noteText, lines, opts));
     if (matched.length === 0) continue;
 
     // Title match ranks first (use the first positive term of any matched group).
@@ -181,6 +203,13 @@ export function searchVault(notes: VaultNote[], query: string, opts: SearchOpts 
           for (const t of g.terms) {
             const j = lines[i].indexOf(t);
             if (j !== -1 && (idx === -1 || j < idx)) idx = j;
+          }
+        }
+        // A `line:(…)` group hits the lines where all its terms co-occur.
+        for (const lg of g.lineGroups) {
+          if (lg.every((t) => lines[i].includes(t))) {
+            const j = Math.min(...lg.map((t) => lines[i].indexOf(t)));
+            if (idx === -1 || j < idx) idx = j;
           }
         }
       }
