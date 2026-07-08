@@ -384,6 +384,7 @@ export default function App() {
   // Seeds the search palette when opened from a tag / search bookmark.
   const [searchSeed, setSearchSeed] = useState("");
   const [fileMenu, setFileMenu] = useState<{ path: string; x: number; y: number } | null>(null);
+  const [tabMenu, setTabMenu] = useState<{ paneId: string; path: string; x: number; y: number } | null>(null);
   const [attMenu, setAttMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const [folderMenu, setFolderMenu] = useState<{ folderRel: string; x: number; y: number } | null>(null);
   // Parent rel for a pending "New folder…" prompt ("" = vault root).
@@ -944,6 +945,69 @@ export default function App() {
       setFocusedId(newId);
     },
     [],
+  );
+
+  // Tab context-menu actions.
+  const closeOtherTabs = useCallback(
+    async (id: string, keep: string) => {
+      const pane = panesRef.current[id];
+      if (!pane) return;
+      for (const p of pane.tabs.filter((t) => t !== keep && !pane.pinned?.includes(t))) await closeTab(id, p);
+    },
+    [closeTab],
+  );
+  const closeTabsToRight = useCallback(
+    async (id: string, path: string) => {
+      const pane = panesRef.current[id];
+      if (!pane) return;
+      const idx = pane.tabs.indexOf(path);
+      if (idx < 0) return;
+      for (const p of pane.tabs.slice(idx + 1).filter((t) => !pane.pinned?.includes(t))) await closeTab(id, p);
+    },
+    [closeTab],
+  );
+  /** Open `path` (from pane `id`) in a fresh vertical split. */
+  const splitTabRight = useCallback(
+    async (id: string, path: string) => {
+      focusPane(id);
+      await openInPane(id, path); // make it active so the split carries it
+      splitFocused("row");
+    },
+    [focusPane, openInPane, splitFocused],
+  );
+  /** Open a note (by path) in a fresh vertical split (file menu "Open to the right"). */
+  const openInNewSplit = useCallback(
+    async (path: string) => {
+      splitFocused("row"); // new pane becomes focused, carrying the current active
+      const newId = focusedIdRef.current;
+      if (newId) await openInPane(newId, path);
+    },
+    [splitFocused, openInPane],
+  );
+  /** Duplicate a note next to itself ("… copy") and open the copy. */
+  const handleDuplicateNote = useCallback(
+    async (path: string) => {
+      const root = vaultRef.current;
+      const note = notesRef.current.find((n) => n.path === path);
+      if (!root || !note || !isMarkdownPath(path)) return;
+      try {
+        const content = await readNote(path);
+        const dir = note.rel.replace(/[^/\\]+$/, "");
+        const copyPath = await createNote(`${dir}${note.name} copy`);
+        await writeNote(copyPath, content);
+        const rel = copyPath.startsWith(root) ? copyPath.slice(root.length).replace(/^[/\\]+/, "") : copyPath;
+        const copy: VaultNote = { path: copyPath, rel, name: nameFromRel(rel), content };
+        index.current.setNote(copy);
+        setNotes((prev) => [...prev, copy].sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())));
+        rememberSelfWrite(rel, content);
+        bumpStructure();
+        emitVaultEvent("create", { path: rel, name: copy.name });
+        await openNoteByPath(copyPath);
+      } catch (e) {
+        setSaveError(`Couldn't duplicate: ${e}`);
+      }
+    },
+    [openNoteByPath, rememberSelfWrite, bumpStructure],
   );
 
   // Rebuild the saved tab/split layout for a vault. Tabs pointing at notes that
@@ -3374,6 +3438,7 @@ export default function App() {
             onClose={(p) => void closeTab(id, p)}
             onTogglePin={(p) => togglePin(id, p)}
             onTabDrop={(fromId, p, toIndex) => void handleTabDrop(fromId, p, id, toIndex)}
+            onContextMenu={(p, x, y) => setTabMenu({ paneId: id, path: p, x, y })}
             linked={pane.linked ?? false}
             onToggleLink={() => toggleLink(id)}
             stacked={pane.stacked ?? false}
@@ -3849,6 +3914,39 @@ export default function App() {
           ))}
         </div>
       )}
+      {tabMenu &&
+        (() => {
+          const pane = panes[tabMenu.paneId];
+          const pinned = pane?.pinned?.includes(tabMenu.path) ?? false;
+          const idx = pane?.tabs.indexOf(tabMenu.path) ?? -1;
+          const hasOthers = (pane?.tabs.length ?? 0) > 1;
+          const hasRight = idx >= 0 && idx < (pane?.tabs.length ?? 0) - 1;
+          const run = (fn: () => void) => {
+            setTabMenu(null);
+            fn();
+          };
+          return (
+            <div className="ctx-overlay" onMouseDown={() => setTabMenu(null)} onContextMenu={(e) => e.preventDefault()}>
+              <div className="ctx-menu" style={{ left: tabMenu.x, top: tabMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+                <button className="ctx-item" onClick={() => run(() => void closeTab(tabMenu.paneId, tabMenu.path))}>
+                  Close
+                </button>
+                <button className="ctx-item" disabled={!hasOthers} onClick={() => run(() => void closeOtherTabs(tabMenu.paneId, tabMenu.path))}>
+                  Close others
+                </button>
+                <button className="ctx-item" disabled={!hasRight} onClick={() => run(() => void closeTabsToRight(tabMenu.paneId, tabMenu.path))}>
+                  Close to the right
+                </button>
+                <button className="ctx-item" onClick={() => run(() => togglePin(tabMenu.paneId, tabMenu.path))}>
+                  {pinned ? "Unpin" : "Pin"}
+                </button>
+                <button className="ctx-item" onClick={() => run(() => void splitTabRight(tabMenu.paneId, tabMenu.path))}>
+                  Split right
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       {fileMenu && (
         <div className="ctx-overlay" onMouseDown={() => setFileMenu(null)} onContextMenu={(e) => e.preventDefault()}>
           <div
@@ -3882,6 +3980,36 @@ export default function App() {
                   ? "Remove bookmark"
                   : "Bookmark";
               })()}
+            </button>
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const path = fileMenu.path;
+                setFileMenu(null);
+                void openInNewSplit(path);
+              }}
+            >
+              Open to the right
+            </button>
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const path = fileMenu.path;
+                setFileMenu(null);
+                void handleDuplicateNote(path);
+              }}
+            >
+              Make a copy
+            </button>
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const rel = notes.find((n) => n.path === fileMenu.path)?.rel ?? fileMenu.path;
+                setFileMenu(null);
+                void navigator.clipboard?.writeText(rel).catch(() => {});
+              }}
+            >
+              Copy path
             </button>
             <button
               className="ctx-item"

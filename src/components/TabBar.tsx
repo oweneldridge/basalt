@@ -18,6 +18,8 @@ interface Props {
   onTogglePin: (path: string) => void;
   /** A tab was dropped: move `path` from `fromPaneId` into this pane at `index`. */
   onTabDrop: (fromPaneId: string, path: string, toIndex: number) => void;
+  /** Right-click a tab → open a context menu at (x, y). */
+  onContextMenu: (path: string, x: number, y: number) => void;
   /** Whether this pane is "linked" (follows notes opened elsewhere). */
   linked: boolean;
   onToggleLink: () => void;
@@ -29,7 +31,7 @@ interface Props {
 // A tab drag carries "<paneId>\n<path>" under this private MIME type.
 const TAB_MIME = "application/x-basalt-tab";
 
-export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onTogglePin, onTabDrop, linked, onToggleLink, stacked, onToggleStacked }: Props) {
+export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onTogglePin, onTabDrop, onContextMenu, linked, onToggleLink, stacked, onToggleStacked }: Props) {
   // Index the drop indicator sits before (null = none, tabs.length = at end).
   const [dropAt, setDropAt] = useState<number | null>(null);
 
@@ -97,7 +99,7 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
           }}
           onContextMenu={(e) => {
             e.preventDefault();
-            onTogglePin(t.path); // right-click toggles pin (like Obsidian's menu)
+            onContextMenu(t.path, e.clientX, e.clientY);
           }}
         >
           {t.pinned && (

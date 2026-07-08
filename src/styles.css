@@ -2376,3 +2376,6 @@ button.primary:hover {
 .plugin-settings { margin-top: 6px; }
 .plugin-settings-toggle { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 2px 0; }
 .plugin-settings-mount { margin-top: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+
+/* Disabled context-menu item */
+.ctx-item:disabled { opacity: 0.4; cursor: default; }
