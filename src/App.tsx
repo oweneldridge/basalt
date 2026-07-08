@@ -1901,6 +1901,62 @@ export default function App() {
     }
   }, []);
 
+  // Audio recorder (Obsidian's core recorder): capture from the mic, save as an
+  // attachment, and embed it at the cursor. `recSeconds` drives the UI (null =
+  // not recording).
+  const recorderRef = useRef<{ rec: MediaRecorder; chunks: BlobPart[]; stream: MediaStream } | null>(null);
+  const [recSeconds, setRecSeconds] = useState<number | null>(null);
+  const recTimer = useRef<number | null>(null);
+
+  const startRecording = useCallback(async () => {
+    if (recorderRef.current) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setSaveError("Audio recording isn't available in this environment");
+      return;
+    }
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setSaveError("Microphone access was denied");
+      return;
+    }
+    const rec = new MediaRecorder(stream);
+    const chunks: BlobPart[] = [];
+    rec.ondataavailable = (e) => {
+      if (e.data.size) chunks.push(e.data);
+    };
+    rec.start();
+    recorderRef.current = { rec, chunks, stream };
+    setRecSeconds(0);
+    recTimer.current = window.setInterval(() => setRecSeconds((s) => (s ?? 0) + 1), 1000);
+  }, []);
+
+  const stopRecording = useCallback(
+    async (save = true) => {
+      const cur = recorderRef.current;
+      if (!cur) return;
+      if (recTimer.current) {
+        clearInterval(recTimer.current);
+        recTimer.current = null;
+      }
+      setRecSeconds(null);
+      recorderRef.current = null;
+      const blob: Blob = await new Promise((resolve) => {
+        cur.rec.onstop = () => resolve(new Blob(cur.chunks, { type: cur.rec.mimeType || "audio/webm" }));
+        cur.rec.stop();
+      });
+      cur.stream.getTracks().forEach((t) => t.stop());
+      if (!save || blob.size === 0) return;
+      const ext = (cur.rec.mimeType || "audio/webm").includes("ogg") ? "ogg" : "webm";
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      const file = new File([blob], `Recording ${stamp}.${ext}`, { type: blob.type });
+      const target = await handleSaveAttachment(file);
+      if (target) editorApiRef.current?.insertAtCursor(`![[${target}]]`);
+    },
+    [handleSaveAttachment],
+  );
+
   /** Replace an upload placeholder in whichever note still contains it —
    * the editor that received the paste is gone (note switch / reload). */
   const handleReplacePlaceholder = useCallback(
@@ -3166,6 +3222,7 @@ export default function App() {
       } },
       { id: "daily-note", label: "Open today's daily note", hint: "creates it from your template if missing", run: () => void openDailyNote() },
       { id: "slides", label: "Start presentation", hint: "present the active note as `---`-separated slides", run: () => { const p = focusedIdRef.current ? panesRef.current[focusedIdRef.current] : null; if (p?.active && isMarkdownPath(p.active)) setSlidesOpen(true); } },
+      { id: "record-audio", label: "Record audio", hint: "record from the mic and embed it in the note", run: () => (recorderRef.current ? void stopRecording(true) : void startRecording()) },
       { id: "workspaces", label: "Manage workspaces…", hint: "save / switch named layouts", run: () => setModal("workspaces") },
       { id: "source-mode", label: "Toggle Source mode", hint: "raw Markdown ↔ Live Preview", run: toggleSourceMode },
       { id: "reading-mode", label: "Toggle Reading view", hint: "rendered, read-only ↔ edit", run: toggleReading },
@@ -3933,6 +3990,18 @@ export default function App() {
             />
           );
         })()}
+      {recSeconds !== null && (
+        <div className="rec-indicator" role="status">
+          <span className="rec-dot" aria-hidden />
+          Recording {Math.floor(recSeconds / 60)}:{String(recSeconds % 60).padStart(2, "0")}
+          <button className="rec-stop" onClick={() => void stopRecording(true)}>
+            Stop &amp; insert
+          </button>
+          <button className="rec-discard" onClick={() => void stopRecording(false)}>
+            Discard
+          </button>
+        </div>
+      )}
     </div>
   );
 }
