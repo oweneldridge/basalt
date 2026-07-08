@@ -55,3 +55,44 @@ test("a fresh vault has a right dock of view leaves that tracks the active note"
   await page.keyboard.press("Enter");
   await expect(page.locator(".pane.dock-right")).toHaveCount(0);
 });
+
+test("a view tab can be dragged across regions (dock → editor) and to a split", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.waitForSelector(".sidebar");
+  await page.locator(".pane.dock-left .tree-row.file", { hasText: "Welcome" }).click();
+  await expect(page.locator(".pane:not(.dock) .cm-editor")).toBeVisible();
+
+  // Drag the Outline tab from the right dock onto the editor pane's tab bar.
+  await page.evaluate(() => {
+    const tab = [...document.querySelectorAll(".pane.dock-right .tab.view-tab")].find((t) => t.textContent!.includes("Outline"))!;
+    const bar = document.querySelector(".pane:not(.dock) .tab-bar") as HTMLElement;
+    const dt = new DataTransfer();
+    tab.dispatchEvent(new DragEvent("dragstart", { dataTransfer: dt, bubbles: true }));
+    const r = bar.getBoundingClientRect();
+    const o = { dataTransfer: dt, clientX: r.right - 10, clientY: r.top + r.height / 2, bubbles: true, cancelable: true };
+    bar.dispatchEvent(new DragEvent("dragover", o));
+    bar.dispatchEvent(new DragEvent("drop", o));
+    tab.dispatchEvent(new DragEvent("dragend", { dataTransfer: dt, bubbles: true }));
+  });
+  // It left the dock and joined the editor pane's tabs.
+  await expect(page.locator(".pane:not(.dock) .tab.view-tab", { hasText: "Outline" })).toHaveCount(1);
+  await expect(page.locator(".pane.dock-right .tab.view-tab", { hasText: "Outline" })).toHaveCount(0);
+
+  // Drag the Backlinks tab from the dock onto the editor's bottom edge → new split leaf.
+  const before = await page.locator(".pane:not(.dock)").count();
+  await page.evaluate(async () => {
+    const tab = [...document.querySelectorAll(".pane.dock-right .tab.view-tab")].find((t) => t.textContent!.includes("Backlinks"))!;
+    const dt = new DataTransfer();
+    tab.dispatchEvent(new DragEvent("dragstart", { dataTransfer: dt, bubbles: true }));
+    await new Promise((r) => setTimeout(r, 60));
+    const zone = document.querySelector(".pane:not(.dock) .pane-dropzone") as HTMLElement;
+    const r = zone.getBoundingClientRect();
+    const o = { dataTransfer: dt, clientX: r.left + r.width / 2, clientY: r.bottom - 8, bubbles: true, cancelable: true };
+    zone.dispatchEvent(new DragEvent("dragover", o));
+    zone.dispatchEvent(new DragEvent("drop", o));
+  });
+  await expect(page.locator(".pane:not(.dock)")).toHaveCount(before + 1);
+  await expect(page.locator(".pane:not(.dock) .tab.view-tab", { hasText: "Backlinks" })).toHaveCount(1);
+});
