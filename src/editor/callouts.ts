@@ -5,10 +5,27 @@
 // decorations are legal from a ViewPlugin.
 import { RangeSetBuilder } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
-import { Decoration, EditorView, ViewPlugin } from "@codemirror/view";
+import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { treeChanged } from "./regions";
+import { calloutIcon } from "../lib/callouticons";
+
+/** The callout type's icon, rendered where the `[!type]` token was. */
+class IconWidget extends WidgetType {
+  constructor(readonly type: string) {
+    super();
+  }
+  eq(o: IconWidget): boolean {
+    return o.type === this.type;
+  }
+  toDOM(): HTMLElement {
+    const s = document.createElement("span");
+    s.className = "cm-callout-icon";
+    s.textContent = calloutIcon(this.type);
+    return s;
+  }
+}
 
 const CALLOUT_RE = /^\s*>\s*\[!(\w+)\]([+-]?)/;
 
@@ -22,6 +39,7 @@ function calloutGroup(type: string): string {
   if (["quote", "cite", "example"].includes(t)) return "gray";
   return "blue"; // note/info/abstract/summary/tldr and unknown types
 }
+
 
 function build(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
@@ -48,10 +66,11 @@ function build(view: EditorView): DecorationSet {
         // later offset — added in order so the RangeSetBuilder stays sorted.
         builder.add(line.from, line.from, Decoration.line({ class: cls }));
         if (group && n === startLine && !lineTouched(line.from, line.to)) {
-          const m = /\[!\w+\][+-]?\s?/.exec(line.text);
+          const m = /\[!(\w+)\][+-]?\s?/.exec(line.text);
           if (m) {
             const cFrom = line.from + m.index;
-            builder.add(cFrom, cFrom + m[0].length, Decoration.replace({}));
+            // Replace the `[!type]` token with the type's icon (Obsidian shows one).
+            builder.add(cFrom, cFrom + m[0].length, Decoration.replace({ widget: new IconWidget(m[1]) }));
           }
         }
       }

@@ -2104,3 +2104,21 @@ button.primary:hover {
 
 /* ------- %% comments (Live Preview) ------- */
 .cm-comment { color: var(--text-faint, var(--text-muted)); opacity: 0.6; }
+
+/* ------- Callout icons ------- */
+.cm-callout-icon, .md-callout-icon { margin-right: 6px; }
+
+/* ------- Tag hierarchy ------- */
+.tag-row { display: flex; align-items: center; gap: 2px; }
+.tag-chevron { background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 10px; width: 14px; transition: transform 0.1s; }
+.tag-chevron.open { transform: rotate(90deg); }
+.tag-chevron-spacer { display: inline-block; width: 14px; }
+.tag-name-btn { flex: 1; display: flex; justify-content: space-between; align-items: center; background: none; border: none; cursor: pointer; color: inherit; padding: 2px 4px; }
+.tag-name-btn:hover { background: var(--hover, rgba(127,127,127,0.12)); border-radius: 4px; }
+
+/* ------- Backlinks grouped by source ------- */
+.ref-group-head { display: flex; align-items: center; gap: 4px; width: 100%; background: none; border: none; cursor: pointer; color: inherit; padding: 3px 4px; font-weight: 500; }
+.ref-group-head:hover { background: var(--hover, rgba(127,127,127,0.12)); border-radius: 4px; }
+.ref-chevron { font-size: 10px; color: var(--text-muted); transition: transform 0.1s; }
+.ref-chevron.open { transform: rotate(90deg); }
+.ref-child { padding-left: 20px; }
