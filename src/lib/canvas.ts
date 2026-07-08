@@ -129,6 +129,39 @@ function end(v: unknown): End | undefined {
   return v === "none" || v === "arrow" ? v : undefined;
 }
 
+/** Rewrite `file:` references in a canvas's file-nodes using `relMap`
+ * (oldRel → newRel), for keeping canvas embeds pointing at a renamed/moved
+ * note. This is a MINIMAL edit of the raw JSON — it changes only matched `file`
+ * fields and re-stringifies, so it never rounds geometry or drops fields the
+ * canvas modeler doesn't understand (unlike serializeCanvas). Returns the new
+ * JSON, or null if nothing changed / the JSON is unparseable. A file-node's
+ * subpath lives in a separate field, so `Note.md#heading` embeds keep it. */
+export function rewriteCanvasFileRefs(json: string, relMap: Map<string, string>): string | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== "object" || !Array.isArray((data as { nodes?: unknown }).nodes)) return null;
+  // Exact match first; then a case-insensitive fallback so an embed authored
+  // with different casing (cross-platform sync, a prior case-only rename) still
+  // retargets on a case-insensitive vault — matching how the app resolves links.
+  const lower = new Map([...relMap].map(([k, v]) => [k.toLowerCase(), v]));
+  let changed = false;
+  for (const n of (data as { nodes: unknown[] }).nodes) {
+    if (!n || typeof n !== "object") continue;
+    const node = n as { type?: unknown; file?: unknown };
+    if (node.type !== "file" || typeof node.file !== "string") continue;
+    const to = relMap.get(node.file) ?? lower.get(node.file.toLowerCase());
+    if (to !== undefined && to !== node.file) {
+      node.file = to;
+      changed = true;
+    }
+  }
+  return changed ? JSON.stringify(data, null, "\t") : null;
+}
+
 /** Parse JSON Canvas text. Returns null only if the JSON itself is unparseable;
  * otherwise returns the valid nodes/edges (malformed entries are dropped). */
 export function parseCanvas(json: string): CanvasData | null {
