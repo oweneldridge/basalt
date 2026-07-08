@@ -21,12 +21,15 @@ interface Props {
   /** Whether this pane is "linked" (follows notes opened elsewhere). */
   linked: boolean;
   onToggleLink: () => void;
+  /** Whether this pane's tabs are shown as a stacked spread. */
+  stacked: boolean;
+  onToggleStacked: () => void;
 }
 
 // A tab drag carries "<paneId>\n<path>" under this private MIME type.
 const TAB_MIME = "application/x-basalt-tab";
 
-export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onTogglePin, onTabDrop, linked, onToggleLink }: Props) {
+export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onTogglePin, onTabDrop, linked, onToggleLink, stacked, onToggleStacked }: Props) {
   // Index the drop indicator sits before (null = none, tabs.length = at end).
   const [dropAt, setDropAt] = useState<number | null>(null);
 
@@ -137,8 +140,18 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
         aria-pressed={linked}
         onClick={onToggleLink}
       >
-        {linked ? "🔗" : "🔗"}
+        🔗
       </button>
+      {tabs.length > 1 && (
+        <button
+          className={`tab-link tab-stack${stacked ? " active" : ""}`}
+          title={stacked ? "Unstack tabs" : "Stack tabs (spread all open notes)"}
+          aria-pressed={stacked}
+          onClick={onToggleStacked}
+        >
+          ▤
+        </button>
+      )}
     </div>
   );
 }

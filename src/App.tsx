@@ -65,6 +65,7 @@ import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { Ribbon } from "./components/Ribbon";
 import { WorkspacesModal } from "./components/WorkspacesModal";
+import { StackedTabs } from "./components/StackedTabs";
 import { SideResizer } from "./components/SideResizer";
 import { EditorPane } from "./components/EditorPane";
 import { RightPanel, type RightTab } from "./components/RightPanel";
@@ -163,6 +164,9 @@ interface Pane {
   /** Linked pane: follows the note navigated in another pane (Obsidian's
    * "Link with pane"). */
   linked?: boolean;
+  /** Stacked tab group: show all open tabs as a horizontal spread (Obsidian's
+   * "Stack tab group") instead of one editor. */
+  stacked?: boolean;
 }
 
 type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | "templates" | "history" | "workspaces" | null;
@@ -188,7 +192,7 @@ const namedWsKey = (vault: string) => `basalt.workspaces.${vault}`;
 /** The serializable shape of a workspace (no live doc — restored from disk). */
 interface SavedWorkspace {
   layout: LayoutNode;
-  panes: Record<string, { tabs: string[]; active: string | null; pinned?: string[]; linked?: boolean }>;
+  panes: Record<string, { tabs: string[]; active: string | null; pinned?: string[]; linked?: boolean; stacked?: boolean }>;
   focusedId: string | null;
 }
 
@@ -817,6 +821,12 @@ export default function App() {
     [patchPane],
   );
 
+  // Toggle "stacked" on a pane — show all its tabs as a horizontal spread.
+  const toggleStacked = useCallback(
+    (id: string) => patchPane(id, { stacked: !panesRef.current[id]?.stacked }),
+    [patchPane],
+  );
+
   const closeTab = useCallback(
     async (id: string, path: string) => {
       const pane = panesRef.current[id];
@@ -947,7 +957,7 @@ export default function App() {
           doc = "";
         }
         const pinned = (saved?.pinned ?? []).filter((p) => tabs.includes(p));
-        rebuilt[id] = { id, tabs, active, doc, pinned: pinned.length ? pinned : undefined, linked: saved?.linked };
+        rebuilt[id] = { id, tabs, active, doc, pinned: pinned.length ? pinned : undefined, linked: saved?.linked, stacked: saved?.stacked };
       }
       // Drop layout leaves with no surviving pane.
       let lay: LayoutNode | null = ws.layout;
@@ -1053,7 +1063,7 @@ export default function App() {
     const v = vaultRef.current;
     if (!v) return;
     const projected: SavedWorkspace["panes"] = {};
-    for (const [id, p] of Object.entries(panes)) projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned, linked: p.linked };
+    for (const [id, p] of Object.entries(panes)) projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned, linked: p.linked, stacked: p.stacked };
     const json = JSON.stringify({ layout, panes: projected, focusedId });
     if (json === lastSavedWs.current) return;
     lastSavedWs.current = json;
@@ -1085,7 +1095,7 @@ export default function App() {
     if (!layoutRef.current) return null;
     const projected: SavedWorkspace["panes"] = {};
     for (const [id, p] of Object.entries(panesRef.current)) {
-      projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned, linked: p.linked };
+      projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned, linked: p.linked, stacked: p.stacked };
     }
     return { layout: layoutRef.current, panes: projected, focusedId: focusedIdRef.current };
   }, []);
@@ -3278,13 +3288,29 @@ export default function App() {
             onTabDrop={(fromId, p, toIndex) => void handleTabDrop(fromId, p, id, toIndex)}
             linked={pane.linked ?? false}
             onToggleLink={() => toggleLink(id)}
+            stacked={pane.stacked ?? false}
+            onToggleStacked={() => toggleStacked(id)}
             onNew={() => {
               focusPane(id);
               setModal("switcher");
             }}
           />
         )}
-        {path ? (
+        {pane.stacked && pane.tabs.length > 0 ? (
+          <StackedTabs
+            tabs={pane.tabs.map((p) => ({ path: p, name: tabItemsFor([p])[0]?.name ?? p, rel: notes.find((n) => n.path === p)?.rel ?? "" }))}
+            activePath={pane.active}
+            dark={dark}
+            readNote={readNote}
+            onOpenInternal={handleOpenWikilink}
+            onOpenUrl={handleOpenUrl}
+            resolveImage={(target, sourceRel) => (vaultRef.current ? resolveImage(target, sourceRel) : Promise.resolve(null))}
+            onFocusTab={(p) => {
+              toggleStacked(id);
+              void openInPane(id, p);
+            }}
+          />
+        ) : path ? (
           /\.canvas$/i.test(path) ? (
             <ErrorBoundary key={`${id}:${path}:canvas`} resetKey={path} onClose={() => void closeTab(id, path)}>
               <CanvasView
