@@ -1190,6 +1190,9 @@ struct ObsidianConfig {
     daily_notes_template: Option<String>,
     /// Folder holding templates (core Templates plugin, or Templater's setting).
     templates_folder: Option<String>,
+    /// Core Templates plugin `{{date}}` / `{{time}}` default formats.
+    templates_date_format: Option<String>,
+    templates_time_format: Option<String>,
 }
 
 #[tauri::command]
@@ -1244,6 +1247,14 @@ fn read_obsidian_config(window: tauri::Window, state: State<VaultState>) -> Resu
                 .and_then(|v| v.get("folder").and_then(|x| x.as_str()).map(String::from))
                 .filter(|s| !s.is_empty())
         });
+    // Core Templates plugin date/time formats (Moment tokens).
+    if let Ok(raw) = fs::read_to_string(root.join(".obsidian/templates.json")) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+            let s = |k: &str| v.get(k).and_then(|x| x.as_str()).filter(|s| !s.is_empty()).map(String::from);
+            cfg.templates_date_format = s("dateFormat");
+            cfg.templates_time_format = s("timeFormat");
+        }
+    }
     Ok(cfg)
 }
 

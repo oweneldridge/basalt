@@ -77,7 +77,7 @@ import { VersionHistory } from "./components/VersionHistory";
 const BaseView = lazy(() =>
   import("./components/BaseView").then((m) => ({ default: m.BaseView })),
 );
-import { renderMarkdown } from "./lib/render";
+import { renderMarkdown, toggleTaskLine } from "./lib/render";
 import { renderMermaid } from "./lib/mermaid";
 import { buildHtmlDocument } from "./lib/export";
 import {
@@ -170,6 +170,8 @@ interface AppCommand {
 
 const RECENT_MAX = 50;
 const recentKey = (vault: string) => `basalt.recent.${vault}`;
+/** Sentinel path for the quick-switcher's "Create <query>" row. */
+const SWITCHER_CREATE = "\u0000create";
 const rightTabKey = (vault: string) => `basalt.rightTab.${vault}`;
 // Layout is per-WINDOW so two windows on the same vault don't clobber each
 // other's tabs (see lib/recentVaults.ts::workspaceKey).
@@ -1404,6 +1406,8 @@ export default function App() {
           path: rel,
           ctime: target?.ctime ?? Date.now(),
           now: Date.now(),
+          dateFormat: obsConfigRef.current?.templatesDateFormat ?? undefined,
+          timeFormat: obsConfigRef.current?.templatesTimeFormat ?? undefined,
           prompt: askTemplatePrompt,
         };
         const res = await applyTemplate(text, ctx);
@@ -3147,6 +3151,13 @@ export default function App() {
               dark={dark}
               onOpenInternal={handleOpenWikilink}
               onOpenUrl={handleOpenUrl}
+              onToggleTask={(line) => {
+                if (!isMarkdownPath(path)) return;
+                const next = toggleTaskLine(pane.doc, line);
+                if (next === null || next === pane.doc) return;
+                patchPane(id, { doc: next }); // reading view re-renders toggled
+                handleChange(id, path, next); // pending + debounced save
+              }}
               resolveImage={(target) =>
                 vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null)
               }
@@ -3323,18 +3334,31 @@ export default function App() {
       )}
       {modal === "switcher" && (
         <Palette<VaultNote>
-          placeholder="Open note…"
-          getItems={(q) => switcherItems(q)}
+          placeholder="Open or create a note…"
+          getItems={(q) => {
+            const items = switcherItems(q);
+            const query = q.trim();
+            // Offer "Create <query>" when the name doesn't already exist (Obsidian).
+            if (query && !items.some((n) => normalizeName(n.name) === normalizeName(query))) {
+              return [...items, { path: SWITCHER_CREATE, name: query, rel: "", content: "" }];
+            }
+            return items;
+          }}
           itemKey={(n) => n.path}
-          renderItem={(n) => (
-            <>
-              <span className="palette-name">{n.name}</span>
-              <span className="palette-sub">{n.rel}</span>
-            </>
-          )}
+          renderItem={(n) =>
+            n.path === SWITCHER_CREATE ? (
+              <span className="palette-name">Create note: “{n.name}”</span>
+            ) : (
+              <>
+                <span className="palette-name">{n.name}</span>
+                <span className="palette-sub">{n.rel}</span>
+              </>
+            )
+          }
           onSelect={(n) => {
             setModal(null);
-            openNoteByPath(n.path);
+            if (n.path === SWITCHER_CREATE) void createAndOpen(n.name);
+            else openNoteByPath(n.path);
           }}
           onClose={() => setModal(null)}
           emptyText="No notes"

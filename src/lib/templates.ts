@@ -21,6 +21,10 @@ export interface TemplateCtx {
   ctime: number;
   /** "Now" in ms — injectable for tests. */
   now: number;
+  /** Default `{{date}}` / `{{time}}` formats from the vault's core Templates
+   * settings (`.obsidian/templates.json`); Obsidian's own defaults when unset. */
+  dateFormat?: string;
+  timeFormat?: string;
   /** Resolve a `tp.system.prompt(...)`; return null = user cancelled. */
   prompt: (message: string, defaultValue?: string) => Promise<string | null>;
 }
@@ -127,7 +131,9 @@ export async function applyTemplate(text: string, ctx: TemplateCtx): Promise<Tem
   let out = text.replace(/\{\{(date|time|title)(?::([^}]+))?\}\}/gi, (_m, key: string, fmt?: string) => {
     const k = key.toLowerCase();
     if (k === "title") return ctx.title;
-    return fmtDate(ctx.now, fmt ?? (k === "time" ? "HH:mm" : "YYYY-MM-DD"));
+    // Inline `{{date:FMT}}` wins; else the vault's configured default; else Obsidian's.
+    const dflt = k === "time" ? (ctx.timeFormat ?? "HH:mm") : (ctx.dateFormat ?? "YYYY-MM-DD");
+    return fmtDate(ctx.now, fmt ?? dflt);
   });
 
   // Then Templater <% %> tags (left-to-right; prompts awaited in order).

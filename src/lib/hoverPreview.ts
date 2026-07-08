@@ -3,6 +3,7 @@
 // a single delegated document listener finds `[data-target]` wikilinks and the
 // nearest `[data-self-rel]` ancestor for relative-link resolution.
 import { renderMarkdown } from "./render";
+import { internalMdHref } from "./markdown";
 import { getTranscludeHost } from "./transclude";
 
 const SHOW_DELAY = 280;
@@ -88,28 +89,38 @@ async function show(anchor: HTMLElement, rawTarget: string, sourceRel: string): 
   position(el, anchor);
 }
 
+/** The note target to preview for a hovered element: a wikilink's `data-target`,
+ * or an INTERNAL markdown-style `.md-link` (`[text](Note.md#h)`). null otherwise. */
+function hoverTarget(t: HTMLElement | null): { anchor: HTMLElement; target: string } | null {
+  const wiki = t?.closest("[data-target]") as HTMLElement | null;
+  if (wiki?.dataset.target) return { anchor: wiki, target: wiki.dataset.target };
+  const md = t?.closest(".md-link") as HTMLElement | null;
+  if (md?.dataset.href) {
+    const internal = internalMdHref(md.dataset.href);
+    if (internal) return { anchor: md, target: internal.path + internal.fragment };
+  }
+  return null;
+}
+
 /** Install the global hover-preview listener (call once). */
 export function installHoverPreview(): void {
   document.addEventListener("mouseover", (e) => {
-    const t = e.target as HTMLElement | null;
-    const link = t?.closest("[data-target]") as HTMLElement | null;
-    if (!link || !link.dataset.target) return;
-    if (link === currentAnchor) return;
+    const hit = hoverTarget(e.target as HTMLElement | null);
+    if (!hit || hit.anchor === currentAnchor) return;
+    const link = hit.anchor;
     currentAnchor = link;
     window.clearTimeout(showTimer);
     window.clearTimeout(hideTimer);
-    const rawTarget = link.dataset.target;
     const sourceRel = (link.closest("[data-self-rel]") as HTMLElement | null)?.dataset.selfRel ?? "";
     showTimer = window.setTimeout(() => {
-      if (currentAnchor === link) void show(link, rawTarget, sourceRel);
+      if (currentAnchor === link) void show(link, hit.target, sourceRel);
     }, SHOW_DELAY);
   });
   document.addEventListener("mouseout", (e) => {
-    const t = e.target as HTMLElement | null;
-    const link = t?.closest("[data-target]") as HTMLElement | null;
-    if (!link) return;
+    const hit = hoverTarget(e.target as HTMLElement | null);
+    if (!hit) return;
     window.clearTimeout(showTimer);
-    if (currentAnchor === link) currentAnchor = null;
+    if (currentAnchor === hit.anchor) currentAnchor = null;
     scheduleHide();
   });
 }

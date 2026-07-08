@@ -80,3 +80,15 @@ describe("applyTemplate", () => {
     expect(r.text).toBe("one-two");
   });
 });
+
+describe("templates: configured {{date}}/{{time}} format", () => {
+  const base = { title: "T", folder: "", path: "T.md", ctime: 0, now: Date.UTC(2026, 0, 2, 9, 5), prompt: async () => null };
+  it("uses the vault's dateFormat/timeFormat when no inline format is given", async () => {
+    const r = await applyTemplate("{{date}} {{time}}", { ...base, dateFormat: "YYYY/MM/DD", timeFormat: "HH.mm" });
+    expect(r.text).toMatch(/2026\/01\/0[12] \d\d\.\d\d/);
+  });
+  it("an inline {{date:FMT}} overrides the configured default", async () => {
+    const r = await applyTemplate("{{date:YYYY}}", { ...base, dateFormat: "YYYY/MM/DD" });
+    expect(r.text).toBe("2026");
+  });
+});

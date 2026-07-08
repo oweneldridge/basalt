@@ -210,6 +210,7 @@ interface LI {
   ordered: boolean;
   task: "" | "x" | " " | null; // null = not a task
   html: string;
+  line?: number; // 0-based source line of a task item (for reading-view toggling)
 }
 
 function renderList(items: LI[]): string {
@@ -233,7 +234,7 @@ function renderList(items: LI[]): string {
     }
     const body =
       it.task !== null
-        ? `<input type="checkbox" disabled${it.task !== " " ? " checked" : ""} /> ${it.html}`
+        ? `<input type="checkbox" class="md-task-check" data-task-line="${it.line ?? ""}"${it.task !== " " ? " checked" : ""} /> ${it.html}`
         : it.html;
     out += it.task !== null ? `<li class="md-task">${body}` : `<li>${body}`;
     openItem = true;
@@ -264,6 +265,20 @@ export function stripBlockIds(md: string): string {
 }
 
 /** Render a full Markdown document to an HTML string. */
+
+/** Flip the `[ ]`↔`[x]` checkbox on 0-based source `line` (from a reading-view
+ * task checkbox's data-task-line). Returns the new doc, or null if that line
+ * isn't a task. */
+export function toggleTaskLine(doc: string, line: number): string | null {
+  const lines = doc.split("\n");
+  if (line < 0 || line >= lines.length) return null;
+  const re = /^(\s*[-*+]\s+\[)([ xX])(\])/;
+  const m = re.exec(lines[line]);
+  if (!m) return null;
+  lines[line] = lines[line].replace(re, (_full, pre, mark, post) => pre + (mark === " " ? "x" : " ") + post);
+  return lines.join("\n");
+}
+
 export function renderMarkdown(src: string): string {
   const md = stripBlockIds(stripComments(src));
   const lines = extractFootnoteDefs(md);
@@ -423,6 +438,7 @@ export function renderMarkdown(src: string): string {
           ordered: !!o,
           task: task ? ((task[1] === " " ? " " : "x") as " " | "x") : null,
           html: renderInline(task ? task[2] : content),
+          line: task ? i : undefined,
         });
         i++;
       }
