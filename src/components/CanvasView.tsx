@@ -100,6 +100,8 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
     [],
   );
   const clearSel = useCallback(() => setSelected((prev) => (prev.size ? new Set() : prev)), []);
+  // Right-click context menu (client coords; world coords for "add card here").
+  const [menu, setMenu] = useState<{ x: number; y: number; kind: "node" | "empty"; wx: number; wy: number } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [drawingEdge, setDrawingEdge] = useState<{ from: string; side: Side; x: number; y: number } | null>(null);
   // Rubber-band rectangle (world coords) while Shift-dragging empty space.
@@ -181,7 +183,17 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
     let lastY = 0;
     const onDown = (e: PointerEvent) => {
       const el = e.target as HTMLElement;
-      if (el.closest(".canvas-node") || el.closest(".canvas-handle") || el.closest(".canvas-anchor")) return;
+      // Ignore drags starting on a node/handle/anchor, the toolbar, or an open
+      // context menu — a native listener here would otherwise clear the
+      // selection and capture the pointer before the control's click runs.
+      if (
+        el.closest(".canvas-node") ||
+        el.closest(".canvas-handle") ||
+        el.closest(".canvas-anchor") ||
+        el.closest(".canvas-toolbar") ||
+        el.closest(".ctx-overlay")
+      )
+        return;
       // Shift+drag on empty space = rubber-band select; plain drag = pan.
       if (editable && e.shiftKey) {
         banding = true;
@@ -253,29 +265,54 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
     };
   }, []);
 
+  // Delete every selected node (+ its edges) and any selected edges.
+  const deleteSelection = useCallback(() => {
+    const sel = selectedRef.current;
+    if (sel.size === 0) return;
+    const d = dataRef.current;
+    const nodeIds = new Set(d.nodes.filter((n) => sel.has(n.id)).map((n) => n.id));
+    emit({
+      ...d, // keep passNodes/passEdges/topRaw
+      nodes: d.nodes.filter((n) => !sel.has(n.id)),
+      edges: d.edges.filter((ed) => !sel.has(ed.id) && !nodeIds.has(ed.fromNode) && !nodeIds.has(ed.toNode)),
+    });
+    setSelected(new Set());
+  }, [emit]);
+
+  // Clone the selected nodes (offset +24,+24, fresh ids) and select the copies.
+  const duplicateSelection = useCallback(() => {
+    const sel = selectedRef.current;
+    const d = dataRef.current;
+    const clones = d.nodes.filter((n) => sel.has(n.id)).map((n) => ({ ...n, id: newId(), x: n.x + 24, y: n.y + 24 }));
+    if (clones.length === 0) return;
+    emit({ ...d, nodes: [...d.nodes, ...clones] });
+    setSelected(new Set(clones.map((c) => c.id)));
+  }, [emit]);
+
+  const addCardAt = useCallback(
+    (wx: number, wy: number) => {
+      const node: CanvasNode = { id: newId(), type: "text", text: "", x: Math.round(wx - 100), y: Math.round(wy - 30), width: 200, height: 60 };
+      emit({ ...dataRef.current, nodes: [...dataRef.current.nodes, node] });
+      selectOne(node.id);
+      setEditingId(node.id);
+    },
+    [emit, selectOne],
+  );
+
   // Delete the selection with Delete/Backspace (when not editing text).
   useEffect(() => {
     if (!editable) return;
     const onKey = (e: KeyboardEvent) => {
-      const sel = selectedRef.current;
-      if (sel.size === 0 || editingId) return;
+      if (selectedRef.current.size === 0 || editingId) return;
       if (e.key !== "Delete" && e.key !== "Backspace") return;
       const target = e.target as HTMLElement;
       if (target.isContentEditable || target.tagName === "TEXTAREA" || target.tagName === "INPUT") return;
       e.preventDefault();
-      const d = dataRef.current;
-      const nodeIds = new Set(d.nodes.filter((n) => sel.has(n.id)).map((n) => n.id));
-      emit({
-        ...d, // keep passNodes/passEdges/topRaw
-        nodes: d.nodes.filter((n) => !sel.has(n.id)),
-        // Drop selected edges AND edges touching a deleted node.
-        edges: d.edges.filter((ed) => !sel.has(ed.id) && !nodeIds.has(ed.fromNode) && !nodeIds.has(ed.toNode)),
-      });
-      setSelected(new Set());
+      deleteSelection();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editable, editingId, emit]);
+  }, [editable, editingId, deleteSelection]);
 
   // Drag a node body → move. If the node is part of a multi-selection, the
   // whole selection moves together; otherwise it becomes the sole selection.
@@ -436,8 +473,16 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
   const selectedNodes = data.nodes.filter((n) => selected.has(n.id));
   const colorRef = selectedNodes[0];
 
+  const onEmptyContextMenu = (e: React.MouseEvent) => {
+    if (!editable) return;
+    if ((e.target as HTMLElement).closest(".canvas-node")) return; // node handler owns it
+    e.preventDefault();
+    const w = toWorld(e.clientX, e.clientY);
+    setMenu({ x: e.clientX, y: e.clientY, kind: "empty", wx: w.x, wy: w.y });
+  };
+
   return (
-    <div className="canvas-view" ref={viewport} onDoubleClick={onDoubleClick}>
+    <div className="canvas-view" ref={viewport} onDoubleClick={onDoubleClick} onContextMenu={onEmptyContextMenu}>
       {editable && (
         <div className="canvas-toolbar">
           <button
@@ -561,7 +606,12 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
             onOpenFile={onOpenFile}
             onOpenUrl={onOpenUrl}
             resolveImage={resolveImage}
-            onSelect={() => {}}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!selectedRef.current.has(n.id)) selectOne(n.id);
+              setMenu({ x: e.clientX, y: e.clientY, kind: "node", wx: 0, wy: 0 });
+            }}
             onStartDrag={(e) => startNodeDrag(e, n.id)}
             onStartResize={(e) => startResize(e, n.id)}
             onStartEdge={(e, side) => startEdge(e, n.id, side)}
@@ -573,6 +623,26 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
           />
         ))}
       </div>
+      {menu && (
+        <div className="ctx-overlay" onMouseDown={() => setMenu(null)} onContextMenu={(e) => e.preventDefault()}>
+          <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
+            {menu.kind === "node" ? (
+              <>
+                <button className="ctx-item" onClick={() => { setMenu(null); duplicateSelection(); }}>
+                  Duplicate
+                </button>
+                <button className="ctx-item danger" onClick={() => { setMenu(null); deleteSelection(); }}>
+                  Delete
+                </button>
+              </>
+            ) : (
+              <button className="ctx-item" onClick={() => { const { wx, wy } = menu; setMenu(null); addCardAt(wx, wy); }}>
+                Add card here
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -585,7 +655,7 @@ function CanvasNodeView({
   onOpenFile,
   onOpenUrl,
   resolveImage,
-  onSelect,
+  onContextMenu,
   onStartDrag,
   onStartResize,
   onStartEdge,
@@ -599,7 +669,7 @@ function CanvasNodeView({
   onOpenFile: (file: string, subpath?: string) => void;
   onOpenUrl: (url: string) => void;
   resolveImage: (target: string) => Promise<string | null>;
-  onSelect: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
   onStartDrag: (e: React.PointerEvent) => void;
   onStartResize: (e: React.PointerEvent) => void;
   onStartEdge: (e: React.PointerEvent, side: Side) => void;
@@ -644,7 +714,7 @@ function CanvasNodeView({
   }, [node, resolveImage, editing]);
 
   const dragProps = editable
-    ? { onPointerDown: onStartDrag, onClick: (e: React.MouseEvent) => (e.stopPropagation(), onSelect()) }
+    ? { onPointerDown: onStartDrag, onClick: (e: React.MouseEvent) => e.stopPropagation(), onContextMenu }
     : {};
   const handles =
     editable && selected ? (

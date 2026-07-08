@@ -40,3 +40,14 @@ test("delete removes the whole selection", async ({ page }) => {
   await page.locator(".canvas-view").press("Delete");
   await expect(page.locator(".canvas-node")).toHaveCount(1);
 });
+
+test("right-click context menu: duplicate a node and add a card", async ({ page }) => {
+  await page.locator(".canvas-node").nth(1).click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Duplicate" }).click();
+  await expect(page.locator(".canvas-node")).toHaveCount(4);
+  await expect(page.locator(".ctx-menu")).toHaveCount(0);
+  const view = (await page.locator(".canvas-view").boundingBox())!;
+  await page.mouse.click(view.x + 20, view.y + view.height - 20, { button: "right" });
+  await page.locator(".ctx-item", { hasText: "Add card here" }).click();
+  await expect(page.locator(".canvas-node")).toHaveCount(5);
+});
