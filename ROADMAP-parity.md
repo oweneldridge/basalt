@@ -6,12 +6,11 @@ Ordered by leverage (impact ÷ effort). Checked items are done.
 
 ## Plugin API (Basalt's own API — the weakest area)
 
-- [ ] **Event system** — `app.vault.on(create|delete|rename|modify)`,
+- [x] **Event system** — `app.vault.on(create|delete|rename|modify)`,
       `app.workspace.on(file-open|active-leaf-change)`, `plugin.registerEvent`,
-      `registerDomEvent`, `registerInterval`. Most plugins are reactive.
-- [ ] **Settings-tab API** — `addSettingTab(tab)` / `PluginSettingTab.display(el)`
-      so a plugin can render a settings UI (it can already persist data).
-- [ ] **`addStatusBarItem`** (needs the status bar below) + **`addRibbonIcon`**.
+      `registerDomEvent`, `registerInterval`. *(done)*
+- [x] **Settings-tab API** — `addSettingTab(tab)` / `PluginSettingTab.display(el)`. *(done)*
+- [x] **`addStatusBarItem`** *(done — with the status bar below)*; **`addRibbonIcon`** still open.
 - [ ] **Custom view registration** (`registerView`) — add side-panel view types
       (compounds the layout gap).
 - [ ] **Metadata cache API** — parsed tags/links/frontmatter/headings for a note.
@@ -19,7 +18,7 @@ Ordered by leverage (impact ÷ effort). Checked items are done.
 
 ## UX/UI depth
 
-- [ ] **Bottom status bar** — cursor line/col + word/char count + plugin items.
+- [x] **Bottom status bar** — cursor line/col + word/char count + plugin items. *(done)*
 - [ ] **Editor right-click menu** (cut/copy/format/bookmark) instead of native.
 - [ ] **Tab right-click menu** (Close others / to the right / Split / Move to
       new window); currently right-click just toggles pin.
