@@ -13,19 +13,19 @@ Ordered by leverage (impact ÷ effort). Checked items are done.
 - [x] **`addStatusBarItem`** + **`addRibbonIcon`** *(done)*.
 - [x] **Custom view registration** (`registerView`) — plugin right-panel views. *(done)*
 - [x] **Metadata cache API** — getFileCache(tags/links/headings/frontmatter). *(done)*
-- [ ] **Thicker vault API** — delete/rename/folder ops/attachment access.
+- [x] **Thicker vault API** — delete/rename/createFolder. *(done; attachment access still open)*
 
 ## UX/UI depth
 
 - [x] **Bottom status bar** — cursor line/col + word/char count + plugin items. *(done)*
-- [ ] **Editor right-click menu** (cut/copy/format/bookmark) instead of native.
+- [x] **Editor right-click menu** — Cut/Copy/Paste/Bold/Italic. *(done)*
 - [x] **Tab right-click menu** (Close / Close others / to the right / Pin / Split). *(done)*
 - [x] **File context menu depth** — Open to the right, Make a copy, Copy path. *(done; Move to… still open)*
 - [x] **File tree** — reveal-active-file + collapse-all *(done)*; folders-first already default. Multi-select + folder drag-to-reparent still open.
 - [x] **Inline title** — editable filename above the editor. *(done)*
 - [x] **Drag a tree note into the editor** → inserts `[[wikilink]]`. *(done)*
 - [x] **Properties panel** — add/edit/remove in the right sidebar (+ inline render). *(done)*
-- [ ] Appearance: font / font-size / accent settings; rebind built-in shortcuts;
+- [x] Appearance: font-size + accent settings *(done)*; rebind built-in shortcuts still open;
       persist UI zoom.
 
 ## Layout composability (biggest lift)
