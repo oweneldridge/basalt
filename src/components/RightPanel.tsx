@@ -41,6 +41,8 @@ interface Props {
   onSearch: (query: string) => void;
   /** Open-or-create an unresolved outgoing link's target (Obsidian: click to create). */
   onOpenUnresolved: (target: string) => void;
+  onLinkMention: (m: Backlink) => void;
+  onLinkAllMentions: (m: Backlink[]) => void;
 }
 
 export function RightPanel({
@@ -58,6 +60,8 @@ export function RightPanel({
   bookmarks,
   onOpenBookmark,
   onOpenUnresolved,
+  onLinkMention,
+  onLinkAllMentions,
   onSearch,
 }: Props) {
   return (
@@ -80,6 +84,8 @@ export function RightPanel({
             backlinks={backlinks}
             unlinked={unlinked}
             onOpen={onOpenRef}
+            onLink={onLinkMention}
+            onLinkAll={onLinkAllMentions}
           />
         )}
         {tab === "links" && (

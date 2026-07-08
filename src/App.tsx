@@ -41,6 +41,7 @@ import { setQueryHost } from "./lib/queryHost";
 import { setTranscludeHost, splitSubpath, subpathToLine, extractHeadings, extractBlockIds } from "./lib/transclude";
 import { recordSnapshot, listSnapshots, clearSnapshots, renameSnapshots, type Snapshot } from "./lib/snapshots";
 import { installHoverPreview } from "./lib/hoverPreview";
+import { linkifyMention } from "./lib/linkify";
 import { reorderTabs, insertTab } from "./lib/tabs";
 import { loadBindings, saveBindings, matchChord, type Bindings } from "./lib/hotkeys";
 import { noteRow, tasksForNote } from "./lib/vaultRows";
@@ -2666,6 +2667,70 @@ export default function App() {
     [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs],
   );
 
+  // Convert an unlinked mention into a `[[wikilink]]` in its SOURCE note (the
+  // "Link" / "Link all" backlink actions). Reads disk (authoritative), edits
+  // the one line, writes, and reconciles index/notes/panes — like a rename's
+  // link rewrite. Returns whether it changed anything.
+  const linkifyInNote = useCallback(
+    async (sourcePath: string, line: number, targetName: string): Promise<boolean> => {
+      if (conflictsRef.current.has(sourcePath)) {
+        setSaveError("Resolve the “Changed on disk” conflict before linking mentions");
+        return false;
+      }
+      await flushPath(sourcePath);
+      let disk: string;
+      try {
+        disk = await readNote(sourcePath);
+      } catch {
+        return false;
+      }
+      const lines = disk.split("\n");
+      const idx = line - 1;
+      if (idx < 0 || idx >= lines.length) return false;
+      const next = linkifyMention(lines[idx], targetName);
+      if (next === null) return false;
+      lines[idx] = next;
+      const content = lines.join("\n");
+      try {
+        await writeNote(sourcePath, content);
+      } catch (e) {
+        setSaveError(`Couldn't link mention: ${e}`);
+        return false;
+      }
+      const note = notesRef.current.find((n) => n.path === sourcePath);
+      if (note) {
+        const updated: VaultNote = { ...note, content };
+        index.current.setNote(updated);
+        rememberSelfWrite(note.rel, content);
+        setNotes((prev) => prev.map((n) => (n.path === sourcePath ? updated : n)));
+        for (const p of Object.values(panesRef.current)) {
+          if (p.active === sourcePath) patchPane(p.id, { doc: content });
+        }
+      }
+      bumpStructure(); // the mention is now a real link → backlinks/unlinked recompute
+      return true;
+    },
+    [flushPath, rememberSelfWrite, patchPane, bumpStructure],
+  );
+
+  const handleLinkMention = useCallback(
+    (m: { path: string; line: number }) => {
+      const name = notesRef.current.find((n) => n.path === activePathRef.current)?.name;
+      if (name) void linkifyInNote(m.path, m.line, name);
+    },
+    [linkifyInNote],
+  );
+
+  const handleLinkAllMentions = useCallback(
+    async (mentions: { path: string; line: number }[]) => {
+      const name = notesRef.current.find((n) => n.path === activePathRef.current)?.name;
+      if (!name) return;
+      // Snapshot the list; line numbers stay valid (linkify never adds lines).
+      for (const m of [...mentions]) await linkifyInNote(m.path, m.line, name);
+    },
+    [linkifyInNote],
+  );
+
   // Delete a whole folder to the vault trash (recoverable). All notes under it
   // leave the index/state; the prune effect closes their tabs.
   const handleDeleteFolder = useCallback(
@@ -3334,6 +3399,8 @@ export default function App() {
           bookmarks={bookmarks}
           onOpenBookmark={handleOpenBookmark}
           onOpenUnresolved={(target) => void handleOpenWikilink(target)}
+          onLinkMention={handleLinkMention}
+          onLinkAllMentions={handleLinkAllMentions}
           onSearch={(query) => {
             setSearchSeed(query);
             setModal("search");
