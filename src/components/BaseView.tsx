@@ -382,6 +382,37 @@ function BaseEditor({
         )}
       </div>
 
+      <div className="base-editor-section">
+        <div className="base-editor-title">Group by</div>
+        <div className="base-editor-row">
+          <select
+            value={view.groupBy?.property ?? ""}
+            onChange={(e) => {
+              const property = e.target.value;
+              onPatchView({ groupBy: property ? { property, direction: view.groupBy?.direction ?? "ASC" } : undefined });
+            }}
+          >
+            <option value="">None</option>
+            {availableKeys.map((k) => (
+              <option key={k} value={k}>{def.display[k] ?? k}</option>
+            ))}
+          </select>
+          {view.groupBy && (
+            <button
+              className="base-sort-dir"
+              title={view.groupBy.direction === "ASC" ? "Ascending" : "Descending"}
+              onClick={() =>
+                onPatchView({
+                  groupBy: { property: view.groupBy!.property, direction: view.groupBy!.direction === "ASC" ? "DESC" : "ASC" },
+                })
+              }
+            >
+              {view.groupBy.direction === "ASC" ? "↑ Asc" : "↓ Desc"}
+            </button>
+          )}
+        </div>
+      </div>
+
       <div className="base-editor-actions">
         <button onClick={onAddView}>+ Add view</button>
         <button onClick={onDeleteView} disabled={def.views.length <= 1}>Delete view</button>

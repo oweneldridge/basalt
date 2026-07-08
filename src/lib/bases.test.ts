@@ -667,3 +667,21 @@ describe("cellParts / columnLabel", () => {
     expect(columnLabel("formula.x", def)).toBe("formula.x");
   });
 });
+
+describe("serializeBase groupBy round-trip", () => {
+  const SRC = "views:\n  - type: table\n    name: All\n    order:\n      - file.name\n";
+  it("writes an added groupBy in the documented { property, direction } shape", () => {
+    const def = parseBase(SRC)!;
+    def.views[0].groupBy = { property: "status", direction: "DESC" };
+    const out = serializeBase(def);
+    expect(out).toMatch(/groupBy:/);
+    const back = parseBase(out)!;
+    expect(back.views[0].groupBy).toEqual({ property: "status", direction: "DESC" });
+  });
+  it("removing groupBy drops the key", () => {
+    const def = parseBase("views:\n  - type: table\n    name: All\n    groupBy:\n      property: status\n      direction: ASC\n")!;
+    expect(def.views[0].groupBy).toEqual({ property: "status", direction: "ASC" });
+    def.views[0].groupBy = undefined;
+    expect(parseBase(serializeBase(def))!.views[0].groupBy).toBeUndefined();
+  });
+});
