@@ -2218,3 +2218,13 @@ button.primary:hover {
 .cm-table-foot { display: none; gap: 6px; padding: 4px 0 2px; }
 .cm-md-table-wrap:hover .cm-table-foot { display: flex; }
 .cm-table-foot .cm-table-ctrl { font-size: 11px; padding: 3px 8px; }
+
+/* ------- Canvas multi-select ------- */
+.canvas-band {
+  fill: var(--accent-soft, rgba(169, 139, 224, 0.12));
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+.canvas-selcount { font-size: 11px; color: var(--text-muted); margin-right: 6px; align-self: center; }

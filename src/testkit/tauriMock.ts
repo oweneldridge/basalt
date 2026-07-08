@@ -22,6 +22,18 @@ seed("Projects/Roadmap.md", "# Roadmap\n\n- [ ] ship v0.1.1\n- [x] release v0.1.
 
 const config: ObsidianConfig = { newLinkFormat: "shortest" };
 
+// A .canvas attachment fixture (for exercising the canvas editor / multi-select).
+const CANVAS_PATH = `${VAULT}/Board.canvas`;
+const canvasContent = JSON.stringify({
+  nodes: [
+    { id: "a1", type: "text", text: "Node A", x: 0, y: 0, width: 160, height: 60 },
+    { id: "a2", type: "text", text: "Node B", x: 240, y: 0, width: 160, height: 60 },
+    { id: "a3", type: "text", text: "Node C", x: 0, y: 160, width: 160, height: 60 },
+  ],
+  edges: [],
+});
+const files = new Map<string, string>([[CANVAS_PATH, canvasContent]]);
+
 export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const a = args ?? {};
   const ok = <R>(v: R) => Promise.resolve(v as unknown as T);
@@ -31,11 +43,13 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
     case "read_vault":
       return ok([...notes.values()]);
     case "read_note":
-      return ok(notes.get(String(a.path))?.content ?? "");
+      return ok(files.get(String(a.path)) ?? notes.get(String(a.path))?.content ?? "");
     case "write_note":
     case "write_canvas":
     case "write_base": {
-      const n = notes.get(String(a.path));
+      const path = String(a.path);
+      if (files.has(path)) files.set(path, String(a.content));
+      const n = notes.get(path);
       if (n) n.content = String(a.content);
       return ok(undefined);
     }
@@ -50,7 +64,7 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
     case "read_obsidian_config":
       return ok(config);
     case "list_attachments":
-      return ok([] as Attachment[]);
+      return ok([{ path: CANVAS_PATH, rel: "Board.canvas", name: "Board.canvas", mtime: now, ctime: now, size: canvasContent.length }] as Attachment[]);
     case "read_obsidian_bookmarks":
     case "list_css_snippets":
     case "list_plugins":
