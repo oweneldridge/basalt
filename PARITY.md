@@ -8,6 +8,32 @@ Basalt clears the bar for a credible core-app foundation but not for full core-a
 
 **Weighted parity: ~67%** ((full + 0.5·partial) / in-scope features). Of 85 in-scope features: **37 full, 38 partial, 9 missing, 1 bonus**.
 
+## Fixed since this audit (2026-07-07)
+
+The four **HIGH**-severity items — the data-safety/interop holes and the one
+confirmed bug — have been resolved (the matrix below still shows the pre-fix
+state):
+
+- ✅ **Internal markdown-links navigate in the editor.** `[text](Note.md)` now
+  routes to the note-open handler in Live Preview, not the external opener.
+- ✅ **CRLF line endings preserved.** Normalization moved to the disk boundary
+  in Rust: `read_note`/`read_vault` return LF (so the whole frontend compares
+  LF-vs-LF), `write_note`/`write_canvas`/`write_base` re-apply the file's
+  existing EOL (majority-detected) — a CRLF file round-trips CRLF; new/LF files
+  stay LF.
+- ✅ **Rename rewrites canvas embeds.** Note and folder renames repoint
+  `.canvas` file-node embeds (of moved notes *and* attachments) via a minimal,
+  geometry-preserving JSON edit, case-insensitively. (Bases query dynamically,
+  so they don't dangle on rename — no base rewrite needed.)
+- ✅ **Non-UTF8 handling — deliberate safety stance, clarified.** `read_note`
+  still refuses non-UTF8 rather than lossily re-encoding (which could corrupt a
+  shared vault; Obsidian vaults are UTF-8), but now with a clear, actionable
+  message. Full encoding conversion is intentionally *not* implemented — high
+  risk, low value for a UTF-8 vault format.
+
+Each fix landed with regression tests; the canvas/CRLF write-path changes went
+through an adversarial data-safety review.
+
 ## Scored matrix
 
 | Dimension | ✅ Full | 🟡 Partial | ❌ Missing | ⭐ Bonus |
