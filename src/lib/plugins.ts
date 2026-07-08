@@ -46,6 +46,18 @@ export type CodeBlockProcessor = (
   ctx: { notePath: string },
 ) => void;
 
+/** Parsed metadata for one note (Obsidian's metadataCache.getFileCache). */
+export interface FileCache {
+  /** Tags in the note (frontmatter + inline `#tag`), each without the `#`. */
+  tags: string[];
+  /** Resolved-or-not outgoing link targets. */
+  links: string[];
+  /** Headings, in document order. */
+  headings: { heading: string; level: number }[];
+  /** Parsed YAML frontmatter (empty object if none). */
+  frontmatter: Record<string, unknown>;
+}
+
 /** The concrete capabilities App wires into the host. Keeping the host UI- and
  * Tauri-agnostic makes it unit-testable and keeps the trust surface explicit. */
 export interface HostDeps {
@@ -58,6 +70,8 @@ export interface HostDeps {
   vaultName: () => string;
   savePluginData: (id: string, json: string) => Promise<void>;
   notice: (message: string, timeoutMs?: number) => void;
+  /** Parsed metadata for a note (by vault-relative path), or null if unknown. */
+  getFileCache: (path: string) => FileCache | null;
   /** Re-render open editors/reading views after processors/commands change. */
   onRegistryChanged: () => void;
 }
@@ -239,6 +253,11 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
        * (file, oldPath). Pass the returned ref to plugin.registerEvent(). */
       on: (name: VaultEventName, cb: (...args: unknown[]) => void): EventRef =>
         subscribe(vaultListeners, name, cb),
+    },
+    metadataCache: {
+      /** Parsed metadata for a note (accepts a `{path}` or a rel string). */
+      getFileCache: (file: { path: string } | string): FileCache | null =>
+        host.getFileCache(typeof file === "string" ? file : file.path),
     },
     workspace: {
       getActiveFile: () => {
