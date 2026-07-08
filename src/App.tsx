@@ -80,6 +80,7 @@ import { EditorPane } from "./components/EditorPane";
 import { RightPanel } from "./components/RightPanel";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
+import { isViewPath } from "./lib/leafViews";
 import { ReadingView } from "./components/ReadingView";
 import { CanvasView } from "./components/CanvasView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -198,8 +199,15 @@ const workspaceKey = (vault: string) => wsKey(vault, WINDOW_LABEL);
 /** Named saved workspaces (Obsidian's Workspaces plugin), per vault. */
 const namedWsKey = (vault: string) => `basalt.workspaces.${vault}`;
 
-/** The serializable shape of a workspace (no live doc — restored from disk). */
+// Bumped when the persisted workspace shape changes. Unversioned (v1) data is
+// still read — tabs are just note paths, which remain valid — so old workspaces
+// migrate transparently. Anything unparseable falls back to an empty workspace.
+const WORKSPACE_VERSION = 2;
+
+/** The serializable shape of a workspace (no live doc — restored from disk). A
+ * tab path may be a note/attachment path or a view sentinel (see leafViews). */
 interface SavedWorkspace {
+  version?: number;
   layout: LayoutNode;
   panes: Record<string, { tabs: string[]; active: string | null; pinned?: string[]; linked?: boolean; stacked?: boolean }>;
   focusedId: string | null;
@@ -1102,14 +1110,17 @@ export default function App() {
         const saved = ws.panes[id];
         const m = /(\d+)$/.exec(id);
         if (m) maxN = Math.max(maxN, Number(m[1]));
-        const tabs = (saved?.tabs ?? []).filter((p) => exists.has(p));
+        // View tabs (sentinels) are always valid; note tabs must exist on disk.
+        const tabs = (saved?.tabs ?? []).filter((p) => isViewPath(p) || exists.has(p));
         if (tabs.length === 0) continue; // pane will be pruned from the layout
         const active = saved?.active && tabs.includes(saved.active) ? saved.active : tabs[0];
         let doc = "";
-        try {
-          doc = await readNote(active);
-        } catch {
-          doc = "";
+        if (!isViewPath(active)) {
+          try {
+            doc = await readNote(active);
+          } catch {
+            doc = "";
+          }
         }
         const pinned = (saved?.pinned ?? []).filter((p) => tabs.includes(p));
         rebuilt[id] = { id, tabs, active, doc, pinned: pinned.length ? pinned : undefined, linked: saved?.linked, stacked: saved?.stacked };
@@ -1219,7 +1230,7 @@ export default function App() {
     if (!v) return;
     const projected: SavedWorkspace["panes"] = {};
     for (const [id, p] of Object.entries(panes)) projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned, linked: p.linked, stacked: p.stacked };
-    const json = JSON.stringify({ layout, panes: projected, focusedId });
+    const json = JSON.stringify({ version: WORKSPACE_VERSION, layout, panes: projected, focusedId });
     if (json === lastSavedWs.current) return;
     lastSavedWs.current = json;
     try {
