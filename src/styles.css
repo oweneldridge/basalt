@@ -2248,3 +2248,17 @@ button.primary:hover {
 }
 .graph-legend-row { display: flex; align-items: center; gap: 6px; }
 .graph-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+
+/* ------- Linked-pane toggle in the tab bar ------- */
+.tab-link {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 8px;
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+.tab-link:hover { opacity: 0.7; }
+.tab-link.active { opacity: 1; filter: none; }
