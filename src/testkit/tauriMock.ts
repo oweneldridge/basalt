@@ -85,8 +85,30 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
       bookmarks.push({ type: "file", path: rel, title: rel.replace(/\.md$/i, "") });
       return ok(true);
     }
-    case "list_css_snippets":
     case "list_plugins":
+      return ok([
+        {
+          id: "demo",
+          name: "Demo Plugin",
+          version: "1.0.0",
+          description: "A demo plugin with a settings tab.",
+          author: "test",
+          minAppVersion: "",
+          data: null,
+          code: [
+            'const { Plugin, PluginSettingTab, Notice } = require("basalt");',
+            "module.exports = class extends Plugin {",
+            "  onload() {",
+            "    const tab = new PluginSettingTab(this.app, this);",
+            '    tab.display = function () { this.containerEl.textContent = "Hello from the demo plugin settings"; };',
+            "    this.addSettingTab(tab);",
+            '    this.registerEvent(this.app.vault.on("modify", () => {}));',
+            "  }",
+            "};",
+          ].join("\n"),
+        },
+      ]);
+    case "list_css_snippets":
     case "list_subfolders":
     case "list_foreign_files":
       return ok([]);

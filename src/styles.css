@@ -2335,3 +2335,8 @@ button.primary:hover {
 .expr-input .cm-editor.cm-focused { outline: none; }
 .expr-input .cm-scroller { overflow-x: auto; }
 .expr-error { font-size: 11px; color: var(--danger); }
+
+/* ------- Plugin settings panel ------- */
+.plugin-settings { margin-top: 6px; }
+.plugin-settings-toggle { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 2px 0; }
+.plugin-settings-mount { margin-top: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
