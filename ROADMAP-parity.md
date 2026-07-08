@@ -30,6 +30,7 @@ Ordered by leverage (impact ÷ effort). Checked items are done.
 
 ## Layout composability (biggest lift)
 
-- [ ] **Movable views/leaves** — drag any view into any zone (fixed 3-zone shell
-      today); reorder/relocate right-panel tabs.
+- [x] **Movable views/leaves** — the whole shell (file tree | editor | right
+      panel) is one layout tree; any view/note tab drags into any region or
+      splits anywhere. *(done — Option A, DESIGN-movable-leaves.md phases 1–5)*
 - [x] **Drag a tab to a pane edge to split** *(done)*; drag a tab out to a new window still open.

@@ -182,3 +182,28 @@ vault gets the default 3-zone layout.
    **B2** (dock a view to the other sidebar)?
 3. If A: are you OK with a multi-session effort behind feature-phased commits,
    accepting some churn in pane persistence during the transition?
+
+---
+
+## Outcome (implemented)
+
+Option A shipped across five phases (commits `faa193e` → `db7f071`):
+
+1. **Versioned, view-aware persistence** — `leafViews.ts` (view tabs as NUL
+   sentinels), workspace `version` field, total fail-safe restore.
+2. **Render dispatch** — a pane's tabs can be notes or views; `renderLeafView`
+   dispatches; view leaves track the last active note.
+3. **Right panel → dock leaf** — the fixed `RightPanel` retired; its views live
+   as tabs in a right dock; plugin views auto-sync.
+4. **File explorer → dock leaf** — the fixed `Sidebar` retired; the shell is now
+   one layout tree (file tree | editor | right panel).
+5. **Cross-region drag** — free because the drag machinery is pane-agnostic: any
+   view or note tab drags into any region or splits anywhere.
+
+The v3 migration grafts docks onto old workspaces once and respects a v3 layout
+thereafter (closed docks stay closed). Layout state never touches note content,
+so the data-safety bound held.
+
+**Still open (intentionally, was B1):** drag a tab *out to a new window* — each
+window is its own App instance, so this is an open-new-window + move, not part of
+the single-window leaf model.
