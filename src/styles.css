@@ -2122,3 +2122,8 @@ button.primary:hover {
 .ref-chevron { font-size: 10px; color: var(--text-muted); transition: transform 0.1s; }
 .ref-chevron.open { transform: rotate(90deg); }
 .ref-child { padding-left: 20px; }
+
+/* ------- File sort control ------- */
+.sidebar-controls { display: flex; gap: 4px; align-items: center; padding: 0 6px; }
+.sidebar-controls .filter { flex: 1; }
+.file-sort { font-size: 11px; background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); border-radius: 5px; padding: 2px; max-width: 90px; }
