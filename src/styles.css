@@ -2304,3 +2304,12 @@ button.primary:hover {
 .rec-stop, .rec-discard { border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 6px; padding: 3px 10px; cursor: pointer; font-size: 12px; }
 .rec-stop:hover { border-color: var(--accent); color: var(--accent); }
 .rec-discard:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ------- Bases filter builder ------- */
+.base-filter-builder { display: flex; flex-direction: column; gap: 5px; }
+.base-filter-combinator { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-muted); }
+.base-filter-cond { display: flex; gap: 5px; align-items: center; }
+.base-filter-cond .base-filter-input { flex: 1; }
+.base-filter-cond button { border: 1px solid var(--border); background: var(--bg); color: var(--text-muted); border-radius: 5px; padding: 2px 7px; cursor: pointer; }
+.base-filter-cond button:hover { color: var(--danger); border-color: var(--danger); }
+.base-filter-add { align-self: flex-start; background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 2px 0; }

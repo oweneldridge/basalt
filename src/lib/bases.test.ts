@@ -3,6 +3,8 @@ import {
   parseProperties,
   parseBase,
   serializeBase,
+  asFlatFilter,
+  fromFlat,
   evalExpr,
   evalFilter,
   runView,
@@ -683,5 +685,25 @@ describe("serializeBase groupBy round-trip", () => {
     expect(def.views[0].groupBy).toEqual({ property: "status", direction: "ASC" });
     def.views[0].groupBy = undefined;
     expect(parseBase(serializeBase(def))!.views[0].groupBy).toBeUndefined();
+  });
+});
+
+describe("Bases flat filter editing", () => {
+  it("writes an added and-of-conditions filter and round-trips", () => {
+    const def = parseBase("views:\n  - type: table\n    name: All\n")!;
+    def.views[0].filters = fromFlat({ combinator: "and", conditions: ["status != \"done\"", "priority > 1"] });
+    const out = serializeBase(def);
+    const back = parseBase(out)!;
+    expect(back.views[0].filters).toEqual({ and: ["status != \"done\"", "priority > 1"] });
+  });
+  it("a single condition collapses to a bare string; empty clears", () => {
+    expect(fromFlat({ combinator: "and", conditions: ["  x  "] })).toBe("x");
+    expect(fromFlat({ combinator: "or", conditions: ["", "  "] })).toBeUndefined();
+  });
+  it("asFlatFilter exposes a flat group but leaves nested/not read-only", () => {
+    expect(asFlatFilter({ or: ["a", "b"] })).toEqual({ combinator: "or", conditions: ["a", "b"] });
+    expect(asFlatFilter("solo")).toEqual({ combinator: "and", conditions: ["solo"] });
+    expect(asFlatFilter({ not: ["a"] })).toBeNull();
+    expect(asFlatFilter({ and: ["a", { or: ["b"] }] })).toBeNull();
   });
 });

@@ -72,6 +72,63 @@ export type FilterNode =
   | { or: FilterNode[] }
   | { not: FilterNode[] };
 
+/** A flat, editable filter: a list of string conditions joined by all/any. */
+export interface FlatFilter {
+  combinator: "and" | "or";
+  conditions: string[];
+}
+
+/** True if the RAW (unparsed) filter is a shape the flat editor fully models —
+ * a string, absent, or an and/or group whose every element is a string. Guards
+ * against overwriting a filter that parse LOSSILY reduced (e.g. an and-group
+ * with an unmodeled object element), which would drop the user's data. */
+export function rawFilterIsFlat(raw: unknown): boolean {
+  if (raw === undefined || typeof raw === "string") return true;
+  if (raw && typeof raw === "object") {
+    for (const k of ["and", "or"] as const) {
+      const arr = (raw as Record<string, unknown>)[k];
+      if (Array.isArray(arr)) return arr.every((x) => typeof x === "string");
+    }
+  }
+  return false;
+}
+
+/** The `{and|or: string[]}` object if `f` is a flat group of string conditions,
+ * else null (a nested / `not` tree isn't flat-editable). */
+function flatStringFilter(f: FilterNode): { and: string[] } | { or: string[] } | null {
+  for (const k of ["and", "or"] as const) {
+    if (typeof f === "object" && k in f) {
+      const arr = (f as Record<"and" | "or", FilterNode[]>)[k];
+      if (Array.isArray(arr) && arr.length > 0 && arr.every((x) => typeof x === "string")) {
+        return { [k]: arr as string[] } as { and: string[] } | { or: string[] };
+      }
+    }
+  }
+  return null;
+}
+
+/** View a filter as a flat condition list for the editor, or null if it's a
+ * deeper tree that must stay read-only. `undefined` → an empty editable group. */
+export function asFlatFilter(f: FilterNode | undefined): FlatFilter | null {
+  if (f === undefined) return { combinator: "and", conditions: [] };
+  if (typeof f === "string") return { combinator: "and", conditions: [f] };
+  const flat = flatStringFilter(f);
+  if (flat) {
+    const combinator = "and" in flat ? "and" : "or";
+    return { combinator, conditions: (flat as Record<string, string[]>)[combinator] };
+  }
+  return null;
+}
+
+/** Build a FilterNode from an edited flat filter (drops blank conditions; a
+ * single all-condition collapses to a bare string; empty → undefined). */
+export function fromFlat(flat: FlatFilter): FilterNode | undefined {
+  const conds = flat.conditions.map((c) => c.trim()).filter(Boolean);
+  if (conds.length === 0) return undefined;
+  if (conds.length === 1) return conds[0];
+  return { [flat.combinator]: conds } as FilterNode;
+}
+
 export interface SortSpec {
   property: string;
   direction: "ASC" | "DESC";
@@ -217,11 +274,18 @@ function buildViews(def: BaseDef): Record<string, unknown>[] {
     put(o, "image", v.image);
     // groupBy: { property, direction } — the documented Obsidian shape.
     put(o, "groupBy", v.groupBy ? { property: v.groupBy.property, direction: v.groupBy.direction } : undefined);
-    // filters: rewrite only when it's a simple string (editable); a nested
-    // and/or/not tree stays as raw (re-serializing the parsed FilterNode could
-    // drop shapes filterNode() didn't model).
+    // filters: rewrite a simple string OR a FLAT and/or-of-strings group (the
+    // shapes the editor edits); a deeper/`not` tree stays as raw verbatim
+    // (re-serializing the parsed FilterNode could drop shapes filterNode()
+    // didn't model).
     if (typeof v.filters === "string") o.filters = v.filters;
     else if (v.filters === undefined) delete o.filters;
+    else {
+      const flat = flatStringFilter(v.filters);
+      // Only write the model filter when the RAW was also flat — otherwise parse
+      // may have dropped an unmodeled element and re-serializing would lose it.
+      if (flat && rawFilterIsFlat(v.raw?.filters)) o.filters = flat;
+    }
     return o;
   });
 }
