@@ -2440,3 +2440,8 @@ button.primary:hover {
 /* ------- View leaves (a view rendered as a tab in the layout) ------- */
 .leaf-view { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .tab.view-tab .tab-name { font-style: italic; opacity: 0.9; }
+
+/* Sidebar dock panes (view tabs living in the layout tree) */
+.pane.dock { background: var(--bg-sidebar); }
+.pane.dock .tab-bar { background: var(--bg-sidebar); }
+.pane.dock .leaf-view { font-size: 13px; }

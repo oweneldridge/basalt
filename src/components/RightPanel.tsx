@@ -5,27 +5,12 @@ import { Outline } from "./Outline";
 import { Tags } from "./Tags";
 import { Bookmarks } from "./Bookmarks";
 
-import { useEffect, useRef } from "react";
 import { Properties } from "./Properties";
 import type { PluginView } from "../lib/plugins";
+import { PluginViewMount } from "./PluginViewMount";
 
 export type RightTab = "properties" | "backlinks" | "links" | "outline" | "tags" | "bookmarks";
 
-/** Mounts a plugin's custom right-panel view into a container (runs its cleanup
- * on hide/unmount), mirroring how the settings-tab API mounts. */
-function PluginViewMount({ view }: { view: PluginView }) {
-  const host = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const el = host.current;
-    if (!el) return;
-    const cleanup = view.mount(el);
-    return () => {
-      if (typeof cleanup === "function") cleanup();
-      el.replaceChildren();
-    };
-  }, [view]);
-  return <div className="plugin-view-mount" ref={host} />;
-}
 
 const TABS: { id: RightTab; label: string }[] = [
   { id: "properties", label: "Properties" },

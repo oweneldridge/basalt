@@ -78,11 +78,15 @@ import { SideResizer } from "./components/SideResizer";
 import { StatusBar } from "./components/StatusBar";
 import { InlineTitle } from "./components/InlineTitle";
 import { EditorPane } from "./components/EditorPane";
-import { RightPanel } from "./components/RightPanel";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
-import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec } from "./lib/leafViews";
+import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec, type BuiltinView } from "./lib/leafViews";
 import { Outline } from "./components/Outline";
+import { Backlinks } from "./components/Backlinks";
+import { Tags } from "./components/Tags";
+import { Bookmarks } from "./components/Bookmarks";
+import { Properties } from "./components/Properties";
+import { PluginViewMount } from "./components/PluginViewMount";
 import { ReadingView } from "./components/ReadingView";
 import { CanvasView } from "./components/CanvasView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -179,6 +183,18 @@ interface Pane {
   /** Stacked tab group: show all open tabs as a horizontal spread (Obsidian's
    * "Stack tab group") instead of one editor. */
   stacked?: boolean;
+  /** Marks a sidebar dock pane (holds view tabs). Left = file tree/search;
+   * right = backlinks/outline/properties/… Undefined = a normal editor pane. */
+  dock?: "left" | "right";
+}
+
+// The view tabs a fresh right dock opens with (Obsidian's right sidebar).
+const RIGHT_DOCK_VIEWS: BuiltinView[] = ["backlinks", "outline", "properties", "tags", "bookmarks"];
+
+/** A fresh right-dock pane (view tabs, backlinks active). */
+function makeRightDock(id: string): Pane {
+  const tabs = RIGHT_DOCK_VIEWS.map((type) => viewPath({ type }));
+  return { id, tabs, active: tabs[0], doc: "", dock: "right" };
 }
 
 type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | "templates" | "history" | "workspaces" | null;
@@ -211,7 +227,7 @@ const WORKSPACE_VERSION = 2;
 interface SavedWorkspace {
   version?: number;
   layout: LayoutNode;
-  panes: Record<string, { tabs: string[]; active: string | null; pinned?: string[]; linked?: boolean; stacked?: boolean }>;
+  panes: Record<string, { tabs: string[]; active: string | null; pinned?: string[]; linked?: boolean; stacked?: boolean; dock?: "left" | "right" }>;
   focusedId: string | null;
 }
 
@@ -343,15 +359,11 @@ export default function App() {
   const [recentVaults, setRecentVaults] = useState<RecentVault[]>(() => loadRecentVaults());
   // Sidebar visibility + UI zoom (Obsidian parity: ⌘\ / ⌘⌥\ , ⌘+ / ⌘- / ⌘0).
   const [leftOpen, setLeftOpen] = useState(() => localStorage.getItem("basalt.leftOpen") !== "0");
-  const [rightOpen, setRightOpen] = useState(() => localStorage.getItem("basalt.rightOpen") !== "0");
   useEffect(() => localStorage.setItem("basalt.leftOpen", leftOpen ? "1" : "0"), [leftOpen]);
-  useEffect(() => localStorage.setItem("basalt.rightOpen", rightOpen ? "1" : "0"), [rightOpen]);
   // Resizable sidebar widths (persisted). Clamped so neither can swallow the editor.
   const clampW = (w: number) => Math.max(160, Math.min(560, w));
   const [leftWidth, setLeftWidth] = useState(() => clampW(Number(localStorage.getItem("basalt.leftWidth")) || 260));
-  const [rightWidth, setRightWidth] = useState(() => clampW(Number(localStorage.getItem("basalt.rightWidth")) || 300));
   useEffect(() => localStorage.setItem("basalt.leftWidth", String(leftWidth)), [leftWidth]);
-  useEffect(() => localStorage.setItem("basalt.rightWidth", String(rightWidth)), [rightWidth]);
   const [zoom, setZoom] = useState(1);
   useEffect(() => {
     document.documentElement.style.fontSize = `${Math.round(16 * zoom)}px`;
@@ -761,15 +773,27 @@ export default function App() {
   // empty. Refs are updated synchronously so an immediate open finds the pane.
   const ensureWorkspace = useCallback((): string => {
     const cur = focusedIdRef.current;
-    if (cur && panesRef.current[cur]) return cur;
+    // Notes must never open into a sidebar dock — only into an editor pane.
+    if (cur && panesRef.current[cur] && !panesRef.current[cur].dock) return cur;
+    const editor = Object.values(panesRef.current).find((p) => !p.dock);
+    if (editor) {
+      focusedIdRef.current = editor.id;
+      setFocusedId(editor.id);
+      return editor.id;
+    }
+    // Only docks (or empty): make a fresh editor pane on the left of the layout.
     const id = `pane${(paneCounter.current += 1)}`;
     const pane: Pane = { id, tabs: [], active: null, doc: "" };
-    const lay: LayoutNode = { kind: "leaf", id };
+    const lay = layoutRef.current;
+    const leaf: LayoutNode = { kind: "leaf", id };
+    const nextLayout: LayoutNode = lay
+      ? { kind: "split", dir: "row", sizes: [0.78, 0.22], children: [leaf, lay] }
+      : leaf;
     panesRef.current = { ...panesRef.current, [id]: pane };
-    layoutRef.current = lay;
+    layoutRef.current = nextLayout;
     focusedIdRef.current = id;
     setPanes((ps) => ({ ...ps, [id]: pane }));
-    setLayout(lay);
+    setLayout(nextLayout);
     setFocusedId(id);
     return id;
   }, []);
@@ -798,6 +822,27 @@ export default function App() {
       return n;
     });
   }, []);
+
+  // Show/hide the right sidebar dock (a leaf in the layout tree). Hiding removes
+  // its leaf; showing grafts a fresh dock onto the right of the whole layout.
+  const toggleRightDock = useCallback(() => {
+    const dockEntry = Object.entries(panesRef.current).find(([, p]) => p.dock === "right");
+    if (dockEntry) {
+      removePaneFromWorkspace(dockEntry[0]);
+      return;
+    }
+    const lay = layoutRef.current;
+    const id = `pane${(paneCounter.current += 1)}`;
+    const dock = makeRightDock(id);
+    const leaf: LayoutNode = { kind: "leaf", id };
+    const nextLayout: LayoutNode = lay
+      ? { kind: "split", dir: "row", sizes: [0.78, 0.22], children: [lay, leaf] }
+      : leaf;
+    panesRef.current = { ...panesRef.current, [id]: dock };
+    layoutRef.current = nextLayout;
+    setPanes((ps) => ({ ...ps, [id]: dock }));
+    setLayout(nextLayout);
+  }, [removePaneFromWorkspace]);
 
   // Open `path` in a specific pane (adds the tab, loads the doc, focuses it).
   // `mirror` marks a follow-open into a linked pane: it doesn't steal focus and
@@ -1102,16 +1147,44 @@ export default function App() {
 
   // Rebuild the saved tab/split layout for a vault. Tabs pointing at notes that
   // no longer exist are dropped; emptied panes are removed; active docs are
-  // loaded from disk. Any malformed state silently leaves the workspace empty.
+  // loaded from disk. Every path yields a VALID workspace: malformed/absent
+  // state falls back to the default (an editor pane + a right dock), and a
+  // restored layout without a right dock gets one grafted on (v1/v2 migration).
   const restoreWorkspace = useCallback(
     async (savedWs: string | null, list: VaultNote[], atts: Attachment[]) => {
-      if (!savedWs) return;
+      const commit = (rebuilt: Record<string, Pane>, lay: LayoutNode, focus: string | null) => {
+        panesRef.current = rebuilt;
+        layoutRef.current = lay;
+        focusedIdRef.current = focus;
+        setPanes(rebuilt);
+        setLayout(lay);
+        setFocusedId(focus);
+      };
+      const dockLeaf = (): { pane: Pane; leaf: LayoutNode } => {
+        const id = `pane${(paneCounter.current += 1)}`;
+        return { pane: makeRightDock(id), leaf: { kind: "leaf", id } };
+      };
+      // A fresh workspace: an empty editor pane on the left, the right dock beside it.
+      const buildDefault = () => {
+        const centerId = `pane${(paneCounter.current += 1)}`;
+        const center: Pane = { id: centerId, tabs: [], active: null, doc: "" };
+        const dock = dockLeaf();
+        const lay: LayoutNode = {
+          kind: "split",
+          dir: "row",
+          sizes: [0.78, 0.22],
+          children: [{ kind: "leaf", id: centerId }, dock.leaf],
+        };
+        commit({ [centerId]: center, [dock.pane.id]: dock.pane }, lay, centerId);
+      };
+
+      if (!savedWs) return buildDefault();
       let ws: SavedWorkspace;
       try {
         ws = JSON.parse(savedWs) as SavedWorkspace;
-        if (!ws.layout || !ws.panes) return;
+        if (!ws.layout || !ws.panes) return buildDefault();
       } catch {
-        return;
+        return buildDefault();
       }
       // Notes AND attachments (.canvas) are valid tab paths.
       const exists = new Set([...list.map((n) => n.path), ...atts.map((a) => a.path)]);
@@ -1119,7 +1192,7 @@ export default function App() {
       try {
         ids = leafIds(ws.layout);
       } catch {
-        return;
+        return buildDefault();
       }
       const rebuilt: Record<string, Pane> = {};
       let maxN = 0;
@@ -1140,21 +1213,21 @@ export default function App() {
           }
         }
         const pinned = (saved?.pinned ?? []).filter((p) => tabs.includes(p));
-        rebuilt[id] = { id, tabs, active, doc, pinned: pinned.length ? pinned : undefined, linked: saved?.linked, stacked: saved?.stacked };
+        rebuilt[id] = { id, tabs, active, doc, pinned: pinned.length ? pinned : undefined, linked: saved?.linked, stacked: saved?.stacked, dock: saved?.dock };
       }
       // Drop layout leaves with no surviving pane.
       let lay: LayoutNode | null = ws.layout;
       for (const id of ids) if (!rebuilt[id] && lay) lay = removeLeaf(lay, id);
-      if (!lay || Object.keys(rebuilt).length === 0) return; // nothing to restore
-      const focus =
-        ws.focusedId && rebuilt[ws.focusedId] ? ws.focusedId : firstLeafId(lay);
+      if (!lay || Object.keys(rebuilt).length === 0) return buildDefault();
       paneCounter.current = Math.max(paneCounter.current, maxN);
-      panesRef.current = rebuilt;
-      layoutRef.current = lay;
-      focusedIdRef.current = focus;
-      setPanes(rebuilt);
-      setLayout(lay);
-      setFocusedId(focus);
+      // Migration: a restored workspace with no right dock (v1/v2) gets one.
+      if (!Object.values(rebuilt).some((p) => p.dock === "right")) {
+        const dock = dockLeaf();
+        rebuilt[dock.pane.id] = dock.pane;
+        lay = { kind: "split", dir: "row", sizes: [0.78, 0.22], children: [lay, dock.leaf] };
+      }
+      const focus = ws.focusedId && rebuilt[ws.focusedId] ? ws.focusedId : firstLeafId(lay);
+      commit(rebuilt, lay, focus);
     },
     [],
   );
@@ -1246,7 +1319,7 @@ export default function App() {
     const v = vaultRef.current;
     if (!v) return;
     const projected: SavedWorkspace["panes"] = {};
-    for (const [id, p] of Object.entries(panes)) projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned, linked: p.linked, stacked: p.stacked };
+    for (const [id, p] of Object.entries(panes)) projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned, linked: p.linked, stacked: p.stacked, dock: p.dock };
     const json = JSON.stringify({ version: WORKSPACE_VERSION, layout, panes: projected, focusedId });
     if (json === lastSavedWs.current) return;
     lastSavedWs.current = json;
@@ -1256,6 +1329,28 @@ export default function App() {
       /* ignore */
     }
   }, [layout, panes, focusedId]);
+
+  // Keep plugin-registered views present as tabs in the right dock: add a tab
+  // when a plugin registers a view, remove it when the plugin unloads.
+  useEffect(() => {
+    const dockEntry = Object.entries(panesRef.current).find(([, p]) => p.dock === "right");
+    if (!dockEntry) return;
+    const [dockId, dock] = dockEntry;
+    const views = pluginRightViews();
+    const wantIds = new Set(views.map((v) => v.id));
+    const kept = dock.tabs.filter((p) => {
+      const spec = parseViewPath(p);
+      return spec?.type !== "plugin" || wantIds.has(spec.viewId);
+    });
+    const missing = views
+      .map((v) => viewPath({ type: "plugin", viewId: v.id }))
+      .filter((p) => !kept.includes(p));
+    const next = [...kept, ...missing];
+    if (next.length === dock.tabs.length && next.every((p, i) => p === dock.tabs[i])) return;
+    const active = dock.active && next.includes(dock.active) ? dock.active : (next[0] ?? null);
+    patchPane(dockId, { tabs: next, active });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pluginVersion]);
 
   // Named workspaces (save/switch layouts) — Obsidian's Workspaces plugin.
   const [namedWorkspaces, setNamedWorkspaces] = useState<Record<string, SavedWorkspace>>({});
@@ -1278,7 +1373,7 @@ export default function App() {
     if (!layoutRef.current) return null;
     const projected: SavedWorkspace["panes"] = {};
     for (const [id, p] of Object.entries(panesRef.current)) {
-      projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned, linked: p.linked, stacked: p.stacked };
+      projected[id] = { tabs: p.tabs, active: p.active, pinned: p.pinned, linked: p.linked, stacked: p.stacked, dock: p.dock };
     }
     return { layout: layoutRef.current, panes: projected, focusedId: focusedIdRef.current };
   }, []);
@@ -1602,7 +1697,7 @@ export default function App() {
         setModal("settings");
       } else if (e.key === "\\") {
         e.preventDefault();
-        if (e.altKey) setRightOpen((v) => !v);
+        if (e.altKey) toggleRightDock();
         else setLeftOpen((v) => !v);
       } else if (e.key === "=" || e.key === "+") {
         e.preventDefault();
@@ -2659,6 +2754,16 @@ export default function App() {
   const activeName = activeNote?.name ?? null;
   activeRelRef.current = activeNote?.rel ?? null;
 
+  // The note that the per-note VIEWS (backlinks/outline/properties…) track: the
+  // focused note, or — when a view leaf is focused — the last real note. Keying
+  // the panel memos on this keeps the right panel populated when you click into
+  // an Outline/Backlinks leaf (activeNote would otherwise be null).
+  const lastNote = useMemo(
+    () => (lastNotePath ? (notes.find((n) => n.path === lastNotePath) ?? null) : null),
+    [lastNotePath, notes],
+  );
+  const lastNoteName = lastNote?.name ?? null;
+
   // Tab labels for a given pane's open paths.
   const tabItemsFor = useCallback(
     (paths: string[]): TabItem[] =>
@@ -2688,24 +2793,24 @@ export default function App() {
   // Backlinks of the active note can only change when OTHER notes change, so
   // this keys off structureVersion — a local autosave doesn't re-resolve the vault.
   const backlinks = useMemo(() => {
-    if (!activePath) return [];
-    return index.current.backlinksFor(activePath);
+    if (!lastNotePath) return [];
+    return index.current.backlinksFor(lastNotePath);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePath, structureVersion]);
+  }, [lastNotePath, structureVersion]);
 
   const outgoing = useMemo(() => {
-    if (!activePath) return { resolved: [], unresolved: [] };
-    return index.current.outgoingLinksFor(activePath);
+    if (!lastNotePath) return { resolved: [], unresolved: [] };
+    return index.current.outgoingLinksFor(lastNotePath);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePath, indexVersion, structureVersion]);
+  }, [lastNotePath, indexVersion, structureVersion]);
 
-  // Expensive (full vault text scan). Recompute only when the active note
+  // Expensive (full vault text scan). Recompute only when the tracked note
   // changes — not on every debounced save — to keep typing smooth.
   const unlinked = useMemo(() => {
-    if (!activeName || !activePath) return [];
-    return index.current.unlinkedMentionsFor(activeName, notesRef.current, activePath);
+    if (!lastNoteName || !lastNotePath) return [];
+    return index.current.unlinkedMentionsFor(lastNoteName, notesRef.current, lastNotePath);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeName, activePath]);
+  }, [lastNoteName, lastNotePath]);
 
   // Vault-wide tags for the tag pane — from the incremental index, so this only
   // recomputes when content (indexVersion) or structure (structureVersion) changes.
@@ -3487,7 +3592,7 @@ export default function App() {
         },
       },
       { id: "toggle-left-sidebar", label: "Toggle left sidebar", hint: "⌘\\", run: () => setLeftOpen((v) => !v) },
-      { id: "toggle-right-sidebar", label: "Toggle right sidebar", hint: "⌘⌥\\", run: () => setRightOpen((v) => !v) },
+      { id: "toggle-right-sidebar", label: "Toggle right sidebar", hint: "⌘⌥\\", run: () => toggleRightDock() },
       { id: "zoom-in", label: "Zoom in", hint: "⌘+", run: () => zoomBy(0.1) },
       { id: "zoom-out", label: "Zoom out", hint: "⌘-", run: () => zoomBy(-0.1) },
       { id: "zoom-reset", label: "Reset zoom", hint: "⌘0", run: () => setZoom(1) },
@@ -3576,21 +3681,87 @@ export default function App() {
   }
 
   // Render a VIEW leaf's content (a view tab: Outline, Backlinks, plugin view…).
-  // Views track the last active note (`lastNotePath`), not the pane they live in.
+  // Per-note views track the last active note (`lastNote`), not the pane they
+  // live in. Data (backlinks/outgoing/unlinked/tags/bookmarks) is the same the
+  // right panel uses, keyed on lastNote.
   const renderLeafView = (spec: ViewSpec): ReactNode => {
-    const noteDoc = lastNotePath ? (notesRef.current.find((n) => n.path === lastNotePath)?.content ?? null) : null;
+    if (spec.type === "plugin") {
+      const v = pluginRightViews().find((pv) => pv.id === spec.viewId);
+      return v ? <PluginViewMount view={v} /> : <div className="placeholder">Plugin view unavailable.</div>;
+    }
+    const noteDoc = lastNote?.content ?? null;
+    const jump = (line: number) => {
+      if (lastNotePath) void openNoteByPath(lastNotePath, line);
+    };
     switch (spec.type) {
-      case "outline":
+      case "filetree":
+      case "search":
+        // The sidebar views move into leaves in Phase 4.
+        return <div className="placeholder">The {viewLabel(spec)} view isn’t wired into leaves yet.</div>;
+      case "backlinks":
         return (
-          <Outline
-            doc={noteDoc}
-            onJump={(line) => {
-              if (lastNotePath) void openNoteByPath(lastNotePath, line);
+          <Backlinks
+            noteName={lastNoteName}
+            backlinks={backlinks}
+            unlinked={unlinked}
+            onOpen={(path, line) => openNoteByPath(path, line)}
+            onLink={handleLinkMention}
+            onLinkAll={handleLinkAllMentions}
+          />
+        );
+      case "links":
+        return (
+          <div className="outgoing">
+            {outgoing.resolved.length === 0 && outgoing.unresolved.length === 0 && (
+              <div className="panel-empty">No outgoing links</div>
+            )}
+            {outgoing.resolved.map((l, i) => (
+              <button key={`r${i}`} className="outgoing-item" onClick={() => openNoteByPath(l.path, 1)} title={l.path}>
+                {l.name}
+              </button>
+            ))}
+            {outgoing.unresolved.length > 0 && (
+              <>
+                <div className="outgoing-head">Unresolved</div>
+                {outgoing.unresolved.map((t, i) => (
+                  <button key={`u${i}`} className="outgoing-item unresolved" onClick={() => void handleOpenWikilink(t)} title={`Create “${t}”`}>
+                    {t}
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+        );
+      case "outline":
+        return <Outline doc={noteDoc} onJump={jump} />;
+      case "properties": {
+        // Read the LIVE doc of whichever pane shows the tracked note, so an edit
+        // here reflects at once (the index content lags the debounced save).
+        const hostPane = lastNotePath ? Object.entries(panes).find(([, p]) => p.active === lastNotePath) : undefined;
+        return (
+          <Properties
+            doc={hostPane ? hostPane[1].doc : noteDoc}
+            onChange={(nextDoc) => {
+              if (!hostPane || !lastNotePath) return;
+              patchPane(hostPane[0], { doc: nextDoc });
+              handleChange(hostPane[0], lastNotePath, nextDoc);
             }}
           />
         );
-      default:
-        return <div className="placeholder">The {viewLabel(spec)} view isn’t wired into leaves yet.</div>;
+      }
+      case "tags":
+        return <Tags tags={tags} onSelect={handleSelectTag} />;
+      case "bookmarks":
+        return (
+          <Bookmarks
+            bookmarks={bookmarks}
+            onOpen={handleOpenBookmark}
+            onSearch={(query) => {
+              setSearchSeed(query);
+              setModal("search");
+            }}
+          />
+        );
     }
   };
 
@@ -3604,7 +3775,7 @@ export default function App() {
     const rel = path ? (notes.find((n) => n.path === path)?.rel ?? "") : "";
     return (
       <div
-        className={focused ? "pane focused" : "pane"}
+        className={`pane${focused ? " focused" : ""}${pane.dock ? ` dock dock-${pane.dock}` : ""}`}
         onMouseDownCapture={() => focusPane(id)}
       >
         {pane.tabs.length > 0 && (
@@ -3812,7 +3983,7 @@ export default function App() {
   return (
     <div
       className={readableWidth ? "app readable-width" : "app"}
-      style={{ "--left-w": `${leftWidth}px`, "--right-w": `${rightWidth}px` } as React.CSSProperties}
+      style={{ "--left-w": `${leftWidth}px` } as React.CSSProperties}
     >
       <div className="workspace">
       <Ribbon
@@ -3923,42 +4094,6 @@ export default function App() {
           <div className="placeholder">Select a note, or press + to create one.</div>
         )}
       </main>
-      {rightOpen && <SideResizer onDelta={(dx) => setRightWidth((w) => clampW(w - dx))} />}
-      {rightOpen && (
-        <RightPanel
-          tab={rightTab}
-          onTab={setRightTab}
-          pluginViews={pluginRightViews()}
-          noteName={activeName}
-          backlinks={backlinks}
-          unlinked={unlinked}
-          outgoing={outgoing}
-          onOpenRef={(path, line) => openNoteByPath(path, line)}
-          outlineDoc={activeIsViewer ? null : (activeNote?.content ?? active?.doc ?? null)}
-          onJumpLine={(line) => {
-            if (active) void openNoteByPath(active.path, line);
-          }}
-          propertiesDoc={activeIsViewer ? null : (active?.doc ?? activeNote?.content ?? null)}
-          onEditProperties={(nextDoc) => {
-            const id = focusedIdRef.current;
-            const p = id ? panesRef.current[id]?.active : null;
-            if (!id || !p || !isMarkdownPath(p)) return;
-            patchPane(id, { doc: nextDoc }); // reflect in the editor (reconcile)
-            handleChange(id, p, nextDoc); // pending + debounced save + sync other panes
-          }}
-          tags={tags}
-          onSelectTag={handleSelectTag}
-          bookmarks={bookmarks}
-          onOpenBookmark={handleOpenBookmark}
-          onOpenUnresolved={(target) => void handleOpenWikilink(target)}
-          onLinkMention={handleLinkMention}
-          onLinkAllMentions={handleLinkAllMentions}
-          onSearch={(query) => {
-            setSearchSeed(query);
-            setModal("search");
-          }}
-        />
-      )}
       </div>
       <StatusBar cursor={cursor} words={docStats?.words ?? 0} chars={docStats?.chars ?? 0} pluginVersion={pluginVersion} />
       {modal === "switcher" && (

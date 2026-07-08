@@ -13,8 +13,8 @@ test("tab context menu: close others keeps the right-clicked tab", async ({ page
   await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
   await expect(page.locator(".cm-editor")).toBeVisible();
   await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
-  await expect(page.locator(".pane .tab")).toHaveCount(2);
-  const first = page.locator(".pane .tab").nth(0);
+  await expect(page.locator(".pane:not(.dock) .tab")).toHaveCount(2);
+  const first = page.locator(".pane:not(.dock) .tab").nth(0);
   const name = await first.locator(".tab-name").textContent();
   await first.click({ button: "right" });
   await expect(page.locator(".ctx-menu .ctx-item")).toHaveText([
@@ -25,8 +25,8 @@ test("tab context menu: close others keeps the right-clicked tab", async ({ page
     "Split right",
   ]);
   await page.locator(".ctx-item", { hasText: "Close others" }).click();
-  await expect(page.locator(".pane .tab")).toHaveCount(1);
-  await expect(page.locator(".pane .tab .tab-name")).toHaveText(name!);
+  await expect(page.locator(".pane:not(.dock) .tab")).toHaveCount(1);
+  await expect(page.locator(".pane:not(.dock) .tab .tab-name")).toHaveText(name!);
 });
 
 test("file context menu: Make a copy creates a duplicate note", async ({ page }) => {
@@ -64,7 +64,7 @@ test("inline title renames the note", async ({ page }) => {
   await expect(page.locator(".inline-title")).toHaveValue("Ideas");
   await page.locator(".inline-title").fill("IdeasRenamed");
   await page.locator(".inline-title").press("Enter");
-  await expect(page.locator(".pane .tab.active .tab-name")).toHaveText("IdeasRenamed");
+  await expect(page.locator(".pane:not(.dock) .tab.active .tab-name")).toHaveText("IdeasRenamed");
   await expect(page.locator(".tree-row.file", { hasText: "IdeasRenamed" })).toHaveCount(1);
 });
 

@@ -9,7 +9,7 @@ test("Properties panel edits, adds, and removes frontmatter", async ({ page }) =
   await page.reload();
   await page.locator(".tree-row.file", { hasText: "WithProps" }).click();
   await expect(page.locator(".cm-editor")).toBeVisible();
-  await page.getByRole("button", { name: "Properties" }).click();
+  await page.locator(".pane.dock .tab.view-tab", { hasText: "Properties" }).click();
   await expect(page.locator(".properties .prop-key")).toHaveText(["status", "priority", "done"]);
   // Edit a value.
   const statusRow = page.locator(".prop-row", { hasText: "status" });

@@ -35,12 +35,12 @@ test("hiding the sidebar lets the editor area expand", async ({ page }) => {
 test("opening a note shows an editor + tab, and a pane can split", async ({ page }) => {
   await page.getByRole("button", { name: "Welcome" }).click();
   await expect(page.locator(".cm-editor")).toHaveCount(1);
-  await expect(page.locator(".tab")).toHaveCount(1);
+  await expect(page.locator(".pane:not(.dock) .tab")).toHaveCount(1);
   // The Welcome note's table renders interactively.
   await expect(page.locator(".cm-md-table-wrap")).toBeVisible();
   await page.locator('button:has-text("⊟")').first().click();
   await expect(page.locator(".cm-editor")).toHaveCount(2);
-  await expect(page.locator(".pane-resizer")).toHaveCount(1);
+  await expect(page.locator(".pane-resizer")).toHaveCount(2);
 });
 
 test("a linked pane follows notes opened in another pane", async ({ page }) => {
@@ -61,7 +61,7 @@ test("a linked pane follows notes opened in another pane", async ({ page }) => {
   await page.locator(".pane").first().locator(".cm-content").click();
   await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
   // Both panes now show Ideas.
-  await expect(page.locator(".pane .tab.active .tab-name")).toHaveText(["Ideas", "Ideas"]);
+  await expect(page.locator(".pane:not(.dock) .tab.active .tab-name")).toHaveText(["Ideas", "Ideas"]);
 });
 
 test("stacking a tab group spreads all open notes as columns", async ({ page }) => {
@@ -72,9 +72,9 @@ test("stacking a tab group spreads all open notes as columns", async ({ page }) 
   await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
   await expect(page.locator(".cm-editor")).toHaveCount(1);
   await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
-  await expect(page.locator(".pane .tab")).toHaveCount(2);
+  await expect(page.locator(".pane:not(.dock) .tab")).toHaveCount(2);
   // Stack → a column per open note, each an editable editor.
-  await page.locator(".tab-stack").click();
+  await page.locator(".pane:not(.dock) .tab-stack").click();
   await expect(page.locator(".stacked-col")).toHaveCount(2);
   await expect(page.locator(".stacked-col-head")).toHaveText(["Welcome", "Ideas"]);
   await expect(page.locator(".stacked-col .cm-editor")).toHaveCount(2);
@@ -85,10 +85,10 @@ test("stacking a tab group spreads all open notes as columns", async ({ page }) 
   await page.waitForTimeout(700); // debounced save
   await page.locator(".stacked-col-head").nth(1).click();
   await expect(page.locator(".stacked-tabs")).toHaveCount(0);
-  await expect(page.locator(".tab.active .tab-name")).toHaveText("Ideas");
-  await expect(page.locator(".pane .cm-content")).toContainText("STACKEDIT");
+  await expect(page.locator(".pane:not(.dock) .tab.active .tab-name")).toHaveText("Ideas");
+  await expect(page.locator(".pane:not(.dock) .cm-content")).toContainText("STACKEDIT");
   // Re-stack → the 2nd column reloads the SAVED content from disk.
-  await page.locator(".tab-stack").click();
+  await page.locator(".pane:not(.dock) .tab-stack").click();
   await expect(page.locator(".stacked-col").nth(1).locator(".cm-content")).toContainText("STACKEDIT");
 });
 
@@ -114,26 +114,26 @@ test("dragging a tab to a pane edge splits the pane and moves the tab", async ({
   await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
   await expect(page.locator(".cm-editor")).toBeVisible();
   await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
-  await expect(page.locator(".pane .tab")).toHaveCount(2);
+  await expect(page.locator(".pane:not(.dock) .tab")).toHaveCount(2);
   // Begin dragging the active tab → the edge drop-zones appear.
   await page.evaluate(() => {
-    const tab = document.querySelector(".pane .tab.active") as HTMLElement;
+    const tab = document.querySelector(".pane:not(.dock) .tab.active") as HTMLElement;
     (window as unknown as { __dt: DataTransfer }).__dt = new DataTransfer();
     tab.dispatchEvent(new DragEvent("dragstart", { dataTransfer: (window as unknown as { __dt: DataTransfer }).__dt, bubbles: true }));
   });
-  await expect(page.locator(".pane-dropzone")).toHaveCount(1);
+  await expect(page.locator(".pane:not(.dock) .pane-dropzone")).toHaveCount(1);
   // Drop it on the right edge.
   await page.evaluate(() => {
     const dt = (window as unknown as { __dt: DataTransfer }).__dt;
-    const zone = document.querySelector(".pane-dropzone") as HTMLElement;
+    const zone = document.querySelector(".pane:not(.dock) .pane-dropzone") as HTMLElement;
     const r = zone.getBoundingClientRect();
     const o = { dataTransfer: dt, clientX: r.left + r.width * 0.9, clientY: r.top + r.height * 0.5, bubbles: true, cancelable: true };
     zone.dispatchEvent(new DragEvent("dragover", o));
     zone.dispatchEvent(new DragEvent("drop", o));
   });
-  await expect(page.locator(".pane")).toHaveCount(2);
+  await expect(page.locator(".pane:not(.dock)")).toHaveCount(2);
   await expect(page.locator(".cm-editor")).toHaveCount(2);
-  await expect(page.locator(".pane-resizer")).toHaveCount(1);
+  await expect(page.locator(".pane-resizer")).toHaveCount(2);
   // The dragged "Ideas" tab is alone in the new (focused) split.
   await expect(page.locator(".pane.focused .tab")).toHaveCount(1);
   await expect(page.locator(".pane.focused .tab .tab-name")).toHaveText("Ideas");
