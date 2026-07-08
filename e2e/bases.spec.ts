@@ -41,3 +41,28 @@ test("filter builder: add conditions that persist through a re-parse", async ({ 
   await expect(reopened.nth(0)).toHaveValue('status != "done"');
   await expect(reopened.nth(1)).toHaveValue("priority > 1");
 });
+
+test("formula authoring: add a formula, persist it, use it as a column", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await page.evaluate(() => {
+    Object.keys(localStorage).filter((k) => k.includes("workspace")).forEach((k) => localStorage.removeItem(k));
+  });
+  await page.reload();
+  await page.locator(".tree-row.attachment", { hasText: "Notes.base" }).click();
+  await page.locator("button").filter({ hasText: "Edit" }).first().click();
+  const f = page.locator(".base-editor-section", { hasText: "Formulas" });
+  await f.getByRole("button", { name: "+ Add formula" }).click();
+  await f.locator(".base-formula-name").fill("ppu");
+  await f.locator(".base-formula-name").blur();
+  await f.locator(".base-formula-expr").fill("price / quantity");
+  await f.locator(".base-formula-expr").blur();
+  await page.waitForTimeout(700); // save debounce
+  // Re-parse: the formula persists...
+  await page.locator("button").filter({ hasText: "Edit" }).first().click();
+  await page.locator("button").filter({ hasText: "Edit" }).first().click();
+  const f2 = page.locator(".base-editor-section", { hasText: "Formulas" });
+  await expect(f2.locator(".base-formula-name")).toHaveValue("ppu");
+  await expect(f2.locator(".base-formula-expr")).toHaveValue("price / quantity");
+  // ...and is now offered as a column.
+  await expect(page.locator(".base-add-col option", { hasText: "ppu" })).toHaveCount(1);
+});

@@ -177,6 +177,13 @@ export const BaseView = memo(function BaseView({
     },
     [def, activeIdxSafe, emitDef],
   );
+  // Formulas are a DOCUMENT-level map (not per-view).
+  const patchFormulas = useCallback(
+    (next: Record<string, string>) => {
+      if (def) emitDef({ ...def, formulas: next });
+    },
+    [def, emitDef],
+  );
 
   if (!def) {
     return <div className="base-view base-empty">Not a valid .base file (YAML parse failed).</div>;
@@ -226,6 +233,8 @@ export const BaseView = memo(function BaseView({
           view={def.views[activeIdx]}
           columns={result.columns.map((c) => c.key)}
           availableKeys={availableKeys}
+          formulas={def.formulas}
+          onPatchFormulas={patchFormulas}
           onPatchView={patchView}
           onAddView={() => {
             emitDef({ ...def, views: [...def.views, { type: "table", name: `View ${def.views.length + 1}` }] });
@@ -266,6 +275,8 @@ function BaseEditor({
   view,
   columns,
   availableKeys,
+  formulas,
+  onPatchFormulas,
   onPatchView,
   onAddView,
   onDeleteView,
@@ -274,6 +285,8 @@ function BaseEditor({
   view: BaseViewDef;
   columns: string[];
   availableKeys: string[];
+  formulas: Record<string, string>;
+  onPatchFormulas: (next: Record<string, string>) => void;
   onPatchView: (patch: Partial<BaseViewDef>) => void;
   onAddView: () => void;
   onDeleteView: () => void;
@@ -297,6 +310,20 @@ function BaseEditor({
   }, [view.filters]);
   const commitFilter = (nextConds: string[], nextComb: "and" | "or") =>
     onPatchView({ filters: fromFlat({ combinator: nextComb, conditions: nextConds }) });
+
+  // Formula rows (document-level `formulas` map). Local draft, committed on blur.
+  const [fRows, setFRows] = useState(() => Object.entries(formulas).map(([name, expr]) => ({ name, expr })));
+  useEffect(() => {
+    setFRows(Object.entries(formulas).map(([name, expr]) => ({ name, expr })));
+  }, [formulas]);
+  const commitFormulas = (rows: { name: string; expr: string }[]) => {
+    const map: Record<string, string> = {};
+    for (const r of rows) {
+      const n = r.name.trim();
+      if (n) map[n] = r.expr;
+    }
+    onPatchFormulas(map);
+  };
 
   // The column list to edit: the explicit order, or the currently-shown columns
   // materialized so the first edit is non-destructive.
@@ -458,6 +485,49 @@ function BaseEditor({
             </button>
           )}
         </div>
+      </div>
+
+      <div className="base-editor-section">
+        <div className="base-editor-title">Formulas</div>
+        <div className="base-formula-list">
+          {fRows.map((row, i) => (
+            <div className="base-formula-row" key={i}>
+              <input
+                className="base-formula-name"
+                type="text"
+                placeholder="name"
+                value={row.name}
+                onChange={(e) => setFRows((prev) => prev.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)))}
+                onBlur={() => commitFormulas(fRows)}
+                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              />
+              <span className="base-formula-eq">=</span>
+              <input
+                className="base-formula-expr"
+                type="text"
+                placeholder="e.g. price / quantity"
+                value={row.expr}
+                onChange={(e) => setFRows((prev) => prev.map((r, j) => (j === i ? { ...r, expr: e.target.value } : r)))}
+                onBlur={() => commitFormulas(fRows)}
+                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              />
+              <button
+                title="Remove formula"
+                onClick={() => {
+                  const next = fRows.filter((_, j) => j !== i);
+                  setFRows(next);
+                  commitFormulas(next);
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          <button className="base-filter-add" onClick={() => setFRows((prev) => [...prev, { name: "", expr: "" }])}>
+            + Add formula
+          </button>
+        </div>
+        <div className="base-formula-hint">Use as a column via <code>formula.name</code>.</div>
       </div>
 
       <div className="base-editor-actions">

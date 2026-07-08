@@ -296,20 +296,47 @@ function buildViews(def: BaseDef): Record<string, unknown>[] {
  * node; everything else (top-level filters, formulas, properties, comments)
  * stays exactly as authored. Falls back to a fresh stringify if the original
  * text isn't a usable YAML map. */
+// True if the raw `formulas` is absent or an all-string map — the only shape
+// the editor models (so re-writing it can't drop a non-string entry).
+function rawFormulasAreStrings(raw: Record<string, unknown> | null | undefined): boolean {
+  return !raw || Object.values(raw).every((v) => typeof v === "string");
+}
+// The model formulas already equal the raw ones (so leave the section untouched,
+// preserving its comments/formatting).
+function sameFormulas(model: Record<string, string>, raw: Record<string, unknown> | null | undefined): boolean {
+  const b = raw ?? {};
+  const mk = Object.keys(model);
+  return mk.length === Object.keys(b).length && mk.every((k) => b[k] === model[k]);
+}
+
 export function serializeBase(def: BaseDef): string {
   const views = buildViews(def);
+  // Only rewrite `formulas` when the user actually changed it AND the raw was
+  // an all-string map — otherwise leave it exactly as authored (comments and
+  // any unmodeled shape preserved).
+  const rawF = asRecord(def.raw?.formulas);
+  const writeFormulas = rawFormulasAreStrings(rawF) && !sameFormulas(def.formulas, rawF);
   if (def.rawText !== undefined) {
     try {
       const doc = YAML.parseDocument(def.rawText);
       if (doc.errors.length === 0 && YAML.isMap(doc.contents)) {
         doc.set("views", views);
+        if (writeFormulas) {
+          if (Object.keys(def.formulas).length) doc.set("formulas", def.formulas);
+          else doc.delete("formulas");
+        }
         return doc.toString();
       }
     } catch {
       /* fall through to a fresh serialize */
     }
   }
-  return YAML.stringify({ ...(def.raw ?? {}), views });
+  const base: Record<string, unknown> = { ...(def.raw ?? {}), views };
+  if (writeFormulas) {
+    if (Object.keys(def.formulas).length) base.formulas = def.formulas;
+    else delete base.formulas;
+  }
+  return YAML.stringify(base);
 }
 
 // ---------------------------------------------------------------------------

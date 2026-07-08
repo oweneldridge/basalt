@@ -707,3 +707,25 @@ describe("Bases flat filter editing", () => {
     expect(asFlatFilter({ and: ["a", { or: ["b"] }] })).toBeNull();
   });
 });
+
+describe("Bases formula authoring", () => {
+  it("writes an added/edited formula and round-trips", () => {
+    const def = parseBase("views:\n  - type: table\n    name: All\n")!;
+    def.formulas = { ppu: "price / qty" };
+    const out = serializeBase(def);
+    expect(out).toMatch(/formulas:/);
+    expect(parseBase(out)!.formulas).toEqual({ ppu: "price / qty" });
+  });
+  it("removing all formulas drops the key", () => {
+    const def = parseBase("formulas:\n  ppu: price / qty\nviews:\n  - type: table\n    name: All\n")!;
+    expect(def.formulas).toEqual({ ppu: "price / qty" });
+    def.formulas = {};
+    expect(parseBase(serializeBase(def))!.formulas).toEqual({});
+  });
+  it("leaves an unchanged formulas section untouched (preserves a comment)", () => {
+    const src = "formulas:\n  # keep me\n  ppu: price / qty\nviews:\n  - type: table\n    name: All\n";
+    const def = parseBase(src)!;
+    def.views[0] = { ...def.views[0], name: "Renamed" }; // edit something else
+    expect(serializeBase(def)).toContain("# keep me");
+  });
+});
