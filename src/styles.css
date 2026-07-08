@@ -2436,3 +2436,7 @@ button.primary:hover {
 .settings-num { font-variant-numeric: tabular-nums; color: var(--text-muted); min-width: 34px; }
 .settings-reset { background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); border-radius: 5px; padding: 2px 8px; cursor: pointer; font-size: 12px; }
 .settings-reset:hover { color: var(--text); }
+
+/* ------- View leaves (a view rendered as a tab in the layout) ------- */
+.leaf-view { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.tab.view-tab .tab-name { font-style: italic; opacity: 0.9; }
