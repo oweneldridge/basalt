@@ -2345,13 +2345,14 @@ export default function App() {
 
   // Key the local graph on the active PATH (not the whole active object) so an
   // autosave or caret move doesn't rebuild the simulation.
+  const [graphDepth, setGraphDepth] = useState(1);
   const graphKey = graphMode === "local" ? (active?.path ?? null) : null;
   const graphData = useMemo(() => {
     if (!graphOpen) return { nodes: [], links: [] };
-    if (graphMode === "local" && graphKey) return index.current.localGraph(graphKey, 1);
+    if (graphMode === "local" && graphKey) return index.current.localGraph(graphKey, graphDepth);
     return index.current.graph();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphOpen, graphMode, graphKey, indexVersion]);
+  }, [graphOpen, graphMode, graphKey, graphDepth, indexVersion]);
 
   const handleOpenGraphNode = useCallback(
     (path: string) => {
@@ -3756,6 +3757,8 @@ export default function App() {
           activePath={active?.path ?? null}
           mode={graphMode}
           onSetMode={setGraphMode}
+          depth={graphDepth}
+          onSetDepth={setGraphDepth}
           onOpenNode={handleOpenGraphNode}
           onClose={handleCloseGraph}
         />
