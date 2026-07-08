@@ -57,3 +57,13 @@ test("sidebar: collapse-all hides nested files; reveal-active brings them back",
   await page.locator('.icon-btn[title="Reveal active file"]').click();
   await expect(page.locator(".tree-row.file.active", { hasText: "Roadmap" })).toHaveCount(1);
 });
+
+test("inline title renames the note", async ({ page }) => {
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  await expect(page.locator(".cm-editor")).toBeVisible();
+  await expect(page.locator(".inline-title")).toHaveValue("Ideas");
+  await page.locator(".inline-title").fill("IdeasRenamed");
+  await page.locator(".inline-title").press("Enter");
+  await expect(page.locator(".pane .tab.active .tab-name")).toHaveText("IdeasRenamed");
+  await expect(page.locator(".tree-row.file", { hasText: "IdeasRenamed" })).toHaveCount(1);
+});

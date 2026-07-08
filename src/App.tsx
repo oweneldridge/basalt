@@ -73,6 +73,7 @@ import { StackedTabs } from "./components/StackedTabs";
 import { SlidesView } from "./components/SlidesView";
 import { SideResizer } from "./components/SideResizer";
 import { StatusBar } from "./components/StatusBar";
+import { InlineTitle } from "./components/InlineTitle";
 import { EditorPane } from "./components/EditorPane";
 import { RightPanel, type RightTab } from "./components/RightPanel";
 import { TabBar, type TabItem } from "./components/TabBar";
@@ -3481,6 +3482,13 @@ export default function App() {
               focusPane(id);
               setModal("switcher");
             }}
+          />
+        )}
+        {path && rel && isMarkdownPath(path) && !pane.stacked && (
+          <InlineTitle
+            key={`title:${path}`}
+            name={nameFromRel(rel)}
+            onRename={(newBase) => void handleRenameNote(path, rel.replace(/[^/\\]+$/, "") + newBase)}
           />
         )}
         {pane.stacked && pane.tabs.length > 0 ? (
