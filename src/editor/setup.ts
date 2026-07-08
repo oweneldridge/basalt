@@ -129,6 +129,8 @@ export interface EditorCallbacks {
   onChange: (doc: string) => void;
   /** Fired when the caret moves: 1-based line, 1-based column, selection length. */
   onCursor?: (line: number, col: number, selChars: number) => void;
+  /** Right-click in the editor — open the custom context menu at (x, y). */
+  onContextMenu?: (x: number, y: number) => void;
 }
 
 // Source mode: all Live Preview rendering lives in one Compartment so it can
@@ -320,6 +322,22 @@ export function createEditorState(
         const line = update.state.doc.lineAt(sel.head);
         cb.onCursor?.(line.number, sel.head - line.from + 1, Math.abs(sel.to - sel.from));
       }
+    }),
+    // Right-click → our own context menu (Cut/Copy/Paste/Bold/Italic).
+    EditorView.domEventHandlers({
+      contextmenu: (event, view) => {
+        if (!cb.onContextMenu) return false;
+        // Right-clicking inside the selection keeps it; otherwise move the caret
+        // to the click so single-word actions target what was clicked.
+        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+        const sel = view.state.selection.main;
+        if (pos !== null && (pos < sel.from || pos > sel.to)) {
+          view.dispatch({ selection: { anchor: pos } });
+        }
+        event.preventDefault();
+        cb.onContextMenu(event.clientX, event.clientY);
+        return true;
+      },
     }),
   ];
   return EditorState.create({ doc, selection: { anchor: initialCursor(doc) }, extensions });

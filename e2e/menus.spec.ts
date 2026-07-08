@@ -83,3 +83,19 @@ test("dragging a tree note into the editor inserts a wikilink", async ({ page })
   });
   expect(inserted).toContain("[[Ideas]]");
 });
+
+test("editor right-click menu: Bold wraps the selection; Cut/Copy gate on selection", async ({ page }) => {
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  await expect(page.locator(".cm-editor")).toBeVisible();
+  const word = page.locator(".cm-content").getByText("first", { exact: false }).first();
+  await word.dblclick();
+  await word.click({ button: "right" });
+  await expect(page.locator(".ctx-menu .ctx-item")).toHaveText(["Cut", "Copy", "Paste", "Bold", "Italic"]);
+  await page.locator(".ctx-item", { hasText: "Bold" }).click();
+  await expect(page.locator(".pane .cm-content")).toContainText("**first**");
+  // No selection → Cut/Copy disabled.
+  await page.locator(".pane .cm-content").click();
+  await page.locator(".pane .cm-content").click({ button: "right" });
+  await expect(page.locator(".ctx-item", { hasText: "Cut" })).toBeDisabled();
+  await expect(page.locator(".ctx-item", { hasText: "Paste" })).toBeEnabled();
+});

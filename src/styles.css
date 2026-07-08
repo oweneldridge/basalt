@@ -2427,3 +2427,6 @@ button.primary:hover {
 .pane-drop-indicator.right { top: 0; right: 0; bottom: 0; width: 50%; }
 .pane-drop-indicator.top { top: 0; left: 0; right: 0; height: 50%; }
 .pane-drop-indicator.bottom { bottom: 0; left: 0; right: 0; height: 50%; }
+
+/* Context-menu separator */
+.ctx-sep { height: 1px; background: var(--border); margin: 4px 0; }

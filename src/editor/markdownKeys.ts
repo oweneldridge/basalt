@@ -98,8 +98,12 @@ const insertLink: StateCommand = ({ state, dispatch }) => {
   return true;
 };
 
+// Also exposed as commands so the editor context menu can invoke them.
+export const toggleBold = toggleWrap("**", "StrongEmphasis");
+export const toggleItalic = toggleWrap("*", "Emphasis");
+
 export const markdownKeys: readonly KeyBinding[] = [
-  { key: "Mod-b", run: toggleWrap("**", "StrongEmphasis") },
-  { key: "Mod-i", run: toggleWrap("*", "Emphasis") },
+  { key: "Mod-b", run: toggleBold },
+  { key: "Mod-i", run: toggleItalic },
   { key: "Mod-k", run: insertLink },
 ];
