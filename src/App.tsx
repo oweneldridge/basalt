@@ -23,6 +23,7 @@ import {
   writeCanvas,
   writeBase,
   readObsidianConfig,
+  readObsidianImport,
   readObsidianBookmarks,
   toggleFileBookmark,
   exportFile,
@@ -47,6 +48,7 @@ import { installHoverPreview } from "./lib/hoverPreview";
 import { linkifyMention } from "./lib/linkify";
 import { reorderTabs, insertTab } from "./lib/tabs";
 import { loadBindings, saveBindings, matchChord, type Bindings } from "./lib/hotkeys";
+import { parseObsidianImport, type ObsidianImportResult } from "./lib/obsidianImport";
 import { noteRow, tasksForNote } from "./lib/vaultRows";
 import { parseQuery, runQuery, type Task } from "./lib/query";
 import { applyTemplate, type TemplateCtx } from "./lib/templates";
@@ -2825,6 +2827,26 @@ export default function App() {
     });
   }, []);
 
+  // One-shot "Import from Obsidian": map .obsidian appearance + hotkeys into
+  // Basalt's settings and report the community plugins (which Basalt can't run).
+  const [importReport, setImportReport] = useState<ObsidianImportResult | null>(null);
+  const handleImportFromObsidian = useCallback(async () => {
+    try {
+      const r = parseObsidianImport(await readObsidianImport());
+      if (r.theme) setThemeMode(r.theme);
+      if (r.accent) setAccent(r.accent);
+      if (r.fontSize) setFontSize(r.fontSize);
+      if (r.enabledSnippets) {
+        const enabled = new Set(r.enabledSnippets);
+        setDisabledSnippets(new Set(cssSnippets.map((s) => s.name).filter((n) => !enabled.has(n))));
+      }
+      if (Object.keys(r.hotkeys).length) setHotkeys((h) => ({ ...h, ...r.hotkeys }));
+      setImportReport(r);
+    } catch (e) {
+      setSaveError(`Import from Obsidian failed: ${e}`);
+    }
+  }, [cssSnippets]);
+
   // Create "Untitled" (uniquified) inside `folderRel` ("" = vault root).
   const handleNewNoteIn = useCallback(
     async (folderRel: string) => {
@@ -4279,6 +4301,8 @@ export default function App() {
       {modal === "settings" && (
         <SettingsModal
           themeMode={themeMode}
+          onImportFromObsidian={() => void handleImportFromObsidian()}
+          importReport={importReport}
           onThemeMode={setThemeMode}
           obsConfig={obsConfigRef.current}
           plugins={installedPlugins}

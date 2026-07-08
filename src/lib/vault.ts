@@ -153,6 +153,16 @@ export function readObsidianConfig(): Promise<ObsidianConfig> {
   return invoke<ObsidianConfig>("read_obsidian_config");
 }
 
+/** Raw `.obsidian/` config for the "Import from Obsidian" flow. */
+export interface ObsidianImportRaw {
+  appearance: string | null;
+  hotkeys: string | null;
+  communityPlugins: string[];
+}
+export function readObsidianImport(): Promise<ObsidianImportRaw> {
+  return invoke<ObsidianImportRaw>("read_obsidian_import");
+}
+
 /** A CSS snippet from `.basalt/snippets/*.css`. */
 export interface CssSnippet {
   name: string;

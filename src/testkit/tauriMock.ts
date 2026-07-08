@@ -72,6 +72,17 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
       return ok(`${VAULT}/${String(a.newName)}.md`);
     case "read_obsidian_config":
       return ok(config);
+    case "read_obsidian_import":
+      return ok({
+        appearance: JSON.stringify({ theme: "obsidian", accentColor: "#ff8800", baseFontSize: 19, enabledCssSnippets: [] }),
+        hotkeys: JSON.stringify({
+          "app:open-settings": [{ modifiers: ["Mod"], key: "," }],
+          "workspace:split-vertical": [{ modifiers: ["Mod", "Shift"], key: "\\" }],
+          "some-plugin:custom": [{ modifiers: ["Mod"], key: "j" }],
+        }),
+        communityPlugins: ["dataview", "templater-obsidian"],
+      });
+
     case "list_attachments":
       return ok([
         { path: CANVAS_PATH, rel: "Board.canvas", name: "Board.canvas", mtime: now, ctime: now, size: canvasContent.length },

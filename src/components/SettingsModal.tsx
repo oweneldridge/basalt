@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ThemeMode } from "../lib/theme";
 import { chordOf, chordLabel, type Bindings } from "../lib/hotkeys";
+import type { ObsidianImportResult } from "../lib/obsidianImport";
 import type { ObsidianConfig, PluginInfo } from "../lib/vault";
 import { pluginSettingTabs, type SettingTab } from "../lib/plugins";
 
@@ -34,6 +35,10 @@ interface Props {
   onThemeMode: (mode: ThemeMode) => void;
   /** The vault's read-only Obsidian settings Basalt honors (informational). */
   obsConfig: ObsidianConfig | null;
+  /** Run the one-shot "Import from Obsidian" (appearance + hotkeys + snippets). */
+  onImportFromObsidian: () => void;
+  /** Result of the last import (for the summary), or null. */
+  importReport: ObsidianImportResult | null;
   /** Installed Basalt plugins (from .basalt/plugins/). */
   plugins: PluginInfo[];
   /** Currently-enabled plugin ids. */
@@ -85,6 +90,8 @@ export function SettingsModal({
   themeMode,
   onThemeMode,
   obsConfig,
+  onImportFromObsidian,
+  importReport,
   plugins,
   enabledPlugins,
   onTogglePlugin,
@@ -243,6 +250,40 @@ export function SettingsModal({
           )}
           <p className="settings-hint">
             Basalt reads these from <code>.obsidian/</code> and never writes them.
+          </p>
+          <div className="settings-row">
+            <span className="settings-row-label">Import settings from Obsidian</span>
+            <button className="settings-import-btn" onClick={onImportFromObsidian}>
+              Import
+            </button>
+          </div>
+          {importReport && (
+            <div className="import-report">
+              <div>
+                Applied: theme {importReport.theme ?? "—"}, accent {importReport.accent ?? "—"}, font{" "}
+                {importReport.fontSize ? `${importReport.fontSize}px` : "—"}.
+              </div>
+              <div>
+                {Object.keys(importReport.hotkeys).length} hotkeys imported
+                {importReport.unmappedHotkeys.length > 0 && ` · ${importReport.unmappedHotkeys.length} couldn’t be mapped`}.
+              </div>
+              {importReport.plugins.length > 0 && (
+                <div className="import-plugins">
+                  <span className="settings-hint">
+                    {importReport.plugins.length} Obsidian community plugins found — Basalt can’t run these; find or build
+                    Basalt-native equivalents:
+                  </span>
+                  <ul>
+                    {importReport.plugins.map((p) => (
+                      <li key={p}>{p}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+          <p className="settings-hint">
+            Appearance, hotkeys, and enabled CSS snippets copy over. Plugins are listed but not run.
           </p>
         </section>
 
