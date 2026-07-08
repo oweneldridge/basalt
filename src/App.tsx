@@ -287,8 +287,10 @@ export default function App() {
   const [versionSnapshots, setVersionSnapshots] = useState<Snapshot[]>([]);
   const [recentVaults, setRecentVaults] = useState<RecentVault[]>(() => loadRecentVaults());
   // Sidebar visibility + UI zoom (Obsidian parity: ⌘\ / ⌘⌥\ , ⌘+ / ⌘- / ⌘0).
-  const [leftOpen, setLeftOpen] = useState(true);
-  const [rightOpen, setRightOpen] = useState(true);
+  const [leftOpen, setLeftOpen] = useState(() => localStorage.getItem("basalt.leftOpen") !== "0");
+  const [rightOpen, setRightOpen] = useState(() => localStorage.getItem("basalt.rightOpen") !== "0");
+  useEffect(() => localStorage.setItem("basalt.leftOpen", leftOpen ? "1" : "0"), [leftOpen]);
+  useEffect(() => localStorage.setItem("basalt.rightOpen", rightOpen ? "1" : "0"), [rightOpen]);
   const [zoom, setZoom] = useState(1);
   useEffect(() => {
     document.documentElement.style.fontSize = `${Math.round(16 * zoom)}px`;
@@ -2984,6 +2986,10 @@ export default function App() {
   const commands = useMemo<AppCommand[]>(
     () => [
       { id: "new-note", label: "New note", hint: "create an untitled note", run: () => void handleNewNote() },
+      { id: "random-note", label: "Open random note", hint: "jump to a random note in the vault", run: () => {
+        const all = notesRef.current;
+        if (all.length) void openNoteByPath(all[Math.floor(Math.random() * all.length)].path);
+      } },
       { id: "daily-note", label: "Open today's daily note", hint: "creates it from your template if missing", run: () => void openDailyNote() },
       { id: "source-mode", label: "Toggle Source mode", hint: "raw Markdown ↔ Live Preview", run: toggleSourceMode },
       { id: "reading-mode", label: "Toggle Reading view", hint: "rendered, read-only ↔ edit", run: toggleReading },
@@ -3052,7 +3058,7 @@ export default function App() {
       })),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf, pluginVersion],
+    [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf, openNoteByPath, pluginVersion],
   );
   const commandsRef = useRef(commands);
   commandsRef.current = commands;
@@ -3276,8 +3282,9 @@ export default function App() {
           )}
           <span className="spacer" />
           {docStats && (
-            <span className="status-count" title={`${docStats.chars} characters`}>
-              {docStats.words} {docStats.words === 1 ? "word" : "words"}
+            <span className="status-count">
+              {docStats.words} {docStats.words === 1 ? "word" : "words"} · {docStats.chars}{" "}
+              {docStats.chars === 1 ? "character" : "characters"}
             </span>
           )}
           <span className={saveError ? "status status-error" : "status"} title={saveError ?? ""}>
