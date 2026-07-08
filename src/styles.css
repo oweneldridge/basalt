@@ -107,17 +107,39 @@ button.primary:hover {
 
 /* App layout */
 .app {
-  display: grid;
-  grid-template-columns: 260px 1fr 300px;
+  display: flex;
   height: 100%;
 }
 
 .sidebar {
+  width: var(--left-w, 260px);
+  flex: 0 0 auto;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+/* Draggable divider that resizes a sidebar (1px line + wider invisible grab). */
+.side-resizer {
+  flex: 0 0 auto;
+  width: 1px;
+  background: var(--border);
+  cursor: col-resize;
+  position: relative;
+  z-index: 6;
+}
+.side-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+.side-resizer:hover {
+  background: var(--accent);
 }
 .sidebar-head {
   display: flex;
@@ -248,6 +270,7 @@ button.primary:hover {
 }
 
 .main {
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -663,7 +686,7 @@ button.primary:hover {
 /* Print / Save-as-PDF: show only the Reading view (the editor is virtualized
    and can't print). Forced light for legible output. */
 @media print {
-  .sidebar, .toolbar, .tab-bar, .right-panel, .pane-resizer, .pane-new { display: none !important; }
+  .sidebar, .toolbar, .tab-bar, .right-panel, .pane-resizer, .side-resizer, .pane-new { display: none !important; }
   .app { display: block !important; height: auto !important; }
   .main, .pane, .pane-split, .pane-cell { display: block !important; overflow: visible !important; }
   .reading-view {
@@ -687,6 +710,8 @@ button.primary:hover {
 
 /* Right panel — tabbed (Backlinks / Outline / Tags / Bookmarks) */
 .right-panel {
+  width: var(--right-w, 300px);
+  flex: 0 0 auto;
   background: var(--bg-sidebar);
   border-left: 1px solid var(--border);
   display: flex;

@@ -65,6 +65,7 @@ import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { Ribbon } from "./components/Ribbon";
 import { WorkspacesModal } from "./components/WorkspacesModal";
+import { SideResizer } from "./components/SideResizer";
 import { EditorPane } from "./components/EditorPane";
 import { RightPanel, type RightTab } from "./components/RightPanel";
 import { TabBar, type TabItem } from "./components/TabBar";
@@ -308,6 +309,12 @@ export default function App() {
   const [rightOpen, setRightOpen] = useState(() => localStorage.getItem("basalt.rightOpen") !== "0");
   useEffect(() => localStorage.setItem("basalt.leftOpen", leftOpen ? "1" : "0"), [leftOpen]);
   useEffect(() => localStorage.setItem("basalt.rightOpen", rightOpen ? "1" : "0"), [rightOpen]);
+  // Resizable sidebar widths (persisted). Clamped so neither can swallow the editor.
+  const clampW = (w: number) => Math.max(160, Math.min(560, w));
+  const [leftWidth, setLeftWidth] = useState(() => clampW(Number(localStorage.getItem("basalt.leftWidth")) || 260));
+  const [rightWidth, setRightWidth] = useState(() => clampW(Number(localStorage.getItem("basalt.rightWidth")) || 300));
+  useEffect(() => localStorage.setItem("basalt.leftWidth", String(leftWidth)), [leftWidth]);
+  useEffect(() => localStorage.setItem("basalt.rightWidth", String(rightWidth)), [rightWidth]);
   const [zoom, setZoom] = useState(1);
   useEffect(() => {
     document.documentElement.style.fontSize = `${Math.round(16 * zoom)}px`;
@@ -3340,7 +3347,10 @@ export default function App() {
   };
 
   return (
-    <div className={readableWidth ? "app readable-width" : "app"}>
+    <div
+      className={readableWidth ? "app readable-width" : "app"}
+      style={{ "--left-w": `${leftWidth}px`, "--right-w": `${rightWidth}px` } as React.CSSProperties}
+    >
       <Ribbon
         onToggleSidebar={() => setLeftOpen((v) => !v)}
         onQuickSwitcher={() => setModal("switcher")}
@@ -3367,6 +3377,7 @@ export default function App() {
           onAttachmentContextMenu={(path, x, y) => setAttMenu({ path, x, y })}
         />
       )}
+      {leftOpen && <SideResizer onDelta={(dx) => setLeftWidth((w) => clampW(w + dx))} />}
       <main className="main">
         <div className="toolbar">
           <button className="link-btn" onClick={openVaultSwitcher} title="Switch vault (recent / open a folder)">
@@ -3453,6 +3464,7 @@ export default function App() {
           <div className="placeholder">Select a note, or press + to create one.</div>
         )}
       </main>
+      {rightOpen && <SideResizer onDelta={(dx) => setRightWidth((w) => clampW(w - dx))} />}
       {rightOpen && (
         <RightPanel
           tab={rightTab}

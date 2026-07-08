@@ -68,11 +68,15 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
           draggable
           onDragStart={(e) => {
             e.dataTransfer.setData(TAB_MIME, `${paneId}\n${t.path}`);
+            // WKWebView (the Tauri webview) drops a drag that carries ONLY a
+            // custom MIME type — a text/plain payload keeps it a valid drag.
+            e.dataTransfer.setData("text/plain", t.name);
             e.dataTransfer.effectAllowed = "move";
           }}
           onDragOver={(e) => {
             if (!e.dataTransfer.types.includes(TAB_MIME)) return;
             e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
             // Drop before this tab or after it, based on which half we're over.
             const r = e.currentTarget.getBoundingClientRect();
             setDropAt(e.clientX < r.left + r.width / 2 ? i : i + 1);

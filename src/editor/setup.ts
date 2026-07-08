@@ -142,10 +142,17 @@ const pluginCompartment = new Compartment();
 const spellcheckCompartment = new Compartment();
 // Vim keybindings in a compartment so the mode can be toggled live.
 const vimCompartment = new Compartment();
+// Right-to-left text direction (Obsidian's RTL editor setting), toggled live.
+const rtlCompartment = new Compartment();
 
 /** Toggle Vim keybindings on a live editor. */
 export function setVimMode(view: EditorView, on: boolean): void {
   view.dispatch({ effects: vimCompartment.reconfigure(on ? vim() : []) });
+}
+
+/** Toggle right-to-left text direction on a live editor. */
+export function setRtl(view: EditorView, on: boolean): void {
+  view.dispatch({ effects: rtlCompartment.reconfigure(EditorView.contentAttributes.of({ dir: on ? "rtl" : "ltr" })) });
 }
 
 /** Toggle native spellcheck on a live editor. */
@@ -236,12 +243,14 @@ export function createEditorState(
   selfRel = "",
   spellcheck = true,
   vimMode = false,
+  rtl = false,
 ): EditorState {
   const extensions: Extension[] = [
     notePathFacet.of(selfRel),
     // Vim keybindings (Obsidian's optional Vim mode) — in a compartment, placed
     // FIRST so its keymap wins in normal mode; toggled live via setVimMode().
     vimCompartment.of(vimMode ? vim() : []),
+    rtlCompartment.of(EditorView.contentAttributes.of({ dir: rtl ? "rtl" : "ltr" })),
     // CM6 extensions contributed by enabled plugins — in a compartment so
     // enable/disable reflects into live editors via reconfigurePlugins().
     pluginCompartment.of(pluginEditorExtensions()),
