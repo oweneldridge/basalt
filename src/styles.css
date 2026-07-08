@@ -2134,3 +2134,13 @@ button.primary:hover {
 .ref-link-btn, .link-all-btn { font-size: 11px; background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--accent); cursor: pointer; padding: 1px 6px; margin-left: 4px; }
 .ref-link-btn:hover, .link-all-btn:hover { background: var(--accent-soft, rgba(124,92,208,0.12)); }
 .link-all-btn { margin-left: auto; }
+
+/* ------- Inline raw HTML (Live Preview) ------- */
+.cm-html-sup { vertical-align: super; font-size: 0.78em; }
+.cm-html-sub { vertical-align: sub; font-size: 0.78em; }
+.cm-html-mark { background: var(--highlight, #fef08a); color: #1f2125; border-radius: 2px; padding: 0 1px; }
+.cm-html-kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.85em; }
+.cm-html-u, .cm-html-ins { text-decoration: underline; }
+.cm-html-s, .cm-html-del { text-decoration: line-through; }
+.cm-html-small { font-size: 0.85em; }
+.cm-html-abbr, .cm-html-cite { font-style: italic; }
