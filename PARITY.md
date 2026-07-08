@@ -90,9 +90,22 @@ A follow-up pass closed ~17 more MEDIUM/LOW gaps from the list below:
 - **Audio recorder** — "Record audio" captures from the mic, saves an
   attachment, and embeds it at the cursor.
 
-Still open: bookmarks create/edit (deferred by design — writes `.obsidian/`),
-deeper Bases editing (nested filters, formulas, multi-key sort), inline-editable
-stacked columns. The parity backlog is otherwise cleared.
+### Final deep/deferred items (2026-07-08, closing pass)
+
+- **Bookmarks create/edit** — toggle a file bookmark; the ONE `.obsidian/` write,
+  done data-safely (opaque serde_json::Value preserves groups/nested/unknown
+  fields; atomic write). An adversarial review then found + fixed 3 real bugs:
+  group-nested toggle made a duplicate, heading/block (`subpath`) bookmarks were
+  deleted by a file toggle, and a malformed file was silently discarded.
+- **Deeper Bases editing** — a filter condition builder (multiple and/or string
+  conditions), guarded so it only rewrites a filter the raw fully models (a
+  parse-lossy tree stays read-only).
+- **Inline-editable stacked columns** — stacked-tab columns are now live editors
+  that save back per-note.
+
+**The parity backlog is cleared.** Only genuinely-out-of-scope Obsidian pieces
+remain (formulas authoring in Bases, and the by-design exclusions: Sync/Publish,
+mobile, community-plugin/theme marketplaces).
 
 ## Scored matrix
 
