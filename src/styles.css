@@ -2153,3 +2153,13 @@ button.primary:hover {
 /* ------- Graph filters ------- */
 .graph-search { font-size: 12px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); max-width: 160px; margin-left: 8px; }
 .graph-orphans { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); margin-left: 8px; }
+
+/* ------- Workspaces modal ------- */
+.ws-save-row { display: flex; gap: 6px; }
+.ws-save-row .palette-input { flex: 1; }
+.ws-list { display: flex; flex-direction: column; gap: 2px; }
+.ws-row { display: flex; align-items: center; }
+.ws-name { flex: 1; text-align: left; background: none; border: none; color: var(--text); cursor: pointer; padding: 4px 6px; border-radius: 5px; }
+.ws-name:hover { background: var(--hover, rgba(127,127,127,0.12)); }
+.ws-delete { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px 6px; }
+.ws-delete:hover { color: var(--danger, #c0392b); }
