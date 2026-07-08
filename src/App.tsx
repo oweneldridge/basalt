@@ -3372,15 +3372,48 @@ export default function App() {
           <StackedTabs
             tabs={pane.tabs.map((p) => ({ path: p, name: tabItemsFor([p])[0]?.name ?? p, rel: notes.find((n) => n.path === p)?.rel ?? "" }))}
             activePath={pane.active}
-            dark={dark}
             readNote={readNote}
-            onOpenInternal={handleOpenWikilink}
-            onOpenUrl={handleOpenUrl}
-            resolveImage={(target, sourceRel) => (vaultRef.current ? resolveImage(target, sourceRel) : Promise.resolve(null))}
-            onFocusTab={(p) => {
+            onFocusTab={(p, colDoc) => {
               toggleStacked(id);
-              void openInPane(id, p);
+              // Carry the column's live (possibly edited) content so unstacking
+              // shows it — openInPane would early-return on the already-active
+              // tab and reveal the pane's stale doc. A pending edit still flushes.
+              if (colDoc !== undefined) {
+                const tabs = pane.tabs.includes(p) ? pane.tabs : [...pane.tabs, p];
+                patchPane(id, { active: p, doc: colDoc, tabs });
+                focusPane(id);
+              } else {
+                void openInPane(id, p);
+              }
             }}
+            renderBody={(tab, doc, onDocChange) => (
+              <EditorPane
+                key={`${id}:stacked:${tab.path}`}
+                path={tab.path}
+                selfRel={tab.rel}
+                pluginVersion={pluginVersion}
+                doc={doc}
+                getNotes={getNotes}
+                getLinkFormat={getLinkFormat}
+                getActiveRel={() => tab.rel || null}
+                getHeadings={getHeadings}
+                getBlockIds={getBlockIds}
+                sourceMode={sourceMode}
+                dark={dark}
+                spellcheck={spellcheck}
+                vim={vim}
+                rtl={rtl}
+                onOpenWikilink={handleOpenWikilink}
+                onOpenUrl={handleOpenUrl}
+                resolveImage={(target) => (vaultRef.current ? resolveImage(target, tab.rel) : Promise.resolve(null))}
+                saveAttachment={handleSaveAttachment}
+                replacePlaceholder={handleReplacePlaceholder}
+                onChange={(d) => {
+                  onDocChange(d);
+                  handleChange(id, tab.path, d); // path-scoped save; skips this pane's active doc
+                }}
+              />
+            )}
           />
         ) : path ? (
           /\.canvas$/i.test(path) ? (
