@@ -73,14 +73,21 @@ test("stacking a tab group spreads all open notes as columns", async ({ page }) 
   await expect(page.locator(".cm-editor")).toHaveCount(1);
   await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
   await expect(page.locator(".pane .tab")).toHaveCount(2);
-  // Stack → a column per open note, read-only spread (no editors).
+  // Stack → a column per open note, each an editable editor.
   await page.locator(".tab-stack").click();
   await expect(page.locator(".stacked-col")).toHaveCount(2);
   await expect(page.locator(".stacked-col-head")).toHaveText(["Welcome", "Ideas"]);
-  await expect(page.locator(".cm-editor")).toHaveCount(0);
-  // Focus a column → back to the normal editor for that note.
-  await page.locator(".stacked-col-head", { hasText: "Ideas" }).click();
+  await expect(page.locator(".stacked-col .cm-editor")).toHaveCount(2);
+  // Edit the 2nd column; the edit saves back and survives unstack + re-stack.
+  await page.locator(".stacked-col").nth(1).locator(".cm-content").click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" STACKEDIT");
+  await page.waitForTimeout(700); // debounced save
+  await page.locator(".stacked-col-head").nth(1).click();
   await expect(page.locator(".stacked-tabs")).toHaveCount(0);
-  await expect(page.locator(".cm-editor")).toHaveCount(1);
   await expect(page.locator(".tab.active .tab-name")).toHaveText("Ideas");
+  await expect(page.locator(".pane .cm-content")).toContainText("STACKEDIT");
+  // Re-stack → the 2nd column reloads the SAVED content from disk.
+  await page.locator(".tab-stack").click();
+  await expect(page.locator(".stacked-col").nth(1).locator(".cm-content")).toContainText("STACKEDIT");
 });
