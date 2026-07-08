@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Attachment, VaultNote } from "../lib/vault";
-import { ancestorFolders, buildTree, type TreeNode } from "../lib/tree";
+import { ancestorFolders, buildTree, type TreeNode, type SortOrder } from "../lib/tree";
 
 interface Props {
   notes: VaultNote[];
@@ -46,8 +46,12 @@ const DND_MIME = "application/x-basalt-note";
 export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onNewNote, onOpenAttachment, onContextMenu, onAttachmentContextMenu, onFolderContextMenu, onMoveToFolder }: Props) {
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sort, setSort] = useState<SortOrder>(
+    () => (localStorage.getItem("basalt.fileSort") as SortOrder | null) ?? "name-asc",
+  );
+  useEffect(() => localStorage.setItem("basalt.fileSort", sort), [sort]);
 
-  const tree = useMemo(() => buildTree(notes, attachments), [notes, attachments]);
+  const tree = useMemo(() => buildTree(notes, attachments, sort), [notes, attachments, sort]);
 
   // Load persisted expansion when the vault changes.
   useEffect(() => {
@@ -139,12 +143,26 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
           +
         </button>
       </div>
-      <input
-        className="filter"
-        placeholder="Search notes…"
-        value={filter}
-        onChange={(e) => setFilter(e.currentTarget.value)}
-      />
+      <div className="sidebar-controls">
+        <input
+          className="filter"
+          placeholder="Search notes…"
+          value={filter}
+          onChange={(e) => setFilter(e.currentTarget.value)}
+        />
+        <select
+          className="file-sort"
+          value={sort}
+          onChange={(e) => setSort(e.currentTarget.value as SortOrder)}
+          title="Sort order"
+          aria-label="Sort files"
+        >
+          <option value="name-asc">Name (A–Z)</option>
+          <option value="name-desc">Name (Z–A)</option>
+          <option value="mtime-desc">Modified (newest)</option>
+          <option value="ctime-desc">Created (newest)</option>
+        </select>
+      </div>
       <div className="note-list">
         {filtered ? (
           <>

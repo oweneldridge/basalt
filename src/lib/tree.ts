@@ -8,6 +8,8 @@ export interface TreeFile {
   path: string; // absolute file path
   /** True for non-md files (opened externally, dimmed in the tree). */
   attachment?: boolean;
+  mtime?: number;
+  ctime?: number;
 }
 export interface TreeFolder {
   type: "folder";
@@ -17,17 +19,36 @@ export interface TreeFolder {
 }
 export type TreeNode = TreeFile | TreeFolder;
 
-function sortFolder(folder: TreeFolder): void {
+/** File explorer sort order (folders always come first, sorted by name). */
+export type SortOrder = "name-asc" | "name-desc" | "mtime-desc" | "ctime-desc";
+
+function sortFolder(folder: TreeFolder, order: SortOrder): void {
+  const byName = (a: TreeNode, b: TreeNode) => a.name.toLowerCase().localeCompare(b.name.toLowerCase());
   folder.children.sort((a, b) => {
     if (a.type !== b.type) return a.type === "folder" ? -1 : 1; // folders first
-    return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    if (a.type === "folder") return byName(a, b); // folders always by name
+    const bf = b as TreeFile;
+    switch (order) {
+      case "name-desc":
+        return byName(b, a);
+      case "mtime-desc":
+        return (bf.mtime ?? 0) - (a.mtime ?? 0) || byName(a, b);
+      case "ctime-desc":
+        return (bf.ctime ?? 0) - (a.ctime ?? 0) || byName(a, b);
+      default:
+        return byName(a, b);
+    }
   });
   for (const child of folder.children) {
-    if (child.type === "folder") sortFolder(child);
+    if (child.type === "folder") sortFolder(child, order);
   }
 }
 
-export function buildTree(notes: VaultNote[], attachments: Attachment[] = []): TreeNode[] {
+export function buildTree(
+  notes: VaultNote[],
+  attachments: Attachment[] = [],
+  order: SortOrder = "name-asc",
+): TreeNode[] {
   const root: TreeFolder = { type: "folder", name: "", path: "", children: [] };
   const folders = new Map<string, TreeFolder>([["", root]]);
 
@@ -51,13 +72,13 @@ export function buildTree(notes: VaultNote[], attachments: Attachment[] = []): T
   };
 
   for (const note of notes) {
-    insert(note.rel, { type: "file", name: note.name, path: note.path });
+    insert(note.rel, { type: "file", name: note.name, path: note.path, mtime: note.mtime, ctime: note.ctime });
   }
   for (const a of attachments) {
-    insert(a.rel, { type: "file", name: a.name, path: a.path, attachment: true });
+    insert(a.rel, { type: "file", name: a.name, path: a.path, attachment: true, mtime: a.mtime, ctime: a.ctime });
   }
 
-  sortFolder(root);
+  sortFolder(root, order);
   return root.children;
 }
 
