@@ -26,4 +26,10 @@ test("a plugin can register a settings tab that renders in Settings", async ({ p
   await expect(page.locator(".plugin-settings-mount")).toContainText("Hello from the demo plugin settings");
   // The plugin's addStatusBarItem shows in the bottom status bar.
   await expect(page.locator(".status-bar .plugin-status-item")).toContainText("demo-plugin-ok");
+  // Its addRibbonIcon shows in the ribbon and its callback fires on click.
+  await expect(page.locator(".ribbon-plugin-btn")).toHaveAttribute("title", "Demo action");
+  await page.keyboard.press("Escape"); // close settings so the ribbon isn't covered
+  await expect(page.locator(".settings")).toHaveCount(0);
+  await page.locator(".ribbon-plugin-btn").click();
+  expect(await page.evaluate(() => (window as unknown as { __demoRibbon: number }).__demoRibbon)).toBe(1);
 });

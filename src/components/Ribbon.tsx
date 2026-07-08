@@ -1,3 +1,4 @@
+import { pluginRibbonItems } from "../lib/plugins";
 // The left ribbon — a thin vertical strip of quick-action icons (Obsidian's
 // ribbon). Every action already exists as a command/shortcut; the ribbon just
 // surfaces the common ones for the mouse. Pure presentational: it calls back to
@@ -16,6 +17,8 @@ interface Props {
   onGraph: () => void;
   onToggleSidebar: () => void;
   onSettings: () => void;
+  /** Bumps when the plugin registry changes → re-read plugin ribbon icons. */
+  pluginVersion: number;
 }
 
 export function Ribbon({
@@ -25,7 +28,11 @@ export function Ribbon({
   onGraph,
   onToggleSidebar,
   onSettings,
+  pluginVersion,
 }: Props) {
+  // Plugin-contributed icons (re-read on registry change).
+  void pluginVersion;
+  const pluginIcons = pluginRibbonItems();
   const top: RibbonAction[] = [
     { id: "sidebar", label: "Toggle sidebar (⌘\\)", icon: "☰", onClick: onToggleSidebar },
     { id: "switcher", label: "Quick switcher (⌘O)", icon: "⌕", onClick: onQuickSwitcher },
@@ -39,6 +46,17 @@ export function Ribbon({
         {top.map((a) => (
           <button key={a.id} className="ribbon-btn" title={a.label} aria-label={a.label} onClick={a.onClick}>
             {a.icon}
+          </button>
+        ))}
+        {pluginIcons.map((r, i) => (
+          <button
+            key={`plugin:${r.pluginId}:${i}`}
+            className="ribbon-btn ribbon-plugin-btn"
+            title={r.title}
+            aria-label={r.title}
+            onClick={() => r.callback()}
+          >
+            {r.icon}
           </button>
         ))}
       </div>
