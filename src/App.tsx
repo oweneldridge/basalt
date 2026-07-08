@@ -491,6 +491,8 @@ export default function App() {
   // The most recently active REAL note (not a view tab) — view leaves (Outline,
   // Backlinks…) track this rather than the pane they happen to live in.
   const [lastNotePath, setLastNotePath] = useState<string | null>(null);
+  const lastNotePathRef = useRef<string | null>(null);
+  lastNotePathRef.current = lastNotePath;
   useEffect(() => {
     if (active?.path && !isViewPath(active.path)) setLastNotePath(active.path);
   }, [active?.path]);
@@ -933,6 +935,38 @@ export default function App() {
     },
     [flushPath, focusPane, patchPane, rememberSelfWrite],
   );
+
+  // Restore the default three-region layout (file tree | editor | right dock) —
+  // an escape hatch now that every panel can be closed or rearranged. Keeps the
+  // last active note open in the fresh editor pane.
+  const resetWorkspace = useCallback(() => {
+    const keep = lastNotePathRef.current;
+    const leftId = `pane${(paneCounter.current += 1)}`;
+    const centerId = `pane${(paneCounter.current += 1)}`;
+    const rightId = `pane${(paneCounter.current += 1)}`;
+    const nextPanes: Record<string, Pane> = {
+      [leftId]: makeLeftDock(leftId),
+      [centerId]: { id: centerId, tabs: [], active: null, doc: "" },
+      [rightId]: makeRightDock(rightId),
+    };
+    const lay: LayoutNode = {
+      kind: "split",
+      dir: "row",
+      sizes: [0.18, 0.6, 0.22],
+      children: [
+        { kind: "leaf", id: leftId },
+        { kind: "leaf", id: centerId },
+        { kind: "leaf", id: rightId },
+      ],
+    };
+    panesRef.current = nextPanes;
+    layoutRef.current = lay;
+    focusedIdRef.current = centerId;
+    setPanes(nextPanes);
+    setLayout(lay);
+    setFocusedId(centerId);
+    if (keep) void openInPane(centerId, keep);
+  }, [openInPane]);
 
   // Open a note in the FOCUSED pane (creating the first pane if needed). The
   // sidebar / switcher / backlinks all route through here.
@@ -1793,6 +1827,16 @@ export default function App() {
       setSaveError(`Couldn't open a new window: ${e}`);
     }
   }, []);
+
+  // Open a note in a new window (leaving it open here too).
+  const openNoteInNewWindow = useCallback(
+    async (path: string) => {
+      const v = vaultRef.current;
+      const rel = notesRef.current.find((n) => n.path === path)?.rel;
+      if (v && rel) await handleOpenInNewWindow(v, rel);
+    },
+    [handleOpenInNewWindow],
+  );
 
   // Move a note tab out to a new window: open it there, then close it here.
   const moveTabToNewWindow = useCallback(
@@ -3646,6 +3690,7 @@ export default function App() {
         },
       },
       { id: "toggle-left-sidebar", label: "Toggle left sidebar", hint: "⌘\\", run: () => toggleLeftDock() },
+      { id: "reset-layout", label: "Reset to default layout", hint: "file tree | editor | right dock", run: () => resetWorkspace() },
       { id: "toggle-right-sidebar", label: "Toggle right sidebar", hint: "⌘⌥\\", run: () => toggleRightDock() },
       { id: "zoom-in", label: "Zoom in", hint: "⌘+", run: () => zoomBy(0.1) },
       { id: "zoom-out", label: "Zoom out", hint: "⌘-", run: () => zoomBy(-0.1) },
@@ -3711,7 +3756,7 @@ export default function App() {
       })),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, moveTabToNewWindow, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf, openNoteByPath, pluginVersion],
+    [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, moveTabToNewWindow, resetWorkspace, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf, openNoteByPath, pluginVersion],
   );
   const commandsRef = useRef(commands);
   commandsRef.current = commands;
@@ -4381,9 +4426,14 @@ export default function App() {
                   Split right
                 </button>
                 {!isViewPath(tabMenu.path) && notes.some((n) => n.path === tabMenu.path) && (
-                  <button className="ctx-item" onClick={() => run(() => void moveTabToNewWindow(tabMenu.paneId, tabMenu.path))}>
-                    Move to new window
-                  </button>
+                  <>
+                    <button className="ctx-item" onClick={() => run(() => void openNoteInNewWindow(tabMenu.path))}>
+                      Open in new window
+                    </button>
+                    <button className="ctx-item" onClick={() => run(() => void moveTabToNewWindow(tabMenu.paneId, tabMenu.path))}>
+                      Move to new window
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -4463,6 +4513,16 @@ export default function App() {
               }}
             >
               Open to the right
+            </button>
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const path = fileMenu.path;
+                setFileMenu(null);
+                void openNoteInNewWindow(path);
+              }}
+            >
+              Open in new window
             </button>
             <button
               className="ctx-item"
