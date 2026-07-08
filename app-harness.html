@@ -1,0 +1,15 @@
+<!doctype html>
+<!-- App test harness: the REAL <App/> with a mocked Tauri backend (in-memory
+     vault), so full-app UI — panes, sidebar resize, tab drag-drop, splits —
+     can be exercised in a plain browser. Dev-only.
+     npx vite --config vite.harness.config.ts → http://localhost:1422/app-harness.html -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Basalt app harness</title>
+  </head>
+  <body>
+    <div id="root" style="height: 100vh"></div>
+    <script type="module" src="/src/app-harness.tsx"></script>
+  </body>
+</html>
