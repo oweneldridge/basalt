@@ -64,10 +64,19 @@ A follow-up pass closed ~17 more MEDIUM/LOW gaps from the list below:
   properly-hidable sidebars** — the layout was a fixed CSS grid (real-app bug),
   now flexbox with drag handles + persisted widths.
 
+### Canvas depth + test automation (2026-07-08, third pass)
+
+- **Canvas multi-select** — shift-click, rubber-band, group move/delete/color,
+  right-click **context menu** (duplicate / delete / add card). Was single-select.
+- **Interactive table editor** — cell-precise click-to-edit + row/column controls.
+- **Full-app e2e harness** (`src/testkit/tauriMock.ts` + Playwright): the whole
+  `<App/>` runs against a mocked vault, so panes / sidebars / tabs / canvas are
+  testable (they need the full app + Tauri). 6 e2e specs; CI runs them. This is
+  what verifies the pane/sidebar features the editor harness can't reach.
+
 Still open (larger): bookmarks create/edit (deferred by design — writes
-`.obsidian/`), search `line:` operator, graph node colors, canvas
-node-interaction depth, Bases editing depth, linked panes, stacked tabs,
-slides, audio recorder.
+`.obsidian/`), search `line:` operator, graph node colors, Bases editing depth,
+linked panes, stacked tabs, slides, audio recorder.
 
 ## Scored matrix
 
