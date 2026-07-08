@@ -40,8 +40,8 @@ test("a plugin can register a settings tab that renders in Settings", async ({ p
   expect(meta.tags).toContain("tag/one");
   expect(meta.headings.map((h) => h.heading)).toContain("Ideas");
   // registerView adds a right-panel tab that mounts the plugin's content.
-  await page.getByRole("button", { name: "Demo View" }).click();
-  await expect(page.locator(".plugin-view-mount")).toHaveText("demo-view-content");
+  await page.locator(".pane.dock .tab.view-tab", { hasText: "Demo View" }).click();
+  await expect(page.locator(".pane.dock .plugin-view-mount")).toHaveText("demo-view-content");
   // vault.rename mutates the vault through the host.
   await page.keyboard.press("Meta+p");
   await page.locator(".palette-input").first().fill("Vault rename Ideas");
