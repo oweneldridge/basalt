@@ -400,6 +400,8 @@ export default function App() {
   const [searchSeed, setSearchSeed] = useState("");
   const [fileMenu, setFileMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const [tabMenu, setTabMenu] = useState<{ paneId: string; path: string; x: number; y: number } | null>(null);
+  // Editor right-click context menu position (uses editorApiRef for its actions).
+  const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
   // A tab drag is in progress (show the pane edge drop-zones) + the hovered edge.
   const [tabDragging, setTabDragging] = useState(false);
   const [dropEdge, setDropEdge] = useState<{ paneId: string; edge: PaneEdge } | null>(null);
@@ -3684,6 +3686,7 @@ export default function App() {
               replacePlaceholder={handleReplacePlaceholder}
               onChange={(doc) => handleChange(id, path, doc)}
               onCursor={id === focusedId ? handleCursor : undefined}
+              onContextMenu={id === focusedId ? (x, y) => setEditorMenu({ x, y }) : undefined}
             />
           )
         ) : (
@@ -4091,6 +4094,37 @@ export default function App() {
                 </button>
                 <button className="ctx-item" onClick={() => run(() => void splitTabRight(tabMenu.paneId, tabMenu.path))}>
                   Split right
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+      {editorMenu &&
+        (() => {
+          const api = editorApiRef.current;
+          const hasSel = api?.hasSelection() ?? false;
+          const run = (fn: (() => void) | undefined) => {
+            setEditorMenu(null);
+            fn?.();
+          };
+          return (
+            <div className="ctx-overlay" onMouseDown={() => setEditorMenu(null)} onContextMenu={(e) => e.preventDefault()}>
+              <div className="ctx-menu" style={{ left: editorMenu.x, top: editorMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+                <button className="ctx-item" disabled={!hasSel} onClick={() => run(api?.cut)}>
+                  Cut
+                </button>
+                <button className="ctx-item" disabled={!hasSel} onClick={() => run(api?.copy)}>
+                  Copy
+                </button>
+                <button className="ctx-item" onClick={() => run(api?.paste)}>
+                  Paste
+                </button>
+                <div className="ctx-sep" />
+                <button className="ctx-item" onClick={() => run(api?.bold)}>
+                  Bold
+                </button>
+                <button className="ctx-item" onClick={() => run(api?.italic)}>
+                  Italic
                 </button>
               </div>
             </div>

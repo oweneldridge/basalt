@@ -5,6 +5,7 @@ import { createEditorState, externalReload, reconfigurePlugins, setEditorTheme, 
 import type { EditorCallbacks } from "../editor/setup";
 import type { NoteRef } from "../editor/wikilink";
 import type { LinkFormat } from "../lib/rename";
+import { toggleBold, toggleItalic } from "../editor/markdownKeys";
 
 interface Props {
   /** Active note path — changing this rebuilds the editor with fresh content. */
@@ -26,6 +27,7 @@ interface Props {
   replacePlaceholder: (placeholder: string, replacement: string) => void;
   onChange: (doc: string) => void;
   onCursor?: (line: number, col: number, selChars: number) => void;
+  onContextMenu?: (x: number, y: number) => void;
   /** 1-based line to scroll to / place the caret on (from search or backlinks). */
   scrollToLine?: number;
   /** True = raw Markdown (Live Preview rendering off). */
@@ -47,6 +49,14 @@ export interface EditorApi {
   /** Replace the selection with `text`; place the caret at `caretOffset` into
    * the inserted text (default: end). */
   insertAtCursor: (text: string, caretOffset?: number) => void;
+  /** True when the editor has a non-empty selection. */
+  hasSelection: () => boolean;
+  /** Editor context-menu actions (operate on the current selection/caret). */
+  copy: () => void;
+  cut: () => void;
+  paste: () => void;
+  bold: () => void;
+  italic: () => void;
 }
 
 export function EditorPane({
@@ -65,6 +75,7 @@ export function EditorPane({
   replacePlaceholder,
   onChange,
   onCursor,
+  onContextMenu,
   scrollToLine,
   sourceMode,
   dark,
@@ -78,8 +89,8 @@ export function EditorPane({
   const view = useRef<EditorView | null>(null);
   // Keep the latest callbacks in refs so the editor (rebuilt only per `path`)
   // always calls through to fresh closures without being torn down on every render.
-  const cbs = useRef({ getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange, onCursor });
-  cbs.current = { getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange, onCursor };
+  const cbs = useRef({ getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange, onCursor, onContextMenu });
+  cbs.current = { getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange, onCursor, onContextMenu };
   // A stable adapter that always calls through to the freshest closures — used
   // for both editor construction and source-mode reconfiguration.
   const adapter = useRef<EditorCallbacks>({
@@ -95,6 +106,7 @@ export function EditorPane({
     replacePlaceholder: (ph, rep) => cbs.current.replacePlaceholder(ph, rep),
     onChange: (d) => cbs.current.onChange(d),
     onCursor: (l, c, s) => cbs.current.onCursor?.(l, c, s),
+    onContextMenu: (x, y) => cbs.current.onContextMenu?.(x, y),
   });
   const sourceModeRef = useRef(sourceMode);
   sourceModeRef.current = sourceMode;
@@ -147,6 +159,57 @@ export function EditorPane({
           scrollIntoView: true,
         });
         v.focus();
+      },
+      hasSelection: () => {
+        const v = view.current;
+        return !!v && !v.state.selection.main.empty;
+      },
+      copy: () => {
+        const v = view.current;
+        if (!v) return;
+        const m = v.state.selection.main;
+        const text = v.state.sliceDoc(m.from, m.to);
+        if (text) void navigator.clipboard?.writeText(text);
+        v.focus();
+      },
+      cut: () => {
+        const v = view.current;
+        if (!v) return;
+        const m = v.state.selection.main;
+        const text = v.state.sliceDoc(m.from, m.to);
+        if (!text) return;
+        void navigator.clipboard?.writeText(text);
+        v.dispatch({ changes: { from: m.from, to: m.to, insert: "" }, selection: EditorSelection.cursor(m.from) });
+        v.focus();
+      },
+      paste: () => {
+        const v = view.current;
+        if (!v) return;
+        void navigator.clipboard?.readText().then((text) => {
+          if (!text || !view.current) return;
+          const vv = view.current;
+          const m = vv.state.selection.main;
+          vv.dispatch({
+            changes: { from: m.from, to: m.to, insert: text },
+            selection: EditorSelection.cursor(m.from + text.length),
+            scrollIntoView: true,
+          });
+          vv.focus();
+        });
+      },
+      bold: () => {
+        const v = view.current;
+        if (v) {
+          toggleBold(v);
+          v.focus();
+        }
+      },
+      italic: () => {
+        const v = view.current;
+        if (v) {
+          toggleItalic(v);
+          v.focus();
+        }
       },
     };
     return () => {
