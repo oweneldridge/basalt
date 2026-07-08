@@ -78,6 +78,53 @@ const commands = new Map<string, PluginCommand>();
 const processors = new Map<string, { pluginId: string; fn: CodeBlockProcessor }>();
 const editorExtensions: { pluginId: string; ext: Extension }[] = [];
 
+// ---------------------------------------------------------------------------
+// Event bus. Plugins subscribe via app.vault.on / app.workspace.on; the host
+// (App) emits with emitVaultEvent / emitWorkspaceEvent. A subscription returns
+// an EventRef the plugin should pass to registerEvent() for auto-cleanup.
+
+export type VaultEventName = "create" | "delete" | "rename" | "modify";
+export type WorkspaceEventName = "file-open" | "active-leaf-change";
+/** A minimal file handle passed to event callbacks. */
+export interface PluginFile {
+  path: string;
+  name: string;
+}
+export interface EventRef {
+  off: () => void;
+}
+type Listener = (...args: unknown[]) => void;
+
+const vaultListeners = new Map<string, Set<Listener>>();
+const workspaceListeners = new Map<string, Set<Listener>>();
+
+function subscribe(map: Map<string, Set<Listener>>, name: string, cb: Listener): EventRef {
+  let set = map.get(name);
+  if (!set) {
+    set = new Set();
+    map.set(name, set);
+  }
+  set.add(cb);
+  return { off: () => map.get(name)?.delete(cb) };
+}
+function emit(map: Map<string, Set<Listener>>, name: string, args: unknown[]): void {
+  const set = map.get(name);
+  if (!set) return;
+  for (const h of [...set]) {
+    try {
+      h(...args);
+    } catch (e) {
+      console.error(`plugin ${name} handler failed:`, e);
+    }
+  }
+}
+export function emitVaultEvent(name: VaultEventName, ...args: unknown[]): void {
+  emit(vaultListeners, name, args);
+}
+export function emitWorkspaceEvent(name: WorkspaceEventName, ...args: unknown[]): void {
+  emit(workspaceListeners, name, args);
+}
+
 export function pluginCommands(): PluginCommand[] {
   return [...commands.values()];
 }
@@ -136,6 +183,10 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       create: (path: string, content: string) => host.createNote(path, content),
       modify: (file: { path: string } | string, content: string) =>
         host.modifyNote(typeof file === "string" ? file : file.path, content),
+      /** Subscribe to a vault event: create/delete/modify → (file); rename →
+       * (file, oldPath). Pass the returned ref to plugin.registerEvent(). */
+      on: (name: VaultEventName, cb: (...args: unknown[]) => void): EventRef =>
+        subscribe(vaultListeners, name, cb),
     },
     workspace: {
       getActiveFile: () => {
@@ -143,6 +194,10 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
         return p ? { path: p } : null;
       },
       openLinkText: (target: string) => host.openNote(target),
+      /** Subscribe to a workspace event: file-open → (file|null);
+       * active-leaf-change → (file|null). */
+      on: (name: WorkspaceEventName, cb: (...args: unknown[]) => void): EventRef =>
+        subscribe(workspaceListeners, name, cb),
     },
   };
 
@@ -180,6 +235,21 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     /** Register an arbitrary cleanup run on unload. */
     register(cleanup: () => void) {
       ctx.cleanups.push(cleanup);
+    }
+    /** Track an event subscription so it's removed on unload. */
+    registerEvent(ref: EventRef) {
+      ctx.cleanups.push(() => ref.off());
+    }
+    /** Add a DOM listener that's removed on unload. */
+    registerDomEvent(el: EventTarget, type: string, cb: (ev: Event) => void) {
+      el.addEventListener(type, cb);
+      ctx.cleanups.push(() => el.removeEventListener(type, cb));
+    }
+    /** Start an interval cleared on unload; returns the id. */
+    registerInterval(cb: () => void, ms: number): number {
+      const id = setInterval(cb, ms) as unknown as number;
+      ctx.cleanups.push(() => clearInterval(id));
+      return id;
     }
     async loadData(): Promise<unknown> {
       if (!ctx.info.data) return null;

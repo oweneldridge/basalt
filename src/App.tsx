@@ -56,6 +56,8 @@ import {
   pluginCommands,
   loadEnabled,
   saveEnabled,
+  emitVaultEvent,
+  emitWorkspaceEvent,
   type HostDeps,
 } from "./lib/plugins";
 import { listPlugins, writePluginData, listCssSnippets, deleteFolder, renameFolder, type PluginInfo, type CssSnippet } from "./lib/vault";
@@ -537,6 +539,7 @@ export default function App() {
           index.current.setNote(updated);
           setNotes((prev) => prev.map((n) => (n.path === path ? updated : n)));
           bumpIndex();
+          emitVaultEvent("modify", { path: meta.rel, name: meta.name });
         }
         // `pending` is held until the write SUCCEEDS (not deleted before the
         // await), so an external edit landing mid-write still sees this note as
@@ -781,6 +784,12 @@ export default function App() {
         if (arel) rememberSelfWrite(arel, doc);
       }
       const rel = notesRef.current.find((n) => n.path === path)?.rel;
+      if (!mirror) {
+        const openedName = rel ? nameFromRel(rel) : (attachmentsRef.current.find((a) => a.path === path)?.name ?? path);
+        const openedFile = { path: rel ?? path, name: openedName };
+        emitWorkspaceEvent("file-open", openedFile);
+        emitWorkspaceEvent("active-leaf-change", openedFile);
+      }
       const v = vaultRef.current;
       if (rel && v) {
         recents.current = [rel, ...recents.current.filter((r) => r !== rel)].slice(0, RECENT_MAX);
@@ -2012,6 +2021,7 @@ export default function App() {
       );
       rememberSelfWrite(rel, "");
       bumpStructure();
+      emitVaultEvent("create", { path: rel, name: note.name });
       await openNoteByPath(path); // flushes the focused pane's current note first
     },
     [openNoteByPath, rememberSelfWrite, bumpStructure],
@@ -2574,6 +2584,7 @@ export default function App() {
         setNotes((prev) => prev.filter((n) => n.path !== path));
         recents.current = recents.current.filter((r) => r !== note.rel);
         bumpStructure(); // the prune effect closes its tab in every pane
+        emitVaultEvent("delete", { path: note.rel, name: note.name });
       } catch (e) {
         setSaveError(`Couldn't delete: ${e}`);
       }
@@ -2692,6 +2703,7 @@ export default function App() {
         const newBase = nameFromRel(newRel);
         // Migrate the local snapshot history so recovery follows the note.
         void renameSnapshots(root, oldNote.rel, newRel);
+        emitVaultEvent("rename", { path: newRel, name: newBase }, oldNote.rel);
 
         // Link text Obsidian would write, honoring the vault's newLinkFormat
         // (shortest: bare name unless another note shares the new basename;
