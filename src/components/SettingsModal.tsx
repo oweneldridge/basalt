@@ -1,7 +1,33 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ThemeMode } from "../lib/theme";
 import { chordOf, chordLabel, type Bindings } from "../lib/hotkeys";
 import type { ObsidianConfig, PluginInfo } from "../lib/vault";
+import { pluginSettingTabs, type SettingTab } from "../lib/plugins";
+
+/** Expandable panel that mounts a plugin's own settings DOM (containerEl) and
+ * calls its display() when opened. */
+function PluginSettings({ tab }: { tab: SettingTab }) {
+  const [open, setOpen] = useState(false);
+  const mount = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = mount.current;
+    if (!open || !el) return;
+    el.appendChild(tab.containerEl);
+    tab.display();
+    return () => {
+      tab.hide?.();
+      if (tab.containerEl.parentNode === el) el.removeChild(tab.containerEl);
+    };
+  }, [open, tab]);
+  return (
+    <div className="plugin-settings">
+      <button className="plugin-settings-toggle" onClick={() => setOpen((o) => !o)}>
+        {open ? "▾" : "▸"} Settings
+      </button>
+      {open && <div className="plugin-settings-mount" ref={mount} />}
+    </div>
+  );
+}
 
 interface Props {
   themeMode: ThemeMode;
@@ -74,6 +100,8 @@ export function SettingsModal({
 }: Props) {
   // Command id currently recording a chord (next keydown is captured).
   const [recording, setRecording] = useState<string | null>(null);
+  // Plugin-contributed settings panels, keyed by plugin id (live registry).
+  const settingTabById = new Map(pluginSettingTabs().map((t) => [t.pluginId, t.tab]));
   const isMac = /Mac/.test(navigator.platform);
   useEffect(() => {
     if (!recording) return;
@@ -257,6 +285,9 @@ export function SettingsModal({
                     {p.version && <span className="plugin-version">v{p.version}</span>}
                   </label>
                   {p.description && <div className="plugin-desc">{p.description}</div>}
+                  {enabled.has(p.id) && settingTabById.get(p.id) && (
+                    <PluginSettings tab={settingTabById.get(p.id)!} />
+                  )}
                 </div>
               ))}
             </div>

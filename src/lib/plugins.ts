@@ -138,6 +138,22 @@ export function pluginEditorExtensions(): Extension[] {
   return editorExtensions.map((e) => e.ext);
 }
 
+/** A plugin settings panel: the plugin owns `containerEl` and fills it in
+ * `display()`; the Settings UI mounts it on demand. */
+export interface SettingTab {
+  containerEl: HTMLElement;
+  display: () => void;
+  hide?: () => void;
+}
+const settingTabs = new Map<string, SettingTab>(); // pluginId -> tab
+export function pluginSettingTabs(): { pluginId: string; name: string; tab: SettingTab }[] {
+  return [...settingTabs.entries()].map(([pluginId, tab]) => ({
+    pluginId,
+    name: loaded.get(pluginId)?.info.name ?? pluginId,
+    tab,
+  }));
+}
+
 // ---------------------------------------------------------------------------
 // Host.
 
@@ -171,6 +187,23 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
   class Notice {
     constructor(message: string, timeoutMs = 4000) {
       host.notice(String(message), timeoutMs);
+    }
+  }
+
+  // Base class for a plugin settings panel. The plugin overrides display() to
+  // populate `containerEl`; Settings mounts it on demand.
+  class PluginSettingTab {
+    app = app;
+    plugin: unknown;
+    containerEl: HTMLElement = document.createElement("div");
+    constructor(_app?: unknown, plugin?: unknown) {
+      this.plugin = plugin;
+    }
+    display(): void {
+      /* override */
+    }
+    hide(): void {
+      /* override */
     }
   }
 
@@ -232,6 +265,14 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       });
       host.onRegistryChanged();
     }
+    /** Register a settings panel shown under this plugin in Settings. */
+    addSettingTab(tab: SettingTab) {
+      settingTabs.set(ctx.info.id, tab);
+      ctx.cleanups.push(() => {
+        if (settingTabs.get(ctx.info.id) === tab) settingTabs.delete(ctx.info.id);
+      });
+      host.onRegistryChanged();
+    }
     /** Register an arbitrary cleanup run on unload. */
     register(cleanup: () => void) {
       ctx.cleanups.push(cleanup);
@@ -266,7 +307,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     }
   }
 
-  return { Plugin, Notice, app };
+  return { Plugin, Notice, PluginSettingTab, app };
 }
 
 /** Execute a plugin's main.js in a CommonJS wrapper and return its export. */

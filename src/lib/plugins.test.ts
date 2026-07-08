@@ -12,6 +12,7 @@ import {
   saveEnabled,
   emitVaultEvent,
   emitWorkspaceEvent,
+  pluginSettingTabs,
   type HostDeps,
   type PluginInfo,
 } from "./plugins";
@@ -240,5 +241,23 @@ describe("plugin events", () => {
     await unloadPlugin("iv");
     (globalThis as any).__el.dispatchEvent(new Event("basalt-test-evt"));
     expect((globalThis as any).__domhits).toBe(1); // no further hits after unload
+  });
+});
+
+describe("plugin settings tabs", () => {
+  it("registers a settings tab and removes it on unload", async () => {
+    const { host } = fakeHost();
+    installHost(host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() { this.addSettingTab({ containerEl: { tagName: "DIV" }, display: () => {} }); }
+      };
+    `;
+    await loadPlugin(info({ id: "st", name: "ST", code }));
+    expect(pluginSettingTabs().map((t) => t.pluginId)).toEqual(["st"]);
+    expect(pluginSettingTabs()[0].name).toBe("ST");
+    await unloadPlugin("st");
+    expect(pluginSettingTabs()).toEqual([]);
   });
 });
