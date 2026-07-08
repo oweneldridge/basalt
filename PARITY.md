@@ -74,9 +74,15 @@ A follow-up pass closed ~17 more MEDIUM/LOW gaps from the list below:
   testable (they need the full app + Tauri). 6 e2e specs; CI runs them. This is
   what verifies the pane/sidebar features the editor harness can't reach.
 
+- **Graph node colors by folder** (toggle + legend).
+- **Bases editing**: added a **group-by** control (property + direction),
+  interop-checked against the official syntax; buildViews now persists it.
+  (A `sort` control was deliberately NOT shipped — Obsidian documents no
+  per-view `sort` key, so writing one would corrupt the shared `.base`.)
+
 Still open (larger): bookmarks create/edit (deferred by design — writes
-`.obsidian/`), search `line:` operator, graph node colors, Bases editing depth,
-linked panes, stacked tabs, slides, audio recorder.
+`.obsidian/`), search `line:` operator, deeper Bases editing (nested filters,
+formulas, multi-key), linked panes, stacked tabs, slides, audio recorder.
 
 ## Scored matrix
 
