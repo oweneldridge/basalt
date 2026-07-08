@@ -40,6 +40,9 @@ function fakeHost(over: Partial<HostDeps> = {}): { host: HostDeps; notices: stri
     readNote: async () => "content",
     createNote: async () => {},
     modifyNote: async () => {},
+    deleteNote: async () => {},
+    renameNote: async () => {},
+    createFolder: async () => {},
     getActiveNotePath: () => "A.md",
     openNote: () => {},
     vaultName: () => "Vault",
@@ -302,5 +305,29 @@ describe("plugin registerView", () => {
     expect(views[0].name).toBe("My View");
     await unloadPlugin("vp");
     expect(pluginRightViews()).toHaveLength(0);
+  });
+});
+
+describe("plugin vault mutations", () => {
+  it("delete / rename / createFolder call through to the host", async () => {
+    const calls: string[] = [];
+    const { host } = fakeHost({
+      deleteNote: async (pth) => { calls.push("delete:" + pth); },
+      renameNote: async (pth, np) => { calls.push("rename:" + pth + "->" + np); },
+      createFolder: async (pth) => { calls.push("mkdir:" + pth); },
+    });
+    installHost(host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        async onload() {
+          await this.app.vault.delete("A.md");
+          await this.app.vault.rename("A.md", "B.md");
+          await this.app.vault.createFolder("Folder");
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "vmut", code }));
+    expect(calls).toEqual(["delete:A.md", "rename:A.md->B.md", "mkdir:Folder"]);
   });
 });
