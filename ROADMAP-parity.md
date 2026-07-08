@@ -10,7 +10,7 @@ Ordered by leverage (impact ÷ effort). Checked items are done.
       `app.workspace.on(file-open|active-leaf-change)`, `plugin.registerEvent`,
       `registerDomEvent`, `registerInterval`. *(done)*
 - [x] **Settings-tab API** — `addSettingTab(tab)` / `PluginSettingTab.display(el)`. *(done)*
-- [x] **`addStatusBarItem`** *(done — with the status bar below)*; **`addRibbonIcon`** still open.
+- [x] **`addStatusBarItem`** + **`addRibbonIcon`** *(done)*.
 - [ ] **Custom view registration** (`registerView`) — add side-panel view types
       (compounds the layout gap).
 - [ ] **Metadata cache API** — parsed tags/links/frontmatter/headings for a note.
@@ -20,12 +20,9 @@ Ordered by leverage (impact ÷ effort). Checked items are done.
 
 - [x] **Bottom status bar** — cursor line/col + word/char count + plugin items. *(done)*
 - [ ] **Editor right-click menu** (cut/copy/format/bookmark) instead of native.
-- [ ] **Tab right-click menu** (Close others / to the right / Split / Move to
-      new window); currently right-click just toggles pin.
-- [ ] **File context menu depth** — Open in new tab/pane/window, Make a copy,
-      Move to…, Copy path.
-- [ ] **File tree** — multi-select, folder drag-to-reparent, reveal-active-file,
-      collapse-all/expand-all, folders-first sort.
+- [x] **Tab right-click menu** (Close / Close others / to the right / Pin / Split). *(done)*
+- [x] **File context menu depth** — Open to the right, Make a copy, Copy path. *(done; Move to… still open)*
+- [x] **File tree** — reveal-active-file + collapse-all *(done)*; folders-first already default. Multi-select + folder drag-to-reparent still open.
 - [ ] **Inline title** — click the editor's title to rename.
 - [ ] **Drag a tree note into the editor** to insert a link.
 - [ ] **Properties panel** — dedicated add/edit-property UI (inline render exists).
