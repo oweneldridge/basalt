@@ -407,14 +407,25 @@ fn debug_log(msg: String) {
 }
 
 /// Read a note's contents as UTF-8. Errors on non-UTF8 rather than lossily
-/// decoding, so that a later save can't silently re-encode and corrupt the file.
+/// decoding, so that a later save can't silently re-encode and corrupt the file
+/// — a deliberate data-safety stance (Obsidian vaults are UTF-8). Surfaces a
+/// clear, actionable message for that case instead of a raw IO error.
 #[tauri::command]
 fn read_note(path: String, window: tauri::Window, state: State<VaultState>) -> Result<String, String> {
     let root = current_root(&state, window.label())?;
     let resolved = ensure_in_vault(&root, &path)?;
-    let raw = fs::read_to_string(&resolved).map_err(|e| format!("read {}: {e}", resolved.display()))?;
-    // Normalize to LF for the editor; write_note re-applies the file's EOL.
-    Ok(to_lf(&raw))
+    match fs::read_to_string(&resolved) {
+        // Normalize to LF for the editor; write_note re-applies the file's EOL.
+        Ok(raw) => Ok(to_lf(&raw)),
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            let name = resolved.file_name().and_then(|n| n.to_str()).unwrap_or("This file");
+            Err(format!(
+                "“{name}” isn't UTF-8 encoded, so Basalt won't open it — editing could corrupt it. \
+                 Re-save it as UTF-8 in another editor first."
+            ))
+        }
+        Err(e) => Err(format!("read {}: {e}", resolved.display())),
+    }
 }
 
 /// Atomically write a note's contents, only within the vault.
