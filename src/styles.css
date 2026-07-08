@@ -2127,3 +2127,10 @@ button.primary:hover {
 .sidebar-controls { display: flex; gap: 4px; align-items: center; padding: 0 6px; }
 .sidebar-controls .filter { flex: 1; }
 .file-sort { font-size: 11px; background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); border-radius: 5px; padding: 2px; max-width: 90px; }
+
+/* ------- Unlinked mention Link buttons ------- */
+.ref-child-row { display: flex; align-items: center; }
+.ref-child-row .ref-child { flex: 1; }
+.ref-link-btn, .link-all-btn { font-size: 11px; background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--accent); cursor: pointer; padding: 1px 6px; margin-left: 4px; }
+.ref-link-btn:hover, .link-all-btn:hover { background: var(--accent-soft, rgba(124,92,208,0.12)); }
+.link-all-btn { margin-left: auto; }
