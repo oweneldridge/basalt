@@ -3524,6 +3524,7 @@ export default function App() {
     >
       <div className="workspace">
       <Ribbon
+        pluginVersion={pluginVersion}
         onToggleSidebar={() => setLeftOpen((v) => !v)}
         onQuickSwitcher={() => setModal("switcher")}
         onSearch={() => {

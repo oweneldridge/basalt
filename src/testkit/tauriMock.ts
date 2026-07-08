@@ -104,6 +104,8 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
             "    this.addSettingTab(tab);",
             "    const item = this.addStatusBarItem();",
             '    item.textContent = "demo-plugin-ok";',
+            "    globalThis.__demoRibbon = 0;",
+            '    this.addRibbonIcon("★", "Demo action", () => { globalThis.__demoRibbon++; });',
             '    this.registerEvent(this.app.vault.on("modify", () => {}));',
             "  }",
             "};",

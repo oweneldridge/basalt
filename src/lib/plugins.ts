@@ -161,6 +161,18 @@ export function pluginStatusBarItems(): HTMLElement[] {
   return statusBarItems.map((s) => s.el);
 }
 
+// Plugin-contributed ribbon icons.
+export interface RibbonItem {
+  pluginId: string;
+  icon: string;
+  title: string;
+  callback: () => void;
+}
+const ribbonItems: RibbonItem[] = [];
+export function pluginRibbonItems(): RibbonItem[] {
+  return [...ribbonItems];
+}
+
 // ---------------------------------------------------------------------------
 // Host.
 
@@ -277,6 +289,16 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       settingTabs.set(ctx.info.id, tab);
       ctx.cleanups.push(() => {
         if (settingTabs.get(ctx.info.id) === tab) settingTabs.delete(ctx.info.id);
+      });
+      host.onRegistryChanged();
+    }
+    /** Add a ribbon icon (an emoji/text glyph + tooltip) that runs `callback`. */
+    addRibbonIcon(icon: string, title: string, callback: () => void) {
+      const entry: RibbonItem = { pluginId: ctx.info.id, icon, title, callback };
+      ribbonItems.push(entry);
+      ctx.cleanups.push(() => {
+        const i = ribbonItems.indexOf(entry);
+        if (i >= 0) ribbonItems.splice(i, 1);
       });
       host.onRegistryChanged();
     }
