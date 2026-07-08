@@ -31,12 +31,14 @@ interface Props {
   /** Whether this pane's tabs are shown as a stacked spread. */
   stacked: boolean;
   onToggleStacked: () => void;
+  /** A sidebar dock pane — hides editor-only affordances (+, link, stack). */
+  dock?: boolean;
 }
 
 // A tab drag carries "<paneId>\n<path>" under this private MIME type.
 const TAB_MIME = "application/x-basalt-tab";
 
-export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onTogglePin, onTabDrop, onContextMenu, onDragStateChange, linked, onToggleLink, stacked, onToggleStacked }: Props) {
+export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onTogglePin, onTabDrop, onContextMenu, onDragStateChange, linked, onToggleLink, stacked, onToggleStacked, dock }: Props) {
   // Index the drop indicator sits before (null = none, tabs.length = at end).
   const [dropAt, setDropAt] = useState<number | null>(null);
 
@@ -140,18 +142,22 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
         </div>
       ))}
       <span className={`tab-drop-end${dropAt === tabs.length ? " active" : ""}`} aria-hidden />
-      <button className="tab-new" title="Open a note (⌘O)" onClick={onNew}>
-        +
-      </button>
-      <button
-        className={`tab-link${linked ? " active" : ""}`}
-        title={linked ? "Linked — follows notes opened elsewhere (click to unlink)" : "Link this pane (follow notes opened elsewhere)"}
-        aria-pressed={linked}
-        onClick={onToggleLink}
-      >
-        🔗
-      </button>
-      {tabs.length > 1 && (
+      {!dock && (
+        <button className="tab-new" title="Open a note (⌘O)" onClick={onNew}>
+          +
+        </button>
+      )}
+      {!dock && (
+        <button
+          className={`tab-link${linked ? " active" : ""}`}
+          title={linked ? "Linked — follows notes opened elsewhere (click to unlink)" : "Link this pane (follow notes opened elsewhere)"}
+          aria-pressed={linked}
+          onClick={onToggleLink}
+        >
+          🔗
+        </button>
+      )}
+      {!dock && tabs.length > 1 && (
         <button
           className={`tab-link tab-stack${stacked ? " active" : ""}`}
           title={stacked ? "Unstack tabs" : "Stack tabs (spread all open notes)"}

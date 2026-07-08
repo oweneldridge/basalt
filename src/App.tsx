@@ -74,7 +74,6 @@ import { Ribbon } from "./components/Ribbon";
 import { WorkspacesModal } from "./components/WorkspacesModal";
 import { StackedTabs } from "./components/StackedTabs";
 import { SlidesView } from "./components/SlidesView";
-import { SideResizer } from "./components/SideResizer";
 import { StatusBar } from "./components/StatusBar";
 import { InlineTitle } from "./components/InlineTitle";
 import { EditorPane } from "./components/EditorPane";
@@ -197,6 +196,12 @@ function makeRightDock(id: string): Pane {
   return { id, tabs, active: tabs[0], doc: "", dock: "right" };
 }
 
+/** A fresh left-dock pane (the file explorer). */
+function makeLeftDock(id: string): Pane {
+  const tabs = [viewPath({ type: "filetree" })];
+  return { id, tabs, active: tabs[0], doc: "", dock: "left" };
+}
+
 type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | "templates" | "history" | "workspaces" | null;
 
 interface AppCommand {
@@ -220,7 +225,7 @@ const namedWsKey = (vault: string) => `basalt.workspaces.${vault}`;
 // Bumped when the persisted workspace shape changes. Unversioned (v1) data is
 // still read — tabs are just note paths, which remain valid — so old workspaces
 // migrate transparently. Anything unparseable falls back to an empty workspace.
-const WORKSPACE_VERSION = 2;
+const WORKSPACE_VERSION = 3;
 
 /** The serializable shape of a workspace (no live doc — restored from disk). A
  * tab path may be a note/attachment path or a view sentinel (see leafViews). */
@@ -358,12 +363,7 @@ export default function App() {
   const [versionSnapshots, setVersionSnapshots] = useState<Snapshot[]>([]);
   const [recentVaults, setRecentVaults] = useState<RecentVault[]>(() => loadRecentVaults());
   // Sidebar visibility + UI zoom (Obsidian parity: ⌘\ / ⌘⌥\ , ⌘+ / ⌘- / ⌘0).
-  const [leftOpen, setLeftOpen] = useState(() => localStorage.getItem("basalt.leftOpen") !== "0");
-  useEffect(() => localStorage.setItem("basalt.leftOpen", leftOpen ? "1" : "0"), [leftOpen]);
   // Resizable sidebar widths (persisted). Clamped so neither can swallow the editor.
-  const clampW = (w: number) => Math.max(160, Math.min(560, w));
-  const [leftWidth, setLeftWidth] = useState(() => clampW(Number(localStorage.getItem("basalt.leftWidth")) || 260));
-  useEffect(() => localStorage.setItem("basalt.leftWidth", String(leftWidth)), [leftWidth]);
   const [zoom, setZoom] = useState(1);
   useEffect(() => {
     document.documentElement.style.fontSize = `${Math.round(16 * zoom)}px`;
@@ -844,6 +844,26 @@ export default function App() {
     setLayout(nextLayout);
   }, [removePaneFromWorkspace]);
 
+  // Show/hide the left sidebar dock (the file explorer) as a layout leaf.
+  const toggleLeftDock = useCallback(() => {
+    const dockEntry = Object.entries(panesRef.current).find(([, p]) => p.dock === "left");
+    if (dockEntry) {
+      removePaneFromWorkspace(dockEntry[0]);
+      return;
+    }
+    const lay = layoutRef.current;
+    const id = `pane${(paneCounter.current += 1)}`;
+    const dock = makeLeftDock(id);
+    const leaf: LayoutNode = { kind: "leaf", id };
+    const nextLayout: LayoutNode = lay
+      ? { kind: "split", dir: "row", sizes: [0.18, 0.82], children: [leaf, lay] }
+      : leaf;
+    panesRef.current = { ...panesRef.current, [id]: dock };
+    layoutRef.current = nextLayout;
+    setPanes((ps) => ({ ...ps, [id]: dock }));
+    setLayout(nextLayout);
+  }, [removePaneFromWorkspace]);
+
   // Open `path` in a specific pane (adds the tab, loads the doc, focuses it).
   // `mirror` marks a follow-open into a linked pane: it doesn't steal focus and
   // doesn't re-mirror, so a linked pair can't ping-pong.
@@ -1160,22 +1180,27 @@ export default function App() {
         setLayout(lay);
         setFocusedId(focus);
       };
-      const dockLeaf = (): { pane: Pane; leaf: LayoutNode } => {
+      const rightDockLeaf = (): { pane: Pane; leaf: LayoutNode } => {
         const id = `pane${(paneCounter.current += 1)}`;
         return { pane: makeRightDock(id), leaf: { kind: "leaf", id } };
       };
-      // A fresh workspace: an empty editor pane on the left, the right dock beside it.
+      const leftDockLeaf = (): { pane: Pane; leaf: LayoutNode } => {
+        const id = `pane${(paneCounter.current += 1)}`;
+        return { pane: makeLeftDock(id), leaf: { kind: "leaf", id } };
+      };
+      // A fresh workspace: file-tree dock | editor | right dock.
       const buildDefault = () => {
+        const left = leftDockLeaf();
         const centerId = `pane${(paneCounter.current += 1)}`;
         const center: Pane = { id: centerId, tabs: [], active: null, doc: "" };
-        const dock = dockLeaf();
+        const right = rightDockLeaf();
         const lay: LayoutNode = {
           kind: "split",
           dir: "row",
-          sizes: [0.78, 0.22],
-          children: [{ kind: "leaf", id: centerId }, dock.leaf],
+          sizes: [0.18, 0.6, 0.22],
+          children: [left.leaf, { kind: "leaf", id: centerId }, right.leaf],
         };
-        commit({ [centerId]: center, [dock.pane.id]: dock.pane }, lay, centerId);
+        commit({ [left.pane.id]: left.pane, [centerId]: center, [right.pane.id]: right.pane }, lay, centerId);
       };
 
       if (!savedWs) return buildDefault();
@@ -1220,11 +1245,20 @@ export default function App() {
       for (const id of ids) if (!rebuilt[id] && lay) lay = removeLeaf(lay, id);
       if (!lay || Object.keys(rebuilt).length === 0) return buildDefault();
       paneCounter.current = Math.max(paneCounter.current, maxN);
-      // Migration: a restored workspace with no right dock (v1/v2) gets one.
-      if (!Object.values(rebuilt).some((p) => p.dock === "right")) {
-        const dock = dockLeaf();
-        rebuilt[dock.pane.id] = dock.pane;
-        lay = { kind: "split", dir: "row", sizes: [0.78, 0.22], children: [lay, dock.leaf] };
+      // One-time migration: pre-v3 workspaces (fixed sidebars) get docks grafted
+      // on. A v3 workspace is respected as-is, so a dock the user closed stays
+      // closed across reloads.
+      if ((ws.version ?? 1) < WORKSPACE_VERSION) {
+        if (!Object.values(rebuilt).some((p) => p.dock === "left")) {
+          const dock = leftDockLeaf();
+          rebuilt[dock.pane.id] = dock.pane;
+          lay = { kind: "split", dir: "row", sizes: [0.18, 0.82], children: [dock.leaf, lay] };
+        }
+        if (!Object.values(rebuilt).some((p) => p.dock === "right")) {
+          const dock = rightDockLeaf();
+          rebuilt[dock.pane.id] = dock.pane;
+          lay = { kind: "split", dir: "row", sizes: [0.82, 0.18], children: [lay, dock.leaf] };
+        }
       }
       const focus = ws.focusedId && rebuilt[ws.focusedId] ? ws.focusedId : firstLeafId(lay);
       commit(rebuilt, lay, focus);
@@ -1698,7 +1732,7 @@ export default function App() {
       } else if (e.key === "\\") {
         e.preventDefault();
         if (e.altKey) toggleRightDock();
-        else setLeftOpen((v) => !v);
+        else toggleLeftDock();
       } else if (e.key === "=" || e.key === "+") {
         e.preventDefault();
         zoomBy(0.1);
@@ -3591,7 +3625,7 @@ export default function App() {
           setGraphOpen(true);
         },
       },
-      { id: "toggle-left-sidebar", label: "Toggle left sidebar", hint: "⌘\\", run: () => setLeftOpen((v) => !v) },
+      { id: "toggle-left-sidebar", label: "Toggle left sidebar", hint: "⌘\\", run: () => toggleLeftDock() },
       { id: "toggle-right-sidebar", label: "Toggle right sidebar", hint: "⌘⌥\\", run: () => toggleRightDock() },
       { id: "zoom-in", label: "Zoom in", hint: "⌘+", run: () => zoomBy(0.1) },
       { id: "zoom-out", label: "Zoom out", hint: "⌘-", run: () => zoomBy(-0.1) },
@@ -3695,9 +3729,23 @@ export default function App() {
     };
     switch (spec.type) {
       case "filetree":
+        return (
+          <Sidebar
+            notes={notes}
+            attachments={attachmentsList}
+            activePath={lastNotePath}
+            vaultName={basename(vault)}
+            onOpen={(path) => openNoteByPath(path)}
+            onNewNote={handleNewNote}
+            onFolderContextMenu={(folderRel, x, y) => setFolderMenu({ folderRel, x, y })}
+            onMoveToFolder={handleMoveToFolder}
+            onOpenAttachment={handleOpenAttachment}
+            onContextMenu={(path, x, y) => setFileMenu({ path, x, y })}
+            onAttachmentContextMenu={(path, x, y) => setAttMenu({ path, x, y })}
+          />
+        );
       case "search":
-        // The sidebar views move into leaves in Phase 4.
-        return <div className="placeholder">The {viewLabel(spec)} view isn’t wired into leaves yet.</div>;
+        return <div className="placeholder">Press ⌘⇧F to search the vault.</div>;
       case "backlinks":
         return (
           <Backlinks
@@ -3796,6 +3844,7 @@ export default function App() {
             onToggleLink={() => toggleLink(id)}
             stacked={pane.stacked ?? false}
             onToggleStacked={() => toggleStacked(id)}
+            dock={!!pane.dock}
             onNew={() => {
               focusPane(id);
               setModal("switcher");
@@ -3983,12 +4032,11 @@ export default function App() {
   return (
     <div
       className={readableWidth ? "app readable-width" : "app"}
-      style={{ "--left-w": `${leftWidth}px` } as React.CSSProperties}
     >
       <div className="workspace">
       <Ribbon
         pluginVersion={pluginVersion}
-        onToggleSidebar={() => setLeftOpen((v) => !v)}
+        onToggleSidebar={() => toggleLeftDock()}
         onQuickSwitcher={() => setModal("switcher")}
         onSearch={() => {
           setSearchSeed("");
@@ -3998,22 +4046,6 @@ export default function App() {
         onGraph={() => setGraphOpen(true)}
         onSettings={() => setModal("settings")}
       />
-      {leftOpen && (
-        <Sidebar
-          notes={notes}
-          attachments={attachmentsList}
-          activePath={active?.path ?? null}
-          vaultName={basename(vault)}
-          onOpen={(path) => openNoteByPath(path)}
-          onNewNote={handleNewNote}
-          onFolderContextMenu={(folderRel, x, y) => setFolderMenu({ folderRel, x, y })}
-          onMoveToFolder={handleMoveToFolder}
-          onOpenAttachment={handleOpenAttachment}
-          onContextMenu={(path, x, y) => setFileMenu({ path, x, y })}
-          onAttachmentContextMenu={(path, x, y) => setAttMenu({ path, x, y })}
-        />
-      )}
-      {leftOpen && <SideResizer onDelta={(dx) => setLeftWidth((w) => clampW(w + dx))} />}
       <main className="main">
         <div className="toolbar">
           <button className="link-btn" onClick={openVaultSwitcher} title="Switch vault (recent / open a folder)">
