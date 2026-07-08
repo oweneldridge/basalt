@@ -1572,24 +1572,31 @@ struct CssSnippet {
 #[tauri::command]
 fn list_css_snippets(window: tauri::Window, state: State<VaultState>) -> Result<Vec<CssSnippet>, String> {
     let root = current_root(&state, window.label())?;
-    let dir = root.join(".basalt").join("snippets");
     let mut out = Vec::new();
-    let Ok(entries) = fs::read_dir(&dir) else {
-        return Ok(out); // no snippets folder yet
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() || path.extension().and_then(|e| e.to_str()).map(|e| !e.eq_ignore_ascii_case("css")).unwrap_or(true) {
-            continue;
-        }
-        if fs::metadata(&path).map(|m| m.len() > 1_000_000).unwrap_or(true) {
-            continue;
-        }
-        let Ok(css) = fs::read_to_string(&path) else {
-            continue;
+    let mut seen = std::collections::HashSet::new();
+    // Basalt's own snippets, plus an existing Obsidian vault's snippets so they
+    // appear (and are toggleable) here too. On a name clash, .basalt wins.
+    for dir in [root.join(".basalt").join("snippets"), root.join(".obsidian").join("snippets")] {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue; // folder may not exist
         };
-        let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-        out.push(CssSnippet { name, css });
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() || path.extension().and_then(|e| e.to_str()).map(|e| !e.eq_ignore_ascii_case("css")).unwrap_or(true) {
+                continue;
+            }
+            if fs::metadata(&path).map(|m| m.len() > 1_000_000).unwrap_or(true) {
+                continue;
+            }
+            let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            if !seen.insert(name.clone()) {
+                continue; // already loaded from .basalt
+            }
+            let Ok(css) = fs::read_to_string(&path) else {
+                continue;
+            };
+            out.push(CssSnippet { name, css });
+        }
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
