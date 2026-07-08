@@ -38,3 +38,22 @@ test("file context menu: Make a copy creates a duplicate note", async ({ page })
   await page.locator(".ctx-item", { hasText: "Make a copy" }).click();
   await expect(page.locator(".tree-row.file", { hasText: "Ideas copy" })).toHaveCount(1);
 });
+
+test("sidebar: collapse-all hides nested files; reveal-active brings them back", async ({ page }) => {
+  await page.evaluate(() => {
+    Object.keys(localStorage).filter((k) => k.includes("tree.expanded")).forEach((k) => localStorage.removeItem(k));
+  });
+  await page.reload();
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).click();
+  await expect(page.locator(".tree-row.file", { hasText: "Roadmap" })).toHaveCount(1);
+  await page.locator('.icon-btn[title="Collapse all"]').click();
+  await expect(page.locator(".tree-row.file", { hasText: "Roadmap" })).toHaveCount(0);
+  // Open the nested note, collapse again, then reveal it.
+  await page.keyboard.press("Meta+o");
+  await page.locator(".palette-input").first().fill("Roadmap");
+  await page.keyboard.press("Enter");
+  await page.locator('.icon-btn[title="Collapse all"]').click();
+  await expect(page.locator(".tree-row.file", { hasText: "Roadmap" })).toHaveCount(0);
+  await page.locator('.icon-btn[title="Reveal active file"]').click();
+  await expect(page.locator(".tree-row.file.active", { hasText: "Roadmap" })).toHaveCount(1);
+});
