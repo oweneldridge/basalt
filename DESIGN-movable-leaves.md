@@ -204,6 +204,11 @@ The v3 migration grafts docks onto old workspaces once and respects a v3 layout
 thereafter (closed docks stay closed). Layout state never touches note content,
 so the data-safety bound held.
 
-**Still open (intentionally, was B1):** drag a tab *out to a new window* — each
-window is its own App instance, so this is an open-new-window + move, not part of
-the single-window leaf model.
+**Also shipped (B1, commit `a40b1d6`):** move a note tab *out to a new window*.
+Because each window is its own App instance, this is an open-new-window + move
+rather than a single-tree operation: `open_new_window` carries `?vault=X&note=Y`,
+the spawned window opens the note from its freshly loaded list, and the tab
+closes in the origin window. Exposed via the tab context menu + a command (true
+OS drag-out isn't feasible in a Tauri webview, so it's menu-driven).
+
+Nothing on the parity list remains open.
