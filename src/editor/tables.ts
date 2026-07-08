@@ -11,6 +11,8 @@ import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { renderInline } from "./inlineRender";
+import { parseTable, serializeTable, insertRow, deleteRow, insertColumn, deleteColumn } from "../lib/tableEdit";
+import type { ParsedTable } from "../lib/tableEdit";
 
 // Split a table row into cells on UNescaped pipes, then unescape `\|`.
 function splitCells(line: string): string[] {
@@ -18,9 +20,17 @@ function splitCells(line: string): string[] {
   return inner.split(/(?<!\\)\|/).map((c) => c.replace(/\\\|/g, "|").trim());
 }
 
-// The `|---|:--:|` alignment row.
-function isDelimiter(line: string): boolean {
-  return line.includes("-") && /^\s*\|?[\s:|-]+\|?\s*$/.test(line);
+// Character offset where cell `col`'s content begins within a raw table line.
+function cellOffsetInLine(line: string, col: number): number {
+  let i = 0;
+  if (line[i] === "|") i++; // skip a leading pipe
+  let cell = 0;
+  while (cell < col && i < line.length) {
+    if (line[i] === "|" && line[i - 1] !== "\\") cell++;
+    i++;
+  }
+  while (i < line.length && line[i] === " ") i++; // skip the cell's leading spaces
+  return i;
 }
 
 class TableWidget extends WidgetType {
@@ -30,7 +40,7 @@ class TableWidget extends WidgetType {
   eq(other: TableWidget): boolean {
     return other.source === this.source;
   }
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "cm-md-table-wrap";
     const table = document.createElement("table");
@@ -42,36 +52,110 @@ class TableWidget extends WidgetType {
     }
     const headerCells = splitCells(lines[0]);
     const cols = headerCells.length;
+    // Source-line index for each rendered row: header is line 0; body rows skip
+    // the delimiter (line 1). Built alongside the DOM for cell-precise caret.
+    const bodyLineIdx: number[] = [];
+    for (let i = 2; i < lines.length; i++) bodyLineIdx.push(i);
+
+    // The table's live document range, resolved at interaction time (positions
+    // can shift between renders). source length matches the replaced block.
+    const range = () => {
+      const from = view.posAtDOM(wrap);
+      return { from, to: from + this.source.length };
+    };
+    // Structurally edit the table (add/remove row/col) via the pure module.
+    const edit = (fn: (t: ParsedTable) => ParsedTable) => (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const t = parseTable(this.source);
+      if (!t) return;
+      const { from, to } = range();
+      view.dispatch({ changes: { from, to, insert: serializeTable(fn(t)) } });
+    };
+    // Reveal the raw source with the caret inside a specific cell.
+    const editCell = (lineIdx: number, col: number) => (e: Event) => {
+      const el = e.target as HTMLElement;
+      if (el.closest(".cm-md-link") || el.closest(".cm-wikilink")) return; // let links navigate
+      e.preventDefault();
+      e.stopPropagation();
+      const { from } = range();
+      const before = lines.slice(0, lineIdx).reduce((n, l) => n + l.length + 1, 0);
+      const pos = from + before + cellOffsetInLine(lines[lineIdx], col);
+      view.dispatch({ selection: { anchor: pos } });
+      view.focus();
+    };
+    const ctrl = (cls: string, label: string, title: string, on: (e: Event) => void): HTMLButtonElement => {
+      const b = document.createElement("button");
+      b.className = `cm-table-ctrl ${cls}`;
+      b.textContent = label;
+      b.title = title;
+      b.addEventListener("mousedown", on);
+      return b;
+    };
 
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
-    for (const cell of headerCells) {
+    headerCells.forEach((cell, c) => {
       const th = document.createElement("th");
-      th.append(renderInline(cell));
+      const content = document.createElement("span");
+      content.className = "cm-table-cell";
+      content.append(renderInline(cell));
+      content.addEventListener("mousedown", editCell(0, c));
+      th.append(content);
+      // Per-column controls (delete this column, insert one to its right).
+      const bar = document.createElement("span");
+      bar.className = "cm-table-colbar";
+      bar.append(
+        ctrl("cm-table-delcol", "✕", "Delete column", edit((t) => deleteColumn(t, c))),
+        ctrl("cm-table-addcol", "＋", "Insert column right", edit((t) => insertColumn(t, c + 1))),
+      );
+      th.append(bar);
       headRow.append(th);
-    }
+    });
     thead.append(headRow);
     table.append(thead);
 
     const tbody = document.createElement("tbody");
-    for (let i = 1; i < lines.length; i++) {
-      if (i === 1 && isDelimiter(lines[i])) continue;
-      const cells = splitCells(lines[i]);
+    bodyLineIdx.forEach((lineIdx, bodyRow) => {
+      const cells = splitCells(lines[lineIdx]);
       const tr = document.createElement("tr");
-      // Normalize ragged rows to the header's column count (GFM semantics).
       for (let c = 0; c < cols; c++) {
         const td = document.createElement("td");
-        td.append(renderInline(cells[c] ?? ""));
+        const content = document.createElement("span");
+        content.className = "cm-table-cell";
+        content.append(renderInline(cells[c] ?? ""));
+        content.addEventListener("mousedown", editCell(lineIdx, c));
+        td.append(content);
+        if (c === cols - 1) {
+          const bar = document.createElement("span");
+          bar.className = "cm-table-rowbar";
+          bar.append(
+            ctrl("cm-table-delrow", "✕", "Delete row", edit((t) => deleteRow(t, bodyRow))),
+            ctrl("cm-table-addrow", "＋", "Insert row below", edit((t) => insertRow(t, bodyRow + 1))),
+          );
+          td.append(bar);
+        }
         tr.append(td);
       }
       tbody.append(tr);
-    }
+    });
     table.append(tbody);
     wrap.append(table);
+
+    // Footer control: append a row / append a column to an all-empty-body table.
+    const foot = document.createElement("div");
+    foot.className = "cm-table-foot";
+    foot.append(
+      ctrl("cm-table-addrow-foot", "＋ Row", "Add row", edit((t) => insertRow(t, t.rows.length))),
+      ctrl("cm-table-addcol-foot", "＋ Column", "Add column", edit((t) => insertColumn(t, t.header.length))),
+    );
+    wrap.append(foot);
     return wrap;
   }
-  ignoreEvent(): boolean {
-    return false;
+  // Let control buttons / cell spans handle their own events; CM ignores them.
+  ignoreEvent(event: Event): boolean {
+    const t = event.target as HTMLElement | null;
+    return !!t && (!!t.closest(".cm-table-ctrl") || !!t.closest(".cm-table-cell"));
   }
 }
 
