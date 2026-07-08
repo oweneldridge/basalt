@@ -296,6 +296,17 @@ function normalizeCreateTarget(target: string, sourceRel: string | null): string
   return stack.join("/");
 }
 
+
+// Which edge of a pane a tab is being dropped on (for drag-to-split), or
+// "center" (no split — the tab bar handles moving a tab into a pane).
+type PaneEdge = "left" | "right" | "top" | "bottom";
+function pickEdge(fx: number, fy: number): PaneEdge | "center" {
+  const d: Record<PaneEdge, number> = { left: fx, right: 1 - fx, top: fy, bottom: 1 - fy };
+  const min = Math.min(d.left, d.right, d.top, d.bottom);
+  if (min > 0.3) return "center"; // near the middle → don't split
+  return (Object.keys(d) as PaneEdge[]).find((k) => d[k] === min)!;
+}
+
 export default function App() {
   const [vault, setVault] = useState<string | null>(null);
   const [notes, setNotes] = useState<VaultNote[]>([]);
@@ -388,6 +399,9 @@ export default function App() {
   const [searchSeed, setSearchSeed] = useState("");
   const [fileMenu, setFileMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const [tabMenu, setTabMenu] = useState<{ paneId: string; path: string; x: number; y: number } | null>(null);
+  // A tab drag is in progress (show the pane edge drop-zones) + the hovered edge.
+  const [tabDragging, setTabDragging] = useState(false);
+  const [dropEdge, setDropEdge] = useState<{ paneId: string; edge: PaneEdge } | null>(null);
   const [attMenu, setAttMenu] = useState<{ path: string; x: number; y: number } | null>(null);
   const [folderMenu, setFolderMenu] = useState<{ folderRel: string; x: number; y: number } | null>(null);
   // Parent rel for a pending "New folder…" prompt ("" = vault root).
@@ -917,6 +931,35 @@ export default function App() {
       const tp = panesRef.current[toId];
       if (tp) patchPane(toId, { tabs: insertTab(tp.tabs, path, toIndex) });
       await closeTab(fromId, path); // removes the origin tab (note stays open in target)
+    },
+    [openInPane, closeTab, patchPane],
+  );
+
+  // Drop a dragged tab on a pane EDGE → split that pane in the edge's direction
+  // and move the tab into the new split (Obsidian's drag-to-split).
+  const handleTabDropToEdge = useCallback(
+    async (fromId: string, path: string, targetId: string, edge: PaneEdge) => {
+      const lay = layoutRef.current;
+      const from = panesRef.current[fromId];
+      if (!lay || !panesRef.current[targetId]) return;
+      // Can't split a pane off itself when the dragged tab is its only tab.
+      if (fromId === targetId && from && from.tabs.length <= 1) return;
+      const dir: Dir = edge === "left" || edge === "right" ? "row" : "col";
+      const before = edge === "left" || edge === "top";
+      const newId = `pane${(paneCounter.current += 1)}`;
+      const newPane: Pane = { id: newId, tabs: [], active: null, doc: "" };
+      const nextLayout = splitLeaf(lay, targetId, newId, dir, before);
+      panesRef.current = { ...panesRef.current, [newId]: newPane };
+      layoutRef.current = nextLayout;
+      setPanes((ps) => ({ ...ps, [newId]: newPane }));
+      setLayout(nextLayout);
+      // Moving out of the source: unpin there first (a pinned tab can't close).
+      if (from?.pinned?.includes(path)) {
+        const pinned = from.pinned.filter((p) => p !== path);
+        patchPane(fromId, { pinned: pinned.length ? pinned : undefined });
+      }
+      await openInPane(newId, path); // load + activate + focus the new split
+      await closeTab(fromId, path); // remove the origin tab (may drop an emptied pane)
     },
     [openInPane, closeTab, patchPane],
   );
@@ -3475,6 +3518,10 @@ export default function App() {
             onTogglePin={(p) => togglePin(id, p)}
             onTabDrop={(fromId, p, toIndex) => void handleTabDrop(fromId, p, id, toIndex)}
             onContextMenu={(p, x, y) => setTabMenu({ paneId: id, path: p, x, y })}
+            onDragStateChange={(active) => {
+              setTabDragging(active);
+              if (!active) setDropEdge(null);
+            }}
             linked={pane.linked ?? false}
             onToggleLink={() => toggleLink(id)}
             stacked={pane.stacked ?? false}
@@ -3492,6 +3539,7 @@ export default function App() {
             onRename={(newBase) => void handleRenameNote(path, rel.replace(/[^/\\]+$/, "") + newBase)}
           />
         )}
+        <div className="pane-body">
         {pane.stacked && pane.tabs.length > 0 ? (
           <StackedTabs
             tabs={pane.tabs.map((p) => ({ path: p, name: tabItemsFor([p])[0]?.name ?? p, rel: notes.find((n) => n.path === p)?.rel ?? "" }))}
@@ -3621,6 +3669,35 @@ export default function App() {
         ) : (
           <div className="placeholder">Select a note, or press + to create one.</div>
         )}
+        {tabDragging && (
+          <div
+            className="pane-dropzone"
+            onDragOver={(e) => {
+              if (!e.dataTransfer.types.includes("application/x-basalt-tab")) return;
+              e.preventDefault();
+              const r = e.currentTarget.getBoundingClientRect();
+              const edge = pickEdge((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+              setDropEdge(edge === "center" ? null : { paneId: id, edge });
+            }}
+            onDragLeave={(e) => {
+              if (e.currentTarget === e.target) setDropEdge(null);
+            }}
+            onDrop={(e) => {
+              const raw = e.dataTransfer.getData("application/x-basalt-tab");
+              setDropEdge(null);
+              const nl = raw.indexOf("\n");
+              if (nl < 0) return;
+              const r = e.currentTarget.getBoundingClientRect();
+              const edge = pickEdge((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+              if (edge === "center") return; // center → tab bar handles move-into
+              e.preventDefault();
+              void handleTabDropToEdge(raw.slice(0, nl), raw.slice(nl + 1), id, edge);
+            }}
+          >
+            {dropEdge?.paneId === id && <div className={`pane-drop-indicator ${dropEdge.edge}`} />}
+          </div>
+        )}
+        </div>
       </div>
     );
   };

@@ -2412,3 +2412,18 @@ button.primary:hover {
 
 /* Plugin-registered right-panel view */
 .plugin-view-mount { padding: 8px; font-size: 13px; color: var(--text); }
+
+/* ------- Drag a tab to a pane edge to split ------- */
+.pane-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pane-dropzone { position: absolute; inset: 0; z-index: 20; }
+.pane-drop-indicator {
+  position: absolute;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border: 2px solid var(--accent);
+  border-radius: 6px;
+  pointer-events: none;
+}
+.pane-drop-indicator.left { top: 0; left: 0; bottom: 0; width: 50%; }
+.pane-drop-indicator.right { top: 0; right: 0; bottom: 0; width: 50%; }
+.pane-drop-indicator.top { top: 0; left: 0; right: 0; height: 50%; }
+.pane-drop-indicator.bottom { bottom: 0; left: 0; right: 0; height: 50%; }

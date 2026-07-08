@@ -20,6 +20,9 @@ interface Props {
   onTabDrop: (fromPaneId: string, path: string, toIndex: number) => void;
   /** Right-click a tab → open a context menu at (x, y). */
   onContextMenu: (path: string, x: number, y: number) => void;
+  /** Fired when a tab drag starts (true) / ends (false) — drives the pane edge
+   * drop-zones for drag-to-split. */
+  onDragStateChange: (active: boolean) => void;
   /** Whether this pane is "linked" (follows notes opened elsewhere). */
   linked: boolean;
   onToggleLink: () => void;
@@ -31,7 +34,7 @@ interface Props {
 // A tab drag carries "<paneId>\n<path>" under this private MIME type.
 const TAB_MIME = "application/x-basalt-tab";
 
-export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onTogglePin, onTabDrop, onContextMenu, linked, onToggleLink, stacked, onToggleStacked }: Props) {
+export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onTogglePin, onTabDrop, onContextMenu, onDragStateChange, linked, onToggleLink, stacked, onToggleStacked }: Props) {
   // Index the drop indicator sits before (null = none, tabs.length = at end).
   const [dropAt, setDropAt] = useState<number | null>(null);
 
@@ -80,7 +83,9 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
             // custom MIME type — a text/plain payload keeps it a valid drag.
             e.dataTransfer.setData("text/plain", t.name);
             e.dataTransfer.effectAllowed = "move";
+            onDragStateChange(true);
           }}
+          onDragEnd={() => onDragStateChange(false)}
           onDragOver={(e) => {
             if (!e.dataTransfer.types.includes(TAB_MIME)) return;
             e.preventDefault();
