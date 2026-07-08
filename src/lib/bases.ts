@@ -196,11 +196,13 @@ export function parseBase(text: string): BaseDef | null {
 }
 
 /** Rebuild the plain `views` array Basalt writes. Only the keys in Obsidian's
- * documented .base view schema are written from the model; `groupBy` and
- * anything else round-trips through each view's `raw`. Obsidian has no per-view
- * `sort` key, so we never emit one (a legacy Basalt `sort` survives via raw).
- * A nested/unchanged filter is left in raw verbatim — only a simple string
- * filter (the only kind the editor edits) is re-written. */
+ * documented .base view schema (help.obsidian.md/bases/syntax) are written from
+ * the model — `type`, `name`, `limit`, `order`, `image`, `groupBy`, and a
+ * simple string `filters`; everything else round-trips through each view's
+ * `raw`. Obsidian documents no per-view `sort` key, so we never emit one (a
+ * legacy Basalt `sort` survives via raw). A nested/unchanged filter is left in
+ * raw verbatim — only a simple string filter (the only kind the editor edits)
+ * is re-written. */
 function buildViews(def: BaseDef): Record<string, unknown>[] {
   const put = (o: Record<string, unknown>, k: string, v: unknown) => {
     if (v === undefined || v === null) delete o[k];
@@ -213,6 +215,8 @@ function buildViews(def: BaseDef): Record<string, unknown>[] {
     put(o, "limit", v.limit);
     put(o, "order", v.order && v.order.length ? v.order : undefined);
     put(o, "image", v.image);
+    // groupBy: { property, direction } — the documented Obsidian shape.
+    put(o, "groupBy", v.groupBy ? { property: v.groupBy.property, direction: v.groupBy.direction } : undefined);
     // filters: rewrite only when it's a simple string (editable); a nested
     // and/or/not tree stays as raw (re-serializing the parsed FilterNode could
     // drop shapes filterNode() didn't model).

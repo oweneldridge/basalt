@@ -32,7 +32,13 @@ const canvasContent = JSON.stringify({
   ],
   edges: [],
 });
-const files = new Map<string, string>([[CANVAS_PATH, canvasContent]]);
+// A .base attachment fixture (for exercising the Bases view + editor).
+const BASE_PATH = `${VAULT}/Notes.base`;
+const baseContent = "views:\n  - type: table\n    name: All notes\n    order:\n      - file.name\n";
+const files = new Map<string, string>([
+  [CANVAS_PATH, canvasContent],
+  [BASE_PATH, baseContent],
+]);
 
 export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const a = args ?? {};
@@ -64,7 +70,10 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
     case "read_obsidian_config":
       return ok(config);
     case "list_attachments":
-      return ok([{ path: CANVAS_PATH, rel: "Board.canvas", name: "Board.canvas", mtime: now, ctime: now, size: canvasContent.length }] as Attachment[]);
+      return ok([
+        { path: CANVAS_PATH, rel: "Board.canvas", name: "Board.canvas", mtime: now, ctime: now, size: canvasContent.length },
+        { path: BASE_PATH, rel: "Notes.base", name: "Notes.base", mtime: now, ctime: now, size: baseContent.length },
+      ] as Attachment[]);
     case "read_obsidian_bookmarks":
     case "list_css_snippets":
     case "list_plugins":
