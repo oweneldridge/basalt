@@ -59,6 +59,7 @@ import {
   saveEnabled,
   emitVaultEvent,
   emitWorkspaceEvent,
+  pluginRightViews,
   type HostDeps,
 } from "./lib/plugins";
 import { listPlugins, writePluginData, listCssSnippets, deleteFolder, renameFolder, type PluginInfo, type CssSnippet } from "./lib/vault";
@@ -75,7 +76,7 @@ import { SideResizer } from "./components/SideResizer";
 import { StatusBar } from "./components/StatusBar";
 import { InlineTitle } from "./components/InlineTitle";
 import { EditorPane } from "./components/EditorPane";
-import { RightPanel, type RightTab } from "./components/RightPanel";
+import { RightPanel } from "./components/RightPanel";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { ReadingView } from "./components/ReadingView";
@@ -381,7 +382,7 @@ export default function App() {
   // User-assigned command hotkeys (global preference; see lib/hotkeys.ts).
   const [hotkeys, setHotkeys] = useState<Bindings>(() => loadBindings());
   useEffect(() => saveBindings(hotkeys), [hotkeys]);
-  const [rightTab, setRightTab] = useState<RightTab>("backlinks");
+  const [rightTab, setRightTab] = useState<string>("backlinks");
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   // Seeds the search palette when opened from a tag / search bookmark.
   const [searchSeed, setSearchSeed] = useState("");
@@ -3743,6 +3744,7 @@ export default function App() {
         <RightPanel
           tab={rightTab}
           onTab={setRightTab}
+          pluginViews={pluginRightViews()}
           noteName={activeName}
           backlinks={backlinks}
           unlinked={unlinked}

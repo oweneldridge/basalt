@@ -187,6 +187,19 @@ export function pluginRibbonItems(): RibbonItem[] {
   return [...ribbonItems];
 }
 
+// Plugin-contributed right-panel views. `mount` receives a container the plugin
+// fills; its optional return is a cleanup run when the view is hidden/unloaded.
+export interface PluginView {
+  pluginId: string;
+  id: string;
+  name: string;
+  mount: (container: HTMLElement) => (() => void) | void;
+}
+const pluginViews = new Map<string, PluginView>(); // keyed by view id
+export function pluginRightViews(): PluginView[] {
+  return [...pluginViews.values()];
+}
+
 // ---------------------------------------------------------------------------
 // Host.
 
@@ -318,6 +331,16 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       ctx.cleanups.push(() => {
         const i = ribbonItems.indexOf(entry);
         if (i >= 0) ribbonItems.splice(i, 1);
+      });
+      host.onRegistryChanged();
+    }
+    /** Register a custom right-panel view (shown as an extra tab). `mount` fills
+     * the given container and may return a cleanup run when the view hides. */
+    registerView(id: string, name: string, mount: (container: HTMLElement) => (() => void) | void) {
+      const view: PluginView = { pluginId: ctx.info.id, id, name, mount };
+      pluginViews.set(id, view);
+      ctx.cleanups.push(() => {
+        if (pluginViews.get(id) === view) pluginViews.delete(id);
       });
       host.onRegistryChanged();
     }

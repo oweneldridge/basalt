@@ -2409,3 +2409,6 @@ button.primary:hover {
 .prop-del:hover { color: var(--danger); }
 .prop-add { display: flex; gap: 6px; margin-top: 4px; }
 .prop-add-btn { border: 1px solid var(--border); background: var(--bg); color: var(--text-muted); border-radius: 5px; padding: 0 8px; cursor: pointer; }
+
+/* Plugin-registered right-panel view */
+.plugin-view-mount { padding: 8px; font-size: 13px; color: var(--text); }
