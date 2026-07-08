@@ -83,11 +83,14 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
       return ok([]);
     case "read_image":
       return ok("");
+    case "write_attachment": {
+      const name = String(a.name);
+      return ok({ path: `${VAULT}/${name}`, rel: name, name, mtime: now, ctime: now, size: 0 });
+    }
     // Fire-and-forget / no-op side effects.
     case "start_watching":
     case "debug_log":
     case "write_plugin_data":
-    case "write_attachment":
     case "create_folder":
     case "delete_note":
     case "delete_folder":
