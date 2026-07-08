@@ -27,6 +27,27 @@ jobs:
       - name: Unit tests
         run: npm test
 
+  e2e:
+    name: E2E (full-app UI, mocked backend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run e2e (drives real App against mocked Tauri IPC)
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
   rust:
     name: Rust (clippy + build)
     runs-on: ubuntu-latest
