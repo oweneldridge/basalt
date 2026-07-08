@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCanvas, serializeCanvas, canvasBounds, canvasColor } from "./canvas";
+import { parseCanvas, serializeCanvas, canvasBounds, canvasColor, rewriteCanvasFileRefs } from "./canvas";
 
 describe("serializeCanvas", () => {
   it("round-trips parse → serialize → parse", () => {
@@ -197,5 +197,54 @@ describe("canvasBounds / canvasColor", () => {
       expect(typeof out).toBe("string");
       expect(out).toBe("#fallback");
     }
+  });
+});
+
+describe("rewriteCanvasFileRefs", () => {
+  const canvas = JSON.stringify({
+    nodes: [
+      { id: "a", type: "file", file: "Notes/Old.md", x: 0, y: 0, width: 200, height: 100 },
+      { id: "b", type: "file", file: "Notes/Old.md", subpath: "#Heading", x: 0, y: 0, width: 200, height: 100 },
+      { id: "c", type: "text", text: "hi", x: 0, y: 0, width: 100, height: 60 },
+      { id: "d", type: "file", file: "Other.md", x: 0, y: 0, width: 100, height: 60 },
+    ],
+    edges: [],
+  });
+  it("remaps matching file nodes and preserves subpath + other nodes", () => {
+    const out = rewriteCanvasFileRefs(canvas, new Map([["Notes/Old.md", "Archive/New.md"]]));
+    expect(out).not.toBeNull();
+    const d = parseCanvas(out!)!;
+    const files = d.nodes.filter((n) => n.type === "file");
+    expect(files.map((n) => (n as { file: string }).file)).toEqual(["Archive/New.md", "Archive/New.md", "Other.md"]);
+    expect((files[1] as { subpath?: string }).subpath).toBe("#Heading"); // subpath kept
+  });
+  it("returns null when nothing matches", () => {
+    expect(rewriteCanvasFileRefs(canvas, new Map([["Nope.md", "X.md"]]))).toBeNull();
+    expect(rewriteCanvasFileRefs("not json", new Map([["a", "b"]]))).toBeNull();
+  });
+  it("matches case-insensitively as a fallback (case-only divergence)", () => {
+    const c = JSON.stringify({ nodes: [{ id: "a", type: "file", file: "notes/old.md", x: 0, y: 0, width: 1, height: 1 }], edges: [] });
+    const out = rewriteCanvasFileRefs(c, new Map([["Notes/Old.md", "Notes/New.md"]]));
+    expect(out).not.toBeNull();
+    expect(parseCanvas(out!)!.nodes.filter((n) => n.type === "file").map((n) => (n as { file: string }).file)).toEqual(["Notes/New.md"]);
+  });
+});
+
+describe("rewriteCanvasFileRefs — minimal, non-destructive", () => {
+  it("preserves fractional geometry and unmodeled fields (no rounding / loss)", () => {
+    const raw = JSON.stringify({
+      nodes: [
+        { id: "a", type: "file", file: "Old.md", x: 10.7, y: -3.2, width: 200.9, height: 100.1, styleAttributes: { z: 1 } },
+      ],
+      edges: [],
+      metadata: { custom: true },
+    });
+    const out = rewriteCanvasFileRefs(raw, new Map([["Old.md", "New.md"]]))!;
+    const o = JSON.parse(out);
+    expect(o.nodes[0].file).toBe("New.md");
+    expect(o.nodes[0].x).toBe(10.7); // NOT rounded
+    expect(o.nodes[0].height).toBe(100.1);
+    expect(o.nodes[0].styleAttributes).toEqual({ z: 1 }); // unmodeled field kept
+    expect(o.metadata).toEqual({ custom: true }); // top-level unmodeled key kept
   });
 });

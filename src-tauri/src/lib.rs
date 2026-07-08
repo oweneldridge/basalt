@@ -175,20 +175,41 @@ fn to_lf(s: &str) -> String {
     }
 }
 
-/// The dominant line ending of an existing file (`"\r\n"` vs `"\n"`), read
-/// cheaply from a prefix. LF when the file is absent, has no break in the
-/// prefix, or is unreadable — so new notes are created LF (Obsidian's default).
+/// The dominant line ending of an existing file (`"\r\n"` vs `"\n"`), read from
+/// a prefix and decided by MAJORITY (so a lone CRLF/LF first line, or a very
+/// long first line, doesn't flip the whole file's convention). LF when the file
+/// is absent, has no break in the prefix, or is unreadable — so new notes are
+/// created LF (Obsidian's default).
 fn existing_eol(path: &Path) -> &'static str {
     use std::io::Read;
     let Ok(mut f) = fs::File::open(path) else {
         return "\n";
     };
-    let mut buf = [0u8; 8192];
+    let mut buf = vec![0u8; 65536];
     let n = f.read(&mut buf).unwrap_or(0);
     let bytes = &buf[..n];
-    match bytes.iter().position(|&b| b == b'\n') {
-        Some(i) if i > 0 && bytes[i - 1] == b'\r' => "\r\n",
-        _ => "\n",
+    let lf = bytes.iter().filter(|&&b| b == b'\n').count();
+    if lf == 0 {
+        return "\n";
+    }
+    let crlf = bytes.windows(2).filter(|w| w == b"\r\n").count();
+    let lone_lf = lf - crlf;
+    if crlf > 0 && crlf >= lone_lf {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+/// Re-apply a file's existing line endings to editor output (which is always
+/// LF): CRLF files round-trip CRLF, new/LF files stay LF. Shared by the note,
+/// canvas, and base write paths.
+fn preserve_eol(resolved: &Path, content: &str) -> Vec<u8> {
+    let lf = to_lf(content);
+    if existing_eol(resolved) == "\r\n" {
+        lf.replace('\n', "\r\n").into_bytes()
+    } else {
+        lf.into_bytes()
     }
 }
 
@@ -417,15 +438,8 @@ fn write_note(path: String, content: String, window: tauri::Window, state: State
         ));
     }
     // Preserve the file's existing line endings: the editor works in LF, so a
-    // CRLF note would otherwise be silently rewritten to LF on first save. Read
-    // the current EOL and re-apply it (new/LF files stay LF).
-    let lf = to_lf(&content);
-    let out = if existing_eol(&resolved) == "\r\n" {
-        lf.replace('\n', "\r\n")
-    } else {
-        lf
-    };
-    atomic_write(&resolved, out.as_bytes())
+    // CRLF note would otherwise be silently rewritten to LF on first save.
+    atomic_write(&resolved, &preserve_eol(&resolved, &content))
 }
 
 /// Atomically write a `.canvas` file (the editable JSON Canvas), only within the
@@ -455,7 +469,9 @@ fn write_canvas(
     if !resolved.is_file() {
         return Err("canvas file does not exist".into());
     }
-    atomic_write(&resolved, content.as_bytes())
+    // Preserve the file's line endings like write_note (canvas/base are
+    // normally LF, but never silently flip them).
+    atomic_write(&resolved, &preserve_eol(&resolved, &content))
 }
 
 /// Atomically write a `.base` file (the editable Bases definition YAML), only
@@ -480,7 +496,9 @@ fn write_base(
     if !resolved.is_file() {
         return Err("base file does not exist".into());
     }
-    atomic_write(&resolved, content.as_bytes())
+    // Preserve the file's line endings like write_note (canvas/base are
+    // normally LF, but never silently flip them).
+    atomic_write(&resolved, &preserve_eol(&resolved, &content))
 }
 
 /// Build `<root>/<name>.md` from a folder-qualified note name, sanitizing each
@@ -1719,14 +1737,20 @@ mod tests {
         assert_eq!(existing_eol(&crlf), "\r\n");
         assert_eq!(existing_eol(&lf), "\n");
         assert_eq!(existing_eol(&dir.join("absent.md")), "\n"); // new note → LF
+        // Majority wins: a lone CRLF first line in an otherwise-LF file is LF.
+        let mixed = dir.join("mixed.md");
+        fs::write(&mixed, b"first\r\ntwo\nthree\nfour").unwrap();
+        assert_eq!(existing_eol(&mixed), "\n"); // 1 CRLF vs 2 lone LF → LF
 
-        // Simulate write_note's re-apply: LF editor content -> preserved on disk.
+        // preserve_eol re-applies the file's EOL to LF editor output.
         let edited = "one\ntwo\nthree\nfour"; // what the editor (always LF) produces
-        let out = if existing_eol(&crlf) == "\r\n" { to_lf(edited).replace('\n', "\r\n") } else { to_lf(edited).into() };
-        fs::write(&crlf, out.as_bytes()).unwrap();
+        fs::write(&crlf, preserve_eol(&crlf, edited)).unwrap();
         let back = fs::read_to_string(&crlf).unwrap();
         assert!(back.contains("\r\n") && !back.contains("\n\n"), "CRLF preserved: {back:?}");
         assert_eq!(to_lf(&back), edited); // and read_note normalizes it back to LF
+        // An LF file stays LF.
+        fs::write(&lf, preserve_eol(&lf, edited)).unwrap();
+        assert!(!fs::read_to_string(&lf).unwrap().contains('\r'));
         let _ = fs::remove_dir_all(&dir);
     }
 

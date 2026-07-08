@@ -102,6 +102,7 @@ import {
   type ThemeMode,
 } from "./lib/theme";
 import { linkTargetForFormat, rewriteLinks, folderMoveMapper } from "./lib/rename";
+import { rewriteCanvasFileRefs } from "./lib/canvas";
 import { looksLikeAttachment, resolveAttachment } from "./lib/attachments";
 import { fillTemplate, formatMoment, UnsupportedTokenError } from "./lib/daily";
 import type { LinkFormat } from "./lib/rename";
@@ -2449,6 +2450,38 @@ export default function App() {
    * 5. rewrite each affected source READ FROM DISK (memory may lag external
    *    edits; read_note also refuses non-UTF8 instead of corrupting it), with
    *    per-source failure domains. */
+  // Rewrite canvas file-node references to renamed/moved notes (relMap:
+  // oldRel → newRel) across `canvases` (post-move paths), then reconcile any
+  // open canvas viewer so its editor isn't left showing stale refs. Reads DISK
+  // (authoritative — callers flushAll first, so pending canvas edits are saved).
+  const rewriteCanvasRefs = useCallback(
+    async (canvases: { path: string; rel: string }[], relMap: Map<string, string>): Promise<string[]> => {
+      const failed: string[] = [];
+      if (relMap.size === 0) return failed;
+      for (const c of canvases) {
+        // Never overwrite a canvas with UNSAVED edits (a failed flush leaves it
+        // pending): reading disk would miss them and the write would clobber.
+        // Its refs stay dangling until the user saves — no data loss.
+        if (pending.current.has(c.path) || conflictsRef.current.has(c.path)) continue;
+        try {
+          const json = await readNote(c.path);
+          const next = rewriteCanvasFileRefs(json, relMap);
+          if (next === null) continue;
+          await writeCanvas(c.path, next);
+          rememberSelfWrite(c.rel, next);
+          for (const p of Object.values(panesRef.current)) {
+            if (p.active === c.path) patchPane(p.id, { doc: next });
+          }
+        } catch (e) {
+          failed.push(c.rel);
+          console.error("[basalt] canvas ref rewrite failed", c.rel, e);
+        }
+      }
+      return failed;
+    },
+    [rememberSelfWrite, patchPane],
+  );
+
   const handleRenameNote = useCallback(
     async (oldPath: string, newName: string) => {
       const root = vaultRef.current;
@@ -2608,14 +2641,23 @@ export default function App() {
             if (p.active && byPath.has(p.active)) patchPane(p.id, { doc: byPath.get(p.active)!.content });
           }
         }
+        // Repoint canvas file-node embeds of the renamed note (canvases aren't
+        // in the note link-rewrite loop above; without this they'd dangle).
+        const canvasFails = await rewriteCanvasRefs(
+          attachmentsRef.current
+            .filter((a) => /\.canvas$/i.test(a.path))
+            .map((a) => ({ path: a.path, rel: a.rel })),
+          new Map([[oldNote.rel, newRel]]),
+        );
+        const allFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
         setSaveError(
-          failures.length > 0 ? `Renamed, but link updates failed in: ${failures.join(", ")}` : null,
+          allFails.length > 0 ? `Renamed, but link updates failed in: ${allFails.join(", ")}` : null,
         );
       } catch (e) {
         setSaveError(`Couldn't rename: ${e}`);
       }
     },
-    [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane],
+    [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs],
   );
 
   // Delete a whole folder to the vault trash (recoverable). All notes under it
@@ -2887,11 +2929,24 @@ export default function App() {
       );
       setPanes((ps) => Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, repoint(pane)])));
       bumpStructure();
+
+      // Repoint canvas file-node embeds of every moved note AND moved
+      // attachment (canvas file-nodes can embed images/PDFs/nested canvases, not
+      // just notes), across ALL canvases (moved ones now at their new path,
+      // unmoved at their original path). After the pane repoint so an open moved
+      // canvas reconciles at its new path.
+      const moveRelMap = new Map([...movingNotes, ...movingAtts].map((f) => [f.rel, swap(f.rel)]));
+      const postCanvases = preAtts.map((a) =>
+        a.rel.startsWith(oldPrefix) ? { path: `${root}/${swap(a.rel)}`, rel: swap(a.rel) } : { path: a.path, rel: a.rel },
+      ).filter((a) => /\.canvas$/i.test(a.path));
+      const canvasFails = await rewriteCanvasRefs(postCanvases, moveRelMap);
+
+      const folderFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
       setSaveError(
-        failures.length > 0 ? `Folder moved, but link updates failed in: ${failures.join(", ")}` : null,
+        folderFails.length > 0 ? `Folder moved, but link updates failed in: ${folderFails.join(", ")}` : null,
       );
     },
-    [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat],
+    [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs],
   );
 
   // Move a note into a folder (rel, "" = root) by renaming — reuses the
