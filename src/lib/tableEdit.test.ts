@@ -51,4 +51,12 @@ describe("tableEdit", () => {
     expect(out).toContain("x \\| y"); // re-escaped on serialize
     expect(parseTable(out)!.rows[0][0]).toBe("x | y"); // survives a round-trip
   });
+  it("preserves extra cells in over-wide rows instead of deleting them", () => {
+    const t = parseTable("| a | b |\n| --- | --- |\n| 1 | 2 | 3 |")!;
+    expect(t.header).toEqual(["a", "b", ""]); // promoted to 3 columns
+    expect(t.rows[0]).toEqual(["1", "2", "3"]); // the extra "3" survives parse
+    const out = serializeTable(insertRow(t, 1));
+    expect(out).toContain("3"); // and survives a structural edit
+    expect(parseTable(out)!.rows.find((r) => r.includes("3"))).toBeTruthy();
+  });
 });
