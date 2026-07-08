@@ -2188,3 +2188,33 @@ button.primary:hover {
 .ws-name:hover { background: var(--hover, rgba(127,127,127,0.12)); }
 .ws-delete { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px 6px; }
 .ws-delete:hover { color: var(--danger, #c0392b); }
+
+/* ------- Interactive table editor controls ------- */
+.cm-md-table-wrap { position: relative; }
+.cm-table-cell { cursor: text; }
+.cm-md-table th { position: relative; }
+.cm-table-colbar, .cm-table-rowbar {
+  position: absolute;
+  display: none;
+  gap: 1px;
+  z-index: 3;
+}
+.cm-table-colbar { top: -9px; right: 2px; }
+.cm-table-rowbar { top: 50%; right: -14px; transform: translateY(-50%); flex-direction: column; }
+.cm-md-table th:hover .cm-table-colbar,
+.cm-md-table tr:hover .cm-table-rowbar { display: inline-flex; }
+.cm-table-ctrl {
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text-muted);
+  border-radius: 4px;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 3px;
+  cursor: pointer;
+}
+.cm-table-ctrl:hover { color: var(--text); border-color: var(--accent); }
+.cm-table-delcol:hover, .cm-table-delrow:hover { color: var(--danger); border-color: var(--danger); }
+.cm-table-foot { display: none; gap: 6px; padding: 4px 0 2px; }
+.cm-md-table-wrap:hover .cm-table-foot { display: flex; }
+.cm-table-foot .cm-table-ctrl { font-size: 11px; padding: 3px 8px; }
