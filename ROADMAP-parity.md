@@ -13,7 +13,7 @@ Ordered by leverage (impact ÷ effort). Checked items are done.
 - [x] **`addStatusBarItem`** + **`addRibbonIcon`** *(done)*.
 - [ ] **Custom view registration** (`registerView`) — add side-panel view types
       (compounds the layout gap).
-- [ ] **Metadata cache API** — parsed tags/links/frontmatter/headings for a note.
+- [x] **Metadata cache API** — getFileCache(tags/links/headings/frontmatter). *(done)*
 - [ ] **Thicker vault API** — delete/rename/folder ops/attachment access.
 
 ## UX/UI depth
@@ -23,8 +23,8 @@ Ordered by leverage (impact ÷ effort). Checked items are done.
 - [x] **Tab right-click menu** (Close / Close others / to the right / Pin / Split). *(done)*
 - [x] **File context menu depth** — Open to the right, Make a copy, Copy path. *(done; Move to… still open)*
 - [x] **File tree** — reveal-active-file + collapse-all *(done)*; folders-first already default. Multi-select + folder drag-to-reparent still open.
-- [ ] **Inline title** — click the editor's title to rename.
-- [ ] **Drag a tree note into the editor** to insert a link.
+- [x] **Inline title** — editable filename above the editor. *(done)*
+- [x] **Drag a tree note into the editor** → inserts `[[wikilink]]`. *(done)*
 - [ ] **Properties panel** — dedicated add/edit-property UI (inline render exists).
 - [ ] Appearance: font / font-size / accent settings; rebind built-in shortcuts;
       persist UI zoom.
