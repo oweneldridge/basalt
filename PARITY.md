@@ -34,6 +34,29 @@ state):
 Each fix landed with regression tests; the canvas/CRLF write-path changes went
 through an adversarial data-safety review.
 
+### Depth & UX gaps closed (2026-07-08)
+
+A follow-up pass closed ~17 more MEDIUM/LOW gaps from the list below:
+
+- **Editor/reading:** interactive task checkboxes in reading mode; `%%comments%%`
+  hidden in Live Preview; per-type **callout icons** (LP + reading); hover
+  page-preview on markdown-style links.
+- **Links/backlinks/tags:** quick-switcher **"Create ‹query›"** + `[[` create-new
+  entry; **backlinks grouped** by source file (collapsible); **"Link" / "Link
+  all"** unlinked mentions; unresolved outgoing links clickable; **nested tag
+  hierarchy** with roll-up counts.
+- **Files/workspace:** **file-explorer sort** (name/modified/created); drag a
+  note to the vault-name header to move it to **root**; sidebar collapse state
+  persists.
+- **Misc:** **random-note** command; status bar shows **character count**;
+  templates honor the vault's `dateFormat`/`timeFormat`; CSS snippets also read
+  `.obsidian/snippets`.
+
+Still open (larger): list/indent folding, raw HTML in Live Preview, bookmarks
+create/edit, search OR/`line:` operators, graph filters/colors, canvas node-
+interaction depth, Bases editing depth, interactive table editor, Vim mode,
+linked panes, stacked tabs, named workspaces, slides, audio recorder, RTL.
+
 ## Scored matrix
 
 | Dimension | ✅ Full | 🟡 Partial | ❌ Missing | ⭐ Bonus |
