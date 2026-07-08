@@ -3828,7 +3828,11 @@ export default function App() {
             >
               {(() => {
                 const rel = notes.find((n) => n.path === fileMenu.path)?.rel;
-                return rel && bookmarks.some((b) => b.type === "file" && b.path === rel) ? "Remove bookmark" : "Bookmark";
+                // Only a WHOLE-file bookmark (no subpath) counts — a heading/block
+                // bookmark of the same file must not flip the label.
+                return rel && bookmarks.some((b) => b.type === "file" && b.path === rel && !b.subpath)
+                  ? "Remove bookmark"
+                  : "Bookmark";
               })()}
             </button>
             <button

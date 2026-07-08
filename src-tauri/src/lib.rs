@@ -1352,11 +1352,20 @@ fn toggle_file_bookmark(
         .to_string();
 
     let bpath = root.join(".obsidian/bookmarks.json");
-    let existing: serde_json::Value = fs::read_to_string(&bpath)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .filter(serde_json::Value::is_object)
-        .unwrap_or_else(|| serde_json::json!({ "items": [] }));
+    // An ABSENT or empty file starts fresh; a file that exists but doesn't parse
+    // to a JSON object is REFUSED (never silently clobber the user's data).
+    let existing: serde_json::Value = match fs::read_to_string(&bpath) {
+        Err(_) => serde_json::json!({ "items": [] }),
+        Ok(s) if s.trim().is_empty() => serde_json::json!({ "items": [] }),
+        Ok(s) => {
+            let parsed: serde_json::Value = serde_json::from_str(&s)
+                .map_err(|e| format!("bookmarks.json is malformed ({e}); refusing to overwrite it"))?;
+            if !parsed.is_object() {
+                return Err("bookmarks.json isn't a JSON object; refusing to overwrite it".into());
+            }
+            parsed
+        }
+    };
 
     let (v, now_bookmarked) = toggle_bookmark_in_value(existing, &rel, &title)?;
 
@@ -1367,9 +1376,42 @@ fn toggle_file_bookmark(
     Ok(now_bookmarked)
 }
 
-/// Pure toggle: add or remove a top-level `{type:"file", path}` entry in a
-/// bookmarks Value, leaving every group, nested item, and unknown field intact.
-/// Returns the updated Value and whether the file is now bookmarked.
+/// A WHOLE-FILE bookmark for `rel` — `{type:"file", path:rel}` with NO subpath.
+/// Heading/block bookmarks are `{type:"file", path, subpath:"#…"}` and must be
+/// left alone (toggling the file must not delete the user's heading bookmark).
+fn is_whole_file_bookmark(it: &serde_json::Value, rel: &str) -> bool {
+    it.get("type").and_then(serde_json::Value::as_str) == Some("file")
+        && it.get("path").and_then(serde_json::Value::as_str) == Some(rel)
+        && it
+            .get("subpath")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(str::is_empty)
+}
+
+/// Remove the first whole-file bookmark for `rel` from an items array, recursing
+/// into groups. Returns whether one was removed.
+fn remove_file_bookmark(items: &mut Vec<serde_json::Value>, rel: &str) -> bool {
+    if let Some(i) = items.iter().position(|it| is_whole_file_bookmark(it, rel)) {
+        items.remove(i);
+        return true;
+    }
+    for it in items.iter_mut() {
+        if it.get("type").and_then(serde_json::Value::as_str) == Some("group") {
+            if let Some(sub) = it.get_mut("items").and_then(serde_json::Value::as_array_mut) {
+                if remove_file_bookmark(sub, rel) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Pure toggle: remove the whole-file bookmark for `rel` from ANYWHERE in the
+/// tree (top level or nested in a group) if present, else add one at the top
+/// level. Groups, nested items, heading/block bookmarks, and unknown fields are
+/// all preserved. Returns the updated Value and whether the file is now
+/// bookmarked.
 fn toggle_bookmark_in_value(
     mut v: serde_json::Value,
     rel: &str,
@@ -1381,12 +1423,7 @@ fn toggle_bookmark_in_value(
         *items = serde_json::json!([]);
     }
     let arr = items.as_array_mut().ok_or("bookmarks: items not an array")?;
-    let pos = arr.iter().position(|it| {
-        it.get("type").and_then(serde_json::Value::as_str) == Some("file")
-            && it.get("path").and_then(serde_json::Value::as_str) == Some(rel)
-    });
-    let now_bookmarked = if let Some(i) = pos {
-        arr.remove(i);
+    let now_bookmarked = if remove_file_bookmark(arr, rel) {
         false
     } else {
         arr.push(serde_json::json!({ "type": "file", "path": rel, "title": title }));
@@ -1850,6 +1887,41 @@ mod tests {
         let (v, on) = toggle_bookmark_in_value(serde_json::json!({}), "A.md", "A").unwrap();
         assert!(on);
         assert_eq!(v["items"][0]["path"], "A.md");
+    }
+
+    #[test]
+    fn bookmark_toggle_removes_a_group_nested_file_no_duplicate() {
+        // A file bookmarked INSIDE a group: toggling must remove it from the
+        // group (not append a duplicate at top level).
+        let src = serde_json::json!({
+            "items": [{ "type": "group", "title": "Dash", "items": [
+                { "type": "file", "path": "Dashboard.md", "title": "Home" }
+            ]}]
+        });
+        let (v, on) = toggle_bookmark_in_value(src, "Dashboard.md", "Dashboard").unwrap();
+        assert!(!on); // now un-bookmarked
+        assert_eq!(v["items"][0]["items"].as_array().unwrap().len(), 0); // removed from the group
+        // No stray top-level duplicate was created.
+        assert!(v["items"].as_array().unwrap().iter().all(|it| it["type"] != "file"));
+    }
+
+    #[test]
+    fn bookmark_toggle_leaves_heading_and_block_bookmarks_alone() {
+        // Obsidian stores heading/block bookmarks as type:"file" + subpath.
+        // Toggling the WHOLE file must not delete them.
+        let src = serde_json::json!({
+            "items": [
+                { "type": "file", "path": "Note.md", "subpath": "#Intro", "title": "Intro" },
+                { "type": "file", "path": "Note.md", "subpath": "#^abc123" }
+            ]
+        });
+        // No whole-file bookmark exists → toggle ADDS one, leaving both subpath entries.
+        let (v, on) = toggle_bookmark_in_value(src, "Note.md", "Note").unwrap();
+        assert!(on);
+        let items = v["items"].as_array().unwrap();
+        assert_eq!(items.len(), 3); // both heading/block kept + one whole-file added
+        assert!(items.iter().any(|it| it["subpath"] == "#Intro"));
+        assert!(items.iter().any(|it| it["subpath"] == "#^abc123"));
     }
 
     #[test]
