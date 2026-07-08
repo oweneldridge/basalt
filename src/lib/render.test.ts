@@ -109,7 +109,7 @@ describe("blocks", () => {
     expect(renderMarkdown("> quoted")).toBe("<blockquote><p>quoted</p></blockquote>");
     const c = renderMarkdown("> [!warning] Heads up\n> body text");
     expect(c).toContain('<div class="md-callout md-callout-warning">');
-    expect(c).toContain('<div class="md-callout-title">Heads up</div>');
+    expect(c).toContain('<div class="md-callout-title"><span class="md-callout-icon">⚠️</span>Heads up</div>');
     expect(c).toContain("body text");
   });
   it("table", () => {

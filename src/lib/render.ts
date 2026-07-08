@@ -11,6 +11,7 @@
 // semantics so Reading mode and the editor agree on what a link/tag is.
 import { parseMarkdownLink, targetNoteName, proseMask } from "./markdown";
 import { parseFm } from "./frontmatter";
+import { calloutIcon } from "./callouticons";
 
 export function escapeHtml(s: string): string {
   return s
@@ -399,13 +400,14 @@ export function renderMarkdown(src: string): string {
         const fold = callout[2]; // "", "+" (foldable-open) or "-" (foldable-closed)
         const titleText = callout[3].trim() || callout[1];
         const bodyMd = inner.slice(1).join("\n");
-        const title = `<div class="md-callout-title">${renderInline(titleText)}</div>`;
+        const icon = `<span class="md-callout-icon">${calloutIcon(type)}</span>`;
+        const title = `<div class="md-callout-title">${icon}${renderInline(titleText)}</div>`;
         const body = bodyMd.trim() ? `<div class="md-callout-body">${renderMarkdown(bodyMd)}</div>` : "";
         const cls = `md-callout md-callout-${escapeHtml(type)}`;
         if (fold) {
           // Foldable → native <details>; `-` starts collapsed, `+` open.
           parts.push(
-            `<details class="${cls} md-callout-foldable"${fold === "-" ? "" : " open"}><summary class="md-callout-title">${renderInline(
+            `<details class="${cls} md-callout-foldable"${fold === "-" ? "" : " open"}><summary class="md-callout-title">${icon}${renderInline(
               titleText,
             )}</summary>${body}</details>`,
           );
