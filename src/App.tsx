@@ -66,6 +66,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Ribbon } from "./components/Ribbon";
 import { WorkspacesModal } from "./components/WorkspacesModal";
 import { StackedTabs } from "./components/StackedTabs";
+import { SlidesView } from "./components/SlidesView";
 import { SideResizer } from "./components/SideResizer";
 import { EditorPane } from "./components/EditorPane";
 import { RightPanel, type RightTab } from "./components/RightPanel";
@@ -342,6 +343,7 @@ export default function App() {
   const [notices, setNotices] = useState<{ id: number; msg: string }[]>([]);
   const noticeSeq = useRef(0);
   const [graphOpen, setGraphOpen] = useState(false);
+  const [slidesOpen, setSlidesOpen] = useState(false);
   const [graphMode, setGraphMode] = useState<"global" | "local">("global");
   const [sourceMode, setSourceMode] = useState(false);
   // Reading view: a rendered, read-only HTML view (vs the editable CM6 panes).
@@ -3163,6 +3165,7 @@ export default function App() {
         if (all.length) void openNoteByPath(all[Math.floor(Math.random() * all.length)].path);
       } },
       { id: "daily-note", label: "Open today's daily note", hint: "creates it from your template if missing", run: () => void openDailyNote() },
+      { id: "slides", label: "Start presentation", hint: "present the active note as `---`-separated slides", run: () => { const p = focusedIdRef.current ? panesRef.current[focusedIdRef.current] : null; if (p?.active && isMarkdownPath(p.active)) setSlidesOpen(true); } },
       { id: "workspaces", label: "Manage workspaces…", hint: "save / switch named layouts", run: () => setModal("workspaces") },
       { id: "source-mode", label: "Toggle Source mode", hint: "raw Markdown ↔ Live Preview", run: toggleSourceMode },
       { id: "reading-mode", label: "Toggle Reading view", hint: "rendered, read-only ↔ edit", run: toggleReading },
@@ -3911,6 +3914,25 @@ export default function App() {
           onClose={handleCloseGraph}
         />
       )}
+      {slidesOpen &&
+        focusedPane?.active &&
+        (() => {
+          const srel = notes.find((n) => n.path === focusedPane.active)?.rel ?? "";
+          return (
+            <SlidesView
+              doc={focusedPane.doc}
+              selfRel={srel}
+              dark={dark}
+              onOpenInternal={(t) => {
+                setSlidesOpen(false);
+                void handleOpenWikilink(t);
+              }}
+              onOpenUrl={handleOpenUrl}
+              resolveImage={(target) => (vaultRef.current ? resolveImage(target, srel) : Promise.resolve(null))}
+              onClose={() => setSlidesOpen(false)}
+            />
+          );
+        })()}
     </div>
   );
 }
