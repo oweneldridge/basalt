@@ -22,6 +22,7 @@ import {
   writeBase,
   readObsidianConfig,
   readObsidianBookmarks,
+  toggleFileBookmark,
   exportFile,
   type Attachment,
   type Bookmark,
@@ -828,6 +829,16 @@ export default function App() {
     (id: string) => patchPane(id, { stacked: !panesRef.current[id]?.stacked }),
     [patchPane],
   );
+
+  // Bookmark / unbookmark a note (writes .obsidian/bookmarks.json), then refresh.
+  const toggleBookmark = useCallback(async (notePath: string) => {
+    try {
+      await toggleFileBookmark(notePath);
+      setBookmarks(await readObsidianBookmarks().catch(() => []));
+    } catch (e) {
+      setSaveError(`Couldn't update bookmark: ${e}`);
+    }
+  }, []);
 
   const closeTab = useCallback(
     async (id: string, path: string) => {
@@ -3223,6 +3234,7 @@ export default function App() {
       { id: "daily-note", label: "Open today's daily note", hint: "creates it from your template if missing", run: () => void openDailyNote() },
       { id: "slides", label: "Start presentation", hint: "present the active note as `---`-separated slides", run: () => { const p = focusedIdRef.current ? panesRef.current[focusedIdRef.current] : null; if (p?.active && isMarkdownPath(p.active)) setSlidesOpen(true); } },
       { id: "record-audio", label: "Record audio", hint: "record from the mic and embed it in the note", run: () => (recorderRef.current ? void stopRecording(true) : void startRecording()) },
+      { id: "toggle-bookmark", label: "Bookmark / unbookmark current note", hint: "add or remove this note in .obsidian/bookmarks.json", run: () => { const p = focusedIdRef.current ? panesRef.current[focusedIdRef.current] : null; if (p?.active && isMarkdownPath(p.active)) void toggleBookmark(p.active); } },
       { id: "workspaces", label: "Manage workspaces…", hint: "save / switch named layouts", run: () => setModal("workspaces") },
       { id: "source-mode", label: "Toggle Source mode", hint: "raw Markdown ↔ Live Preview", run: toggleSourceMode },
       { id: "reading-mode", label: "Toggle Reading view", hint: "rendered, read-only ↔ edit", run: toggleReading },
@@ -3805,6 +3817,19 @@ export default function App() {
               }}
             >
               Rename…
+            </button>
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const path = fileMenu.path;
+                setFileMenu(null);
+                void toggleBookmark(path);
+              }}
+            >
+              {(() => {
+                const rel = notes.find((n) => n.path === fileMenu.path)?.rel;
+                return rel && bookmarks.some((b) => b.type === "file" && b.path === rel) ? "Remove bookmark" : "Bookmark";
+              })()}
             </button>
             <button
               className="ctx-item"

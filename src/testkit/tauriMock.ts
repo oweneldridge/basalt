@@ -36,6 +36,7 @@ const canvasContent = JSON.stringify({
 // A .base attachment fixture (for exercising the Bases view + editor).
 const BASE_PATH = `${VAULT}/Notes.base`;
 const baseContent = "views:\n  - type: table\n    name: All notes\n    order:\n      - file.name\n";
+const bookmarks: { type: string; path?: string; title?: string }[] = [];
 const files = new Map<string, string>([
   [CANVAS_PATH, canvasContent],
   [BASE_PATH, baseContent],
@@ -76,6 +77,14 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
         { path: BASE_PATH, rel: "Notes.base", name: "Notes.base", mtime: now, ctime: now, size: baseContent.length },
       ] as Attachment[]);
     case "read_obsidian_bookmarks":
+      return ok(bookmarks.slice());
+    case "toggle_file_bookmark": {
+      const rel = String(a.path).replace(`${VAULT}/`, "");
+      const i = bookmarks.findIndex((b) => b.type === "file" && b.path === rel);
+      if (i !== -1) { bookmarks.splice(i, 1); return ok(false); }
+      bookmarks.push({ type: "file", path: rel, title: rel.replace(/\.md$/i, "") });
+      return ok(true);
+    }
     case "list_css_snippets":
     case "list_plugins":
     case "list_subfolders":

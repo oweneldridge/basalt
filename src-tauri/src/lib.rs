@@ -1327,6 +1327,74 @@ fn read_obsidian_bookmarks(window: tauri::Window, state: State<VaultState>) -> R
     Ok(out)
 }
 
+/// Toggle a FILE bookmark for `path` in `.obsidian/bookmarks.json`, returning
+/// the new state (true = now bookmarked). This is the ONE place Basalt writes
+/// into `.obsidian/` — done data-safely: the file is parsed as an opaque
+/// serde_json::Value so every group, nested item, and unknown field is
+/// preserved; only a top-level `{type:"file", path}` entry is added or removed,
+/// and the write is atomic (temp + fsync + rename) so a torn write can't corrupt
+/// the bookmarks Obsidian shares.
+#[tauri::command]
+fn toggle_file_bookmark(
+    path: String,
+    window: tauri::Window,
+    state: State<VaultState>,
+) -> Result<bool, String> {
+    let root = current_root(&state, window.label())?;
+    let resolved = ensure_in_vault(&root, &path)?;
+    let rel = rel_under(&root, &resolved)
+        .ok_or("path escapes vault")?
+        .replace('\\', "/");
+    let title = Path::new(&rel)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(rel.as_str())
+        .to_string();
+
+    let bpath = root.join(".obsidian/bookmarks.json");
+    let existing: serde_json::Value = fs::read_to_string(&bpath)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({ "items": [] }));
+
+    let (v, now_bookmarked) = toggle_bookmark_in_value(existing, &rel, &title)?;
+
+    fs::create_dir_all(root.join(".obsidian")).map_err(|e| format!("create .obsidian: {e}"))?;
+    let mut out = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
+    out.push('\n');
+    atomic_write(&bpath, out.as_bytes())?;
+    Ok(now_bookmarked)
+}
+
+/// Pure toggle: add or remove a top-level `{type:"file", path}` entry in a
+/// bookmarks Value, leaving every group, nested item, and unknown field intact.
+/// Returns the updated Value and whether the file is now bookmarked.
+fn toggle_bookmark_in_value(
+    mut v: serde_json::Value,
+    rel: &str,
+    title: &str,
+) -> Result<(serde_json::Value, bool), String> {
+    let obj = v.as_object_mut().ok_or("bookmarks: not an object")?;
+    let items = obj.entry("items").or_insert_with(|| serde_json::json!([]));
+    if !items.is_array() {
+        *items = serde_json::json!([]);
+    }
+    let arr = items.as_array_mut().ok_or("bookmarks: items not an array")?;
+    let pos = arr.iter().position(|it| {
+        it.get("type").and_then(serde_json::Value::as_str) == Some("file")
+            && it.get("path").and_then(serde_json::Value::as_str) == Some(rel)
+    });
+    let now_bookmarked = if let Some(i) = pos {
+        arr.remove(i);
+        false
+    } else {
+        arr.push(serde_json::json!({ "type": "file", "path": rel, "title": title }));
+        true
+    };
+    Ok((v, now_bookmarked))
+}
+
 /// Watch the open vault recursively. Markdown file changes emit `vault-changed`
 /// with `{path, rel}` per note; directory-level changes (folder rename/delete,
 /// which FSEvents reports only for the folder path) emit a payload-less
@@ -1732,6 +1800,7 @@ pub fn run() {
             write_attachment,
             read_obsidian_config,
             read_obsidian_bookmarks,
+            toggle_file_bookmark,
             export_file,
             start_watching,
             read_image,
@@ -1746,6 +1815,42 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bookmark_toggle_preserves_groups_and_unknown_fields() {
+        // A realistic bookmarks.json: a group with a nested file, plus a
+        // top-level unknown field the toggle must not drop.
+        let src = serde_json::json!({
+            "items": [
+                { "type": "group", "title": "Work", "items": [
+                    { "type": "file", "path": "Work/Todo.md", "title": "Todo" }
+                ]},
+                { "type": "search", "query": "tag:#idea" }
+            ],
+            "someUnknownSetting": true
+        });
+        // Add a new file bookmark.
+        let (v, on) = toggle_bookmark_in_value(src.clone(), "Notes/A.md", "A").unwrap();
+        assert!(on);
+        let items = v["items"].as_array().unwrap();
+        assert_eq!(items.len(), 3); // group + search preserved, one appended
+        assert_eq!(v["someUnknownSetting"], serde_json::json!(true)); // unknown field kept
+        // The group's nested file is untouched.
+        assert_eq!(items[0]["items"][0]["path"], "Work/Todo.md");
+        assert_eq!(items[2]["path"], "Notes/A.md");
+        // Toggling the same path again removes exactly that top-level entry.
+        let (v2, off) = toggle_bookmark_in_value(v, "Notes/A.md", "A").unwrap();
+        assert!(!off);
+        assert_eq!(v2["items"].as_array().unwrap().len(), 2);
+        assert_eq!(v2["someUnknownSetting"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn bookmark_toggle_seeds_missing_items() {
+        let (v, on) = toggle_bookmark_in_value(serde_json::json!({}), "A.md", "A").unwrap();
+        assert!(on);
+        assert_eq!(v["items"][0]["path"], "A.md");
+    }
 
     #[test]
     fn to_lf_normalizes_crlf_and_lone_cr() {
