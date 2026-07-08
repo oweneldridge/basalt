@@ -91,3 +91,17 @@ test("stacking a tab group spreads all open notes as columns", async ({ page }) 
   await page.locator(".tab-stack").click();
   await expect(page.locator(".stacked-col").nth(1).locator(".cm-content")).toContainText("STACKEDIT");
 });
+
+test("the status bar shows word count and a live cursor position", async ({ page }) => {
+  await page.evaluate(() => {
+    Object.keys(localStorage).filter((k) => k.includes("workspace")).forEach((k) => localStorage.removeItem(k));
+  });
+  await page.reload();
+  await expect(page.locator(".status-bar")).toBeVisible();
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  await expect(page.locator(".cm-editor")).toBeVisible();
+  await expect(page.locator(".status-bar")).toContainText("words");
+  await page.locator(".pane .cm-content").click();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(".status-bar")).toContainText(/Ln \d+, Col \d+/);
+});

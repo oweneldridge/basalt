@@ -71,6 +71,7 @@ import { WorkspacesModal } from "./components/WorkspacesModal";
 import { StackedTabs } from "./components/StackedTabs";
 import { SlidesView } from "./components/SlidesView";
 import { SideResizer } from "./components/SideResizer";
+import { StatusBar } from "./components/StatusBar";
 import { EditorPane } from "./components/EditorPane";
 import { RightPanel, type RightTab } from "./components/RightPanel";
 import { TabBar, type TabItem } from "./components/TabBar";
@@ -347,6 +348,9 @@ export default function App() {
   const noticeSeq = useRef(0);
   const [graphOpen, setGraphOpen] = useState(false);
   const [slidesOpen, setSlidesOpen] = useState(false);
+  // Caret position for the status bar (from the focused editor).
+  const [cursor, setCursor] = useState<{ line: number; col: number; sel: number } | null>(null);
+  const handleCursor = useCallback((line: number, col: number, sel: number) => setCursor({ line, col, sel }), []);
   const [graphMode, setGraphMode] = useState<"global" | "local">("global");
   const [sourceMode, setSourceMode] = useState(false);
   // Reading view: a rendered, read-only HTML view (vs the editable CM6 panes).
@@ -3503,6 +3507,7 @@ export default function App() {
               saveAttachment={handleSaveAttachment}
               replacePlaceholder={handleReplacePlaceholder}
               onChange={(doc) => handleChange(id, path, doc)}
+              onCursor={id === focusedId ? handleCursor : undefined}
             />
           )
         ) : (
@@ -3517,6 +3522,7 @@ export default function App() {
       className={readableWidth ? "app readable-width" : "app"}
       style={{ "--left-w": `${leftWidth}px`, "--right-w": `${rightWidth}px` } as React.CSSProperties}
     >
+      <div className="workspace">
       <Ribbon
         onToggleSidebar={() => setLeftOpen((v) => !v)}
         onQuickSwitcher={() => setModal("switcher")}
@@ -3595,12 +3601,6 @@ export default function App() {
             </span>
           )}
           <span className="spacer" />
-          {docStats && (
-            <span className="status-count">
-              {docStats.words} {docStats.words === 1 ? "word" : "words"} · {docStats.chars}{" "}
-              {docStats.chars === 1 ? "character" : "characters"}
-            </span>
-          )}
           <span className={saveError ? "status status-error" : "status"} title={saveError ?? ""}>
             {saveError
               ? `⚠ ${saveError}`
@@ -3657,6 +3657,8 @@ export default function App() {
           }}
         />
       )}
+      </div>
+      <StatusBar cursor={cursor} words={docStats?.words ?? 0} chars={docStats?.chars ?? 0} pluginVersion={pluginVersion} />
       {modal === "switcher" && (
         <Palette<VaultNote>
           placeholder="Open or create a note…"
