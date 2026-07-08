@@ -11,8 +11,7 @@ Ordered by leverage (impact ÷ effort). Checked items are done.
       `registerDomEvent`, `registerInterval`. *(done)*
 - [x] **Settings-tab API** — `addSettingTab(tab)` / `PluginSettingTab.display(el)`. *(done)*
 - [x] **`addStatusBarItem`** + **`addRibbonIcon`** *(done)*.
-- [ ] **Custom view registration** (`registerView`) — add side-panel view types
-      (compounds the layout gap).
+- [x] **Custom view registration** (`registerView`) — plugin right-panel views. *(done)*
 - [x] **Metadata cache API** — getFileCache(tags/links/headings/frontmatter). *(done)*
 - [ ] **Thicker vault API** — delete/rename/folder ops/attachment access.
 
@@ -25,7 +24,7 @@ Ordered by leverage (impact ÷ effort). Checked items are done.
 - [x] **File tree** — reveal-active-file + collapse-all *(done)*; folders-first already default. Multi-select + folder drag-to-reparent still open.
 - [x] **Inline title** — editable filename above the editor. *(done)*
 - [x] **Drag a tree note into the editor** → inserts `[[wikilink]]`. *(done)*
-- [ ] **Properties panel** — dedicated add/edit-property UI (inline render exists).
+- [x] **Properties panel** — add/edit/remove in the right sidebar (+ inline render). *(done)*
 - [ ] Appearance: font / font-size / accent settings; rebind built-in shortcuts;
       persist UI zoom.
 
@@ -33,4 +32,4 @@ Ordered by leverage (impact ÷ effort). Checked items are done.
 
 - [ ] **Movable views/leaves** — drag any view into any zone (fixed 3-zone shell
       today); reorder/relocate right-panel tabs.
-- [ ] **Drag a tab to a pane edge to split**; drag a tab out to a new window.
+- [x] **Drag a tab to a pane edge to split** *(done)*; drag a tab out to a new window still open.
