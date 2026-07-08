@@ -27,6 +27,7 @@ import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { GFM } from "@lezer/markdown";
+import { vim } from "@replit/codemirror-vim";
 
 import { markdownKeys } from "./markdownKeys";
 
@@ -139,6 +140,13 @@ const themeCompartment = new Compartment();
 const pluginCompartment = new Compartment();
 // Spellcheck lives in its own compartment so it can be toggled without a remount.
 const spellcheckCompartment = new Compartment();
+// Vim keybindings in a compartment so the mode can be toggled live.
+const vimCompartment = new Compartment();
+
+/** Toggle Vim keybindings on a live editor. */
+export function setVimMode(view: EditorView, on: boolean): void {
+  view.dispatch({ effects: vimCompartment.reconfigure(on ? vim() : []) });
+}
 
 /** Toggle native spellcheck on a live editor. */
 export function setSpellcheck(view: EditorView, on: boolean): void {
@@ -227,9 +235,13 @@ export function createEditorState(
   dark = true,
   selfRel = "",
   spellcheck = true,
+  vimMode = false,
 ): EditorState {
   const extensions: Extension[] = [
     notePathFacet.of(selfRel),
+    // Vim keybindings (Obsidian's optional Vim mode) — in a compartment, placed
+    // FIRST so its keymap wins in normal mode; toggled live via setVimMode().
+    vimCompartment.of(vimMode ? vim() : []),
     // CM6 extensions contributed by enabled plugins — in a compartment so
     // enable/disable reflects into live editors via reconfigurePlugins().
     pluginCompartment.of(pluginEditorExtensions()),

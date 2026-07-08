@@ -329,6 +329,8 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("basalt-readable-width", String(readableWidth));
   }, [readableWidth]);
+  const [vim, setVim] = useState(() => localStorage.getItem("basalt-vim") === "true");
+  useEffect(() => localStorage.setItem("basalt-vim", String(vim)), [vim]);
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem("basalt-spellcheck") !== "false");
   useEffect(() => {
     localStorage.setItem("basalt-spellcheck", String(spellcheck));
@@ -3251,6 +3253,7 @@ export default function App() {
               sourceMode={sourceMode}
               dark={dark}
               spellcheck={spellcheck}
+              vim={vim}
               onOpenWikilink={handleOpenWikilink}
               onOpenUrl={handleOpenUrl}
               resolveImage={(target) =>
@@ -3493,6 +3496,8 @@ export default function App() {
           onReadableWidth={setReadableWidth}
           spellcheck={spellcheck}
           onSpellcheck={setSpellcheck}
+          vim={vim}
+          onVim={setVim}
           cssSnippets={cssSnippets.map((s) => s.name)}
           disabledSnippets={disabledSnippets}
           onToggleSnippet={toggleSnippet}
