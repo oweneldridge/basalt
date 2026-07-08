@@ -39,4 +39,7 @@ test("a plugin can register a settings tab that renders in Settings", async ({ p
   const meta = await page.evaluate(() => (window as unknown as { __ideasMeta: { tags: string[]; headings: { heading: string }[] } }).__ideasMeta);
   expect(meta.tags).toContain("tag/one");
   expect(meta.headings.map((h) => h.heading)).toContain("Ideas");
+  // registerView adds a right-panel tab that mounts the plugin's content.
+  await page.getByRole("button", { name: "Demo View" }).click();
+  await expect(page.locator(".plugin-view-mount")).toHaveText("demo-view-content");
 });

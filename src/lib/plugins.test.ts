@@ -13,6 +13,7 @@ import {
   emitVaultEvent,
   emitWorkspaceEvent,
   pluginSettingTabs,
+  pluginRightViews,
   type HostDeps,
   type PluginInfo,
 } from "./plugins";
@@ -282,5 +283,24 @@ describe("plugin metadata cache", () => {
       headings: [{ heading: "H", level: 1 }],
       frontmatter: { title: "A" },
     });
+  });
+});
+
+describe("plugin registerView", () => {
+  it("registers a right-panel view and removes it on unload", async () => {
+    const { host } = fakeHost();
+    installHost(host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() { this.registerView("v1", "My View", (el) => { el.textContent = "hi"; }); }
+      };
+    `;
+    await loadPlugin(info({ id: "vp", code }));
+    const views = pluginRightViews();
+    expect(views.map((v) => v.id)).toEqual(["v1"]);
+    expect(views[0].name).toBe("My View");
+    await unloadPlugin("vp");
+    expect(pluginRightViews()).toHaveLength(0);
   });
 });
