@@ -75,6 +75,10 @@ function insertAll(view: EditorView, files: File[], pos: number, opts: Attachmen
   files.forEach((f, i) => void complete(view, placeholders[i], f, opts));
 }
 
+// A note dragged from the file tree carries its path under this MIME type
+// (see Sidebar). Dropping it in the editor inserts a `[[wikilink]]`.
+const NOTE_MIME = "application/x-basalt-note";
+
 export function attachments(opts: AttachmentOptions): Extension {
   return EditorView.domEventHandlers({
     paste: (event, view) => {
@@ -84,13 +88,30 @@ export function attachments(opts: AttachmentOptions): Extension {
       insertAll(view, files, view.state.selection.main.head, opts);
       return true;
     },
+    // Accept a tree-note drag so the drop below fires.
+    dragover: (event) => {
+      if (event.dataTransfer?.types.includes(NOTE_MIME)) {
+        event.preventDefault();
+        return true;
+      }
+      return false;
+    },
     drop: (event, view) => {
+      const pos =
+        view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.state.selection.main.head;
+      // A note dropped from the file tree → insert a wikilink to it.
+      const notePath = event.dataTransfer?.getData(NOTE_MIME);
+      if (notePath) {
+        event.preventDefault();
+        const base = (notePath.split(/[/\\]/).pop() ?? notePath).replace(/\.md$/i, "");
+        const link = `[[${base}]]`;
+        view.dispatch({ changes: { from: pos, insert: link }, selection: { anchor: pos + link.length } });
+        view.focus();
+        return true;
+      }
       const files = pastable(event.dataTransfer?.files);
       if (files.length === 0) return false;
       event.preventDefault();
-      const pos =
-        view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
-        view.state.selection.main.head;
       insertAll(view, files, pos, opts);
       return true;
     },
