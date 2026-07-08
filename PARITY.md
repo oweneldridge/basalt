@@ -52,10 +52,22 @@ A follow-up pass closed ~17 more MEDIUM/LOW gaps from the list below:
   templates honor the vault's `dateFormat`/`timeFormat`; CSS snippets also read
   `.obsidian/snippets`.
 
-Still open (larger): list/indent folding, raw HTML in Live Preview, bookmarks
-create/edit, search OR/`line:` operators, graph filters/colors, canvas node-
-interaction depth, Bases editing depth, interactive table editor, Vim mode,
-linked panes, stacked tabs, named workspaces, slides, audio recorder, RTL.
+### More gaps closed (2026-07-08, second pass)
+
+- **Editor:** **list/indent folding** (fold a list item's children); **inline
+  raw HTML in Live Preview** (`<sup>`/`<sub>`/`<mark>`/… allowlist); **interactive
+  table editor** (cell-precise click-to-edit + add/delete row/column controls);
+  **Vim key bindings** (optional, live toggle); **RTL** editor direction.
+- **Search/graph:** **`OR`** search operator (top-level OR-groups); local-graph
+  **depth** control + global graph **filters** (name search + hide orphans).
+- **Workspace:** **named workspaces** (save/switch/delete layouts); **resizable +
+  properly-hidable sidebars** — the layout was a fixed CSS grid (real-app bug),
+  now flexbox with drag handles + persisted widths.
+
+Still open (larger): bookmarks create/edit (deferred by design — writes
+`.obsidian/`), search `line:` operator, graph node colors, canvas
+node-interaction depth, Bases editing depth, linked panes, stacked tabs,
+slides, audio recorder.
 
 ## Scored matrix
 
