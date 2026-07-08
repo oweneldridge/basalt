@@ -3752,6 +3752,14 @@ export default function App() {
           onJumpLine={(line) => {
             if (active) void openNoteByPath(active.path, line);
           }}
+          propertiesDoc={activeIsViewer ? null : (active?.doc ?? activeNote?.content ?? null)}
+          onEditProperties={(nextDoc) => {
+            const id = focusedIdRef.current;
+            const p = id ? panesRef.current[id]?.active : null;
+            if (!id || !p || !isMarkdownPath(p)) return;
+            patchPane(id, { doc: nextDoc }); // reflect in the editor (reconcile)
+            handleChange(id, p, nextDoc); // pending + debounced save + sync other panes
+          }}
           tags={tags}
           onSelectTag={handleSelectTag}
           bookmarks={bookmarks}

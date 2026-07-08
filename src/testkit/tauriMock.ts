@@ -20,6 +20,7 @@ seed("Welcome.md", "# Welcome\n\nThis is the mock vault used for automated UI te
 seed("Ideas.md", "# Ideas\n\n- first\n- second\n  - nested\n\n#tag/one\n");
 seed("Projects/Roadmap.md", "# Roadmap\n\n- [ ] ship v0.1.1\n- [x] release v0.1.0\n");
 seed("Deck.md", "# Slide One\n\nintro\n\n---\n\n# Slide Two\n\nbody\n\n---\n\n# Slide Three\n\nend\n");
+seed("WithProps.md", "---\nstatus: draft\npriority: 3\ndone: false\n---\n\n# With Props\n\nbody\n");
 
 const config: ObsidianConfig = { newLinkFormat: "shortest" };
 

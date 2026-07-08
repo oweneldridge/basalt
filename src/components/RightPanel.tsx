@@ -5,9 +5,12 @@ import { Outline } from "./Outline";
 import { Tags } from "./Tags";
 import { Bookmarks } from "./Bookmarks";
 
-export type RightTab = "backlinks" | "links" | "outline" | "tags" | "bookmarks";
+import { Properties } from "./Properties";
+
+export type RightTab = "properties" | "backlinks" | "links" | "outline" | "tags" | "bookmarks";
 
 const TABS: { id: RightTab; label: string }[] = [
+  { id: "properties", label: "Properties" },
   { id: "backlinks", label: "Backlinks" },
   { id: "links", label: "Links" },
   { id: "outline", label: "Outline" },
@@ -32,6 +35,10 @@ interface Props {
   // Outline
   outlineDoc: string | null;
   onJumpLine: (line: number) => void;
+  /** The focused pane's LIVE note content — Properties edits reflect at once. */
+  propertiesDoc: string | null;
+  /** Commit an edited version of the active note (from the Properties panel). */
+  onEditProperties: (nextDoc: string) => void;
   // Tags
   tags: TagCount[];
   onSelectTag: (tag: string) => void;
@@ -55,6 +62,8 @@ export function RightPanel({
   onOpenRef,
   outlineDoc,
   onJumpLine,
+  propertiesDoc,
+  onEditProperties,
   tags,
   onSelectTag,
   bookmarks,
@@ -78,6 +87,7 @@ export function RightPanel({
         ))}
       </div>
       <div className="right-body">
+        {tab === "properties" && <Properties doc={propertiesDoc} onChange={onEditProperties} />}
         {tab === "backlinks" && (
           <Backlinks
             noteName={noteName}
