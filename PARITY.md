@@ -108,10 +108,14 @@ A follow-up pass closed ~17 more MEDIUM/LOW gaps from the list below:
   and offered as a `formula.<name>` column. serializeBase writes the `formulas`
   map with the same change-only + all-strings guard used for filters/groupBy.
 
-**The parity backlog is cleared.** Only the by-design exclusions remain out of
-scope: Sync/Publish, mobile, and the community-plugin/theme marketplaces. A
-fancier formula editor (expression autocomplete + live validation against the
-Bases language) is the one nice-to-have left, but authoring itself is done.
+- **Bases expression editor** — formula expressions and filter conditions are
+  edited in a CodeMirror field with language-aware **autocomplete** (functions /
+  namespaces / `file.*` members / methods) and **live validation** (parse +
+  unknown-function check, shown inline).
+
+**The parity backlog is cleared** — including the "nice-to-have" expression
+editor. Only the by-design exclusions remain out of scope: Sync/Publish, mobile,
+and the community-plugin/theme marketplaces.
 
 ## Scored matrix
 
