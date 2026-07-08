@@ -2228,3 +2228,23 @@ button.primary:hover {
   vector-effect: non-scaling-stroke;
 }
 .canvas-selcount { font-size: 11px; color: var(--text-muted); margin-right: 6px; align-self: center; }
+
+/* ------- Graph folder-color legend ------- */
+.graph-legend {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  max-height: 40%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.graph-legend-row { display: flex; align-items: center; gap: 6px; }
+.graph-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }

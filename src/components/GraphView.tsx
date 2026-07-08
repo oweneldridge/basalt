@@ -32,6 +32,22 @@ export function filterGraph(data: GraphData, search: string, hideOrphans: boolea
 interface GNode extends SimulationNodeDatum {
   id: string;
   name: string;
+  group: string;
+}
+
+// Deterministic color per top-level folder (root = neutral). Golden-angle hue
+// so adjacent groups stay visually distinct.
+const groupPalette = new Map<string, string>();
+function groupColor(group: string): string {
+  if (!group) return "#7d7f88";
+  let c = groupPalette.get(group);
+  if (!c) {
+    let h = 0;
+    for (let i = 0; i < group.length; i++) h = (h * 31 + group.charCodeAt(i)) >>> 0;
+    c = `hsl(${(h * 137.508) % 360}, 55%, 62%)`;
+    groupPalette.set(group, c);
+  }
+  return c;
 }
 interface GLink {
   source: GNode | string;
@@ -59,6 +75,12 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
   activePathRef.current = activePath;
   const [search, setSearch] = useState("");
   const [hideOrphans, setHideOrphans] = useState(false);
+  const [colorByFolder, setColorByFolder] = useState(false);
+  const colorByFolderRef = useRef(colorByFolder);
+  colorByFolderRef.current = colorByFolder;
+  useEffect(() => {
+    redrawRef.current();
+  }, [colorByFolder]);
   const filtered = useMemo(() => filterGraph(data, search, hideOrphans), [data, search, hideOrphans]);
   const redrawRef = useRef<() => void>(() => {});
   // Layout + viewport survive data rebuilds (autosave/watcher refresh): known
@@ -95,6 +117,7 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
       return {
         id: n.id,
         name: n.name,
+        group: n.group,
         x: prev?.x ?? (Math.random() - 0.5) * 300,
         y: prev?.y ?? (Math.random() - 0.5) * 300,
       };
@@ -173,17 +196,27 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
         ctx.stroke();
       }
 
-      // Normal nodes: one batched fill.
-      ctx.fillStyle = "#7d7f88";
-      ctx.beginPath();
-      for (const n of nodes) {
-        if (special(n)) continue;
-        const x = n.x ?? 0;
-        const y = n.y ?? 0;
-        ctx.moveTo(x + 5, y);
-        ctx.arc(x, y, 5, 0, Math.PI * 2);
+      // Normal nodes: one batched fill, or per-folder color when grouping is on.
+      if (colorByFolderRef.current) {
+        for (const n of nodes) {
+          if (special(n)) continue;
+          ctx.fillStyle = groupColor(n.group);
+          ctx.beginPath();
+          ctx.arc(n.x ?? 0, n.y ?? 0, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else {
+        ctx.fillStyle = "#7d7f88";
+        ctx.beginPath();
+        for (const n of nodes) {
+          if (special(n)) continue;
+          const x = n.x ?? 0;
+          const y = n.y ?? 0;
+          ctx.moveTo(x + 5, y);
+          ctx.arc(x, y, 5, 0, Math.PI * 2);
+        }
+        ctx.fill();
       }
-      ctx.fill();
 
       // Special nodes individually (active / hover / neighbors).
       for (const n of nodes) {
@@ -379,6 +412,10 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
           <input type="checkbox" checked={hideOrphans} onChange={(e) => setHideOrphans(e.currentTarget.checked)} />
           Hide orphans
         </label>
+        <label className="graph-orphans" title="Color nodes by top-level folder">
+          <input type="checkbox" checked={colorByFolder} onChange={(e) => setColorByFolder(e.currentTarget.checked)} />
+          Color by folder
+        </label>
         <span className="graph-count">
           {filtered.nodes.length} notes · {filtered.links.length} links
         </span>
@@ -388,6 +425,18 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
       </div>
       <div className="graph-canvas-wrap" ref={wrapRef}>
         <canvas ref={canvasRef} />
+        {colorByFolder && (
+          <div className="graph-legend">
+            {[...new Set(filtered.nodes.map((n) => n.group))]
+              .sort((a, b) => a.localeCompare(b))
+              .map((g) => (
+                <div key={g || "(root)"} className="graph-legend-row">
+                  <span className="graph-legend-dot" style={{ background: groupColor(g) }} />
+                  {g || "(root)"}
+                </div>
+              ))}
+          </div>
+        )}
       </div>
     </div>
   );
