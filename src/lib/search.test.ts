@@ -65,3 +65,28 @@ describe("searchVault operators", () => {
     expect(searchVault(NOTES, "   ")).toEqual([]);
   });
 });
+
+describe("OR search groups", () => {
+  const notes = [
+    { path: "/v/a.md", rel: "a.md", name: "a", content: "green turtle" },
+    { path: "/v/b.md", rel: "b.md", name: "b", content: "blue whale" },
+    { path: "/v/c.md", rel: "c.md", name: "c", content: "red fox" },
+  ] as any;
+  const paths = (q: string) => new Set(searchVault(notes, q).map((h) => h.path));
+  it("matches notes in EITHER OR-group", () => {
+    const p = paths("turtle OR whale");
+    expect(p.has("/v/a.md")).toBe(true);
+    expect(p.has("/v/b.md")).toBe(true);
+    expect(p.has("/v/c.md")).toBe(false);
+  });
+  it("each group keeps AND semantics", () => {
+    // (green AND turtle) OR (blue AND fox) → only a matches (b has blue but not fox)
+    const p = paths("green turtle OR blue fox");
+    expect([...p]).toEqual(["/v/a.md"]);
+  });
+  it("a quoted \"OR\" is a literal phrase, not the operator", () => {
+    const withOr = [{ path: "/v/x.md", rel: "x.md", name: "x", content: "this OR that" }] as any;
+    expect(searchVault(withOr, '"OR that"').length).toBe(1);
+    expect(searchVault(withOr, '"zzz OR"').length).toBe(0);
+  });
+});
