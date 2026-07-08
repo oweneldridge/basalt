@@ -21,8 +21,9 @@ function splitCells(line: string): string[] {
 }
 
 // Character offset where cell `col`'s content begins within a raw table line.
-function cellOffsetInLine(line: string, col: number): number {
+export function cellOffsetInLine(line: string, col: number): number {
   let i = 0;
+  while (i < line.length && line[i] === " ") i++; // skip GFM's up-to-3-space indent
   if (line[i] === "|") i++; // skip a leading pipe
   let cell = 0;
   while (cell < col && i < line.length) {

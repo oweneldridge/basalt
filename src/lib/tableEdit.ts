@@ -38,16 +38,16 @@ export function parseTable(source: string): ParsedTable | null {
   const header = splitCells(lines[0]);
   const aligns = splitCells(lines[1]).map(parseAlign);
   const rows = lines.slice(2).map((l) => splitCells(l));
-  const cols = header.length;
-  // Normalize ragged rows / alignment to the header width.
-  while (aligns.length < cols) aligns.push("");
-  aligns.length = cols;
-  const norm = rows.map((r) => {
-    const rr = r.slice(0, cols);
-    while (rr.length < cols) rr.push("");
-    return rr;
-  });
-  return { header, aligns, rows: norm };
+  // Normalize to the WIDEST row (never truncate — a row with more cells than
+  // the header, e.g. from an unescaped `|`, would otherwise lose text on the
+  // next structural edit). Extra cells become real (empty-header) columns.
+  const cols = Math.max(header.length, aligns.length, ...rows.map((r) => r.length));
+  const pad = (arr: string[]): string[] => {
+    const a = arr.slice();
+    while (a.length < cols) a.push("");
+    return a;
+  };
+  return { header: pad(header), aligns: pad(aligns) as Align[], rows: rows.map(pad) };
 }
 
 function delimiterCell(a: Align): string {
