@@ -25,11 +25,14 @@ interface Props {
   activePath: string | null;
   mode: Mode;
   onSetMode: (m: Mode) => void;
+  /** Local-graph neighborhood depth (hops from the active note). */
+  depth: number;
+  onSetDepth: (d: number) => void;
   onOpenNode: (path: string) => void;
   onClose: () => void;
 }
 
-export function GraphView({ data, activePath, mode, onSetMode, onOpenNode, onClose }: Props) {
+export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth, onOpenNode, onClose }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const activePathRef = useRef(activePath);
@@ -328,6 +331,19 @@ export function GraphView({ data, activePath, mode, onSetMode, onOpenNode, onClo
           >
             Local
           </button>
+          {mode === "local" && (
+            <label className="graph-depth" title="Neighborhood depth (hops)">
+              Depth
+              <input
+                type="range"
+                min={1}
+                max={5}
+                value={depth}
+                onChange={(e) => onSetDepth(Number(e.currentTarget.value))}
+              />
+              <span className="graph-depth-val">{depth}</span>
+            </label>
+          )}
         </div>
         <span className="graph-count">
           {data.nodes.length} notes · {data.links.length} links

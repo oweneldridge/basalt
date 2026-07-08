@@ -2144,3 +2144,8 @@ button.primary:hover {
 .cm-html-s, .cm-html-del { text-decoration: line-through; }
 .cm-html-small { font-size: 0.85em; }
 .cm-html-abbr, .cm-html-cite { font-style: italic; }
+
+/* ------- Local graph depth control ------- */
+.graph-depth { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); margin-left: 8px; }
+.graph-depth input[type="range"] { width: 70px; }
+.graph-depth-val { min-width: 10px; text-align: center; }
