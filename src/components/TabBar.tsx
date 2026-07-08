@@ -4,6 +4,8 @@ export interface TabItem {
   path: string;
   name: string;
   pinned?: boolean;
+  /** True for a view tab (file tree, outline, plugin view…) vs a note tab. */
+  view?: boolean;
 }
 
 interface Props {
@@ -72,7 +74,7 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
       {tabs.map((t, i) => (
         <div
           key={t.path}
-          className={`tab${t.path === activePath ? " active" : ""}${t.pinned ? " pinned" : ""}${dropAt === i ? " drop-before" : ""}`}
+          className={`tab${t.path === activePath ? " active" : ""}${t.pinned ? " pinned" : ""}${t.view ? " view-tab" : ""}${dropAt === i ? " drop-before" : ""}`}
           role="tab"
           aria-selected={t.path === activePath}
           title={t.pinned ? `${t.name} (pinned)` : t.name}

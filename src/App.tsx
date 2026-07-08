@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -80,7 +81,8 @@ import { EditorPane } from "./components/EditorPane";
 import { RightPanel } from "./components/RightPanel";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
-import { isViewPath } from "./lib/leafViews";
+import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec } from "./lib/leafViews";
+import { Outline } from "./components/Outline";
 import { ReadingView } from "./components/ReadingView";
 import { CanvasView } from "./components/CanvasView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -474,6 +476,12 @@ export default function App() {
 
   const activePathRef = useRef<string | null>(null);
   activePathRef.current = active?.path ?? null;
+  // The most recently active REAL note (not a view tab) — view leaves (Outline,
+  // Backlinks…) track this rather than the pane they happen to live in.
+  const [lastNotePath, setLastNotePath] = useState<string | null>(null);
+  useEffect(() => {
+    if (active?.path && !isViewPath(active.path)) setLastNotePath(active.path);
+  }, [active?.path]);
   // The active note's vault-relative path — the key the watcher matches on.
   const activeRelRef = useRef<string | null>(null);
   const conflictsRef = useRef<Set<string>>(conflicts);
@@ -798,6 +806,15 @@ export default function App() {
     async (id: string, path: string, line?: number, mirror = false) => {
       const pane = panesRef.current[id];
       if (!pane) return;
+      // A view tab (file tree, outline, plugin view…) has no note to load: just
+      // add/activate it. No readNote, recents, or workspace events.
+      if (isViewPath(path)) {
+        focusPane(id);
+        if (pane.active === path) return;
+        const tabs = pane.tabs.includes(path) ? pane.tabs : [...pane.tabs, path];
+        patchPane(id, { tabs, active: path, doc: "" });
+        return;
+      }
       // A linked pane follows the note the user opens elsewhere, so mirror BEFORE
       // the same-active early return (the source pane may already show `path`).
       if (!mirror) {
@@ -1305,7 +1322,8 @@ export default function App() {
     // Panes whose active note was pruned and need a neighbor loaded from disk.
     const toLoad: { id: string; neighbor: string }[] = [];
     for (const [id, pane] of Object.entries(panesNow)) {
-      const keep = pane.tabs.filter((p) => exists.has(p) || (p === pane.active && conf.has(p)));
+      // View tabs (sentinels) have no backing file — never prune them.
+      const keep = pane.tabs.filter((p) => isViewPath(p) || exists.has(p) || (p === pane.active && conf.has(p)));
       if (keep.length === pane.tabs.length) {
         nextPanes[id] = pane;
         continue;
@@ -2644,12 +2662,19 @@ export default function App() {
   // Tab labels for a given pane's open paths.
   const tabItemsFor = useCallback(
     (paths: string[]): TabItem[] =>
-      paths.map((p) => ({
-        path: p,
-        name: notesRef.current.find((n) => n.path === p)?.name ?? basename(p),
-      })),
+      paths.map((p) => {
+        const spec = parseViewPath(p);
+        if (spec) {
+          const name =
+            spec.type === "plugin"
+              ? (pluginRightViews().find((v) => v.id === spec.viewId)?.name ?? spec.viewId)
+              : viewLabel(spec);
+          return { path: p, name, view: true };
+        }
+        return { path: p, name: notesRef.current.find((n) => n.path === p)?.name ?? basename(p) };
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [notes],
+    [notes, pluginVersion],
   );
 
   // Word/char count for the status bar (from the saved content — updates within
@@ -3478,6 +3503,12 @@ export default function App() {
       { id: "split-right", label: "Split right", hint: "open the current note in a vertical split", run: () => splitFocused("row") },
       { id: "split-down", label: "Split down", hint: "open the current note in a horizontal split", run: () => splitFocused("col") },
       {
+        id: "open-outline-tab",
+        label: "Open outline in a new tab",
+        hint: "the outline as a movable view leaf",
+        run: () => void openInPane(ensureWorkspace(), viewPath({ type: "outline" })),
+      },
+      {
         id: "rename-note",
         label: "Rename current note…",
         hint: "moves it and rewrites links vault-wide",
@@ -3543,6 +3574,25 @@ export default function App() {
       </div>
     );
   }
+
+  // Render a VIEW leaf's content (a view tab: Outline, Backlinks, plugin view…).
+  // Views track the last active note (`lastNotePath`), not the pane they live in.
+  const renderLeafView = (spec: ViewSpec): ReactNode => {
+    const noteDoc = lastNotePath ? (notesRef.current.find((n) => n.path === lastNotePath)?.content ?? null) : null;
+    switch (spec.type) {
+      case "outline":
+        return (
+          <Outline
+            doc={noteDoc}
+            onJump={(line) => {
+              if (lastNotePath) void openNoteByPath(lastNotePath, line);
+            }}
+          />
+        );
+      default:
+        return <div className="placeholder">The {viewLabel(spec)} view isn’t wired into leaves yet.</div>;
+    }
+  };
 
   // Render one pane's content: a tab bar + the live editor for its active note.
   // Mousedown anywhere in the pane focuses it (so it drives the right panel).
@@ -3636,6 +3686,13 @@ export default function App() {
               />
             )}
           />
+        ) : path && isViewPath(path) ? (
+          <div className="leaf-view" key={`${id}:${path}:view`}>
+            {(() => {
+              const spec = parseViewPath(path);
+              return spec ? renderLeafView(spec) : <div className="placeholder">Unknown view.</div>;
+            })()}
+          </div>
         ) : path ? (
           /\.canvas$/i.test(path) ? (
             <ErrorBoundary key={`${id}:${path}:canvas`} resetKey={path} onClose={() => void closeTab(id, path)}>
