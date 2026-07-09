@@ -535,7 +535,7 @@ button.primary:hover {
   color: var(--text);
   font-family: var(--font-text);
   line-height: 1.6;
-  font-size: 16px;
+  font-size: var(--font-size, 16px);
 }
 .reading-view h1 { font-size: 1.8em; }
 .reading-view h2 { font-size: 1.5em; }
