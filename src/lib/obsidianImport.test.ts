@@ -18,12 +18,14 @@ describe("obsidianChord", () => {
 });
 
 describe("parseObsidianImport", () => {
-  it("maps appearance.json → theme / accent / font / snippets", () => {
+  it("maps appearance.json → theme / accent / font / fonts / snippets", () => {
     const r = parseObsidianImport({
       appearance: JSON.stringify({
         theme: "obsidian",
         accentColor: "#7B6CD9",
         baseFontSize: 18,
+        textFontFamily: "Inter",
+        monospaceFontFamily: "MesloLGL Nerd Font Mono",
         enabledCssSnippets: ["mytweaks", "colors"],
       }),
       hotkeys: null,
@@ -32,7 +34,14 @@ describe("parseObsidianImport", () => {
     expect(r.theme).toBe("dark");
     expect(r.accent).toBe("#7B6CD9");
     expect(r.fontSize).toBe(18);
+    expect(r.fontText).toBe("Inter");
+    expect(r.fontMono).toBe("MesloLGL Nerd Font Mono");
     expect(r.enabledSnippets).toEqual(["mytweaks", "colors"]);
+  });
+
+  it("falls back to interfaceFontFamily and ignores empty font strings", () => {
+    expect(parseObsidianImport({ appearance: JSON.stringify({ interfaceFontFamily: "Lato" }), hotkeys: null, communityPlugins: [] }).fontText).toBe("Lato");
+    expect(parseObsidianImport({ appearance: JSON.stringify({ textFontFamily: "" }), hotkeys: null, communityPlugins: [] }).fontText).toBeNull();
   });
 
   it("maps moonstone/system themes and ignores a bad accent/font", () => {

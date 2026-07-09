@@ -18,6 +18,10 @@ export interface ObsidianImportResult {
   theme: ThemeMode | null;
   accent: string | null; // hex, e.g. "#7b6cd9"
   fontSize: number | null;
+  /** Text/interface font family (appearance.json textFontFamily), or null. */
+  fontText: string | null;
+  /** Monospace font family (appearance.json monospaceFontFamily), or null. */
+  fontMono: string | null;
   /** Enabled CSS-snippet names, or null when appearance.json didn't say. */
   enabledSnippets: string[] | null;
   /** Basalt commandId → chord, for the Obsidian hotkeys we could map. */
@@ -89,6 +93,8 @@ export function parseObsidianImport(raw: ObsidianImportRaw): ObsidianImportResul
     theme: null,
     accent: null,
     fontSize: null,
+    fontText: null,
+    fontMono: null,
     enabledSnippets: null,
     hotkeys: {},
     unmappedHotkeys: [],
@@ -106,6 +112,15 @@ export function parseObsidianImport(raw: ObsidianImportRaw): ObsidianImportResul
       }
       if (typeof a.baseFontSize === "number" && a.baseFontSize >= 8 && a.baseFontSize <= 40) {
         out.fontSize = Math.round(a.baseFontSize);
+      }
+      // Obsidian uses textFontFamily for body text; interfaceFontFamily as a
+      // fallback. Empty string = default (leave null).
+      const textFont =
+        (typeof a.textFontFamily === "string" && a.textFontFamily.trim()) ||
+        (typeof a.interfaceFontFamily === "string" && a.interfaceFontFamily.trim());
+      if (textFont) out.fontText = textFont;
+      if (typeof a.monospaceFontFamily === "string" && a.monospaceFontFamily.trim()) {
+        out.fontMono = a.monospaceFontFamily.trim();
       }
       if (Array.isArray(a.enabledCssSnippets)) {
         out.enabledSnippets = a.enabledCssSnippets.filter((x): x is string => typeof x === "string");
