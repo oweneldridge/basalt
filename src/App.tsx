@@ -427,6 +427,28 @@ export default function App() {
       localStorage.removeItem("basalt-accent");
     }
   }, [accent]);
+  // Font families ("" = Basalt default). Imported from Obsidian; a single family
+  // is prepended to Basalt's fallback stack so it degrades if not installed.
+  const [fontText, setFontText] = useState(() => localStorage.getItem("basalt-font-text") ?? "");
+  useEffect(() => {
+    if (fontText) {
+      document.documentElement.style.setProperty("--font-text", `"${fontText}", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif`);
+      localStorage.setItem("basalt-font-text", fontText);
+    } else {
+      document.documentElement.style.removeProperty("--font-text");
+      localStorage.removeItem("basalt-font-text");
+    }
+  }, [fontText]);
+  const [fontMono, setFontMono] = useState(() => localStorage.getItem("basalt-font-mono") ?? "");
+  useEffect(() => {
+    if (fontMono) {
+      document.documentElement.style.setProperty("--font-mono", `"${fontMono}", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace`);
+      localStorage.setItem("basalt-font-mono", fontMono);
+    } else {
+      document.documentElement.style.removeProperty("--font-mono");
+      localStorage.removeItem("basalt-font-mono");
+    }
+  }, [fontMono]);
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem("basalt-spellcheck") !== "false");
   useEffect(() => {
     localStorage.setItem("basalt-spellcheck", String(spellcheck));
@@ -2836,6 +2858,8 @@ export default function App() {
       if (r.theme) setThemeMode(r.theme);
       if (r.accent) setAccent(r.accent);
       if (r.fontSize) setFontSize(r.fontSize);
+      if (r.fontText) setFontText(r.fontText);
+      if (r.fontMono) setFontMono(r.fontMono);
       if (r.enabledSnippets) {
         const enabled = new Set(r.enabledSnippets);
         setDisabledSnippets(new Set(cssSnippets.map((s) => s.name).filter((n) => !enabled.has(n))));

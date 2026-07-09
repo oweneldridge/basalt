@@ -74,7 +74,7 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
       return ok(config);
     case "read_obsidian_import":
       return ok({
-        appearance: JSON.stringify({ theme: "obsidian", accentColor: "#ff8800", baseFontSize: 19, enabledCssSnippets: [] }),
+        appearance: JSON.stringify({ theme: "obsidian", accentColor: "#ff8800", baseFontSize: 19, textFontFamily: "Inter", monospaceFontFamily: "Meslo", enabledCssSnippets: [] }),
         hotkeys: JSON.stringify({
           "app:open-settings": [{ modifiers: ["Mod"], key: "," }],
           "workspace:split-vertical": [{ modifiers: ["Mod", "Shift"], key: "\\" }],

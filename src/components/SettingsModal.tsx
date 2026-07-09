@@ -261,7 +261,8 @@ export function SettingsModal({
             <div className="import-report">
               <div>
                 Applied: theme {importReport.theme ?? "—"}, accent {importReport.accent ?? "—"}, font{" "}
-                {importReport.fontSize ? `${importReport.fontSize}px` : "—"}.
+                {importReport.fontSize ? `${importReport.fontSize}px` : "—"}
+                {importReport.fontText ? ` ${importReport.fontText}` : ""}.
               </div>
               <div>
                 {Object.keys(importReport.hotkeys).length} hotkeys imported
