@@ -3,6 +3,11 @@
   --bg-editor: #1e1e1e;
   --bg-sidebar: #252525;
   --bg-elev: #2d2d2d;
+  /* Alias used by modals/panels/menus; was referenced but never defined, so
+     those surfaces rendered transparent (content bled through). Resolves to the
+     theme's elevated bg. */
+  --bg-secondary: var(--bg-elev);
+  --hover: rgba(127, 127, 127, 0.12); /* neutral hover-row background */
   --border: #383838;
   --text: #dcddde;
   --text-muted: #999a9c;
