@@ -1,0 +1,8 @@
+{
+  "id": "pomodoro",
+  "name": "Pomodoro Timer",
+  "version": "1.0.0",
+  "description": "A focus timer in the status bar — work / short-break / long-break cycles, with commands and settings.",
+  "author": "Basalt",
+  "minAppVersion": "0.1.0"
+}
