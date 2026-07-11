@@ -30,9 +30,14 @@ export type ThemePalette = Record<string, string>;
 export function resolveThemePalette(themeCss: string, mode: "dark" | "light"): ThemePalette {
   const style = document.createElement("style");
   style.textContent = themeCss;
+  // Themes scope vars under `.theme-dark`, `body.theme-dark`, or `:root` — put
+  // the mode class on <body> so all three match; a child probe inherits the
+  // resulting vars. Done synchronously (no repaint), then fully reverted.
+  const cls = `theme-${mode}`;
+  const hadCls = document.body.classList.contains(cls);
   const probe = document.createElement("div");
-  probe.className = `theme-${mode}`; // Obsidian's theme blocks key off this class
   probe.style.display = "none";
+  document.body.classList.add(cls);
   document.body.append(style, probe);
   try {
     const cs = getComputedStyle(probe);
@@ -50,6 +55,7 @@ export function resolveThemePalette(themeCss: string, mode: "dark" | "light"): T
   } finally {
     probe.remove();
     style.remove();
+    if (!hadCls) document.body.classList.remove(cls);
   }
 }
 
