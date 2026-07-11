@@ -1,0 +1,8 @@
+{
+  "id": "dataviewjs",
+  "name": "Dataview JS (lite)",
+  "version": "1.0.0",
+  "description": "Runs `dataviewjs` code blocks with a dv API (current/pages/page, where/sort/map/limit, list/table/taskList/paragraph/header) + a minimal moment. A subset of Dataview's JS API. Runs note JavaScript — enable only for vaults you trust.",
+  "author": "Basalt",
+  "minAppVersion": "0.1.0"
+}
