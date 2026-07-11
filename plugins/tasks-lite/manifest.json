@@ -1,0 +1,8 @@
+{
+  "id": "tasks-lite",
+  "name": "Tasks Lite",
+  "version": "1.0.0",
+  "description": "Query vault checkboxes with `tasks` code blocks (obsidian-tasks subset): done / not done, due before/after/on, path/description/tags filters, sort by due, limit.",
+  "author": "Basalt",
+  "minAppVersion": "0.1.0"
+}
