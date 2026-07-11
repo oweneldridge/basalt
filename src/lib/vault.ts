@@ -158,6 +158,8 @@ export interface ObsidianImportRaw {
   appearance: string | null;
   hotkeys: string | null;
   communityPlugins: string[];
+  /** The active community theme's CSS (for the palette bridge), or null. */
+  themeCss: string | null;
 }
 export function readObsidianImport(): Promise<ObsidianImportRaw> {
   return invoke<ObsidianImportRaw>("read_obsidian_import");

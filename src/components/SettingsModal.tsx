@@ -264,6 +264,7 @@ export function SettingsModal({
                 {importReport.fontSize ? `${importReport.fontSize}px` : "—"}
                 {importReport.fontText ? ` ${importReport.fontText}` : ""}.
               </div>
+              {importReport.themePaletteApplied && <div>Community theme palette applied.</div>}
               <div>
                 {Object.keys(importReport.hotkeys).length} hotkeys imported
                 {importReport.unmappedHotkeys.length > 0 && ` · ${importReport.unmappedHotkeys.length} couldn’t be mapped`}.

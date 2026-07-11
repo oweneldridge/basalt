@@ -49,6 +49,7 @@ import { linkifyMention } from "./lib/linkify";
 import { reorderTabs, insertTab } from "./lib/tabs";
 import { loadBindings, saveBindings, matchChord, type Bindings } from "./lib/hotkeys";
 import { parseObsidianImport, type ObsidianImportResult } from "./lib/obsidianImport";
+import { resolveThemePalettes, applyThemePalette, type ThemePalette } from "./lib/obsidianTheme";
 import { noteRow, tasksForNote } from "./lib/vaultRows";
 import { parseQuery, runQuery, type Task } from "./lib/query";
 import { applyTemplate, type TemplateCtx } from "./lib/templates";
@@ -449,6 +450,23 @@ export default function App() {
       localStorage.removeItem("basalt-font-mono");
     }
   }, [fontMono]);
+  // An imported Obsidian theme's palette (per mode), bridged onto Basalt's vars.
+  const [importedPalette, setImportedPalette] = useState<{ dark: ThemePalette; light: ThemePalette } | null>(() => {
+    try {
+      const raw = localStorage.getItem("basalt-imported-palette");
+      return raw ? (JSON.parse(raw) as { dark: ThemePalette; light: ThemePalette }) : null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    if (importedPalette) localStorage.setItem("basalt-imported-palette", JSON.stringify(importedPalette));
+    else localStorage.removeItem("basalt-imported-palette");
+  }, [importedPalette]);
+  // Apply the palette for the CURRENT resolved theme; re-applies on theme switch.
+  useEffect(() => {
+    applyThemePalette(importedPalette ? (dark ? importedPalette.dark : importedPalette.light) : null);
+  }, [importedPalette, dark]);
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem("basalt-spellcheck") !== "false");
   useEffect(() => {
     localStorage.setItem("basalt-spellcheck", String(spellcheck));
@@ -2854,7 +2872,8 @@ export default function App() {
   const [importReport, setImportReport] = useState<ObsidianImportResult | null>(null);
   const handleImportFromObsidian = useCallback(async () => {
     try {
-      const r = parseObsidianImport(await readObsidianImport());
+      const raw = await readObsidianImport();
+      const r = parseObsidianImport(raw);
       if (r.theme) setThemeMode(r.theme);
       if (r.accent) setAccent(r.accent);
       if (r.fontSize) setFontSize(r.fontSize);
@@ -2865,7 +2884,13 @@ export default function App() {
         setDisabledSnippets(new Set(cssSnippets.map((s) => s.name).filter((n) => !enabled.has(n))));
       }
       if (Object.keys(r.hotkeys).length) setHotkeys((h) => ({ ...h, ...r.hotkeys }));
-      setImportReport(r);
+      // The community theme's palette (needs the DOM — outside the pure parse).
+      let themePaletteApplied = false;
+      if (raw.themeCss) {
+        setImportedPalette(resolveThemePalettes(raw.themeCss));
+        themePaletteApplied = true;
+      }
+      setImportReport({ ...r, themePaletteApplied });
     } catch (e) {
       setSaveError(`Import from Obsidian failed: ${e}`);
     }
