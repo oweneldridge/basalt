@@ -30,6 +30,8 @@ export interface ObsidianImportResult {
   unmappedHotkeys: string[];
   /** Community plugin ids the vault had — reported, not run. */
   plugins: string[];
+  /** Set by the host when an Obsidian community theme palette was applied. */
+  themePaletteApplied?: boolean;
 }
 
 // Obsidian command id → Basalt command id, for the overlapping core commands.

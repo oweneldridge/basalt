@@ -16,6 +16,9 @@ test("Import from Obsidian applies appearance + hotkeys and reports plugins", as
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--font-size").trim())).toBe("19px");
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe("dark");
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--font-text").trim())).toContain("Inter");
+  // Community theme palette bridged onto Basalt vars (fixture theme is dark).
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bg").trim())).toBe("#101418");
+  await expect(page.locator(".import-report")).toContainText("Community theme palette applied");
 
   // Report: 2 of 3 hotkeys mapped, and the community plugins listed (not run).
   await expect(page.locator(".import-report")).toContainText("2 hotkeys imported");

@@ -81,6 +81,7 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
           "some-plugin:custom": [{ modifiers: ["Mod"], key: "j" }],
         }),
         communityPlugins: ["dataview", "templater-obsidian"],
+        themeCss: ".theme-dark { --background-primary: #101418; --text-normal: #c8d3f5; --background-modifier-border: #223; } .theme-light { --background-primary: #fafafa; --text-normal: #202020; }",
       });
 
     case "list_attachments":

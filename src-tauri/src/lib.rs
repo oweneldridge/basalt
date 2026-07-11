@@ -1271,6 +1271,9 @@ struct ObsidianImport {
     appearance: Option<String>,
     hotkeys: Option<String>,
     community_plugins: Vec<String>,
+    /// The active community theme's CSS (appearance.cssTheme →
+    /// themes/<name>/theme.css), for the palette bridge. Capped at 4 MB.
+    theme_css: Option<String>,
 }
 
 #[tauri::command]
@@ -1285,10 +1288,21 @@ fn read_obsidian_import(
         .ok()
         .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
         .unwrap_or_default();
+    // Read the active theme's CSS, if any (name comes from appearance.cssTheme).
+    let theme_css = appearance
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .and_then(|v| v.get("cssTheme").and_then(|x| x.as_str()).map(String::from))
+        .filter(|s| !s.is_empty())
+        // Theme name is user data — refuse path escapes before joining it.
+        .filter(|name| !name.contains('/') && !name.contains('\\') && !name.contains(".."))
+        .and_then(|name| fs::read_to_string(root.join(".obsidian/themes").join(name).join("theme.css")).ok())
+        .filter(|css| css.len() <= 4 * 1024 * 1024);
     Ok(ObsidianImport {
         appearance,
         hotkeys,
         community_plugins,
+        theme_css,
     })
 }
 
