@@ -61,7 +61,9 @@ export interface FileCache {
 /** The concrete capabilities App wires into the host. Keeping the host UI- and
  * Tauri-agnostic makes it unit-testable and keeps the trust surface explicit. */
 export interface HostDeps {
-  getMarkdownFiles: () => { path: string; name: string }[];
+  /** Vault notes. `ctime`/`mtime` are epoch-ms (for Dataview-style file dates);
+   * older callers may omit them. */
+  getMarkdownFiles: () => { path: string; name: string; ctime?: number; mtime?: number }[];
   readNote: (path: string) => Promise<string>;
   createNote: (path: string, content: string) => Promise<void>;
   modifyNote: (path: string, content: string) => Promise<void>;
