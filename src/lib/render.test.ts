@@ -247,6 +247,17 @@ describe("raw HTML", () => {
     expect(out).not.toContain("<span onclick");
     expect(out).toContain("&lt;span");
   });
+  it("treats a <font>-led line as a raw-HTML block (Obsidian daily-note header)", () => {
+    // A common Obsidian daily-note template: <font color=…><center>…<cite>…</cite></center></font>
+    const out = renderMarkdown('<font color="#ff0000"><center>Wednesday<cite>a quote</cite></center></font>');
+    expect(out).toContain("raw-html");
+    expect(out).toContain('data-basalt-html="');
+    // the full source (font/center/cite) is escaped INTO the placeholder for the
+    // sanitizer to fill — NOT emitted as escaped literal prose…
+    expect(out).toContain("&lt;font color=&quot;#ff0000&quot;&gt;");
+    // …and the color hex is NOT misread as a #tag (the pre-fix bug)
+    expect(out).not.toContain('class="md-tag"');
+  });
 });
 
 describe("raw HTML — review fixes", () => {
