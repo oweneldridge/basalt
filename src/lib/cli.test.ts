@@ -130,6 +130,13 @@ describe("cli run()", () => {
     expect(o.opened[0]).toContain("basalt://open?vault=");
   });
 
+  it("expands a leading ~ in --vault/$BASALT_VAULT (quoted paths)", () => {
+    const t = makeIo("/home/me/vault", { "/home/me/vault/Note.md": "hi" }, { HOME: "/home/me", BASALT_VAULT: "~/vault" });
+    t.io.isDir = (p: string) => p === "/home/me/vault";
+    expect(run(["ls"], t.io)).toBe(0);
+    expect(t.out[0]).toBe("Note.md"); // "~/vault" resolved to /home/me/vault
+  });
+
   it("no vault → error exit 1; help → 0", () => {
     const t = makeIo("", {}, { BASALT_VAULT: "" });
     t.io.cwd = "/nope";
