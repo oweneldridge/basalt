@@ -2561,3 +2561,134 @@ textarea.tp-modal-input {
   color: var(--danger, #d33);
   font-size: 0.9em;
 }
+
+/* Kanban — board rendered inside a ```kanban code block. */
+.kanban-board {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding: 4px 2px 10px;
+}
+.kanban-col {
+  flex: 0 0 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-sidebar, var(--bg-elev));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+}
+.kanban-col-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.kanban-col-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kanban-col-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--hover);
+  border-radius: 10px;
+  padding: 0 7px;
+}
+.kanban-col-del,
+.kanban-card-del {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 4px;
+}
+.kanban-col-del:hover,
+.kanban-card-del:hover {
+  color: var(--danger, #d33);
+  background: var(--hover);
+}
+.kanban-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 12px;
+  border-radius: 6px;
+}
+.kanban-cards.is-drop {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+}
+.kanban-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 8px;
+  cursor: grab;
+}
+.kanban-card:active {
+  cursor: grabbing;
+}
+.kanban-card-text {
+  flex: 1;
+  font-size: 0.88rem;
+  color: var(--text);
+  word-break: break-word;
+}
+.kanban-card.is-done .kanban-card-text {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+.kanban-card-del {
+  opacity: 0;
+}
+.kanban-card:hover .kanban-card-del {
+  opacity: 1;
+}
+.kanban-add-card {
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  outline: none;
+}
+.kanban-add-card:focus {
+  border-style: solid;
+  border-color: var(--accent);
+}
+.kanban-add-col {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.kanban-add-col:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.kanban-readonly-note {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-style: italic;
+  padding: 4px 2px;
+}

@@ -1,0 +1,8 @@
+{
+  "id": "kanban",
+  "name": "Kanban",
+  "version": "1.0.0",
+  "description": "Markdown-backed Kanban boards in a code block — columns of cards, drag to move, add/rename/delete, toggle done. Persists to the note it lives in.",
+  "author": "Basalt",
+  "minAppVersion": "0.1.0"
+}
