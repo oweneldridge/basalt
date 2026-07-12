@@ -5,6 +5,9 @@
   "description": "An open-source, local-first Markdown knowledge base \u2014 vault-compatible with Obsidian, built to never be enshittified.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
+  "bin": {
+    "basalt": "cli/basalt.mjs"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
