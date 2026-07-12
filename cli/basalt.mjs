@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // basalt — command-line access to a Basalt/Obsidian vault. Operates directly on
 // the vault's Markdown files (no running app required), so it's usable headless
-// (e.g. from Claude Code). `open` hands a basalt:// URI to the OS.
+// (e.g. in scripts and automation). `open` hands a basalt:// URI to the OS.
 import { existsSync, statSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { spawn } from "node:child_process";

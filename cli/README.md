@@ -2,7 +2,7 @@
 
 Command-line access to a Basalt/Obsidian vault. It reads and writes the vault's
 Markdown files directly — **no running app required** — so it works headless
-(e.g. from Claude Code sessions or scripts).
+(e.g. in scripts, editors, and automation).
 
 ## Install
 
