@@ -10,6 +10,9 @@ interface El {
   _tag: string;
   className: string;
   textContent: string;
+  type: string;
+  checked: boolean;
+  disabled: boolean;
   children: El[];
   style: Record<string, string>;
   setAttribute(k: string, v: string): void;
@@ -24,6 +27,9 @@ function makeEl(tag: string): El {
     _tag: tag,
     className: "",
     textContent: "",
+    type: "",
+    checked: false,
+    disabled: false,
     children: [],
     style: {},
     setAttribute(k, v) {
@@ -58,11 +64,20 @@ function textOf(el: El): string {
 }
 vi.stubGlobal("document", { createElement: (t: string) => makeEl(t) });
 
-const NOTES = ["SmithRx/Daily Notes/2026-07-01.md", "SmithRx/Daily Notes/2026-07-05.md", "SmithRx/Daily Notes/2026-07-09.md", "Other/Misc.md"];
+// mtime chosen so 2026-07-01's mtime lands on 2026-07-10 (a known date to assert).
+const JUL10 = new Date(2026, 6, 10, 9, 30).getTime();
+const NOTES: { path: string; ctime: number; mtime: number; content: string }[] = [
+  { path: "SmithRx/Daily Notes/2026-07-01.md", ctime: JUL10 - 86400000, mtime: JUL10, content: "# 2026-07-01\n- [ ] morning standup 📅 2026-07-03 #work\n- [x] wrote notes\n" },
+  { path: "SmithRx/Daily Notes/2026-07-05.md", ctime: JUL10, mtime: JUL10, content: "- [ ] review PR\n" },
+  { path: "SmithRx/Daily Notes/2026-07-09.md", ctime: JUL10, mtime: JUL10, content: "no tasks here\n" },
+  { path: "Other/Misc.md", ctime: JUL10, mtime: JUL10, content: "- [ ] stray task\n" },
+];
+const byPath = new Map(NOTES.map((n) => [n.path, n]));
 function fakeHost(): HostDeps {
   return {
-    getMarkdownFiles: () => NOTES.map((p) => ({ path: p, name: p.split("/").pop()!.replace(/\.md$/, "") })),
-    readNote: async () => "",
+    getMarkdownFiles: () =>
+      NOTES.map((n) => ({ path: n.path, name: n.path.split("/").pop()!.replace(/\.md$/, ""), ctime: n.ctime, mtime: n.mtime })),
+    readNote: async (rel: string) => byPath.get(rel)?.content ?? "",
     createNote: async () => {},
     modifyNote: async () => {},
     deleteNote: async () => {},
@@ -78,9 +93,11 @@ function fakeHost(): HostDeps {
   };
 }
 const info = (): PluginInfo => ({ id: "dataviewjs", name: "Dataview JS", version: "1.0.0", description: "", author: "", minAppVersion: "", code, data: null });
-function run(source: string, notePath = "SmithRx/Daily Notes/2026-07-01.md"): El {
+const flush = () => new Promise((r) => setTimeout(r, 0));
+async function run(source: string, notePath = "SmithRx/Daily Notes/2026-07-01.md"): Promise<El> {
   const el = makeEl("div");
   codeBlockProcessor("dataviewjs")!(source, el as unknown as HTMLElement, { notePath });
+  await flush(); // the processor pre-loads notes async before running the block
   return el;
 }
 
@@ -91,41 +108,52 @@ beforeEach(async () => {
 });
 
 describe("dataviewjs (lite)", () => {
-  it("runs a realistic daily-notes query: pages → where → sort → table + moment", () => {
-    const el = run(`
+  it("runs a daily-notes query sorted by file.day, formatted with Luxon", async () => {
+    const el = await run(`
       const pages = dv.pages('"SmithRx/Daily Notes"')
         .where(p => /^\\d{4}-\\d{2}-\\d{2}/.test(p.file.name))
-        .sort(p => moment(p.file.name.substring(0, 10)).valueOf(), "asc");
-      dv.table(["Date", "Day"], pages.map(p => [p.file.link, moment(p.file.name.substring(0, 10)).format("dddd")]));
+        .sort(p => p.file.day);
+      dv.table(["Date", "Day"], pages.map(p => [p.file.link, p.file.day.toFormat("cccc")]));
       dv.paragraph("Total: " + pages.length);
     `);
-    // header row + 3 daily notes (Misc.md excluded by folder + name filter)
     expect(findAll(el, "th").map((t) => t.textContent)).toEqual(["Date", "Day"]);
     const rows = findAll(findAll(el, "tbody")[0], "tr");
-    expect(rows).toHaveLength(3);
-    // Sorted ascending: 07-01 first, and 2026-07-01 is a Wednesday.
+    expect(rows).toHaveLength(3); // Misc.md excluded by folder source
+    // 2026-07-01 sorts first and is a Wednesday.
     expect(textOf(rows[0])).toContain("2026-07-01");
     expect(textOf(rows[0])).toContain("Wednesday");
-    // Links are clickable anchors, and the paragraph counted them.
     expect(findAll(el, "a").length).toBe(3);
     expect(textOf(el)).toContain("Total: 3");
   });
 
-  it("dv.current() resolves the block's own note; dv.list renders links", () => {
-    const el = run(`dv.list([dv.current().file.link]);`);
-    expect(findAll(el, "a").map((a) => a.textContent)).toEqual(["2026-07-01"]);
-  });
-
-  it("moment comparisons work (isBefore / isAfter / isValid)", () => {
-    const el = run(`
-      const a = moment("2026-07-01"), b = moment("2026-07-09");
-      dv.paragraph([a.isBefore(b), b.isAfter(a), moment("not-a-date").isValid(), a.format("YYYY/MM/DD")].join(" "));
+  it("exposes dv.luxon.DateTime with plus/diff/toFormat", async () => {
+    const el = await run(`
+      const { DateTime } = dv.luxon;
+      const a = DateTime.fromISO("2026-07-01");
+      const b = a.plus({ days: 8 });
+      dv.paragraph([a.toFormat("cccc"), b.toISODate(), b.diff(a, "days").days].join(" "));
     `);
-    expect(textOf(el)).toContain("true true false 2026/07/01");
+    // 2026-07-01 = Wednesday; +8 days = 2026-07-09; diff = 8
+    expect(textOf(el)).toContain("Wednesday 2026-07-09 8");
   });
 
-  it("reports a runtime error instead of throwing", () => {
-    const el = run(`dv.pages().nope.crash();`);
+  it("exposes file.tasks with completed state, and file.mtime as a DateTime", async () => {
+    const tl = await run(`dv.taskList(dv.current().file.tasks);`);
+    const boxes = findAll(tl, "input");
+    expect(boxes).toHaveLength(2); // one open + one done
+    expect(boxes.map((b) => b.checked)).toEqual([false, true]);
+
+    const mt = await run(`dv.paragraph(dv.current().file.mtime.toISODate());`);
+    expect(textOf(mt)).toContain("2026-07-10");
+  });
+
+  it("dv.date parses and compares, and dv.current resolves the block's note", async () => {
+    const el = await run(`dv.paragraph([dv.date("2026-07-01") < dv.date("2026-07-09"), dv.current().file.name].join(" "));`);
+    expect(textOf(el)).toContain("true 2026-07-01");
+  });
+
+  it("reports a runtime error instead of throwing", async () => {
+    const el = await run(`dv.pages().nope.crash();`);
     expect(textOf(el)).toContain("dataviewjs error");
   });
 });

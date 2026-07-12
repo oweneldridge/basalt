@@ -2676,7 +2676,7 @@ export default function App() {
   // Install the plugin host once; its deps read live refs / stable callbacks.
   useEffect(() => {
     const deps: HostDeps = {
-      getMarkdownFiles: () => notesRef.current.map((n) => ({ path: n.rel, name: n.name })),
+      getMarkdownFiles: () => notesRef.current.map((n) => ({ path: n.rel, name: n.name, ctime: n.ctime, mtime: n.mtime })),
       readNote: (rel) => {
         const note = notesRef.current.find((n) => n.rel === rel);
         return readNote(note ? note.path : rel);
