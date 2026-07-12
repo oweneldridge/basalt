@@ -2751,6 +2751,7 @@ export default function App() {
           frontmatter: parseProperties(note.content),
         };
       },
+      insertAtCursor: (text, caretOffset) => editorApiRef.current?.insertAtCursor(text, caretOffset),
       onRegistryChanged: () => setPluginVersion((v) => v + 1),
     };
     installHost(deps);

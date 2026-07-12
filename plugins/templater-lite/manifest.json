@@ -1,0 +1,8 @@
+{
+  "id": "templater-lite",
+  "name": "Templater Lite",
+  "version": "1.0.0",
+  "description": "Insert templates with Templater syntax — <% tp.* %> interpolation, <%* %> JS execution, cursor placement, prompt & suggester. A pragmatic subset of Templater.",
+  "author": "Basalt",
+  "minAppVersion": "0.1.0"
+}
