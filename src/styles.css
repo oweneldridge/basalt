@@ -2795,3 +2795,13 @@ textarea.tp-modal-input {
 .cal-setting input[type="text"] {
   margin-left: auto;
 }
+
+/* Live Preview raw-HTML block widget (renders sanitized HTML; click to edit). */
+.cm-html-block {
+  padding: 2px 0;
+  cursor: text;
+}
+.cm-html-block :where(center) {
+  display: block;
+  text-align: center;
+}
