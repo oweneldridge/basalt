@@ -58,6 +58,11 @@ export function openNewWindow(vault?: string, note?: string): Promise<string> {
   return invoke<string>("open_new_window", { vault: vault ?? null, note: note ?? null });
 }
 
+/** The `basalt://` URL the app was launched with (consumed once), or null. */
+export function takePendingDeepLink(): Promise<string | null> {
+  return invoke<string | null>("take_pending_deep_link");
+}
+
 export function readNote(path: string): Promise<string> {
   return invoke<string>("read_note", { path });
 }

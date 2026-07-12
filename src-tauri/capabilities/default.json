@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window and any window opened via open_new_window (labels w<n>). Without covering the extra windows, their event listeners (the on-disk conflict watcher + flush-on-close) and dialog/opener would be denied — which silently defeats lost-update protection on the live vault.",
+  "description": "Capability for the main window and any window opened via open_new_window (labels w<n>). Without covering the extra windows, their event listeners (the on-disk conflict watcher + flush-on-close) and dialog/opener would be denied \u2014 which silently defeats lost-update protection on the live vault.",
   "windows": [
     "main",
     "w*"
@@ -11,6 +11,7 @@
     "opener:default",
     "dialog:default",
     "opener:allow-open-path",
-    "opener:allow-reveal-item-in-dir"
+    "opener:allow-reveal-item-in-dir",
+    "deep-link:default"
   ]
 }

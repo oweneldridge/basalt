@@ -145,6 +145,8 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
       (globalThis as unknown as { __newWindows: unknown[] }).__newWindows.push({ vault: a.vault, note: a.note });
       return ok("w1");
     }
+    case "take_pending_deep_link":
+      return ok(null); // the harness never launches via a basalt:// URL
     // Fire-and-forget / no-op side effects.
     case "start_watching":
     case "debug_log":

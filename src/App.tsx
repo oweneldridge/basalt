@@ -15,6 +15,7 @@ import {
   writeAttachment,
   openVaultBackend,
   openNewWindow,
+  takePendingDeepLink,
   pickVault,
   readNote,
   readVault,
@@ -83,6 +84,7 @@ import { EditorPane } from "./components/EditorPane";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec, type BuiltinView } from "./lib/leafViews";
+import { parseBasaltUri } from "./lib/deeplink";
 import { Outline } from "./components/Outline";
 import { Backlinks } from "./components/Backlinks";
 import { Tags } from "./components/Tags";
@@ -1428,6 +1430,50 @@ export default function App() {
       openVault(last).catch(() => localStorage.removeItem(LAST_VAULT_KEY));
     }
   }, [openVault]);
+
+  // Handle `basalt://open?vault=…&note=…` deep links (from the CLI). Only the
+  // main window responds. A URL the app launched with is taken once; links that
+  // arrive while running come via the `deep-link-open` event. Identical URLs are
+  // de-duped (a launch link can surface through both paths on some platforms).
+  const lastDeepLink = useRef<string>("");
+  useEffect(() => {
+    if (WINDOW_LABEL !== "main") return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    const handle = (url: string) => {
+      if (!url || url === lastDeepLink.current) return;
+      lastDeepLink.current = url;
+      const parsed = parseBasaltUri(url);
+      if (!parsed) return;
+      // If the target vault is already open, just navigate — don't reset the
+      // workspace by re-opening it.
+      if (vaultRef.current === parsed.vault) {
+        const target = parsed.note ? notesRef.current.find((n) => n.rel === parsed.note) : null;
+        if (target) openInPane(ensureWorkspace(), target.path);
+        return;
+      }
+      openVault(parsed.vault, parsed.note).catch((e) => setSaveError(`Couldn't open link: ${e}`));
+    };
+    takePendingDeepLink()
+      .then((u) => {
+        if (!cancelled && u) handle(u);
+      })
+      .catch(() => {
+        /* not running under Tauri (e.g. harness) */
+      });
+    listen<string>("deep-link-open", (e) => handle(e.payload))
+      .then((u) => {
+        if (cancelled) u();
+        else unlisten = u;
+      })
+      .catch(() => {
+        /* event unavailable */
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [openVault, openInPane, ensureWorkspace]);
 
   // Persist the workspace (layout + tabs + active + focus, NOT live docs) per
   // vault. Keyed on the structural projection so per-keystroke doc syncs don't
