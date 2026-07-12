@@ -80,6 +80,10 @@ export interface HostDeps {
   notice: (message: string, timeoutMs?: number) => void;
   /** Parsed metadata for a note (by vault-relative path), or null if unknown. */
   getFileCache: (path: string) => FileCache | null;
+  /** Insert text at the focused editor's caret (replacing any selection); place
+   * the caret `caretOffset` chars into the inserted text. No-op if no editor.
+   * Optional so older host wirings still satisfy the type. */
+  insertAtCursor?: (text: string, caretOffset?: number) => void;
   /** Re-render open editors/reading views after processors/commands change. */
   onRegistryChanged: () => void;
 }
@@ -291,11 +295,23 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
         return p ? { path: p } : null;
       },
       openLinkText: (target: string) => host.openNote(target),
+      /** The focused editor (Obsidian-shaped: `activeEditor.editor`), or null.
+       * The editor exposes replaceSelection + a Basalt insertAtCursor that can
+       * place the caret inside the inserted text. */
+      get activeEditor() {
+        return host.getActiveNotePath() ? { editor } : null;
+      },
       /** Subscribe to a workspace event: file-open → (file|null);
        * active-leaf-change → (file|null). */
       on: (name: WorkspaceEventName, cb: (...args: unknown[]) => void): EventRef =>
         subscribe(workspaceListeners, name, cb),
     },
+  };
+
+  const editor = {
+    replaceSelection: (text: string) => host.insertAtCursor?.(String(text)),
+    insertAtCursor: (text: string, caretOffset?: number) =>
+      host.insertAtCursor?.(String(text), caretOffset),
   };
 
   class Plugin {
