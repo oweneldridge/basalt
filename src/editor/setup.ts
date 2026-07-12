@@ -84,6 +84,7 @@ import { calloutFold } from "./calloutFold";
 import { footnotes } from "./footnotes";
 import { comments } from "./comments";
 import { htmlInline } from "./htmlInline";
+import { htmlBlock } from "./htmlBlock";
 import { highlight } from "./highlight";
 import { tags } from "./tags";
 import { embeds } from "./embeds";
@@ -198,6 +199,7 @@ function renderExtensions(cb: EditorCallbacks): Extension[] {
     footnotes,
     comments,
     htmlInline,
+    htmlBlock,
     highlight,
     tags,
     embeds({ resolveImage: cb.resolveImage, onOpen: cb.onOpenWikilink }),

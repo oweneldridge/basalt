@@ -191,7 +191,7 @@ const CALLOUT = /^\[!([A-Za-z]+)\]([+-]?)\s*(.*)$/;
 // A line opening a BLOCK-LEVEL HTML tag (CommonMark type-6-ish list). Inline
 // tags (`<sup>`, `<span>`, `<a>`) at line start stay a paragraph; a
 // `<scheme:…>` autolink isn't matched (no block tag name).
-const HTML_BLOCK =
+export const HTML_BLOCK =
   /^<\/?(?:div|table|thead|tbody|tfoot|tr|td|th|colgroup|col|section|article|aside|header|footer|nav|figure|figcaption|blockquote|details|summary|dl|dt|dd|ul|ol|li|p|h[1-6]|hr|pre|form|fieldset|video|audio|canvas|main|address|center|font|span)(?:[\s/>]|$)/i;
 // Safe, attribute-free inline tags passed through literally (no XSS surface).
 const INLINE_HTML = /^<\/?(?:br|hr|sup|sub|kbd|mark|u|s|abbr|cite|small|ins|del|wbr)\s*\/?>$/i;
