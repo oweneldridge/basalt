@@ -30,7 +30,7 @@
     "category": "Productivity",
     "shortDescription": "Local-first Markdown knowledge base",
     "longDescription": "Basalt is an open-source, local-first Markdown knowledge base that reads and writes the same plain-Markdown vault as Obsidian. AGPL-3.0-or-later.",
-    "copyright": "Copyright © 2026 Owen Eldridge and contributors",
+    "copyright": "Copyright \u00a9 2026 Owen Eldridge and contributors",
     "publisher": "Owen Eldridge",
     "homepage": "https://github.com/oweneldridge/basalt",
     "licenseFile": "../LICENSE",
@@ -41,5 +41,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "basalt"
+        ]
+      }
+    }
   }
 }

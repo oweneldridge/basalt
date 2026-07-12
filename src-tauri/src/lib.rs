@@ -69,6 +69,11 @@ struct VaultState(Mutex<HashMap<String, PathBuf>>);
 /// The live vault watcher per window (kept alive so it isn't dropped, which
 /// would stop watching).
 struct WatcherState(Mutex<HashMap<String, notify::RecommendedWatcher>>);
+/// A `basalt://` URL the app was launched with, held until the frontend is
+/// ready to consume it (via `take_pending_deep_link`). Deep links that arrive
+/// while the app is already running are delivered by the `deep-link-open` event
+/// instead.
+struct PendingDeepLink(Mutex<Option<String>>);
 
 static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -374,6 +379,13 @@ fn open_new_window(app: AppHandle, vault: Option<String>, note: Option<String>) 
         .build()
         .map_err(|e| e.to_string())?;
     Ok(label)
+}
+
+/// Return (and clear) the `basalt://` URL the app was launched with, if any.
+/// The frontend calls this once on mount; live deep links use the event.
+#[tauri::command]
+fn take_pending_deep_link(state: State<PendingDeepLink>) -> Option<String> {
+    state.0.lock().ok().and_then(|mut g| g.take())
 }
 
 /// Minimal percent-encoding for a URL query value (path → ?vault=…).
@@ -1838,11 +1850,59 @@ fn write_plugin_data(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // Single-instance MUST be registered first: a second `basalt://…` launch
+    // routes into the running app (and, via the `deep-link` feature, forwards
+    // the URL to on_open_url) instead of spawning a duplicate.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(VaultState(Mutex::new(HashMap::new())))
         .manage(WatcherState(Mutex::new(HashMap::new())))
+        .manage(PendingDeepLink(Mutex::new(None)))
+        .setup(|app| {
+            use tauri_plugin_deep_link::DeepLinkExt;
+            // A URL the app was launched with → stash for the frontend to take.
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                if let Some(u) = urls.iter().find(|u| u.scheme() == "basalt") {
+                    if let Some(s) = app.try_state::<PendingDeepLink>() {
+                        *s.0.lock().unwrap() = Some(u.as_str().to_string());
+                    }
+                }
+            }
+            // Links that arrive while running → focus main + emit to the frontend.
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    if url.scheme() != "basalt" {
+                        continue;
+                    }
+                    if let Some(w) = handle.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                    let _ = handle.emit("deep-link-open", url.as_str().to_string());
+                }
+            });
+            // Custom schemes need runtime registration on Linux (and dev Windows).
+            #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+            {
+                let _ = app.deep_link().register_all();
+            }
+            Ok(())
+        })
         .on_window_event(|window, event| {
             // When a window closes, drop its vault + watcher entries so its state
             // can't be reused by a future window that happens to reuse the label.
@@ -1866,6 +1926,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_vault,
             open_new_window,
+            take_pending_deep_link,
             read_vault,
             read_note,
             write_note,

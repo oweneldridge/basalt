@@ -40,9 +40,10 @@ basalt info [--json]               # vault path + note count
   as a case-insensitive `RegExp`; otherwise it's a case-insensitive substring.
 - `new` refuses to overwrite an existing note unless `--force`, sanitizes
   filesystem-hostile characters, and rejects path traversal (`..`).
-- `open` emits `basalt://open?vault=…&note=…`. Navigating the running app to a
-  note needs Basalt to register that URI scheme (a follow-up); today the OS
-  opener is invoked best-effort.
+- `open` emits `basalt://open?vault=…&note=…` to the OS. Basalt registers the
+  `basalt://` scheme, so a running app focuses and navigates to the note (and if
+  it isn't running, launching it opens the link). Requires the bundled app —
+  custom-scheme registration doesn't apply to `tauri dev`.
 
 ## Examples
 
