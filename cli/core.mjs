@@ -52,9 +52,18 @@ export function findVaultRoot(startDir, io) {
   return null;
 }
 
+// Expand a leading ~ / ~/ to $HOME (so a quoted "~/vault" the shell didn't
+// expand still resolves). A ~ mid-path (e.g. com~apple~CloudDocs) is left alone.
+function expandTilde(p, io) {
+  const home = io.env.HOME || io.env.USERPROFILE || "";
+  if (p === "~") return home || p;
+  if (p.startsWith("~/")) return home ? home + p.slice(1) : p;
+  return p;
+}
+
 function resolveVault(opts, io) {
   const explicit = opts.vault || io.env.BASALT_VAULT;
-  if (explicit) return explicit.replace(/\/+$/, "");
+  if (explicit) return expandTilde(explicit, io).replace(/\/+$/, "");
   return findVaultRoot(io.cwd, io);
 }
 
