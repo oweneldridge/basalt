@@ -1,0 +1,8 @@
+{
+  "id": "calendar",
+  "name": "Calendar",
+  "version": "1.0.0",
+  "description": "A month calendar in the sidebar — dots on days that have a daily note, click a day to open (or create) its YYYY-MM-DD note. Today and the open note are highlighted.",
+  "author": "Basalt",
+  "minAppVersion": "0.1.0"
+}
