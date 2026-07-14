@@ -490,6 +490,39 @@ function buildDv(idx, el, notePath) {
     if (value == null) return "";
     return Array.isArray(value) ? value.join(", ") : String(value);
   };
+  // Render a string into `parent`, turning [[wikilinks]] and [text](url) into
+  // clickable links (like Dataview's dv.paragraph, which renders markdown).
+  const INLINE_LINK = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+  const appendInline = (parent, text) => {
+    const str = String(text);
+    let last = 0;
+    let m;
+    INLINE_LINK.lastIndex = 0;
+    while ((m = INLINE_LINK.exec(str))) {
+      if (m.index > last) parent.appendChild(document.createTextNode(str.slice(last, m.index)));
+      if (m[1] !== undefined) {
+        const target = m[1].trim().replace(/\.md$/i, "");
+        const label = (m[2] || target.split("/").pop() || target).trim();
+        const a = document.createElement("a");
+        a.className = "internal-link";
+        a.textContent = label;
+        a.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          openLink(target);
+        });
+        parent.appendChild(a);
+      } else {
+        const a = document.createElement("a");
+        a.href = m[4];
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = m[3];
+        parent.appendChild(a);
+      }
+      last = m.index + m[0].length;
+    }
+    if (last < str.length) parent.appendChild(document.createTextNode(str.slice(last)));
+  };
   const cell = (value) => {
     if (value && value.path !== undefined && value.display !== undefined) {
       const a = document.createElement("a");
@@ -502,7 +535,7 @@ function buildDv(idx, el, notePath) {
       return a;
     }
     const span = document.createElement("span");
-    span.textContent = cellValue(value);
+    appendInline(span, cellValue(value));
     return span;
   };
 

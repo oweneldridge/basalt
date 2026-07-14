@@ -62,7 +62,10 @@ function textOf(el: El): string {
   if (el.children.length) return el.children.map(textOf).join("");
   return el.textContent;
 }
-vi.stubGlobal("document", { createElement: (t: string) => makeEl(t) });
+vi.stubGlobal("document", {
+  createElement: (t: string) => makeEl(t),
+  createTextNode: (t: string) => ({ _tag: "#text", textContent: t, children: [] as El[] }),
+});
 
 // mtime chosen so 2026-07-01's mtime lands on 2026-07-10 (a known date to assert).
 const JUL10 = new Date(2026, 6, 10, 9, 30).getTime();
@@ -150,6 +153,17 @@ describe("dataviewjs (lite)", () => {
   it("dv.date parses and compares, and dv.current resolves the block's note", async () => {
     const el = await run(`dv.paragraph([dv.date("2026-07-01") < dv.date("2026-07-09"), dv.current().file.name].join(" "));`);
     expect(textOf(el)).toContain("true 2026-07-01");
+  });
+
+  it("renders [[wikilinks]] in dv output as clickable links (daily-note nav)", async () => {
+    const el = await run(
+      `dv.paragraph("<< [[SmithRx/Daily Notes/2026-07-01.md|Previous Day]] | [[2026-07-05]] >>")`,
+    );
+    const links = findAll(el, "a");
+    expect(links.map((a) => a.textContent)).toEqual(["Previous Day", "2026-07-05"]);
+    // the surrounding "<<"/">>" text is preserved around the links
+    expect(textOf(el)).toContain("<<");
+    expect(textOf(el)).toContain(">>");
   });
 
   it("reports a runtime error instead of throwing", async () => {
