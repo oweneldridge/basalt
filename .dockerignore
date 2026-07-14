@@ -1,0 +1,11 @@
+# Rebuilt inside the image; keep them out of the build context.
+node_modules
+dist
+target
+src-tauri/target
+src-tauri/gen
+.git
+e2e
+test-results
+*.log
+.DS_Store

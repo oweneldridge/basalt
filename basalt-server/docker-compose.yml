@@ -1,0 +1,21 @@
+# Basalt web on Spectre — serves the vault at a tailnet-only URL via Tailscale
+# Serve, using the same basalt-core engine as the desktop app. See DEPLOY.md.
+# This file lives in basalt-server/; the build context is the repo root ("..").
+services:
+  basalt-web:
+    build:
+      context: ..
+      dockerfile: basalt-server/Dockerfile
+    container_name: basalt-web
+    restart: unless-stopped
+    volumes:
+      # The vault: the same unison-synced space SilverBullet serves. Read-write.
+      - /opt/arrstack/silverbullet/space:/vault
+    environment:
+      # Set in a .env next to this file: BASALT_AUTH=owen:<strong-pass>
+      # (store the creds in Vaultwarden). Malformed value => the server refuses
+      # to start (fails closed). Unset => no auth (tailnet-only boundary).
+      - BASALT_AUTH=${BASALT_AUTH:-}
+    ports:
+      # Localhost only; Tailscale Serve exposes it to the tailnet.
+      - "127.0.0.1:10017:8799"
