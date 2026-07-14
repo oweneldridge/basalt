@@ -1,10 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
-import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { confirm, save } from "@tauri-apps/plugin-dialog";
+import { invoke, getCurrentWindow, listen, openPath, openUrl, revealItemInDir, confirm, save, isTauri } from "./lib/platform";
 import {
   createNote,
   createFolder,
@@ -1817,6 +1813,26 @@ export default function App() {
       void flushAll();
     };
     window.addEventListener("blur", onBlur);
+
+    // The web app has no Tauri onCloseRequested, so guard tab close / reload /
+    // backgrounding: flush on hide (best-effort), and warn before unload while
+    // edits are pending — the browser's prompt lets the user cancel so autosave
+    // can finish, preventing a silent loss the desktop close-guard would catch.
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") void flushAll();
+    };
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (pending.current.size > 0) {
+        void flushAll();
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    if (!isTauri) {
+      document.addEventListener("visibilitychange", onVisibility);
+      window.addEventListener("beforeunload", onBeforeUnload);
+    }
+
     let unlisten: (() => void) | undefined;
     let closing = false;
     (async () => {
@@ -1835,6 +1851,10 @@ export default function App() {
     })();
     return () => {
       window.removeEventListener("blur", onBlur);
+      if (!isTauri) {
+        document.removeEventListener("visibilitychange", onVisibility);
+        window.removeEventListener("beforeunload", onBeforeUnload);
+      }
       unlisten?.();
     };
   }, [flushAll]);
