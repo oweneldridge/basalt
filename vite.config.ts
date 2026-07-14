@@ -20,6 +20,12 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
     host: host || false,
+    // Web dev: proxy /api → a locally-running basalt-server so the app, loaded
+    // in a plain browser, reaches the backend same-origin (no CORS). Inert under
+    // Tauri (the desktop app uses IPC and never hits /api).
+    proxy: {
+      "/api": { target: "http://localhost:8799", changeOrigin: true },
+    },
     hmr: host
       ? {
           protocol: "ws",
