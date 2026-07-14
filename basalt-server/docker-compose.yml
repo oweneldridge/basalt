@@ -17,5 +17,6 @@ services:
       # to start (fails closed). Unset => no auth (tailnet-only boundary).
       - BASALT_AUTH=${BASALT_AUTH:-}
     ports:
-      # Localhost only; Tailscale Serve exposes it to the tailnet.
-      - "127.0.0.1:10017:8799"
+      # Localhost only; Tailscale Serve exposes it to the tailnet. (10017 was
+      # already taken on this tailnet — pick a free port for your deployment.)
+      - "127.0.0.1:10019:8799"

@@ -41,14 +41,14 @@ docker compose logs -f basalt-web # expect: "vault /vault on http://127.0.0.1:87
 ## 5. Expose it tailnet-only (mirrors SilverBullet's :10016)
 
 ```sh
-sudo tailscale serve --bg --https=10017 http://127.0.0.1:10017
-sudo tailscale serve status        # confirm the :10017 mapping
+sudo tailscale serve --bg --https=10019 http://127.0.0.1:10019
+sudo tailscale serve status        # confirm the :10019 mapping
 ```
 
 ## 6. Open it
 
 ```
-https://becspk.tailaeef0f.ts.net:10017
+https://becspk.tailaeef0f.ts.net:10019
 ```
 
 The browser prompts for the Basic-auth creds, then loads your vault — editable
