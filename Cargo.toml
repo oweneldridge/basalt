@@ -1,0 +1,11 @@
+# Cargo workspace for Basalt's Rust code.
+#
+# - basalt-core   : the pure vault engine (all file IO + invariants), no Tauri.
+# - src-tauri      : the desktop app — thin #[tauri::command] adapters over the core.
+# - basalt-server  : the web backend (axum HTTP/SSE) — thin adapters over the SAME core.
+#
+# One security-critical file layer (basalt-core), two front-ends. This is the
+# anti-enshittification payoff of keeping the core independent of the shell.
+[workspace]
+members = ["basalt-core", "src-tauri", "basalt-server"]
+resolver = "2"

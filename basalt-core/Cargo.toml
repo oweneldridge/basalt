@@ -1,0 +1,11 @@
+[package]
+name = "basalt-core"
+version = "0.1.0"
+description = "Basalt's pure vault engine — Obsidian-compatible file IO with hardened path/atomic-write invariants. No UI shell."
+authors = ["Owen Eldridge"]
+license = "AGPL-3.0-or-later"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
