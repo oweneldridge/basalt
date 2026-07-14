@@ -26,7 +26,17 @@ async function httpInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ cmd, args: args ?? {} }),
   });
-  const j = await r.json();
+  // The server answers with a {result}|{error} JSON envelope. A non-JSON body is
+  // a transport-level rejection (413 too-large, 401, 5xx) — surface a clean
+  // message rather than letting JSON parsing throw an opaque SyntaxError.
+  let j: { result?: T; error?: string };
+  try {
+    j = await r.json();
+  } catch {
+    throw new Error(
+      r.status === 413 ? "File is too large to save over the web." : `Server error ${r.status} ${r.statusText}`,
+    );
+  }
   if (j.error) throw new Error(j.error);
   return j.result as T;
 }
@@ -39,9 +49,22 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
 type WebEvent = { payload: unknown };
 const webHandlers = new Map<string, Set<(e: WebEvent) => void>>();
 let es: EventSource | null = null;
+let connectedBefore = false;
 function ensureStream() {
   if (es) return;
   es = new EventSource(`${API}/api/events`);
+  es.onopen = () => {
+    // On RE-connect (laptop sleep/wake, a network blip, a server restart) the
+    // stream missed any frames emitted during the gap, so an open note could be
+    // stale and get silently clobbered by autosave. Force a full resync — App's
+    // vault-rescan handler reloads the index and reconciles open panes (raising a
+    // conflict for dirty ones). The FIRST connect needs none (the app is just
+    // loading the vault).
+    if (connectedBefore) {
+      webHandlers.get("vault-rescan")?.forEach((h) => h({ payload: null }));
+    }
+    connectedBefore = true;
+  };
   es.onmessage = (m) => {
     try {
       const { event, payload } = JSON.parse(m.data);
@@ -51,7 +74,7 @@ function ensureStream() {
     }
   };
   es.onerror = () => {
-    /* the browser auto-reconnects an EventSource */
+    /* the browser auto-reconnects an EventSource; onopen fires again on success */
   };
 }
 export function listen<T>(event: string, handler: (e: { payload: T }) => void): Promise<UnlistenFn> {
@@ -84,7 +107,10 @@ export function getCurrentWindow(): ReturnType<typeof tauriGetCurrentWindow> {
 // hosts, so it returns that root (pickVault treats a string result as chosen).
 export function open(options?: Parameters<typeof tauriOpen>[0]): ReturnType<typeof tauriOpen> {
   if (isTauri) return tauriOpen(options);
-  return webVaultRoot() as ReturnType<typeof tauriOpen>;
+  // The web "picker" resolves to the one served vault; if the server is briefly
+  // unreachable, resolve null (matching the desktop cancel contract) instead of
+  // rejecting into an unhandled promise.
+  return webVaultRoot().catch(() => null) as ReturnType<typeof tauriOpen>;
 }
 // Web export is a browser download (a later enhancement); the server refuses
 // export_file, so returning null makes the export flow no-op cleanly for now.

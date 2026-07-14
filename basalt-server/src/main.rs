@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::{
-    extract::{Request, State},
+    extract::{DefaultBodyLimit, Request, State},
     http::{header, StatusCode},
     middleware::{self, Next},
     response::sse::{Event, KeepAlive, Sse},
@@ -32,17 +32,20 @@ use axum::{
 use notify::{RecursiveMode, Watcher};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Semaphore};
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
 struct AppState {
     root: PathBuf,
     /// Watcher → SSE fan-out. Each frame is a serialized `{"event","payload"}`.
     tx: broadcast::Sender<String>,
+    /// Caps concurrent (blocking, memory-heavy) command execution so a burst of
+    /// read_vault calls can't amplify to an OOM.
+    sem: Semaphore,
 }
 
 #[derive(Deserialize)]
@@ -73,10 +76,19 @@ async fn main() {
     let port: u16 = std::env::var("BASALT_PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(8799);
     let web_dir = PathBuf::from(std::env::var("BASALT_WEB_DIR").unwrap_or_else(|_| "dist".into()));
     // BASALT_AUTH="user:pass" enables HTTP Basic auth. Unset = no auth (rely on
-    // the Tailscale-only network boundary — fine for dev / a trusted tailnet).
-    let auth = std::env::var("BASALT_AUTH").ok().and_then(|s| {
-        s.split_once(':').map(|(u, p)| (u.to_string(), p.to_string()))
-    });
+    // the Tailscale-only network boundary — fine for a trusted tailnet). Present
+    // but malformed (no ':') is a misconfiguration — fail CLOSED (exit) rather
+    // than silently booting with auth disabled.
+    let auth = match std::env::var("BASALT_AUTH") {
+        Ok(s) => match s.split_once(':') {
+            Some((u, p)) => Some((u.to_string(), p.to_string())),
+            None => {
+                eprintln!("BASALT_AUTH must be in 'user:pass' form; refusing to start with auth misconfigured");
+                std::process::exit(1);
+            }
+        },
+        Err(_) => None,
+    };
 
     // Bounded fan-out channel; slow/absent SSE clients just lag and get dropped
     // frames (the frontend reconciles from disk on the next event anyway).
@@ -87,7 +99,7 @@ async fn main() {
         std::process::exit(1);
     });
 
-    let state = Arc::new(AppState { root: root.clone(), tx });
+    let state = Arc::new(AppState { root: root.clone(), tx, sem: Semaphore::new(16) });
 
     let index = web_dir.join("index.html");
     let mut app = Router::new()
@@ -98,7 +110,13 @@ async fn main() {
         .fallback_service(ServeDir::new(&web_dir).fallback(ServeFile::new(index)))
         .with_state(state)
         .layer(CompressionLayer::new()) // gzip — the 43MB read_vault → ~9MB
-        .layer(CorsLayer::permissive()); // dev cross-origin; prod is same-origin
+        // Room for base64 attachment writes (desktop has no limit; axum's 2MB
+        // default would reject routine screenshot pastes with an opaque 413).
+        .layer(DefaultBodyLimit::max(128 * 1024 * 1024));
+    // NO CORS layer: the app is same-origin in prod (server serves dist/) and in
+    // dev (vite proxies /api), so it never needs cross-origin access. Permissive
+    // CORS would only let a drive-by website read/destroy the vault — the
+    // browser's same-origin policy is the intended barrier and we keep it.
 
     if let Some((u, p)) = &auth {
         // Outermost layer → checked first. NOTE: browser EventSource can't set an
@@ -159,7 +177,7 @@ fn frame(event: &str, payload: Value) -> String {
 /// which is what lets same-origin EventSource carry them).
 async fn basic_auth(State(expected): State<Arc<String>>, req: Request, next: Next) -> Response {
     let provided = req.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok());
-    if provided == Some(expected.as_str()) {
+    if provided.is_some_and(|p| ct_eq(p.as_bytes(), expected.as_bytes())) {
         next.run(req).await
     } else {
         (
@@ -169,6 +187,20 @@ async fn basic_auth(State(expected): State<Arc<String>>, req: Request, next: Nex
         )
             .into_response()
     }
+}
+
+/// Length-checked, content-constant-time byte compare (no early-out on the
+/// first differing byte) so the auth check doesn't leak how many leading bytes
+/// of the credential matched.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for i in 0..a.len() {
+        diff |= a[i] ^ b[i];
+    }
+    diff == 0
 }
 
 fn b64(data: &[u8]) -> String {
@@ -193,12 +225,20 @@ async fn vault_root(State(app): State<Arc<AppState>>) -> Json<Value> {
 
 async fn events(State(app): State<Arc<AppState>>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = app.tx.subscribe();
-    // Drop lagged/errored frames; the frontend reconciles from disk regardless.
-    let stream = BroadcastStream::new(rx).filter_map(|msg| msg.ok().map(|s| Ok(Event::default().data(s))));
+    let stream = BroadcastStream::new(rx).map(|msg| match msg {
+        Ok(s) => Ok(Event::default().data(s)),
+        // A lagged client fell behind the channel and MISSED frames. Don't drop
+        // them silently (the missed change could later be clobbered by autosave)
+        // — tell it to fully resync from disk.
+        Err(BroadcastStreamRecvError::Lagged(_)) => Ok(Event::default().data(frame("vault-rescan", Value::Null))),
+    });
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 async fn invoke(State(app): State<Arc<AppState>>, Json(req): Json<InvokeReq>) -> Json<Value> {
+    // Cap concurrent command execution (read_vault is ~150MB peak); excess
+    // requests queue as backpressure instead of piling up toward an OOM.
+    let _permit = app.sem.acquire().await;
     let root = app.root.clone();
     // Every core op is blocking fs work — keep it off the async worker threads.
     let out = tokio::task::spawn_blocking(move || dispatch(&root, &req.cmd, &req.args)).await;
