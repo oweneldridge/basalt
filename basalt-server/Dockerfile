@@ -10,7 +10,11 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-RUN npm run build
+# vite build only — NOT `npm run build` (which also runs `tsc`, a dev-time
+# typecheck gate that flags node:* imports in *.test.ts in this clean image).
+# esbuild/vite strips types and bundles only the app; the typecheck is run
+# separately in dev/CI.
+RUN npx vite build
 
 # ---- 2. build the server binary ----
 FROM rust:1-slim AS server
@@ -31,6 +35,7 @@ COPY --from=web /app/dist /app/dist
 # host-owned bind mount always succeed; see DEPLOY.md to harden to non-root.
 ENV BASALT_WEB_DIR=/app/dist \
     BASALT_VAULT=/vault \
-    BASALT_PORT=8799
+    BASALT_PORT=8799 \
+    BASALT_HOST=0.0.0.0
 EXPOSE 8799
 CMD ["basalt-server"]

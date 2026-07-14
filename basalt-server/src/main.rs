@@ -130,7 +130,15 @@ async fn main() {
         println!("[basalt-server] HTTP Basic auth: OFF (set BASALT_AUTH=user:pass to enable)");
     }
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    // Bind host: default 127.0.0.1 (safe on bare metal — only localhost or a
+    // reverse proxy like Tailscale Serve can reach it). In Docker, set
+    // BASALT_HOST=0.0.0.0 so the container's published port (bound to 127.0.0.1
+    // on the host) can forward into it; the LAN still can't reach it.
+    let host: std::net::IpAddr = std::env::var("BASALT_HOST")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| std::net::IpAddr::from([127, 0, 0, 1]));
+    let addr = SocketAddr::new(host, port);
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .unwrap_or_else(|e| {
