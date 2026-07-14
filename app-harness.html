@@ -10,6 +10,12 @@
   </head>
   <body>
     <div id="root" style="height: 100vh"></div>
+    <script>
+      // The harness mocks Tauri IPC (vite alias → tauriMock). Set the runtime
+      // marker BEFORE any module loads so platform.ts (read at import time) takes
+      // the Tauri path and routes through the mock, not the HTTP transport.
+      window.__TAURI_INTERNALS__ = window.__TAURI_INTERNALS__ || {};
+    </script>
     <script type="module" src="/src/app-harness.tsx"></script>
   </body>
 </html>

@@ -5,7 +5,7 @@
 // Misses are cached only briefly (so an image referenced before it exists, or a
 // transient read error, recovers), the cache is size-bounded, and it's cleared
 // on vault switch.
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./platform";
 
 interface Entry {
   url: string | null;

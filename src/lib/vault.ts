@@ -2,8 +2,7 @@
 // frontend has to the filesystem — see src-tauri/src/lib.rs. The canonical
 // vault root lives in Rust managed state (set by openVaultBackend), so no
 // command here can name a location outside the open vault.
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { invoke, open } from "./platform";
 
 export interface Note {
   /** Absolute path on disk. */
