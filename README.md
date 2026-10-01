@@ -1,6 +1,6 @@
 # Basalt
 
-**An open-source, local-first Markdown knowledge base — vault-compatible with Obsidian, built so it can never be taken away from you.**
+**An open-source, local-first Markdown knowledge base that reads and writes the same vaults as Obsidian.**
 
 [![CI](https://github.com/oweneldridge/basalt/actions/workflows/ci.yml/badge.svg)](https://github.com/oweneldridge/basalt/actions/workflows/ci.yml)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](./LICENSE)
