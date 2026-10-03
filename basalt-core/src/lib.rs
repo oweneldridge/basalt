@@ -539,6 +539,36 @@ pub fn delete_note(root: &Path, path: String) -> Result<(), String> {
 /// Move a whole FOLDER (by vault-relative path) to the vault trash —
 /// recoverable, like note deletion. Refuses the root and dot-folders
 /// (.obsidian/.basalt/.trash live outside the note tree).
+/// Resolve a vault-relative folder to its canonical path, refusing the root,
+/// `..`/absolute forms, and anything whose real location is outside the vault
+/// or under a dot-folder (a symlink can alias `.obsidian` or point outside).
+fn contained_folder(root: &Path, rel: &str) -> Result<PathBuf, String> {
+    let r = rel.trim().trim_matches(['/', '\\']);
+    if r.is_empty() {
+        return Err("invalid folder path".into());
+    }
+    let rp = Path::new(r);
+    if rp.components().any(|c| !matches!(c, Component::Normal(_))) {
+        return Err("invalid folder path".into());
+    }
+    let canon = fs::canonicalize(root.join(rp)).map_err(|e| e.to_string())?;
+    if !canon.starts_with(root) || !canon.is_dir() {
+        return Err("not a folder in the vault".into());
+    }
+    let crel = canon.strip_prefix(root).map_err(|_| "path escapes vault")?;
+    if crel.as_os_str().is_empty()
+        || crel
+            .components()
+            .any(|c| matches!(c, Component::Normal(s) if s.to_string_lossy().starts_with('.')))
+    {
+        return Err("invalid folder path".into());
+    }
+    Ok(canon)
+}
+
+/// Deepest folder nesting the recursive walkers will descend.
+const MAX_WALK_DEPTH: usize = 64;
+
 pub fn delete_folder(root: &Path, rel: String) -> Result<(), String> {
     let r = rel.trim().trim_matches(['/', '\\']);
     if r.is_empty() {
@@ -591,25 +621,26 @@ pub fn remove_empty_folder(root: &Path, rel: String) -> Result<(), String> {
     if rp.components().any(|c| !matches!(c, Component::Normal(_))) {
         return Err("invalid folder path".into());
     }
-    let canon = fs::canonicalize(root.join(rp)).map_err(|e| e.to_string())?;
-    if !canon.starts_with(&root) || !canon.is_dir() {
-        return Err("not a folder in the vault".into());
-    }
+    let canon = contained_folder(root, r)?;
     // Bottom-up remove_dir: each removal fails atomically with ENOTEMPTY if
     // anything appeared since we looked — no TOCTOU window can delete content.
-    fn remove_if_empty(dir: &Path) -> Result<(), String> {
+    // A symlink counts as content: never descend through one.
+    fn remove_if_empty(dir: &Path, depth: usize) -> Result<(), String> {
+        if depth > MAX_WALK_DEPTH {
+            return Err("folder is nested too deeply".into());
+        }
         let entries = fs::read_dir(dir).map_err(|e| e.to_string())?;
         for e in entries.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                remove_if_empty(&p)?;
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir {
+                remove_if_empty(&e.path(), depth + 1)?;
             } else {
                 return Err("folder is not empty".into());
             }
         }
         fs::remove_dir(dir).map_err(|e| format!("remove: {e}"))
     }
-    remove_if_empty(&canon)
+    remove_if_empty(&canon, 0)
 }
 
 /// Every file under `rel` that is NOT a Markdown note (any extension, dotfiles
@@ -624,12 +655,12 @@ pub fn list_foreign_files(root: &Path, rel: String) -> Result<Vec<String>, Strin
     if rp.components().any(|c| !matches!(c, Component::Normal(_))) {
         return Err("invalid folder path".into());
     }
-    let canon = fs::canonicalize(root.join(rp)).map_err(|e| e.to_string())?;
-    if !canon.starts_with(&root) || !canon.is_dir() {
-        return Err("not a folder in the vault".into());
-    }
+    let canon = contained_folder(root, r)?;
     let mut out = Vec::new();
-    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>, depth: usize) {
+        if depth > MAX_WALK_DEPTH {
+            return;
+        }
         let Ok(entries) = fs::read_dir(dir) else { return };
         for e in entries.flatten() {
             if out.len() >= 20 {
@@ -637,8 +668,9 @@ pub fn list_foreign_files(root: &Path, rel: String) -> Result<Vec<String>, Strin
             }
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
-            if p.is_dir() {
-                walk(&p, root, out);
+            // file_type() doesn't follow symlinks: a linked dir is listed, not walked.
+            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                walk(&p, root, out, depth + 1);
             } else if name != ".DS_Store"
                 && !p.extension().and_then(|x| x.to_str()).is_some_and(|x| x.eq_ignore_ascii_case("md"))
             {
@@ -648,7 +680,7 @@ pub fn list_foreign_files(root: &Path, rel: String) -> Result<Vec<String>, Strin
             }
         }
     }
-    walk(&canon, &root, &mut out);
+    walk(&canon, &root, &mut out, 0);
     Ok(out)
 }
 
@@ -663,24 +695,25 @@ pub fn list_subfolders(root: &Path, rel: String) -> Result<Vec<String>, String> 
     if rp.components().any(|c| !matches!(c, Component::Normal(_))) {
         return Err("invalid folder path".into());
     }
-    let canon = fs::canonicalize(root.join(rp)).map_err(|e| e.to_string())?;
-    if !canon.starts_with(&root) || !canon.is_dir() {
-        return Err("not a folder in the vault".into());
-    }
+    let canon = contained_folder(root, r)?;
     let mut out = Vec::new();
-    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>, depth: usize) {
+        if depth > MAX_WALK_DEPTH {
+            return;
+        }
         let Ok(entries) = fs::read_dir(dir) else { return };
         for e in entries.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                if let Ok(rp) = p.strip_prefix(root) {
-                    out.push(rp.to_string_lossy().to_string());
-                }
-                walk(&p, root, out);
+            if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue; // files, and symlinks (never followed)
             }
+            let p = e.path();
+            if let Ok(rp) = p.strip_prefix(root) {
+                out.push(rp.to_string_lossy().to_string());
+            }
+            walk(&p, root, out, depth + 1);
         }
     }
-    walk(&canon, &root, &mut out);
+    walk(&canon, &root, &mut out, 0);
     Ok(out)
 }
 
@@ -739,10 +772,11 @@ pub fn rename_folder(root: &Path, from_rel: String, to_rel: String) -> Result<St
         return Err("cannot move a folder into itself".into());
     }
     let from_abs = root.join(&fromp);
-    let from_canon = fs::canonicalize(&from_abs).map_err(|e| e.to_string())?;
-    if !from_canon.starts_with(&root) || !from_canon.is_dir() {
-        return Err("not a folder in the vault".into());
+    // A symlink alias would move whatever it points at (e.g. `.obsidian`).
+    if from_abs.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+        return Err("invalid folder path".into());
     }
+    let from_canon = contained_folder(root, &from_rel)?;
     let to_abs = root.join(&top);
     // Confirm the destination's nearest EXISTING ancestor is inside the vault
     // BEFORE creating any directories — a symlinked ancestor in `to_rel` must
@@ -1889,6 +1923,47 @@ mod tests {
         assert_eq!((e1.as_str(), e2.as_str()), (WRITE_CONFLICT, WRITE_CONFLICT));
         write_canvas(&root, canvas.to_string_lossy().into(), "{}".into(), Some("{\"nodes\":[]}".into())).unwrap();
         assert_eq!(fs::read_to_string(&canvas).unwrap(), "{}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_walkers_never_follow_symlinks() {
+        use std::os::unix::fs::symlink;
+        let root = scratch_vault("walk");
+        let outside = scratch_vault("walk-outside");
+        fs::create_dir_all(outside.join("emptyA/emptyB")).unwrap();
+        fs::write(outside.join("secret.txt"), "x").unwrap();
+        fs::create_dir_all(root.join("sub")).unwrap();
+        symlink(&outside, root.join("sub/link")).unwrap();
+        fs::create_dir_all(root.join("loop/a")).unwrap();
+        symlink(root.join("loop"), root.join("loop/a/back")).unwrap();
+
+        assert_eq!(list_subfolders(&root, "sub".into()).unwrap(), Vec::<String>::new());
+        assert_eq!(list_subfolders(&root, "loop".into()).unwrap(), vec!["loop/a".to_string()]);
+        let foreign = list_foreign_files(&root, "sub".into()).unwrap();
+        assert!(foreign.iter().all(|f| !f.contains("secret")), "{foreign:?}");
+
+        // The symlink counts as content, so nothing outside is removed.
+        assert!(remove_empty_folder(&root, "sub".into()).is_err());
+        assert!(outside.join("emptyA/emptyB").is_dir());
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_ops_refuse_a_symlink_alias_of_a_dot_folder() {
+        use std::os::unix::fs::symlink;
+        let root = scratch_vault("alias");
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::write(root.join(".obsidian/app.json"), "{}").unwrap();
+        symlink(root.join(".obsidian"), root.join("obsalias")).unwrap();
+        assert!(rename_folder(&root, "obsalias".into(), "moved".into()).is_err());
+        assert!(delete_folder(&root, "obsalias".into()).is_err());
+        assert!(list_subfolders(&root, "obsalias".into()).is_err());
+        assert!(root.join(".obsidian/app.json").is_file());
+        assert!(!root.join("moved").exists());
         fs::remove_dir_all(&root).unwrap();
     }
 
