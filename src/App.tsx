@@ -4345,7 +4345,7 @@ export default function App() {
             ⊟
           </button>
           {changedOnDisk && (
-            <span className="conflict">
+            <span className="conflict" role="alert">
               <span className="conflict-label">⚠ Changed on disk</span>
               <button className="badge-btn" onClick={handleReloadFromDisk}>
                 Reload
@@ -4356,6 +4356,9 @@ export default function App() {
             </span>
           )}
           <span className="spacer" />
+          <span className="sr-only" role="alert">
+            {saveError ? `Not saved: ${saveError}` : ""}
+          </span>
           <span className={saveError ? "status status-error" : "status"} title={saveError ?? ""}>
             {saveError
               ? `⚠ ${saveError}`
@@ -4573,15 +4576,13 @@ export default function App() {
           onClose={() => setModal(null)}
         />
       )}
-      {notices.length > 0 && (
-        <div className="notices">
-          {notices.map((n) => (
-            <div key={n.id} className="notice" onClick={() => setNotices((x) => x.filter((y) => y.id !== n.id))}>
-              {n.msg}
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="notices" role="status" aria-live="polite">
+        {notices.map((n) => (
+          <div key={n.id} className="notice" onClick={() => setNotices((x) => x.filter((y) => y.id !== n.id))}>
+            {n.msg}
+          </div>
+        ))}
+      </div>
       {tabMenu &&
         (() => {
           const pane = panes[tabMenu.paneId];
