@@ -115,3 +115,48 @@ test.describe("links in properties", () => {
     expect(meeting).toContain('  - "[[Welcome]]"');
   });
 });
+
+test.describe("Properties sidebar YAML", () => {
+  const src = [
+    "---",
+    'title: "Re: Budget"',
+    'up: "[[Ideas]]"',
+    "priority: 3",
+    "done: true",
+    "when: 2026-10-03",
+    "authors:",
+    '  - "Doe, Jane"',
+    "  - Smith",
+    "---",
+    "# Typed",
+    "",
+  ].join("\n");
+  test.use({ vaultFiles: { "Typed.md": src } });
+
+  test("focusing and leaving every field changes nothing on disk", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Typed");
+    await page.locator(".pane.dock .tab.view-tab", { hasText: "Properties" }).click();
+    const inputs = page.locator(".properties input.prop-value");
+    const n = await inputs.count();
+    for (let i = 0; i < n; i++) {
+      await inputs.nth(i).focus();
+      await inputs.nth(i).blur();
+    }
+    await settle(page, 1000);
+    expect(vault.read("Typed.md")).toBe(src);
+  });
+
+  test("editing a quoted text value keeps the YAML valid", async ({ page, vault }) => {
+    const { parse } = await import("yaml");
+    await openApp(page, vault);
+    await openNote(page, "Typed");
+    await page.locator(".pane.dock .tab.view-tab", { hasText: "Properties" }).click();
+    const title = page.locator(".prop-row", { hasText: "title" }).locator(".prop-value");
+    await title.fill("Re: Budget v2");
+    await title.press("Enter");
+    await expect.poll(() => vault.read("Typed.md")).toContain("v2");
+    const fm = parse(vault.read("Typed.md").split("---")[1]);
+    expect(fm).toMatchObject({ title: "Re: Budget v2", up: "[[Ideas]]", priority: 3, done: true, authors: ["Doe, Jane", "Smith"] });
+  });
+});

@@ -1,29 +1,41 @@
 import { useState } from "react";
 import { parseFm, setProp, deleteProp, scalarType, boolValue, type FmProp } from "../lib/frontmatter";
+import { isValidDate, isValidNumber } from "../editor/frontmatter";
 
 interface Props {
   /** The active note's full content (with any frontmatter), or null. */
   doc: string | null;
-  /** Commit a new note content (frontmatter edited). */
   /** Receives the edit as a transform so it applies to the editor's live text. */
   onChange: (edit: (doc: string) => string) => void;
 }
 
 /** One property row's value editor (type-appropriate for scalars; lists edit as
- * comma-separated; complex/unknown shapes are read-only). */
+ * comma-separated; complex/unknown shapes are read-only). Writes follow the
+ * Live Preview widget's rules: nothing is written unless the value changed,
+ * text goes through YAML quoting, and numbers/dates are written bare only when
+ * they're valid. */
 function ValueEditor({ prop, onChange }: { prop: FmProp; onChange: (edit: (doc: string) => string) => void }) {
   if (prop.kind === "complex") {
     return <span className="prop-complex">{prop.values.join(", ") || "(complex)"}</span>;
   }
   if (prop.kind === "list" || prop.kind === "inline") {
-    const [draft, setDraft] = useStateFromProp(prop.values.join(", "));
+    const joined = prop.values.join(", ");
+    const [draft, setDraft] = useStateFromProp(joined);
+    // A comma inside an item can't round-trip through one comma-separated field.
+    if (prop.values.some((v) => v.includes(","))) {
+      return <span className="prop-complex" title="Edit this list in the note">{joined}</span>;
+    }
     return (
       <input
         className="prop-value"
+        aria-label={prop.key}
         value={draft}
         placeholder="a, b, c"
         onChange={(e) => setDraft(e.currentTarget.value)}
-        onBlur={() => onChange((d) => setProp(d, prop.key, draft.split(",").map((s) => s.trim()).filter(Boolean), true))}
+        onBlur={() => {
+          if (draft === joined) return;
+          onChange((d) => setProp(d, prop.key, draft.split(",").map((s) => s.trim()).filter(Boolean), true));
+        }}
         onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
       />
     );
@@ -35,22 +47,32 @@ function ValueEditor({ prop, onChange }: { prop: FmProp; onChange: (edit: (doc: 
     return (
       <input
         type="checkbox"
+        aria-label={prop.key}
         checked={boolValue(raw)}
         onChange={(e) => {
           const checked = e.currentTarget.checked;
-          onChange((d) => setProp(d, prop.key, [checked ? "true" : "false"]));
+          onChange((d) => setProp(d, prop.key, [checked ? "true" : "false"], false, true));
         }}
       />
     );
   }
   const [draft, setDraft] = useStateFromProp(raw);
+  // Native date/number inputs only when the stored value is strictly valid;
+  // otherwise they'd render empty and a blur would wipe the value.
+  const native = (type === "date" && isValidDate(raw)) || (type === "number" && isValidNumber(raw));
   return (
     <input
       className="prop-value"
-      type={type === "date" ? "date" : type === "number" ? "number" : "text"}
+      aria-label={prop.key}
+      type={native ? type : "text"}
       value={draft}
       onChange={(e) => setDraft(e.currentTarget.value)}
-      onBlur={() => onChange((d) => setProp(d, prop.key, [draft], false, type === "text"))}
+      onBlur={() => {
+        if (draft === raw) return;
+        const v = draft;
+        const bare = (type === "date" && isValidDate(v)) || (type === "number" && isValidNumber(v));
+        onChange((d) => setProp(d, prop.key, v === "" ? [] : [v], false, bare));
+      }}
       onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
     />
   );
