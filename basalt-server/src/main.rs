@@ -127,6 +127,13 @@ async fn main() {
         app = app.layer(middleware::from_fn_with_state(expected, basic_auth));
         println!("[basalt-server] HTTP Basic auth: ON");
     } else {
+        // Without auth the only barrier is the Host header: a DNS-rebinding page
+        // reaches this port as its own origin and would otherwise be same-origin.
+        let mut allowed: Vec<String> = vec!["localhost".into(), "127.0.0.1".into(), "::1".into()];
+        if let Ok(extra) = std::env::var("BASALT_ALLOWED_HOSTS") {
+            allowed.extend(extra.split(',').map(|h| h.trim().to_string()).filter(|h| !h.is_empty()));
+        }
+        app = app.layer(middleware::from_fn_with_state(Arc::new(allowed), local_host_only));
         println!("[basalt-server] HTTP Basic auth: OFF (set BASALT_AUTH=user:pass to enable)");
     }
 
@@ -195,6 +202,31 @@ async fn basic_auth(State(expected): State<Arc<String>>, req: Request, next: Nex
         )
             .into_response()
     }
+}
+
+/// Auth-off guard: answer only requests addressed to an allowed host name.
+async fn local_host_only(State(allowed): State<Arc<Vec<String>>>, req: Request, next: Next) -> Response {
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(String::from)
+        .or_else(|| req.uri().authority().map(|a| a.to_string()))
+        .unwrap_or_default();
+    let name = host_name(&host);
+    if allowed.iter().any(|a| a.eq_ignore_ascii_case(name)) {
+        next.run(req).await
+    } else {
+        (StatusCode::FORBIDDEN, "Host not allowed (set BASALT_ALLOWED_HOSTS)\n").into_response()
+    }
+}
+
+/// `example.com:8799` → `example.com`, `[::1]:8799` → `::1`.
+fn host_name(host: &str) -> &str {
+    if let Some(rest) = host.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or("");
+    }
+    host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host)
 }
 
 /// Length-checked, content-constant-time byte compare (no early-out on the

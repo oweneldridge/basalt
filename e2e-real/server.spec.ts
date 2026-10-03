@@ -91,6 +91,27 @@ test("there is no permissive CORS on the command endpoint", async ({ vault }) =>
   expect(r.headers.get("access-control-allow-origin")).toBeNull();
 });
 
+test("with auth off, a request for another host name is refused", async ({ vault }) => {
+  const port = new URL(vault.url).port;
+  const { request } = await import("node:http");
+  const status = (host: string) =>
+    new Promise<number>((resolve, reject) => {
+      const req = request(
+        { host: "127.0.0.1", port, path: "/api/vault-root", headers: { Host: host } },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  expect(await status(`rebind.attacker.example:${port}`)).toBe(403);
+  expect(await status(`localhost:${port}`)).toBe(200);
+  expect(await status(`127.0.0.1:${port}`)).toBe(200);
+  expect(await status(`[::1]:${port}`)).toBe(200);
+});
+
 test.describe("with auth on", () => {
   test.use({ auth: "owner:correct horse" });
   test("every route needs the credentials", async ({ vault }) => {

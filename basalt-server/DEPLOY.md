@@ -31,6 +31,10 @@ cat .env            # copy the user:pass into Vaultwarden as "Basalt web (becspk
 Auth is defense-in-depth behind Tailscale (the service is tailnet-only either
 way). A malformed `BASALT_AUTH` (no `:`) makes the server refuse to start.
 
+With auth off, the server only answers requests addressed to `localhost`,
+`127.0.0.1` or `::1`, which stops a DNS-rebinding page from reaching it. To serve
+another name without auth, list it in `BASALT_ALLOWED_HOSTS` (comma-separated).
+
 ## 4. Build + run
 
 ```sh
