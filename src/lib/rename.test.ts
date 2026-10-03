@@ -104,6 +104,11 @@ describe("rewriteLinks", () => {
     const doc = ["---", "up: [[Old]]", "- [[Old]]", "x: 1 # [[Old]]", "# [[Old]]", "---"].join("\n");
     expect(rewriteLinks(doc, renameMap("Old", "New"))).toBeNull();
   });
+  it("keeps the escaped pipe of a table-cell link", () => {
+    expect(rewriteLinks("| [[Old\\|x]] | [[Old#H\\|y]] |", renameMap("Old", "New"))).toBe(
+      "| [[New\\|x]] | [[New#H\\|y]] |",
+    );
+  });
   it("rewrites multiple links on one line independently", () => {
     expect(rewriteLinks("[[Old]] then [[Other]] then [[Old|x]]", renameMap("Old", "New"))).toBe(
       "[[New]] then [[Other]] then [[New|x]]",

@@ -104,8 +104,11 @@ export function rewriteLinks(
       const ctx = yaml ? yamlLinkAt(original, m.index, yaml.block) : null;
       if (ctx && !ctx.ok) continue;
       const quote = ctx?.quote ?? null;
-      const raw = m[1].trim();
       const alias = m[2];
+      // `[[Note\|alias]]` in a table: the backslash escapes the pipe, it isn't
+      // part of the name. It stays in the suffix sliced from the original below.
+      let raw = m[1].trim();
+      if (alias !== undefined && raw.endsWith("\\")) raw = raw.slice(0, -1).trimEnd();
       const pathPart = targetPathPart(raw);
       if (!pathPart) continue; // [[#heading]] self-ref
       const mapped = mapTarget(yamlUnescape(raw, quote));

@@ -111,6 +111,13 @@ describe("VaultIndex link extraction", () => {
   });
 });
 
+describe("table-escaped links", () => {
+  it("resolves [[Note\\|alias]] inside a table row", () => {
+    const idx = indexOf([note("T.md"), note("S.md", "| a | b |\n|---|---|\n| [[T\\|tee]] | x |")]);
+    expect(idx.backlinksFor("/v/T.md").map((b) => b.path)).toEqual(["/v/S.md"]);
+  });
+});
+
 describe("links in frontmatter properties", () => {
   it("indexes quoted and plain-text property links as backlinks", () => {
     const idx = indexOf([

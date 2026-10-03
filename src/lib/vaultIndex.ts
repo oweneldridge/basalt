@@ -112,7 +112,9 @@ function extractLinks(content: string): LinkOccurrence[] {
     while ((m = re.exec(line))) {
       const ctx = ctxAt(m.index);
       if (!ctx.ok) continue;
-      const rawTarget = yamlUnescape(m[1].trim(), ctx.quote);
+      let rawTarget = yamlUnescape(m[1].trim(), ctx.quote);
+      // A table-escaped `[[Note\|alias]]`: the backslash isn't part of the name.
+      if (m[2] !== undefined && rawTarget.endsWith("\\")) rawTarget = rawTarget.slice(0, -1).trimEnd();
       const pathPart = targetPathPart(rawTarget);
       if (!pathPart) continue; // [[#heading]] self-ref
       const key = dedupeKey(pathPart); // dedupe identical targets, keep distinct paths
