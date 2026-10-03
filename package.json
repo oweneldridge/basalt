@@ -15,7 +15,8 @@
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:real": "vite build && cargo build -p basalt-server && playwright test -c playwright.real.config.ts"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.6",
