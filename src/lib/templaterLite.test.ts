@@ -16,7 +16,8 @@ interface El {
   children: El[];
   style: Record<string, string>;
   setAttribute(k: string, v: string): void;
-  addEventListener(): void;
+  listeners: Record<string, () => void>;
+  addEventListener(type: string, fn: () => void): void;
   appendChild(c: El): El;
   append(...c: El[]): void;
   replaceChildren(...c: El[]): void;
@@ -35,7 +36,10 @@ function makeEl(tag: string): El {
     setAttribute(k, v) {
       (el as unknown as Record<string, string>)[k] = v;
     },
-    addEventListener() {},
+    listeners: {},
+    addEventListener(type, fn) {
+      el.listeners[type] = fn;
+    },
     appendChild(c) {
       el.children.push(c);
       return c;
@@ -94,6 +98,7 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 async function preview(source: string, notePath = "Journal/Note.md"): Promise<string> {
   const el = makeEl("div");
   codeBlockProcessor("templater")!(source, el as unknown as HTMLElement, { notePath });
+  el.children.find((c) => c.className === "templater-run")!.listeners.click();
   await flush();
   return textOf(el);
 }
@@ -122,6 +127,17 @@ describe("templater-lite", () => {
     expect(await preview("<% tp.system.suggester(['A','B'], ['a','b']) %>-<% tp.system.prompt('Q', 'def') %>")).toBe("a-def");
     expect(await preview("A <%_ tp.file.title _%> B")).toBe("ANoteB");
     expect(await preview("[<%# a note to self %>]")).toBe("[]");
+  });
+
+  it("runs nothing until the preview is requested", async () => {
+    const g = globalThis as { __tpRan?: number };
+    delete g.__tpRan;
+    const el = makeEl("div");
+    const src = "<%* globalThis.__tpRan = 1 %><% globalThis.__tpRan = 2 %>";
+    codeBlockProcessor("templater")!(src, el as unknown as HTMLElement, { notePath: "Journal/Note.md" });
+    await flush();
+    expect(g.__tpRan).toBeUndefined();
+    expect(textOf(el)).toContain(src);
   });
 
   it("reports a template error instead of throwing", async () => {

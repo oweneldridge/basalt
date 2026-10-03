@@ -315,26 +315,38 @@ module.exports = class TemplaterLite extends Plugin {
 
     this.addCommand({ id: "insert", name: "Insert template", callback: () => this.insertTemplate() });
 
-    // A `templater` code block previews a template's static output inline.
+    // A `templater` code block shows the template and previews its output on
+    // request. Every tag is JavaScript, so nothing runs just because a note
+    // rendered (a synced or pasted note could otherwise execute code).
     // Interactive tags fall back to their defaults (no prompt/suggester UI).
     this.registerMarkdownCodeBlockProcessor("templater", (source, el, ctx) => {
       el.replaceChildren();
-      const fileInfo = this.fileInfoFor(ctx.notePath);
-      const io = {
-        prompt: async (_m, def) => def,
-        suggester: async (_labels, values) => (values.length ? values[0] : ""),
-        notice: () => {},
-      };
-      processTemplate(source, buildTp(fileInfo, fileInfo.frontmatter, io))
-        .then((res) => {
-          el.replaceChildren();
-          const pre = document.createElement("div");
-          pre.className = "templater-preview";
-          pre.style.whiteSpace = "pre-wrap";
-          pre.textContent = res.text;
-          el.appendChild(pre);
-        })
-        .catch((e) => this.renderError(el, e));
+      const shown = document.createElement("div");
+      shown.className = "templater-source";
+      shown.style.whiteSpace = "pre-wrap";
+      shown.textContent = source;
+      const run = document.createElement("button");
+      run.className = "templater-run";
+      run.textContent = "Run preview";
+      run.addEventListener("click", () => {
+        const fileInfo = this.fileInfoFor(ctx.notePath);
+        const io = {
+          prompt: async (_m, def) => def,
+          suggester: async (_labels, values) => (values.length ? values[0] : ""),
+          notice: () => {},
+        };
+        processTemplate(source, buildTp(fileInfo, fileInfo.frontmatter, io))
+          .then((res) => {
+            el.replaceChildren();
+            const pre = document.createElement("div");
+            pre.className = "templater-preview";
+            pre.style.whiteSpace = "pre-wrap";
+            pre.textContent = res.text;
+            el.appendChild(pre);
+          })
+          .catch((e) => this.renderError(el, e));
+      });
+      el.append(shown, run);
     });
 
     const self = this;
