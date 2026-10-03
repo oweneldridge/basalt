@@ -5,12 +5,13 @@ interface Props {
   /** The active note's full content (with any frontmatter), or null. */
   doc: string | null;
   /** Commit a new note content (frontmatter edited). */
-  onChange: (next: string) => void;
+  /** Receives the edit as a transform so it applies to the editor's live text. */
+  onChange: (edit: (doc: string) => string) => void;
 }
 
 /** One property row's value editor (type-appropriate for scalars; lists edit as
  * comma-separated; complex/unknown shapes are read-only). */
-function ValueEditor({ prop, doc, onChange }: { prop: FmProp; doc: string; onChange: (next: string) => void }) {
+function ValueEditor({ prop, onChange }: { prop: FmProp; onChange: (edit: (doc: string) => string) => void }) {
   if (prop.kind === "complex") {
     return <span className="prop-complex">{prop.values.join(", ") || "(complex)"}</span>;
   }
@@ -22,7 +23,7 @@ function ValueEditor({ prop, doc, onChange }: { prop: FmProp; doc: string; onCha
         value={draft}
         placeholder="a, b, c"
         onChange={(e) => setDraft(e.currentTarget.value)}
-        onBlur={() => onChange(setProp(doc, prop.key, draft.split(",").map((s) => s.trim()).filter(Boolean), true))}
+        onBlur={() => onChange((d) => setProp(d, prop.key, draft.split(",").map((s) => s.trim()).filter(Boolean), true))}
         onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
       />
     );
@@ -35,7 +36,10 @@ function ValueEditor({ prop, doc, onChange }: { prop: FmProp; doc: string; onCha
       <input
         type="checkbox"
         checked={boolValue(raw)}
-        onChange={(e) => onChange(setProp(doc, prop.key, [e.currentTarget.checked ? "true" : "false"]))}
+        onChange={(e) => {
+          const checked = e.currentTarget.checked;
+          onChange((d) => setProp(d, prop.key, [checked ? "true" : "false"]));
+        }}
       />
     );
   }
@@ -46,7 +50,7 @@ function ValueEditor({ prop, doc, onChange }: { prop: FmProp; doc: string; onCha
       type={type === "date" ? "date" : type === "number" ? "number" : "text"}
       value={draft}
       onChange={(e) => setDraft(e.currentTarget.value)}
-      onBlur={() => onChange(setProp(doc, prop.key, [draft], false, type === "text"))}
+      onBlur={() => onChange((d) => setProp(d, prop.key, [draft], false, type === "text"))}
       onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
     />
   );
@@ -77,8 +81,8 @@ export function Properties({ doc, onChange }: Props) {
       {props.map((p) => (
         <div className="prop-row" key={p.key}>
           <span className="prop-key" title={p.key}>{p.key}</span>
-          <ValueEditor prop={p} doc={doc} onChange={onChange} />
-          <button className="prop-del" title={`Remove ${p.key}`} onClick={() => onChange(deleteProp(doc, p.key))}>
+          <ValueEditor prop={p} onChange={onChange} />
+          <button className="prop-del" title={`Remove ${p.key}`} onClick={() => onChange((d) => deleteProp(d, p.key))}>
             ✕
           </button>
         </div>
@@ -90,7 +94,7 @@ export function Properties({ doc, onChange }: Props) {
           const k = newKey.trim();
           if (!k || props.some((p) => p.key === k)) return;
           setNewKey("");
-          onChange(setProp(doc, k, [""], false, true));
+          onChange((d) => setProp(d, k, [""], false, true));
         }}
       >
         <input

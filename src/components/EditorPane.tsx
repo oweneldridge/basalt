@@ -15,6 +15,9 @@ interface Props {
   selfRel: string;
   /** Document content for `path`; changing it (same path) reconciles in-place. */
   doc: string;
+  /** Changes whenever the app explicitly sets `doc`, so a reload whose text
+   * equals an older `doc` prop still reconciles. */
+  docRev?: number;
   getNotes: () => NoteRef[];
   getLinkFormat: () => LinkFormat;
   getActiveRel: () => string | null;
@@ -63,6 +66,7 @@ export function EditorPane({
   path,
   selfRel,
   doc,
+  docRev,
   getNotes,
   getLinkFormat,
   getActiveRel,
@@ -232,7 +236,7 @@ export function EditorPane({
       selection: EditorSelection.cursor(head),
       annotations: [externalReload.of(true), Transaction.addToHistory.of(false)],
     });
-  }, [doc]);
+  }, [doc, docRev]);
 
   // Scroll to (and place the caret on) a target line — search hits, backlinks.
   useEffect(() => {

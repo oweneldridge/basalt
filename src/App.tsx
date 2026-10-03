@@ -175,6 +175,9 @@ interface Pane {
   tabs: string[]; // open note paths, in tab order
   active: string | null; // the live note path
   doc: string; // content of the active note (initial/reconciled for its editor)
+  /** Bumped on every explicit doc patch so the editor reconciles even when the
+   * new text equals an older prop value. */
+  docRev?: number;
   scrollToLine?: number;
   /** Pinned tab paths — a pinned tab can't be closed until unpinned. */
   pinned?: string[];
@@ -505,6 +508,11 @@ export default function App() {
   // Workspace refs (read in callbacks/watcher without re-subscribing).
   const panesRef = useRef<Record<string, Pane>>({});
   panesRef.current = panes;
+  // path -> the text its open editor(s) hold right now. A pane's own keystrokes
+  // never reach pane.doc (patching the typing pane would re-render the App per
+  // key), so anything that seeds or derives from a pane must read through docFor.
+  const liveDocs = useRef<Map<string, string>>(new Map());
+  const docFor = (p: Pane) => (p.active ? (liveDocs.current.get(p.active) ?? p.doc) : p.doc);
   const layoutRef = useRef<LayoutNode | null>(null);
   layoutRef.current = layout;
   const focusedIdRef = useRef<string | null>(null);
@@ -516,7 +524,7 @@ export default function App() {
   const focusedPane = focusedId ? (panes[focusedId] ?? null) : null;
   const active: ActiveNote | null =
     focusedPane && focusedPane.active
-      ? { path: focusedPane.active, doc: focusedPane.doc, scrollToLine: focusedPane.scrollToLine }
+      ? { path: focusedPane.active, doc: docFor(focusedPane), scrollToLine: focusedPane.scrollToLine }
       : null;
   const changedOnDisk = !!(active && conflicts.has(active.path));
   // A focused .canvas/.base is a read-only viewer, not an editable note: the
@@ -620,11 +628,23 @@ export default function App() {
 
   // Update one pane's state (and keep panesRef in sync for same-tick reads).
   const patchPane = useCallback((id: string, patch: Partial<Pane>) => {
+    const cur = panesRef.current[id];
+    if (cur && patch.doc !== undefined) {
+      const active = patch.active !== undefined ? patch.active : cur.active;
+      if (active) liveDocs.current.set(active, patch.doc);
+      patch = { ...patch, docRev: (cur.docRev ?? 0) + 1 };
+    }
     setPanes((ps) => (ps[id] ? { ...ps, [id]: { ...ps[id], ...patch } } : ps));
     if (panesRef.current[id]) {
       panesRef.current = { ...panesRef.current, [id]: { ...panesRef.current[id], ...patch } };
     }
   }, []);
+
+  // Forget live text for notes no pane shows, so it can't seed a later open.
+  useEffect(() => {
+    const shown = new Set(Object.values(panes).map((p) => p.active));
+    for (const k of [...liveDocs.current.keys()]) if (!shown.has(k)) liveDocs.current.delete(k);
+  }, [panes]);
 
   const flushSave = useCallback(
     async (path: string, doc: string, force = false) => {
@@ -743,6 +763,7 @@ export default function App() {
   const handleViewerChange = useCallback(
     (paneId: string, path: string, doc: string) => {
       pending.current.set(path, doc);
+      liveDocs.current.set(path, doc);
       patchPane(paneId, { doc }); // keep the pane's doc current (restore/rescan)
       for (const p of Object.values(panesRef.current)) {
         if (p.id !== paneId && p.active === path) patchPane(p.id, { doc });
@@ -771,6 +792,7 @@ export default function App() {
     (paneId: string, path: string, doc: string) => {
       if (!path || !isMarkdownPath(path)) return; // read-only viewers don't autosave
       pending.current.set(path, doc);
+      liveDocs.current.set(path, doc);
       for (const p of Object.values(panesRef.current)) {
         if (p.id !== paneId && p.active === path) patchPane(p.id, { doc });
       }
@@ -948,7 +970,9 @@ export default function App() {
       if (pane.active) await flushPath(pane.active);
       let doc: string;
       try {
-        doc = await readNote(path);
+        // Unsaved text another pane holds wins over disk (a failed or conflicted
+        // save would otherwise be overwritten by this pane's first keystroke).
+        doc = pending.current.get(path) ?? (await readNote(path));
       } catch (e) {
         setSaveError(`Couldn't open note: ${e}`);
         return;
@@ -1087,14 +1111,18 @@ export default function App() {
       }
       const neighbor = tabs[idx] ?? tabs[idx - 1] ?? null;
       let doc = "";
+      let active: string | null = neighbor;
       if (neighbor) {
         try {
-          doc = await readNote(neighbor);
-        } catch {
-          doc = "";
+          doc = pending.current.get(neighbor) ?? (await readNote(neighbor));
+        } catch (e) {
+          // Never mount an editable editor on text we couldn't read: a keystroke
+          // would save it over the real note. Leave the tab for a retry.
+          active = null;
+          setSaveError(`Couldn't open note: ${e}`);
         }
       }
-      patchPane(id, { tabs, active: neighbor, doc, scrollToLine: undefined });
+      patchPane(id, { tabs, active, doc, scrollToLine: undefined });
     },
     [flushPath, patchPane, removePaneFromWorkspace],
   );
@@ -1169,7 +1197,7 @@ export default function App() {
         tabs: active ? [active] : [],
         active,
         // Carry the live (unsaved) content, not just the last-loaded doc.
-        doc: active ? (pending.current.get(active) ?? src?.doc ?? "") : "",
+        doc: active ? (pending.current.get(active) ?? (src ? docFor(src) : "")) : "",
         scrollToLine: src?.scrollToLine,
       };
       const nextLayout = splitLeaf(lay, id, newId, dir);
@@ -1311,15 +1339,16 @@ export default function App() {
         if (tabs.length === 0) continue; // pane will be pruned from the layout
         const active = saved?.active && tabs.includes(saved.active) ? saved.active : tabs[0];
         let doc = "";
+        let shown: string | null = active;
         if (!isViewPath(active)) {
           try {
             doc = await readNote(active);
           } catch {
-            doc = "";
+            shown = null; // unreadable: no editor on placeholder text
           }
         }
         const pinned = (saved?.pinned ?? []).filter((p) => tabs.includes(p));
-        rebuilt[id] = { id, tabs, active, doc, pinned: pinned.length ? pinned : undefined, linked: saved?.linked, stacked: saved?.stacked, dock: saved?.dock };
+        rebuilt[id] = { id, tabs, active: shown, doc, pinned: pinned.length ? pinned : undefined, linked: saved?.linked, stacked: saved?.stacked, dock: saved?.dock };
       }
       // Drop layout leaves with no surviving pane.
       let lay: LayoutNode | null = ws.layout;
@@ -1389,6 +1418,7 @@ export default function App() {
       setFocusedId(null);
       setConflicts(new Set());
       pending.current.clear();
+      liveDocs.current.clear();
       saveTimers.current.forEach((t) => window.clearTimeout(t));
       saveTimers.current.clear();
       selfWrites.current.clear();
@@ -1764,9 +1794,11 @@ export default function App() {
         continue;
       }
       const prev = prevByPath.get(p.active);
-      if (!dirty && prev !== undefined && still.content !== prev) {
-        patchPane(p.id, { doc: still.content });
-      }
+      // An oversized note is listed without content: that's "unknown", not empty.
+      const unknown = still.content === "" && (still.size ?? 0) > 0;
+      if (unknown || prev === undefined || still.content === prev) continue;
+      if (dirty) addConflict(p.active); // changed on disk under unsaved edits
+      else patchPane(p.id, { doc: still.content });
     }
   }, [loadVault, addConflict, patchPane, rememberSelfWrite]);
 
@@ -2120,7 +2152,8 @@ export default function App() {
       // reversible (the pre-restore state stays in the history).
       const vkey = vaultRef.current;
       const rel = notesRef.current.find((n) => n.path === path)?.rel;
-      const cur = panesRef.current[id]?.doc;
+      const curPane = panesRef.current[id];
+      const cur = curPane ? docFor(curPane) : undefined;
       if (vkey && rel && cur) await recordSnapshot(vkey, rel, cur, Date.now(), true);
       patchPane(id, { doc: content }); // editor reconciles to the restored text
       handleChange(id, path, content); // mark dirty + autosave
@@ -2205,7 +2238,7 @@ export default function App() {
     const name = note?.name ?? "note";
     const rel = note?.rel ?? "";
     try {
-      const dom = new DOMParser().parseFromString(`<div>${renderMarkdown(pane.doc)}</div>`, "text/html");
+      const dom = new DOMParser().parseFromString(`<div>${renderMarkdown(docFor(pane))}</div>`, "text/html");
       // Render $…$ / $$…$$ math as MathML in-place (self-contained — browsers
       // render it with their own math fonts, no KaTeX assets to inline).
       if (dom.querySelector("[data-math]")) {
@@ -4009,9 +4042,12 @@ export default function App() {
         const hostPane = lastNotePath ? Object.entries(panes).find(([, p]) => p.active === lastNotePath) : undefined;
         return (
           <Properties
-            doc={hostPane ? hostPane[1].doc : noteDoc}
-            onChange={(nextDoc) => {
+            doc={hostPane ? docFor(hostPane[1]) : noteDoc}
+            onChange={(edit) => {
               if (!hostPane || !lastNotePath) return;
+              // Apply to the text the editor holds now, not this render's copy.
+              const live = panesRef.current[hostPane[0]];
+              const nextDoc = edit(live ? docFor(live) : docFor(hostPane[1]));
               patchPane(hostPane[0], { doc: nextDoc });
               handleChange(hostPane[0], lastNotePath, nextDoc);
             }}
@@ -4167,15 +4203,16 @@ export default function App() {
           ) : readingMode ? (
             <ReadingView
               key={`${id}:${path}:read`}
-              doc={pane.doc}
+              doc={docFor(pane)}
               selfRel={rel}
               dark={dark}
               onOpenInternal={handleOpenWikilink}
               onOpenUrl={handleOpenUrl}
               onToggleTask={(line) => {
                 if (!isMarkdownPath(path)) return;
-                const next = toggleTaskLine(pane.doc, line);
-                if (next === null || next === pane.doc) return;
+                const base = docFor(pane);
+                const next = toggleTaskLine(base, line);
+                if (next === null || next === base) return;
                 patchPane(id, { doc: next }); // reading view re-renders toggled
                 handleChange(id, path, next); // pending + debounced save
               }}
@@ -4190,7 +4227,8 @@ export default function App() {
               selfRel={rel}
               pluginVersion={pluginVersion}
               apiRef={id === focusedId ? editorApiRef : undefined}
-              doc={pane.doc}
+              doc={docFor(pane)}
+              docRev={pane.docRev}
               scrollToLine={pane.scrollToLine}
               getNotes={getNotes}
               getLinkFormat={getLinkFormat}
@@ -4863,7 +4901,7 @@ export default function App() {
           const srel = notes.find((n) => n.path === focusedPane.active)?.rel ?? "";
           return (
             <SlidesView
-              doc={focusedPane.doc}
+              doc={docFor(focusedPane)}
               selfRel={srel}
               dark={dark}
               onOpenInternal={(t) => {

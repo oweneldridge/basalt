@@ -24,7 +24,8 @@ interface Props {
  * is loaded lazily, cached, and rendered by the parent via `renderBody` (an
  * editable EditorPane) so edits in any column save back to that note. */
 export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody }: Props) {
-  const [docs, setDocs] = useState<Record<string, string>>({});
+  // null = the read failed; never hand that to an editable editor.
+  const [docs, setDocs] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -35,7 +36,7 @@ export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody
         try {
           return [t.path, await readNote(t.path)] as const;
         } catch {
-          return [t.path, "*Couldn't load this note.*"] as const;
+          return [t.path, null] as const;
         }
       }),
     ).then((pairs) => {
@@ -55,12 +56,14 @@ export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody
     <div className="stacked-tabs">
       {tabs.map((t) => (
         <div key={t.path} className={`stacked-col${t.path === activePath ? " active" : ""}`}>
-          <button className="stacked-col-head" title={`Focus ${t.name}`} onClick={() => onFocusTab(t.path, docs[t.path])}>
+          <button className="stacked-col-head" title={`Focus ${t.name}`} onClick={() => onFocusTab(t.path, docs[t.path] ?? undefined)}>
             {t.name}
           </button>
           <div className="stacked-col-body">
-            {/\.md$/i.test(t.path) && docs[t.path] !== undefined ? (
-              renderBody(t, docs[t.path], (d) => setDocs((prev) => ({ ...prev, [t.path]: d })))
+            {/\.md$/i.test(t.path) && docs[t.path] === null ? (
+              <div className="placeholder">Couldn't load this note.</div>
+            ) : /\.md$/i.test(t.path) && docs[t.path] !== undefined ? (
+              renderBody(t, docs[t.path] as string, (d) => setDocs((prev) => ({ ...prev, [t.path]: d })))
             ) : (
               <div className="placeholder">{/\.md$/i.test(t.path) ? "Loading…" : "Open this tab to view it."}</div>
             )}
