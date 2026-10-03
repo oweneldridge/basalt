@@ -173,3 +173,20 @@ test.describe("reading-view tasks", () => {
     expect(vault.read("Tasks.md")).toContain("- [ ] Pay rent");
   });
 });
+
+test("rename leaves a linking note with an open conflict alone and says so", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await openNote(page, "Welcome");
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type("\nmine, unsaved");
+  const theirs = vault.read("Welcome.md").replace("# Welcome", "# Welcome (edited elsewhere)");
+  vault.write("Welcome.md", theirs);
+  await expect(page.locator(".conflict")).toBeVisible({ timeout: 5000 });
+  await renameFromTree(page, "Ideas", "Ideas Renamed");
+  await expect.poll(() => vault.exists("Ideas Renamed.md")).toBe(true);
+  await expect(page.locator(".status")).toContainText("Welcome.md (unsaved edits)");
+  expect(vault.read("Welcome.md")).toBe(theirs);
+  await expect(page.locator(".pane:not(.dock) .cm-content").first()).toContainText("mine, unsaved");
+  expect(vault.read("Projects/Alpha.md")).toContain("[[Ideas Renamed]]");
+});

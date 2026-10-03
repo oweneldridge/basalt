@@ -2492,7 +2492,7 @@ export default function App() {
           const disk = await readNote(holder.path);
           if (!disk.includes(placeholder)) return;
           const next = disk.split(placeholder).join(replacement);
-          await writeNote(holder.path, next);
+          await writeNote(holder.path, next, disk);
           rememberSelfWrite(holder.rel, next);
           const updated: VaultNote = { ...holder, content: next };
           index.current.setNote(updated);
@@ -2639,7 +2639,7 @@ export default function App() {
             (_m, a, c, b) => a + (c === " " ? "x" : " ") + b,
           );
           const next = lines.join("\n");
-          await writeNote(key, next);
+          await writeNote(key, next, disk);
           rememberSelfWrite(cur.rel, next); // AFTER a successful write (no stale suppression)
           const updated: VaultNote = {
             ...cur,
@@ -2762,7 +2762,9 @@ export default function App() {
       if (pending.current.has(note.path)) {
         throw new Error(`"${rel}" has unsaved edits — save it before modifying via a plugin`);
       }
-      await writeNote(note.path, content);
+      // The index copy is the last content seen on disk (unknown for oversized notes).
+      const known = note.content === "" && (note.size ?? 0) > 0 ? undefined : note.content;
+      await writeNote(note.path, content, known);
       rememberSelfWrite(rel, content); // AFTER a successful write (no stale suppression)
       const updated: VaultNote = {
         ...note,
@@ -3263,7 +3265,7 @@ export default function App() {
           const json = await readNote(c.path);
           const next = rewriteCanvasFileRefs(json, relMap);
           if (next === null) continue;
-          await writeCanvas(c.path, next);
+          await writeCanvas(c.path, next, json);
           rememberSelfWrite(c.rel, next);
           for (const p of Object.values(panesRef.current)) {
             if (p.active === c.path) patchPane(p.id, { doc: next });
@@ -3299,6 +3301,13 @@ export default function App() {
 
         const newPath = await renameNote(oldPath, newName);
         if (newPath === oldPath) return;
+        // Text typed while the rename was in flight is keyed to the old path; its
+        // timer would save there and recreate the old file. Carry it over below.
+        const typed = pending.current.get(oldPath);
+        const typedTimer = saveTimers.current.get(oldPath);
+        if (typedTimer !== undefined) window.clearTimeout(typedTimer);
+        saveTimers.current.delete(oldPath);
+        pending.current.delete(oldPath);
         const newRel = newPath.startsWith(root)
           ? newPath.slice(root.length).replace(/^[/\\]+/, "")
           : newPath;
@@ -3352,7 +3361,7 @@ export default function App() {
         };
         const ownRewritten = rewriteLinks(renamedContent, ownMap);
         if (ownRewritten !== null) {
-          await writeNote(newPath, ownRewritten);
+          await writeNote(newPath, ownRewritten, renamedContent);
           renamedContent = ownRewritten;
         }
 
@@ -3383,7 +3392,7 @@ export default function App() {
             ...pane,
             tabs: pane.tabs.map((p) => (p === oldPath ? newPath : p)),
             active: pane.active === oldPath ? newPath : pane.active,
-            doc: pane.active === oldPath ? renamedContent : pane.doc,
+            doc: pane.active === oldPath ? (typed ?? renamedContent) : pane.doc,
             pinned: pane.pinned?.map((p) => (p === oldPath ? newPath : p)),
           };
         };
@@ -3393,6 +3402,10 @@ export default function App() {
         setPanes((ps) =>
           Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, repoint(pane)])),
         );
+        if (typed !== undefined) {
+          pending.current.set(newPath, typed);
+          void flushPath(newPath);
+        }
 
         // Rewrite affected sources. Candidates are found via the in-memory
         // snapshot (cheap), but each rewrite reads DISK content so a fresher
@@ -3415,11 +3428,17 @@ export default function App() {
         for (const note of preNotes) {
           if (note.path === oldPath) continue;
           if (rewriteLinks(note.content, sourceMap(note.path, note.rel)) === null) continue; // unaffected
+          // Unsaved edits or an open conflict: rewriting disk under them would be
+          // reverted by the next keystroke (or drop "mine"). Report it instead.
+          if (pending.current.has(note.path) || conflictsRef.current.has(note.path)) {
+            failures.push(`${note.rel} (unsaved edits)`);
+            continue;
+          }
           try {
             const disk = await readNote(note.path);
             const next = rewriteLinks(disk, sourceMap(note.path, note.rel));
             if (next === null) continue;
-            await writeNote(note.path, next);
+            await writeNote(note.path, next, disk);
             const updated: VaultNote = { ...note, content: next };
             rememberSelfWrite(note.rel, next);
             index.current.setNote(updated);
@@ -3454,7 +3473,7 @@ export default function App() {
         setSaveError(`Couldn't rename: ${e}`);
       }
     },
-    [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs],
   );
   handleRenameNoteRef.current = handleRenameNote;
 
@@ -3483,7 +3502,7 @@ export default function App() {
       lines[idx] = next;
       const content = lines.join("\n");
       try {
-        await writeNote(sourcePath, content);
+        await writeNote(sourcePath, content, disk);
       } catch (e) {
         setSaveError(`Couldn't link mention: ${e}`);
         return false;
@@ -3711,7 +3730,7 @@ export default function App() {
           const disk = await readNote(post.path);
           const next = rewriteLinks(disk, mapper);
           if (next === null) continue;
-          await writeNote(post.path, next);
+          await writeNote(post.path, next, disk);
           rememberSelfWrite(post.rel, next);
           updates.set(post.path, { ...post, content: next });
         } catch (e) {
