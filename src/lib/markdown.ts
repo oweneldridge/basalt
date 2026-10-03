@@ -84,37 +84,14 @@ export function yamlContextAt(line: string, pos: number): { quote: '"' | "'" | n
   return { quote, comment: false };
 }
 
-/** Frontmatter lines (between the fences) that are the body of a `|` or `>`
- * block scalar: plain text, so any link in them is inside a string. */
-export function yamlBlockScalarLines(lines: string[], end: number): Set<number> {
-  const out = new Set<number>();
-  let blockIndent = -1;
-  for (let i = 1; i < end; i++) {
-    const line = lines[i];
-    const indent = line.length - line.trimStart().length;
-    if (blockIndent >= 0) {
-      if (line.trim() === "" || indent > blockIndent) {
-        out.add(i);
-        continue;
-      }
-      blockIndent = -1;
-    }
-    if (/:\s*[|>][-+]?\d*\s*(#.*)?$/.test(line)) blockIndent = indent;
-  }
-  return out;
-}
-
-/** Whether a link at `pos` on a frontmatter line is inside a string value.
- * Obsidian only reads quoted or plain-text property values as links; an
- * unquoted `key: [[x]]` parses as a nested list and isn't one. */
-export function yamlLinkAt(line: string, pos: number, inBlockScalar: boolean): { ok: boolean; quote: '"' | "'" | null } {
-  if (inBlockScalar) return { ok: true, quote: null };
-  const ctx = yamlContextAt(line, pos);
-  if (ctx.comment) return { ok: false, quote: null };
-  if (ctx.quote) return { ok: true, quote: ctx.quote };
-  const start = /^\s*(?:-\s+)*(?:[^\s#'"[{-][^:]*?:(?:\s+|$))?(?:-\s+)*/.exec(line)![0].length;
-  const c = line[start];
-  return { ok: c !== "[" && c !== "{", quote: null };
+/** Whether a link of length `len` at `pos` on a frontmatter line is a property
+ * link. Obsidian only treats a string value that is entirely one link as a
+ * link, which in YAML means the whole quoted scalar: `key: "[[x]]"` or a quoted
+ * list item. Unquoted `key: [[x]]` parses as a nested list and isn't one. */
+export function yamlLinkAt(line: string, pos: number, len: number): { ok: boolean; quote: '"' | "'" | null } {
+  const { quote, comment } = yamlContextAt(line, pos);
+  const ok = !comment && quote !== null && line[pos - 1] === quote && line[pos + len] === quote;
+  return { ok, quote };
 }
 
 export function yamlUnescape(s: string, quote: '"' | "'" | null): string {

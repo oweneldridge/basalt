@@ -15,7 +15,6 @@ import {
   parseMarkdownLink,
   proseMask,
   frontmatterEnd,
-  yamlBlockScalarLines,
   yamlLinkAt,
   yamlUnescape,
   tagRegex,
@@ -99,18 +98,17 @@ function extractLinks(content: string): LinkOccurrence[] {
   const lines = content.split("\n");
   const prose = proseMask(lines); // skip frontmatter + fenced code
   const fmEnd = frontmatterEnd(lines);
-  const blockLines = yamlBlockScalarLines(lines, fmEnd);
   for (let i = 0; i < lines.length; i++) {
     // Property values are scanned too, as rewriteLinks does on rename.
     const yaml = i > 0 && i < fmEnd;
     if (!prose[i] && !yaml) continue;
     const line = yaml ? lines[i] : lines[i].replace(INLINE_CODE_RE, " "); // `[[x]]` in code isn't a link
-    const ctxAt = (pos: number) => (yaml ? yamlLinkAt(line, pos, blockLines.has(i)) : { ok: true, quote: null });
+    const ctxAt = (pos: number, len: number) => (yaml ? yamlLinkAt(line, pos, len) : { ok: true, quote: null });
     const re = wikilinkRegex();
     const seen = new Set<string>();
     let m: RegExpExecArray | null;
     while ((m = re.exec(line))) {
-      const ctx = ctxAt(m.index);
+      const ctx = ctxAt(m.index, m[0].length);
       if (!ctx.ok) continue;
       let rawTarget = yamlUnescape(m[1].trim(), ctx.quote);
       // A table-escaped `[[Note\|alias]]`: the backslash isn't part of the name.
@@ -127,7 +125,7 @@ function extractLinks(content: string): LinkOccurrence[] {
     // them, and they must feed backlinks/graph like wikilinks do.
     const mre = mdLinkRegexGlobal();
     while ((m = mre.exec(line))) {
-      const ctx = ctxAt(m.index);
+      const ctx = ctxAt(m.index, m[0].length);
       if (!ctx.ok) continue;
       const parsed = parseMarkdownLink(m[0]);
       if (!parsed) continue;

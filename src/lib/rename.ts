@@ -9,7 +9,6 @@ import {
   proseMask,
   targetPathPart,
   wikilinkRegex,
-  yamlBlockScalarLines,
   yamlEscape,
   yamlLinkAt,
   yamlUnescape,
@@ -29,7 +28,7 @@ function rewriteMdLine(
   original: string,
   masked: string,
   mapTarget: (rawTarget: string) => string | null,
-  yaml: { block: boolean } | null = null,
+  yaml = false,
 ): string | null {
   const re = mdLinkRegexGlobal();
   let m: RegExpExecArray | null;
@@ -39,7 +38,7 @@ function rewriteMdLine(
   while ((m = re.exec(masked))) {
     const parts = MD_PARTS.exec(m[0]);
     if (!parts) continue;
-    const ctx = yaml ? yamlLinkAt(original, m.index, yaml.block) : null;
+    const ctx = yaml ? yamlLinkAt(original, m.index, m[0].length) : null;
     if (ctx && !ctx.ok) continue;
     let urlToken = yamlUnescape(parts[2], ctx?.quote ?? null);
     const angled = urlToken.startsWith("<") && urlToken.endsWith(">");
@@ -86,11 +85,10 @@ export function rewriteLinks(
   const lines = content.split("\n");
   const prose = proseMask(lines);
   const fmEnd = frontmatterEnd(lines);
-  const blockLines = yamlBlockScalarLines(lines, fmEnd);
   let changed = false;
   for (let i = 0; i < lines.length; i++) {
     // Property values hold links too (Obsidian rewrites them on rename).
-    const yaml = i > 0 && i < fmEnd ? { block: blockLines.has(i) } : null;
+    const yaml = i > 0 && i < fmEnd;
     if (!prose[i] && !yaml) continue;
     const original = lines[i];
     // Mask inline code with same-length blanks; offsets stay identical, so
@@ -101,7 +99,7 @@ export function rewriteLinks(
     let out = "";
     let last = 0;
     while ((m = re.exec(masked))) {
-      const ctx = yaml ? yamlLinkAt(original, m.index, yaml.block) : null;
+      const ctx = yaml ? yamlLinkAt(original, m.index, m[0].length) : null;
       if (ctx && !ctx.ok) continue;
       const quote = ctx?.quote ?? null;
       const alias = m[2];

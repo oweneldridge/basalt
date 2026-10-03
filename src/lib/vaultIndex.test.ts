@@ -119,7 +119,7 @@ describe("table-escaped links", () => {
 });
 
 describe("links in frontmatter properties", () => {
-  it("indexes quoted and plain-text property links as backlinks", () => {
+  it("indexes a property value that is entirely a quoted link", () => {
     const idx = indexOf([
       note("T.md"),
       note("A.md", ["---", 'up: "[[T]]"', "---", "body"].join("\n")),
@@ -128,12 +128,7 @@ describe("links in frontmatter properties", () => {
       note("D.md", ["---", "ref: \"[t](T.md)\"", "---"].join("\n")),
       note("E.md", ["---", "# [[T]]", "y: 1 # [[T]]", "---"].join("\n")),
     ]);
-    expect(idx.backlinksFor("/v/T.md").map((b) => b.path).sort()).toEqual([
-      "/v/A.md",
-      "/v/B.md",
-      "/v/C.md",
-      "/v/D.md",
-    ]);
+    expect(idx.backlinksFor("/v/T.md").map((b) => b.path).sort()).toEqual(["/v/A.md", "/v/B.md", "/v/D.md"]);
   });
 });
 

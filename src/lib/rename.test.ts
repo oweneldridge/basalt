@@ -56,7 +56,7 @@ describe("rewriteLinks", () => {
       ["---", "up: [[Old]]", "---", "```", "[[Old]]", "```", "real [[New]]"].join("\n"),
     );
   });
-  it("rewrites links inside quoted and plain-text property values", () => {
+  it("rewrites links that are a whole quoted property value", () => {
     const doc = [
       "---",
       'up: "[[Old]]"',
@@ -65,6 +65,7 @@ describe("rewriteLinks", () => {
       '  - "[[Other]]"',
       'flow: ["[[Old]]", "[[Other]]"]',
       "note: met about [[Old]] today",
+      'mid: "see [[Old]]"',
       "ref: '[text](Old.md)'",
       "---",
       "body [[Old]]",
@@ -77,7 +78,8 @@ describe("rewriteLinks", () => {
         '  - "[[New#Goals|goals]]"',
         '  - "[[Other]]"',
         'flow: ["[[New]]", "[[Other]]"]',
-        "note: met about [[New]] today",
+        "note: met about [[Old]] today",
+        'mid: "see [[Old]]"',
         "ref: '[text](New.md)'",
         "---",
         "body [[New]]",
@@ -94,11 +96,9 @@ describe("rewriteLinks", () => {
     const doc = ["---", "a: '[[Owen''s]]'", "---"].join("\n");
     expect(rewriteLinks(doc, renameMap("Owen's", "Mine"))).toBe(["---", "a: '[[Mine]]'", "---"].join("\n"));
   });
-  it("rewrites links in block-scalar property text", () => {
+  it("leaves links in block-scalar property text alone, as Obsidian does", () => {
     const doc = ["---", "summary: |", "  see [[Old]]", "  [[Old]] again", "next: x", "---"].join("\n");
-    expect(rewriteLinks(doc, renameMap("Old", "New"))).toBe(
-      ["---", "summary: |", "  see [[New]]", "  [[New]] again", "next: x", "---"].join("\n"),
-    );
+    expect(rewriteLinks(doc, renameMap("Old", "New"))).toBeNull();
   });
   it("leaves YAML comments and unquoted nested-list values alone", () => {
     const doc = ["---", "up: [[Old]]", "- [[Old]]", "x: 1 # [[Old]]", "# [[Old]]", "---"].join("\n");
