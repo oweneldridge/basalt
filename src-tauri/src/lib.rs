@@ -273,13 +273,23 @@ async fn write_attachment(
     basalt_core::write_attachment(&root, name, data_b64, source_rel)
 }
 
-/// Write a user-chosen export file. The path comes from the OS save dialog, so
-/// it is user-authorized and may live outside the vault (no containment check).
-/// Written atomically (temp + rename) so a failed/partial export can't leave a
-/// half-written file in place of an existing one.
+/// Ask where to save an export, then write it there. The path comes from the
+/// native save dialog shown here, never from the webview, so page script can't
+/// use this to write arbitrary files. Returns the chosen path, or None if the
+/// user cancelled. Async so the blocking dialog runs off the main thread.
 #[tauri::command]
-fn export_file(path: String, content: String) -> Result<(), String> {
-    basalt_core::export_file(path, content)
+async fn export_file(app: tauri::AppHandle, default_name: String, content: String) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = app
+        .dialog()
+        .file()
+        .set_file_name(default_name)
+        .add_filter("HTML", &["html"])
+        .blocking_save_file();
+    let Some(picked) = picked else { return Ok(None) };
+    let path = picked.into_path().map_err(|e| e.to_string())?.to_string_lossy().to_string();
+    basalt_core::export_file(path.clone(), content)?;
+    Ok(Some(path))
 }
 
 #[tauri::command]

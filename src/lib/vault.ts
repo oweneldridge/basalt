@@ -226,9 +226,9 @@ export function toggleFileBookmark(path: string): Promise<boolean> {
   return invoke<boolean>("toggle_file_bookmark", { path });
 }
 
-/** Write an export file to a user-chosen (save-dialog) path. */
-export function exportFile(path: string, content: string): Promise<void> {
-  return invoke<void>("export_file", { path, content });
+/** Show the native save dialog and write the export there; null if cancelled. */
+export function exportFile(defaultName: string, content: string): Promise<string | null> {
+  return invoke<string | null>("export_file", { defaultName, content });
 }
 
 /** Start (or restart) watching the open vault for on-disk changes. */

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { invoke, getCurrentWindow, listen, openPath, openUrl, revealItemInDir, confirm, save, isTauri } from "./lib/platform";
+import { invoke, getCurrentWindow, listen, openPath, openUrl, revealItemInDir, confirm, isTauri } from "./lib/platform";
 import {
   createNote,
   createFolder,
@@ -2243,14 +2243,8 @@ export default function App() {
         }),
       );
       const body = dom.body.firstElementChild?.innerHTML ?? "";
-      const out = await save({
-        defaultPath: `${name}.html`,
-        filters: [{ name: "HTML", extensions: ["html"] }],
-      });
-      if (out) {
-        await exportFile(out, buildHtmlDocument(name, body));
-        setSaveError(null);
-      }
+      // The save dialog runs in Rust so the write path can't come from the page.
+      if (await exportFile(`${name}.html`, buildHtmlDocument(name, body))) setSaveError(null);
     } catch (e) {
       setSaveError(`Couldn't export: ${e}`);
     }
