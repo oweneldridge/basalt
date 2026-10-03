@@ -111,6 +111,25 @@ describe("VaultIndex link extraction", () => {
   });
 });
 
+describe("links in frontmatter properties", () => {
+  it("indexes quoted and plain-text property links as backlinks", () => {
+    const idx = indexOf([
+      note("T.md"),
+      note("A.md", ["---", 'up: "[[T]]"', "---", "body"].join("\n")),
+      note("B.md", ["---", "rel:", '  - "[[T#H]]"', "---"].join("\n")),
+      note("C.md", ["---", "x: met [[T]] today", "---"].join("\n")),
+      note("D.md", ["---", "ref: \"[t](T.md)\"", "---"].join("\n")),
+      note("E.md", ["---", "# [[T]]", "y: 1 # [[T]]", "---"].join("\n")),
+    ]);
+    expect(idx.backlinksFor("/v/T.md").map((b) => b.path).sort()).toEqual([
+      "/v/A.md",
+      "/v/B.md",
+      "/v/C.md",
+      "/v/D.md",
+    ]);
+  });
+});
+
 describe("markdown-style link indexing (useMarkdownLinks vaults)", () => {
   it("indexes [text](Note.md) links as backlinks, decoding %20 and stripping #fragments", () => {
     const idx = indexOf([

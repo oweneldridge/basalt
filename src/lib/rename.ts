@@ -3,11 +3,16 @@
 // filesystem rename, then read-modify-write each affected source FROM DISK.
 import {
   encodeMdPath,
+  frontmatterEnd,
   internalMdHref,
   mdLinkRegexGlobal,
   proseMask,
   targetPathPart,
   wikilinkRegex,
+  yamlBlockScalarLines,
+  yamlEscape,
+  yamlLinkAt,
+  yamlUnescape,
 } from "./markdown";
 
 const INLINE_CODE_RE = /`[^`\n]*`/g;
@@ -24,6 +29,7 @@ function rewriteMdLine(
   original: string,
   masked: string,
   mapTarget: (rawTarget: string) => string | null,
+  yaml: { block: boolean } | null = null,
 ): string | null {
   const re = mdLinkRegexGlobal();
   let m: RegExpExecArray | null;
@@ -33,7 +39,9 @@ function rewriteMdLine(
   while ((m = re.exec(masked))) {
     const parts = MD_PARTS.exec(m[0]);
     if (!parts) continue;
-    let urlToken = parts[2];
+    const ctx = yaml ? yamlLinkAt(original, m.index, yaml.block) : null;
+    if (ctx && !ctx.ok) continue;
+    let urlToken = yamlUnescape(parts[2], ctx?.quote ?? null);
     const angled = urlToken.startsWith("<") && urlToken.endsWith(">");
     const href = angled ? urlToken.slice(1, -1) : urlToken;
     const internal = internalMdHref(href);
@@ -46,6 +54,7 @@ function rewriteMdLine(
       angled && /[\s()]/.test(internal.fragment)
         ? `<${newPathPart}.md${internal.fragment}>`
         : encodeMdPath(`${newPathPart}.md`) + internal.fragment;
+    urlToken = yamlEscape(urlToken, ctx?.quote ?? null);
     // `parts` matched the code-MASKED copy: splice the prefix (link text) and
     // tail (title + close) from `original` BY OFFSET — the mask is
     // length-preserving — so inline code inside them survives on disk.
@@ -64,10 +73,11 @@ function rewriteMdLine(
 /**
  * Rewrite every wikilink/embed in `content` whose target `mapTarget` maps to a
  * new path part. The `#heading`/`^block` suffix and `|alias` are preserved.
- * Skipped — exactly matching how links are EXTRACTED, so a rewrite can never
- * touch text the backlinks pane didn't show: fenced code blocks, frontmatter,
+ * Skipped, exactly matching how links are EXTRACTED so a rewrite can never
+ * touch text the backlinks pane didn't show: fenced code blocks, YAML comments
  * and inline code spans (matches are found against a code-masked copy of the
- * line and spliced back into the original). Returns null when nothing changed.
+ * line and spliced back into the original). Frontmatter property values are
+ * rewritten with their YAML quoting kept valid. Returns null when unchanged.
  */
 export function rewriteLinks(
   content: string,
@@ -75,24 +85,32 @@ export function rewriteLinks(
 ): string | null {
   const lines = content.split("\n");
   const prose = proseMask(lines);
+  const fmEnd = frontmatterEnd(lines);
+  const blockLines = yamlBlockScalarLines(lines, fmEnd);
   let changed = false;
   for (let i = 0; i < lines.length; i++) {
-    if (!prose[i]) continue;
+    // Property values hold links too (Obsidian rewrites them on rename).
+    const yaml = i > 0 && i < fmEnd ? { block: blockLines.has(i) } : null;
+    if (!prose[i] && !yaml) continue;
     const original = lines[i];
     // Mask inline code with same-length blanks; offsets stay identical, so
     // matches found in the masked copy splice cleanly into the original.
-    const masked = original.replace(INLINE_CODE_RE, (m) => " ".repeat(m.length));
+    const masked = yaml ? original : original.replace(INLINE_CODE_RE, (m) => " ".repeat(m.length));
     const re = wikilinkRegex();
     let m: RegExpExecArray | null;
     let out = "";
     let last = 0;
     while ((m = re.exec(masked))) {
+      const ctx = yaml ? yamlLinkAt(original, m.index, yaml.block) : null;
+      if (ctx && !ctx.ok) continue;
+      const quote = ctx?.quote ?? null;
       const raw = m[1].trim();
       const alias = m[2];
       const pathPart = targetPathPart(raw);
       if (!pathPart) continue; // [[#heading]] self-ref
-      const newPathPart = mapTarget(raw);
-      if (newPathPart === null) continue;
+      const mapped = mapTarget(yamlUnescape(raw, quote));
+      if (mapped === null) continue;
+      const newPathPart = yamlEscape(mapped, quote);
       // m matched the code-MASKED copy; the suffix (#heading / ^block) and
       // alias are re-emitted, so slice them from `original` BY OFFSET (the
       // mask is length-preserving) — else inline code in them would be
@@ -119,8 +137,8 @@ export function rewriteLinks(
     if (last > 0) lines[i] = out + original.slice(last);
     // Second pass: markdown-style internal links on the (possibly updated) line.
     const current = lines[i];
-    const maskedNow = current.replace(INLINE_CODE_RE, (mm) => " ".repeat(mm.length));
-    const mdRewritten = rewriteMdLine(current, maskedNow, mapTarget);
+    const maskedNow = yaml ? current : current.replace(INLINE_CODE_RE, (mm) => " ".repeat(mm.length));
+    const mdRewritten = rewriteMdLine(current, maskedNow, mapTarget, yaml);
     if (mdRewritten !== null) {
       lines[i] = mdRewritten;
       changed = true;

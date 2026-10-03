@@ -22,20 +22,11 @@ export function proseMask(lines: string[]): boolean[] {
   const mask = new Array<boolean>(lines.length).fill(true);
   let i = 0;
   // Leading frontmatter block.
-  if (lines.length > 1 && lines[0].trim() === "---") {
-    mask[0] = false;
-    let end = -1;
-    for (let j = 1; j < lines.length; j++) {
-      const t = lines[j].trim();
-      if (t === "---" || t === "...") {
-        end = j;
-        break;
-      }
-    }
-    if (end !== -1) {
-      for (let j = 1; j <= end; j++) mask[j] = false;
-      i = end + 1;
-    }
+  if (lines.length > 1 && lines[0].trim() === "---") mask[0] = false;
+  const end = frontmatterEnd(lines);
+  if (end !== -1) {
+    for (let j = 1; j <= end; j++) mask[j] = false;
+    i = end + 1;
   }
   let fence: { char: string; len: number } | null = null;
   for (; i < lines.length; i++) {
@@ -56,6 +47,86 @@ export function proseMask(lines: string[]): boolean[] {
     }
   }
   return mask;
+}
+
+/** Index of the line closing a leading `---` frontmatter block, or -1. */
+export function frontmatterEnd(lines: string[]): number {
+  if (lines.length < 2 || lines[0].trim() !== "---") return -1;
+  for (let j = 1; j < lines.length; j++) {
+    const t = lines[j].trim();
+    if (t === "---" || t === "...") return j;
+  }
+  return -1;
+}
+
+/** YAML scalar context at `pos` on one frontmatter line: the quote style of the
+ * scalar it sits in, and whether it's inside a `# comment`. */
+export function yamlContextAt(line: string, pos: number): { quote: '"' | "'" | null; comment: boolean } {
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < pos && i < line.length; i++) {
+    const c = line[i];
+    if (quote === '"') {
+      if (c === "\\") i++;
+      else if (c === '"') quote = null;
+    } else if (quote === "'") {
+      if (c === "'") {
+        if (line[i + 1] === "'") i++;
+        else quote = null;
+      }
+    } else if (c === "#" && (i === 0 || /\s/.test(line[i - 1]))) {
+      return { quote: null, comment: true };
+    } else if (c === '"' || c === "'") {
+      // Quotes only open a scalar at the start of a value, not mid-word (it's).
+      const prev = line.slice(0, i).trimEnd().slice(-1);
+      if (prev === "" || prev === ":" || prev === "-" || prev === "[" || prev === "," || prev === "{") quote = c;
+    }
+  }
+  return { quote, comment: false };
+}
+
+/** Frontmatter lines (between the fences) that are the body of a `|` or `>`
+ * block scalar: plain text, so any link in them is inside a string. */
+export function yamlBlockScalarLines(lines: string[], end: number): Set<number> {
+  const out = new Set<number>();
+  let blockIndent = -1;
+  for (let i = 1; i < end; i++) {
+    const line = lines[i];
+    const indent = line.length - line.trimStart().length;
+    if (blockIndent >= 0) {
+      if (line.trim() === "" || indent > blockIndent) {
+        out.add(i);
+        continue;
+      }
+      blockIndent = -1;
+    }
+    if (/:\s*[|>][-+]?\d*\s*(#.*)?$/.test(line)) blockIndent = indent;
+  }
+  return out;
+}
+
+/** Whether a link at `pos` on a frontmatter line is inside a string value.
+ * Obsidian only reads quoted or plain-text property values as links; an
+ * unquoted `key: [[x]]` parses as a nested list and isn't one. */
+export function yamlLinkAt(line: string, pos: number, inBlockScalar: boolean): { ok: boolean; quote: '"' | "'" | null } {
+  if (inBlockScalar) return { ok: true, quote: null };
+  const ctx = yamlContextAt(line, pos);
+  if (ctx.comment) return { ok: false, quote: null };
+  if (ctx.quote) return { ok: true, quote: ctx.quote };
+  const start = /^\s*(?:-\s+)*(?:[^\s#'"[{-][^:]*?:(?:\s+|$))?(?:-\s+)*/.exec(line)![0].length;
+  const c = line[start];
+  return { ok: c !== "[" && c !== "{", quote: null };
+}
+
+export function yamlUnescape(s: string, quote: '"' | "'" | null): string {
+  if (quote === "'") return s.replace(/''/g, "'");
+  if (quote === '"') return s.replace(/\\(["\\])/g, "$1");
+  return s;
+}
+
+export function yamlEscape(s: string, quote: '"' | "'" | null): string {
+  if (quote === "'") return s.replace(/'/g, "''");
+  if (quote === '"') return s.replace(/(["\\])/g, "\\$1");
+  return s;
 }
 
 /**

@@ -4,9 +4,10 @@ import { describe, expect, it } from "vitest";
 import { linkTargetFor, rewriteLinks } from "./rename";
 import { targetPathPart } from "./markdown";
 
-// A mapper that renames targets whose path part matches `oldName`.
+// A mapper that renames targets whose path part matches `oldName` (markdown
+// links arrive with their .md extension).
 const renameMap = (oldName: string, newName: string) => (raw: string) =>
-  targetPathPart(raw).toLowerCase() === oldName.toLowerCase() ? newName : null;
+  targetPathPart(raw).replace(/\.md$/i, "").toLowerCase() === oldName.toLowerCase() ? newName : null;
 
 describe("rewriteLinks", () => {
   it("rewrites a plain wikilink", () => {
@@ -54,6 +55,54 @@ describe("rewriteLinks", () => {
     expect(rewriteLinks(doc, renameMap("Old", "New"))).toBe(
       ["---", "up: [[Old]]", "---", "```", "[[Old]]", "```", "real [[New]]"].join("\n"),
     );
+  });
+  it("rewrites links inside quoted and plain-text property values", () => {
+    const doc = [
+      "---",
+      'up: "[[Old]]"',
+      "see:",
+      '  - "[[Old#Goals|goals]]"',
+      '  - "[[Other]]"',
+      'flow: ["[[Old]]", "[[Other]]"]',
+      "note: met about [[Old]] today",
+      "ref: '[text](Old.md)'",
+      "---",
+      "body [[Old]]",
+    ].join("\n");
+    expect(rewriteLinks(doc, renameMap("Old", "New"))).toBe(
+      [
+        "---",
+        'up: "[[New]]"',
+        "see:",
+        '  - "[[New#Goals|goals]]"',
+        '  - "[[Other]]"',
+        'flow: ["[[New]]", "[[Other]]"]',
+        "note: met about [[New]] today",
+        "ref: '[text](New.md)'",
+        "---",
+        "body [[New]]",
+      ].join("\n"),
+    );
+  });
+  it("keeps YAML quoting valid when the new name has a quote character", () => {
+    const doc = ["---", "a: '[[Old]]'", 'b: "[[Old]]"', "---"].join("\n");
+    expect(rewriteLinks(doc, renameMap("Old", "Owen's \"Q\""))).toBe(
+      ["---", "a: '[[Owen''s \"Q\"]]'", 'b: "[[Owen\'s \\"Q\\"]]"', "---"].join("\n"),
+    );
+  });
+  it("matches an escaped quote in a single-quoted property link", () => {
+    const doc = ["---", "a: '[[Owen''s]]'", "---"].join("\n");
+    expect(rewriteLinks(doc, renameMap("Owen's", "Mine"))).toBe(["---", "a: '[[Mine]]'", "---"].join("\n"));
+  });
+  it("rewrites links in block-scalar property text", () => {
+    const doc = ["---", "summary: |", "  see [[Old]]", "  [[Old]] again", "next: x", "---"].join("\n");
+    expect(rewriteLinks(doc, renameMap("Old", "New"))).toBe(
+      ["---", "summary: |", "  see [[New]]", "  [[New]] again", "next: x", "---"].join("\n"),
+    );
+  });
+  it("leaves YAML comments and unquoted nested-list values alone", () => {
+    const doc = ["---", "up: [[Old]]", "- [[Old]]", "x: 1 # [[Old]]", "# [[Old]]", "---"].join("\n");
+    expect(rewriteLinks(doc, renameMap("Old", "New"))).toBeNull();
   });
   it("rewrites multiple links on one line independently", () => {
     expect(rewriteLinks("[[Old]] then [[Other]] then [[Old|x]]", renameMap("Old", "New"))).toBe(
