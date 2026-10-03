@@ -19,6 +19,7 @@ import {
   writeNote,
   writeCanvas,
   writeBase,
+  isWriteConflict,
   readObsidianConfig,
   readObsidianImport,
   readObsidianBookmarks,
@@ -626,10 +627,14 @@ export default function App() {
   }, []);
 
   const flushSave = useCallback(
-    async (path: string, doc: string) => {
+    async (path: string, doc: string, force = false) => {
       setSaving(true);
       try {
-        await writeNote(path, doc);
+        const known = notesRef.current.find((n) => n.path === path);
+        // The index's copy is the last content seen on disk; oversized notes are
+        // listed without content, so they skip the compare-and-swap.
+        const unknown = !known || (known.content === "" && (known.size ?? 0) > 0);
+        await writeNote(path, doc, force || unknown ? undefined : known.content);
         setSaveError(null);
         const meta = notesRef.current.find((n) => n.path === path);
         if (meta) {
@@ -669,6 +674,11 @@ export default function App() {
           }
         }
       } catch (e) {
+        if (isWriteConflict(e)) {
+          addConflict(path);
+          if (!pending.current.has(path)) pending.current.set(path, doc);
+          return;
+        }
         // Keep the edit pending — but never clobber a NEWER edit typed during
         // the failed write, and never resurrect pending for a note that has
         // been deleted meanwhile (a phantom entry would block vault switches).
@@ -680,33 +690,30 @@ export default function App() {
         setSaving(false);
       }
     },
-    [bumpIndex, rememberSelfWrite],
+    [bumpIndex, rememberSelfWrite, addConflict],
   );
 
   // Flush ONE editable viewer's (.canvas / .base) pending edit. Same
   // pending/conflict discipline as flushSave, but writes via the extension-gated
   // writeCanvas/writeBase and updates the attachment (not the note index).
   const flushViewer = useCallback(
-    async (path: string, doc: string) => {
+    async (path: string, doc: string, force = false) => {
       setSaving(true);
       try {
         const att = attachmentsRef.current.find((a) => a.path === path);
         const rel = att?.rel;
         const write = /\.base$/i.test(path) ? writeBase : writeCanvas;
-        // Pre-write conflict guard (closes the race where an external edit lands
-        // during the async rescan window): if disk has diverged from the last
-        // content Basalt knew was there — and isn't already what we're writing —
-        // raise a conflict instead of clobbering the external change.
-        if (rel !== undefined) {
-          const onDisk = await readNote(path).catch(() => null);
-          const baseline = selfWrites.current.get(rel);
-          if (onDisk !== null && baseline !== undefined && onDisk !== baseline && onDisk !== doc) {
-            addConflict(path);
-            if (!pending.current.has(path)) pending.current.set(path, doc);
-            return;
-          }
+        // The baseline (seeded on open, refreshed on each save) is what Basalt
+        // last saw on disk; the core refuses the write if the file moved on.
+        const baseline = rel !== undefined && !force ? selfWrites.current.get(rel) : undefined;
+        try {
+          await write(path, doc, baseline);
+        } catch (e) {
+          if (!isWriteConflict(e)) throw e;
+          addConflict(path);
+          if (!pending.current.has(path)) pending.current.set(path, doc);
+          return;
         }
-        await write(path, doc);
         setSaveError(null);
         if (rel !== undefined) rememberSelfWrite(rel, doc); // AFTER a successful write
         if (conflictsRef.current.has(path)) {
@@ -796,8 +803,8 @@ export default function App() {
       if (conflictsRef.current.has(path) && !force) return;
       const doc = pending.current.get(path);
       if (doc === undefined) return;
-      if (isViewerPath(path)) await flushViewer(path, doc);
-      else await flushSave(path, doc); // both delete `pending` on success
+      if (isViewerPath(path)) await flushViewer(path, doc, force);
+      else await flushSave(path, doc, force); // both delete `pending` on success
     },
     [flushSave, flushViewer],
   );

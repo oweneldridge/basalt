@@ -349,8 +349,29 @@ pub fn read_note(root: &Path, path: String) -> Result<String, String> {
     }
 }
 
+/// Returned when the file no longer holds what the caller last read. The
+/// frontend matches this exact text and raises its "Changed on disk" conflict.
+pub const WRITE_CONFLICT: &str = "Changed on disk since Basalt last read it";
+
+/// Compare-and-swap guard for writes: with `expected` set, refuse unless the
+/// file still holds that content (or already holds `content`). A missing file
+/// passes, so a dirty note deleted elsewhere can still be saved back.
+fn check_unchanged(path: &Path, expected: Option<&str>, content: &str) -> Result<(), String> {
+    let Some(expected) = expected else { return Ok(()) };
+    let current = match fs::read(path) {
+        Ok(bytes) => to_lf(&String::from_utf8_lossy(&bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    };
+    if current == to_lf(expected) || current == to_lf(content) {
+        Ok(())
+    } else {
+        Err(WRITE_CONFLICT.into())
+    }
+}
+
 /// Atomically write a note's contents, only within the vault.
-pub fn write_note(root: &Path, path: String, content: String) -> Result<(), String> {
+pub fn write_note(root: &Path, path: String, content: String, expected: Option<String>) -> Result<(), String> {
     let resolved = ensure_in_vault(&root, &path)?;
     // Defense in depth: write_note IS the Markdown-note pipeline, so it must only
     // ever touch a `.md` file. This turns the "never write back a .canvas (or any
@@ -367,6 +388,7 @@ pub fn write_note(root: &Path, path: String, content: String) -> Result<(), Stri
             resolved.display()
         ));
     }
+    check_unchanged(&resolved, expected.as_deref(), &content)?;
     // Preserve the file's existing line endings: the editor works in LF, so a
     // CRLF note would otherwise be silently rewritten to LF on first save.
     atomic_write(&resolved, &preserve_eol(&resolved, &content))
@@ -375,7 +397,7 @@ pub fn write_note(root: &Path, path: String, content: String) -> Result<(), Stri
 /// Atomically write a `.canvas` file (the editable JSON Canvas), only within the
 /// vault. Extension-gated like write_note so this pipeline can only ever touch a
 /// `.canvas` — never a note or another attachment.
-pub fn write_canvas(root: &Path, path: String, content: String) -> Result<(), String> {
+pub fn write_canvas(root: &Path, path: String, content: String, expected: Option<String>) -> Result<(), String> {
     let resolved = ensure_in_vault(&root, &path)?;
     let is_canvas = resolved
         .extension()
@@ -392,6 +414,7 @@ pub fn write_canvas(root: &Path, path: String, content: String) -> Result<(), St
     if !resolved.is_file() {
         return Err("canvas file does not exist".into());
     }
+    check_unchanged(&resolved, expected.as_deref(), &content)?;
     // Preserve the file's line endings like write_note (canvas/base are
     // normally LF, but never silently flip them).
     atomic_write(&resolved, &preserve_eol(&resolved, &content))
@@ -400,7 +423,7 @@ pub fn write_canvas(root: &Path, path: String, content: String) -> Result<(), St
 /// Atomically write a `.base` file (the editable Bases definition YAML), only
 /// within the vault. Extension-gated like write_canvas so this pipeline can only
 /// ever touch a `.base`.
-pub fn write_base(root: &Path, path: String, content: String) -> Result<(), String> {
+pub fn write_base(root: &Path, path: String, content: String, expected: Option<String>) -> Result<(), String> {
     let resolved = ensure_in_vault(&root, &path)?;
     let is_base = resolved
         .extension()
@@ -412,6 +435,7 @@ pub fn write_base(root: &Path, path: String, content: String) -> Result<(), Stri
     if !resolved.is_file() {
         return Err("base file does not exist".into());
     }
+    check_unchanged(&resolved, expected.as_deref(), &content)?;
     // Preserve the file's line endings like write_note (canvas/base are
     // normally LF, but never silently flip them).
     atomic_write(&resolved, &preserve_eol(&resolved, &content))
@@ -1804,6 +1828,68 @@ mod tests {
         atomic_write(&f, b"replaced").expect("overwrite failed");
         assert_eq!(fs::read_to_string(&f).unwrap(), "replaced");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn scratch_vault(tag: &str) -> PathBuf {
+        let n = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("basalt-core-{tag}-{}-{n}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::canonicalize(&dir).unwrap()
+    }
+
+    #[test]
+    fn write_note_compare_and_swap() {
+        let root = scratch_vault("cas");
+        let note = root.join("N.md");
+        let p = || note.to_string_lossy().to_string();
+        fs::write(&note, "base\n").unwrap();
+
+        write_note(&root, p(), "mine\n".into(), Some("base\n".into())).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "mine\n");
+
+        // Someone else wrote after our last read: refuse, leave their text.
+        fs::write(&note, "theirs\n").unwrap();
+        let err = write_note(&root, p(), "mine again\n".into(), Some("mine\n".into())).unwrap_err();
+        assert_eq!(err, WRITE_CONFLICT);
+        assert_eq!(fs::read_to_string(&note).unwrap(), "theirs\n");
+
+        // Disk already holds what we're writing: not a conflict.
+        write_note(&root, p(), "theirs\n".into(), Some("stale\n".into())).unwrap();
+
+        // No expectation means an explicit overwrite (Keep mine).
+        write_note(&root, p(), "forced\n".into(), None).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "forced\n");
+
+        // A missing file still saves, so a dirty note deleted elsewhere survives.
+        fs::remove_file(&note).unwrap();
+        write_note(&root, p(), "back\n".into(), Some("forced\n".into())).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "back\n");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn write_note_compare_and_swap_ignores_line_endings() {
+        let root = scratch_vault("cas-crlf");
+        let note = root.join("W.md");
+        fs::write(&note, "a\r\nb\r\n").unwrap();
+        write_note(&root, note.to_string_lossy().into(), "a\nb\nc\n".into(), Some("a\nb\n".into())).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "a\r\nb\r\nc\r\n");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn write_canvas_and_base_compare_and_swap() {
+        let root = scratch_vault("cas-viewers");
+        let canvas = root.join("B.canvas");
+        let base = root.join("V.base");
+        fs::write(&canvas, "{\"nodes\":[]}").unwrap();
+        fs::write(&base, "views: []\n").unwrap();
+        let e1 = write_canvas(&root, canvas.to_string_lossy().into(), "{}".into(), Some("old".into())).unwrap_err();
+        let e2 = write_base(&root, base.to_string_lossy().into(), "x: 1\n".into(), Some("old".into())).unwrap_err();
+        assert_eq!((e1.as_str(), e2.as_str()), (WRITE_CONFLICT, WRITE_CONFLICT));
+        write_canvas(&root, canvas.to_string_lossy().into(), "{}".into(), Some("{\"nodes\":[]}".into())).unwrap();
+        assert_eq!(fs::read_to_string(&canvas).unwrap(), "{}");
+        fs::remove_dir_all(&root).unwrap();
     }
 
     /// Set BASALT_TEST_VAULT to a real vault path to exercise these on a

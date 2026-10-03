@@ -270,6 +270,7 @@ fn dispatch(root: &Path, cmd: &str, a: &Value) -> Result<Value, String> {
             .map(String::from)
             .ok_or_else(|| format!("missing string arg: {k}"))
     };
+    let opt = |k: &str| a.get(k).and_then(|v| v.as_str()).map(String::from);
     match cmd {
         // Single-vault server: open_vault returns the fixed root (the path arg is
         // ignored — the web app can only ever reach this one vault).
@@ -277,9 +278,9 @@ fn dispatch(root: &Path, cmd: &str, a: &Value) -> Result<Value, String> {
         "read_vault" => to_val(basalt_core::read_vault(root)),
         "list_attachments" => to_val(basalt_core::list_attachments(root)),
         "read_note" => basalt_core::read_note(root, s("path")?).map(|x| json!(x)),
-        "write_note" => basalt_core::write_note(root, s("path")?, s("content")?).map(|_| Value::Null),
-        "write_canvas" => basalt_core::write_canvas(root, s("path")?, s("content")?).map(|_| Value::Null),
-        "write_base" => basalt_core::write_base(root, s("path")?, s("content")?).map(|_| Value::Null),
+        "write_note" => basalt_core::write_note(root, s("path")?, s("content")?, opt("expected")).map(|_| Value::Null),
+        "write_canvas" => basalt_core::write_canvas(root, s("path")?, s("content")?, opt("expected")).map(|_| Value::Null),
+        "write_base" => basalt_core::write_base(root, s("path")?, s("content")?, opt("expected")).map(|_| Value::Null),
         "create_note" => basalt_core::create_note(root, s("name")?).map(|x| json!(x)),
         "delete_note" => basalt_core::delete_note(root, s("path")?).map(|_| Value::Null),
         "rename_note" => basalt_core::rename_note(root, s("path")?, s("newName")?).map(|x| json!(x)),

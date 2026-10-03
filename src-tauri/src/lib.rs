@@ -135,9 +135,15 @@ fn read_note(path: String, window: tauri::Window, state: State<VaultState>) -> R
 
 /// Atomically write a note's contents, only within the vault.
 #[tauri::command]
-fn write_note(path: String, content: String, window: tauri::Window, state: State<VaultState>) -> Result<(), String> {
+fn write_note(
+    path: String,
+    content: String,
+    expected: Option<String>,
+    window: tauri::Window,
+    state: State<VaultState>,
+) -> Result<(), String> {
     let root = current_root(&state, window.label())?;
-    basalt_core::write_note(&root, path, content)
+    basalt_core::write_note(&root, path, content, expected)
 }
 
 /// Atomically write a `.canvas` file (the editable JSON Canvas), only within the
@@ -147,11 +153,12 @@ fn write_note(path: String, content: String, window: tauri::Window, state: State
 fn write_canvas(
     path: String,
     content: String,
+    expected: Option<String>,
     window: tauri::Window,
     state: State<VaultState>,
 ) -> Result<(), String> {
     let root = current_root(&state, window.label())?;
-    basalt_core::write_canvas(&root, path, content)
+    basalt_core::write_canvas(&root, path, content, expected)
 }
 
 /// Atomically write a `.base` file (the editable Bases definition YAML), only
@@ -161,11 +168,12 @@ fn write_canvas(
 fn write_base(
     path: String,
     content: String,
+    expected: Option<String>,
     window: tauri::Window,
     state: State<VaultState>,
 ) -> Result<(), String> {
     let root = current_root(&state, window.label())?;
-    basalt_core::write_base(&root, path, content)
+    basalt_core::write_base(&root, path, content, expected)
 }
 
 /// Create a new empty note, returning its canonical path. `name` may be folder-
