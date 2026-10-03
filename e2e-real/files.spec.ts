@@ -83,6 +83,19 @@ test.describe("canvas", () => {
     expect(saved.edges[0]).toMatchObject({ id: "e1", customFlag: 1 });
     expect(saved.metadata).toEqual({ version: "1.0-1.0", frontmatter: {} });
   });
+
+  test("an external edit reloads the canvas and the next edit saves without a false conflict", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await page.locator(".tree-row.file", { hasText: "Board" }).first().click();
+    await expect(page.locator(".canvas-node").first()).toBeVisible();
+    const external = { ...board, nodes: [...board.nodes, { id: "x1", type: "text", text: "From outside", x: 0, y: 200, width: 200, height: 80 }] };
+    vault.write("Board.canvas", JSON.stringify(external, null, "\t"));
+    await expect(page.locator(".canvas-node", { hasText: "From outside" })).toBeVisible({ timeout: 10000 });
+    await page.getByRole("button", { name: /card/i }).first().click();
+    await expect.poll(() => JSON.parse(vault.read("Board.canvas")).nodes.length, { timeout: 5000 }).toBe(4);
+    await expect(page.locator(".conflict")).toBeHidden();
+    expect(JSON.parse(vault.read("Board.canvas")).nodes.some((n: { id: string }) => n.id === "x1")).toBe(true);
+  });
 });
 
 test.describe("links in properties", () => {

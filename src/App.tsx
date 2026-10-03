@@ -1743,7 +1743,11 @@ export default function App() {
               // An editable canvas with unsaved edits: don't clobber them —
               // raise a conflict so the user chooses Reload / Keep mine.
               if (pending.current.has(path)) addConflict(path);
-              else patchPane(id, { doc: fresh });
+              else {
+                // What's on disk now is the baseline the next save compares against.
+                if (rel !== undefined) rememberSelfWrite(rel, fresh);
+                patchPane(id, { doc: fresh });
+              }
             })
             .catch(() => {
               /* removed between listing and read — prune handles it */
@@ -1764,7 +1768,7 @@ export default function App() {
         patchPane(p.id, { doc: still.content });
       }
     }
-  }, [loadVault, addConflict, patchPane]);
+  }, [loadVault, addConflict, patchPane, rememberSelfWrite]);
 
   // Listen for on-disk changes; debounce; then apply.
   useEffect(() => {
@@ -2036,6 +2040,9 @@ export default function App() {
     clearConflict(path);
     try {
       const doc = await readNote(path);
+      // A viewer's save baseline lives in selfWrites (notes use the index copy).
+      const att = isViewerPath(path) ? attachmentsRef.current.find((a) => a.path === path) : undefined;
+      if (att) rememberSelfWrite(att.rel, doc);
       // Sync every pane showing this note to the on-disk version.
       for (const p of Object.values(panesRef.current)) {
         if (p.active === path) patchPane(p.id, { doc, scrollToLine: undefined });
@@ -2043,7 +2050,7 @@ export default function App() {
     } catch {
       void closeTab(id, path); // vanished — close its tab
     }
-  }, [clearConflict, patchPane, closeTab]);
+  }, [clearConflict, patchPane, closeTab, rememberSelfWrite]);
 
   // Conflict resolution (focused pane): keep local edits, overwriting disk.
   const handleKeepMine = useCallback(async () => {
