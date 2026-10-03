@@ -2055,16 +2055,16 @@ export default function App() {
     const stillExists = isViewerPath(path)
       ? attachmentsRef.current.some((a) => a.path === path)
       : notesRef.current.some((n) => n.path === path);
-    if (!stillExists) {
-      // Vanished externally — don't recreate it at a stale path; just close it.
-      pending.current.delete(path);
-      clearConflict(path);
-      void closeTab(id, path);
+    if (!stillExists && isViewerPath(path)) {
+      // The core only rewrites existing canvases/bases, so keep the edit and the
+      // tab rather than silently dropping what the user asked to keep.
+      setSaveError(`${path.split(/[\\/]/).pop()} was deleted on disk and can't be recreated here`);
       return;
     }
+    // A deleted note is written back: the user explicitly chose their text.
     clearConflict(path);
     await flushPath(path, true); // explicit Keep-mine: write despite the conflict
-  }, [clearConflict, flushPath, closeTab]);
+  }, [clearConflict, flushPath]);
 
   // The note whose history is open — captured so a restore always targets it
   // even if focus moved to another note while the modal was up.
