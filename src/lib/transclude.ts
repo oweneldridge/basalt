@@ -295,6 +295,13 @@ export function renderEmbedElement(
     }
     // renderMarkdown escapes all text and emits only known tags → innerHTML-safe.
     body.innerHTML = renderMarkdown(slice);
+    // Task lines here belong to the embedded note, not the host the reading
+    // view would toggle, so show them read-only.
+    body.querySelectorAll<HTMLInputElement>("input.md-task-check").forEach((cb) => {
+      cb.classList.remove("md-task-check");
+      cb.removeAttribute("data-task-line");
+      cb.disabled = true;
+    });
     const nextChain = [...chain, resolved.path];
     // Resolve images relative to the EMBEDDED note.
     body.querySelectorAll<HTMLImageElement>("img[data-basalt-img]").forEach((img) => {

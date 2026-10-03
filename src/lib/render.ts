@@ -249,7 +249,31 @@ function renderList(items: LI[]): string {
  * reading mode and export hide them (matching Obsidian). Fenced and inline code
  * are preserved. */
 export function stripComments(md: string): string {
-  return md.replace(/(```[\s\S]*?```|`[^`\n]*`)|%%[\s\S]*?%%/g, (_m, code) => code ?? "");
+  return stripCommentsMapped(md).text;
+}
+
+/** stripComments plus, for each output line, the source line it starts on, so
+ * a reading-view checkbox can point back at the right line after a multi-line
+ * comment is removed. */
+function stripCommentsMapped(md: string): { text: string; map: number[] } {
+  const re = /(```[\s\S]*?```|`[^`\n]*`)|%%[\s\S]*?%%/g;
+  const map = [0];
+  let text = "";
+  let src = 0; // source line at the current position
+  const copy = (chunk: string) => {
+    text += chunk;
+    for (let p = chunk.indexOf("\n"); p !== -1; p = chunk.indexOf("\n", p + 1)) map.push(++src);
+  };
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(md))) {
+    copy(md.slice(last, m.index));
+    if (m[1] !== undefined) copy(m[0]);
+    else for (let p = m[0].indexOf("\n"); p !== -1; p = m[0].indexOf("\n", p + 1)) src++;
+    last = m.index + m[0].length;
+  }
+  copy(md.slice(last));
+  return { text, map };
 }
 
 /** Conceal Obsidian block-reference markers (`^blockid` at a line's end or on
@@ -273,15 +297,20 @@ export function stripBlockIds(md: string): string {
 export function toggleTaskLine(doc: string, line: number): string | null {
   const lines = doc.split("\n");
   if (line < 0 || line >= lines.length) return null;
-  const re = /^(\s*[-*+]\s+\[)([ xX])(\])/;
+  // Tasks inside blockquotes and callouts carry a `> ` prefix.
+  const re = /^((?:\s*>)*\s*[-*+]\s+\[)([ xX])(\])/;
   const m = re.exec(lines[line]);
   if (!m) return null;
   lines[line] = lines[line].replace(re, (_full, pre, mark, post) => pre + (mark === " " ? "x" : " ") + post);
   return lines.join("\n");
 }
 
-export function renderMarkdown(src: string): string {
-  const md = stripBlockIds(stripComments(src));
+export function renderMarkdown(src: string, lineMap?: number[]): string {
+  // Nested calls (callout and blockquote bodies) arrive already stripped, with
+  // the source line of each of their lines.
+  const stripped = lineMap ? { text: src, map: lineMap } : stripCommentsMapped(src);
+  const srcLine = (i: number) => stripped.map[i] ?? i;
+  const md = stripBlockIds(stripped.text);
   const lines = extractFootnoteDefs(md);
   let i = 0;
   const parts: string[] = [];
@@ -388,6 +417,7 @@ export function renderMarkdown(src: string): string {
     const q = QUOTE.exec(line);
     if (q) {
       const inner: string[] = [];
+      const first = i;
       while (i < lines.length) {
         const qq = QUOTE.exec(lines[i]);
         if (!qq) break;
@@ -402,7 +432,8 @@ export function renderMarkdown(src: string): string {
         const bodyMd = inner.slice(1).join("\n");
         const icon = `<span class="md-callout-icon">${calloutIcon(type)}</span>`;
         const title = `<div class="md-callout-title">${icon}${renderInline(titleText)}</div>`;
-        const body = bodyMd.trim() ? `<div class="md-callout-body">${renderMarkdown(bodyMd)}</div>` : "";
+        const bodyMap = Array.from({ length: inner.length - 1 }, (_, k) => srcLine(first + 1 + k));
+        const body = bodyMd.trim() ? `<div class="md-callout-body">${renderMarkdown(bodyMd, bodyMap)}</div>` : "";
         const cls = `md-callout md-callout-${escapeHtml(type)}`;
         if (fold) {
           // Foldable → native <details>; `-` starts collapsed, `+` open.
@@ -415,7 +446,8 @@ export function renderMarkdown(src: string): string {
           parts.push(`<div class="${cls}">${title}${body}</div>`);
         }
       } else {
-        parts.push(`<blockquote>${renderMarkdown(inner.join("\n"))}</blockquote>`);
+        const quoteMap = Array.from({ length: inner.length }, (_, k) => srcLine(first + k));
+        parts.push(`<blockquote>${renderMarkdown(inner.join("\n"), quoteMap)}</blockquote>`);
       }
       continue;
     }
@@ -440,7 +472,7 @@ export function renderMarkdown(src: string): string {
           ordered: !!o,
           task: task ? ((task[1] === " " ? " " : "x") as " " | "x") : null,
           html: renderInline(task ? task[2] : content),
-          line: task ? i : undefined,
+          line: task ? srcLine(i) : undefined,
         });
         i++;
       }

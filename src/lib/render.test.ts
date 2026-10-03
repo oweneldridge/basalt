@@ -297,3 +297,29 @@ describe("toggleTaskLine", () => {
     expect(toggleTaskLine("plain text", 0)).toBeNull();
   });
 });
+
+describe("reading-view task lines", () => {
+  const lineOf = (html: string, label: string) => {
+    const m = new RegExp(`data-task-line="(\\d+)"[^>]*/> ${label}`).exec(html);
+    return m ? Number(m[1]) : null;
+  };
+  it("points tasks inside callouts and blockquotes at their source line", () => {
+    const doc = ["- [ ] Pay rent", "- [ ] Call mom", "", "> [!todo] Today", "> - [ ] Write report", "", "> - [ ] Quoted"].join("\n");
+    const html = renderMarkdown(doc);
+    expect(lineOf(html, "Write report")).toBe(4);
+    expect(lineOf(html, "Quoted")).toBe(6);
+    expect(toggleTaskLine(doc, 4)).toBe(doc.replace("> - [ ] Write report", "> - [x] Write report"));
+  });
+  it("keeps line numbers after a multi-line comment", () => {
+    const doc = ["%%", "hidden", "%%", "- [ ] A", "- [ ] B", "- [ ] C"].join("\n");
+    const html = renderMarkdown(doc);
+    expect(lineOf(html, "C")).toBe(5);
+    expect(toggleTaskLine(doc, 5)).toBe(doc.replace("- [ ] C", "- [x] C"));
+  });
+  it("maps a task in a nested callout", () => {
+    const doc = ["> [!note] Outer", "> > [!todo] Inner", "> > - [ ] Deep"].join("\n");
+    expect(lineOf(renderMarkdown(doc), "Deep")).toBe(2);
+    expect(toggleTaskLine(doc, 2)).toBe(doc.replace("[ ] Deep", "[x] Deep"));
+  });
+});
+

@@ -160,3 +160,16 @@ test.describe("Properties sidebar YAML", () => {
     expect(fm).toMatchObject({ title: "Re: Budget v2", up: "[[Ideas]]", priority: 3, done: true, authors: ["Doe, Jane", "Smith"] });
   });
 });
+
+test.describe("reading-view tasks", () => {
+  const src = ["- [ ] Pay rent", "", "> [!todo] Today", "> - [ ] Write report", ""].join("\n");
+  test.use({ vaultFiles: { "Tasks.md": src } });
+  test("ticking a task inside a callout ticks that task", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Tasks");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await page.locator("li.md-task", { hasText: "Write report" }).locator("input").click();
+    await expect.poll(() => vault.read("Tasks.md")).toContain("> - [x] Write report");
+    expect(vault.read("Tasks.md")).toContain("- [ ] Pay rent");
+  });
+});
