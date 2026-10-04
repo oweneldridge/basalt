@@ -778,7 +778,7 @@ export default function App() {
   // Flush ONE editable viewer's (.canvas / .base) pending edit. Same
   // pending/conflict discipline as flushSave, but writes via the extension-gated
   // writeCanvas/writeBase and updates the attachment (not the note index).
-  const flushViewer = useCallback(
+  const writeViewer = useCallback(
     async (path: string, doc: string, force = false) => {
       setSaving(true);
       try {
@@ -793,6 +793,7 @@ export default function App() {
         } catch (e) {
           if (!isWriteConflict(e)) throw e;
           addConflict(path);
+          // "Mine" is the newest edit, not the doc of a save that lost the race.
           if (!pending.current.has(path)) pending.current.set(path, doc);
           return;
         }
@@ -818,6 +819,25 @@ export default function App() {
       }
     },
     [rememberSelfWrite, addConflict],
+  );
+
+  // Viewer saves share the per-path chain with note saves.
+  const flushViewer = useCallback(
+    (path: string, doc: string, force = false): Promise<void> => {
+      const prev = saveChains.current.get(path) ?? Promise.resolve();
+      const run = prev.then(() => {
+        const latest = pending.current.get(path);
+        if (latest === undefined && !force) return;
+        if (!force && conflictsRef.current.has(path)) return;
+        return writeViewer(path, latest ?? doc, force);
+      });
+      saveChains.current.set(path, run);
+      void run.finally(() => {
+        if (saveChains.current.get(path) === run) saveChains.current.delete(path);
+      });
+      return run;
+    },
+    [writeViewer],
   );
 
   // An edit from an editable viewer (CanvasView / BaseView): same debounced,
