@@ -3428,17 +3428,57 @@ export default function App() {
 
         const newPath = await renameNote(oldPath, newName);
         if (newPath === oldPath) return;
-        // Text typed while the rename was in flight is keyed to the old path; its
-        // timer would save there and recreate the old file. Carry it over below.
+        const newRel = newPath.startsWith(root)
+          ? newPath.slice(root.length).replace(/^[/\\]+/, "")
+          : newPath;
+        const newBase = nameFromRel(newRel);
+
+        // Point every pane at the new path before any other await, carrying the
+        // text the editor holds: from here on keystrokes are keyed to the new
+        // path, so nothing can be saved to (and recreate) the old file.
         const typed = pending.current.get(oldPath);
         const typedTimer = saveTimers.current.get(oldPath);
         if (typedTimer !== undefined) window.clearTimeout(typedTimer);
         saveTimers.current.delete(oldPath);
         pending.current.delete(oldPath);
-        const newRel = newPath.startsWith(root)
-          ? newPath.slice(root.length).replace(/^[/\\]+/, "")
-          : newPath;
-        const newBase = nameFromRel(newRel);
+        const live = typed ?? liveDocs.current.get(oldPath);
+        // Same bytes on disk as before the rename, so the old baseline still holds.
+        const moved: VaultNote = { ...oldNote, path: newPath, rel: newRel, name: newBase };
+        selfWrites.current.delete(oldNote.rel);
+        rememberSelfWrite(newRel, oldNote.content);
+        index.current.removeNote(oldPath);
+        index.current.setNote(moved);
+        notesRef.current = notesRef.current.map((n) => (n.path === oldPath ? moved : n));
+        setNotes((prev) =>
+          prev
+            .map((n) => (n.path === oldPath ? moved : n))
+            .sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
+        );
+        recents.current = recents.current.map((r) => (r === oldNote.rel ? newRel : r));
+        const repoint = (pane: Pane): Pane => {
+          if (!pane.tabs.includes(oldPath)) return pane;
+          const isActive = pane.active === oldPath;
+          return {
+            ...pane,
+            tabs: pane.tabs.map((p) => (p === oldPath ? newPath : p)),
+            active: isActive ? newPath : pane.active,
+            doc: isActive ? (live ?? pane.doc) : pane.doc,
+            docRev: isActive ? (pane.docRev ?? 0) + 1 : pane.docRev,
+            pinned: pane.pinned?.map((p) => (p === oldPath ? newPath : p)),
+          };
+        };
+        panesRef.current = Object.fromEntries(
+          Object.entries(panesRef.current).map(([id, pane]) => [id, repoint(pane)]),
+        );
+        setPanes((ps) =>
+          Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, repoint(pane)])),
+        );
+        if (live !== undefined) liveDocs.current.set(newPath, live);
+        if (typed !== undefined) {
+          pending.current.set(newPath, typed);
+          void flushPath(newPath);
+        }
+        bumpStructure();
         // Migrate the local snapshot history so recovery follows the note.
         void renameSnapshots(root, oldNote.rel, newRel);
         emitVaultEvent("rename", { path: newRel, name: newBase }, oldNote.rel);
@@ -3457,14 +3497,8 @@ export default function App() {
           preIndex.allAliases().some((a) => a.rel !== newRel && normalizeName(a.alias) === newBaseKey);
         const newRelNoExt = newRel.replace(/\.md$/i, "");
 
-        // The renamed note's own content, from disk (authoritative), with its
-        // self-links retargeted and position-dependent ./.. links re-anchored.
-        let renamedContent: string;
-        try {
-          renamedContent = await readNote(newPath);
-        } catch {
-          renamedContent = oldNote.content; // disk read failed; best effort
-        }
+        // The renamed note's own self-links retargeted and position-dependent
+        // ./.. links re-anchored.
         const selfAliases = new Set(preIndex.aliasesOf(oldPath).map((a) => normalizeName(a)));
         const ownMap = (raw: string): string | null => {
           const dest = preIndex.resolve(raw, oldPath);
@@ -3486,52 +3520,39 @@ export default function App() {
           );
           return linkTargetForFormat(fmt, destNote.rel.replace(/\.md$/i, ""), destTaken, newRel);
         };
-        const ownRewritten = rewriteLinks(renamedContent, ownMap);
-        if (ownRewritten !== null) {
-          await writeNote(newPath, ownRewritten, renamedContent);
-          renamedContent = ownRewritten;
-        }
-
-        // COMMIT the renamed note before any other writes, so a watcher flush
-        // landing mid-orchestration sees consistent state.
-        selfWrites.current.delete(oldNote.rel);
-        rememberSelfWrite(newRel, renamedContent);
-        index.current.removeNote(oldPath);
-        const renamed: VaultNote = {
-          path: newPath,
-          rel: newRel,
-          name: newBase,
-          content: renamedContent,
-        };
-        index.current.setNote(renamed);
-        recents.current = recents.current.map((r) => (r === oldNote.rel ? newRel : r));
-        setNotes((prev) =>
-          prev
-            .map((n) => (n.path === oldPath ? renamed : n))
-            .sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
-        );
-        bumpStructure();
-        // Re-point the renamed note in every pane (tabs + active + doc) so the
-        // prune effect doesn't drop the now-nonexistent oldPath.
-        const repoint = (pane: Pane): Pane => {
-          if (!pane.tabs.includes(oldPath)) return pane;
-          return {
-            ...pane,
-            tabs: pane.tabs.map((p) => (p === oldPath ? newPath : p)),
-            active: pane.active === oldPath ? newPath : pane.active,
-            doc: pane.active === oldPath ? (typed ?? renamedContent) : pane.doc,
-            pinned: pane.pinned?.map((p) => (p === oldPath ? newPath : p)),
-          };
-        };
-        panesRef.current = Object.fromEntries(
-          Object.entries(panesRef.current).map(([id, pane]) => [id, repoint(pane)]),
-        );
-        setPanes((ps) =>
-          Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, repoint(pane)])),
-        );
-        if (typed !== undefined) {
-          pending.current.set(newPath, typed);
-          void flushPath(newPath);
+        const typing = pending.current.get(newPath);
+        if (typing !== undefined) {
+          // The user is typing: fix the links in their text; autosave writes it.
+          const rewritten = rewriteLinks(typing, ownMap);
+          if (rewritten !== null) {
+            pending.current.set(newPath, rewritten);
+            for (const p of Object.values(panesRef.current)) {
+              if (p.active === newPath) patchPane(p.id, { doc: rewritten });
+            }
+          }
+        } else {
+          let disk = oldNote.content;
+          try {
+            disk = await readNote(newPath);
+          } catch {
+            /* keep the last known content */
+          }
+          const ownRewritten = rewriteLinks(disk, ownMap);
+          if (ownRewritten !== null && !pending.current.has(newPath)) {
+            try {
+              await writeNote(newPath, ownRewritten, disk);
+              rememberSelfWrite(newRel, ownRewritten);
+              const updated: VaultNote = { ...moved, content: ownRewritten };
+              index.current.setNote(updated);
+              notesRef.current = notesRef.current.map((n) => (n.path === newPath ? updated : n));
+              setNotes((prev) => prev.map((n) => (n.path === newPath ? updated : n)));
+              for (const p of Object.values(panesRef.current)) {
+                if (p.active === newPath && !pending.current.has(newPath)) patchPane(p.id, { doc: ownRewritten });
+              }
+            } catch (e) {
+              if (!isWriteConflict(e)) throw e; // edited meanwhile: its own links stay as typed
+            }
+          }
         }
 
         // Rewrite affected sources. Candidates are found via the in-memory
