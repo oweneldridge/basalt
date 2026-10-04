@@ -578,6 +578,11 @@ export default function App() {
   // panes may each have a different unsaved note, so saving is keyed by path.
   const saveTimers = useRef<Map<string, number>>(new Map());
   const pending = useRef<Map<string, string>>(new Map());
+  // Paths whose rename is in flight: their saves wait, then follow the note.
+  const renaming = useRef<Set<string>>(new Set());
+  // Old path -> new path for notes renamed this session, so an edit from an
+  // editor that hasn't re-rendered since the rename still reaches the note.
+  const renamedTo = useRef<Map<string, string>>(new Map());
   // Most-recently-opened rels (per vault) — orders the blank-query switcher.
   const recents = useRef<string[]>([]);
   // rel -> exact content Basalt last wrote there. The watcher echo of our own
@@ -695,6 +700,12 @@ export default function App() {
       setSaving(true);
       try {
         const known = notesRef.current.find((n) => n.path === path);
+        if (!known && !force) {
+          // Renamed or deleted since it was opened: writing would bring it back.
+          addConflict(path);
+          if (!pending.current.has(path)) pending.current.set(path, doc);
+          return;
+        }
         // The index's copy is the last content seen on disk; oversized notes are
         // listed without content, so they skip the compare-and-swap.
         const unknown = !known || (known.content === "" && (known.size ?? 0) > 0);
@@ -769,6 +780,7 @@ export default function App() {
     (path: string, doc: string, force = false): Promise<void> => {
       const prev = saveChains.current.get(path) ?? Promise.resolve();
       const run = prev.then(() => {
+        if (renaming.current.has(path)) return; // the rename carries the edit over
         const latest = pending.current.get(path);
         if (latest === undefined && !force) return;
         if (!force && conflictsRef.current.has(path)) return;
@@ -834,6 +846,7 @@ export default function App() {
     (path: string, doc: string, force = false): Promise<void> => {
       const prev = saveChains.current.get(path) ?? Promise.resolve();
       const run = prev.then(() => {
+        if (renaming.current.has(path)) return;
         const latest = pending.current.get(path);
         if (latest === undefined && !force) return;
         if (!force && conflictsRef.current.has(path)) return;
@@ -879,8 +892,12 @@ export default function App() {
   // pane, the OTHER panes are reconciled to this edit so they never diverge or
   // collide (shared-document semantics). `paneId` is the pane that fired.
   const handleChange = useCallback(
-    (paneId: string, path: string, doc: string) => {
-      if (!path || !isMarkdownPath(path)) return; // read-only viewers don't autosave
+    (paneId: string, editorPath: string, doc: string) => {
+      if (!editorPath || !isMarkdownPath(editorPath)) return; // read-only viewers don't autosave
+      let path = editorPath;
+      for (let i = 0; i < 8 && renamedTo.current.has(path) && !notesRef.current.some((n) => n.path === path); i++) {
+        path = renamedTo.current.get(path)!;
+      }
       pending.current.set(path, doc);
       liveDocs.current.set(path, doc);
       for (const p of Object.values(panesRef.current)) {
@@ -1524,6 +1541,7 @@ export default function App() {
       setConflicts(new Set());
       pending.current.clear();
       liveDocs.current.clear();
+      renamedTo.current.clear();
       saveTimers.current.forEach((t) => window.clearTimeout(t));
       saveTimers.current.clear();
       selfWrites.current.clear();
@@ -3516,8 +3534,19 @@ export default function App() {
         preIndex.build(notesRef.current);
         const preNotes = notesRef.current;
 
-        const newPath = await renameNote(oldPath, newName);
+        // Saves typed during the rename wait for it (the file may already have
+        // moved), then go to the new path below.
+        renaming.current.add(oldPath);
+        let newPath = oldPath;
+        try {
+          newPath = await renameNote(oldPath, newName);
+        } finally {
+          renaming.current.delete(oldPath);
+          if (newPath === oldPath && pending.current.has(oldPath)) void flushPath(oldPath);
+        }
         if (newPath === oldPath) return;
+        renamedTo.current.set(oldPath, newPath);
+        renamedTo.current.delete(newPath);
         const newRel = newPath.startsWith(root)
           ? newPath.slice(root.length).replace(/^[/\\]+/, "")
           : newPath;
@@ -3921,13 +3950,21 @@ export default function App() {
       for (const a of movingAtts) movedAttNewPathByOld.set(a.path, `${root}/${swap(a.rel)}`);
       const postAttByPath = new Map(postAtts.map((a) => [a.path, a]));
 
-      // Do the move. One syscall relocates the whole tree.
+      // Do the move. One syscall relocates the whole tree. Saves typed meanwhile
+      // wait for it, then follow their notes.
+      const movingPaths = [...movingNotes, ...movingAtts].map((f) => f.path);
+      for (const p of movingPaths) renaming.current.add(p);
       try {
         await renameFolder(folderRel, newFolderRel);
       } catch (e) {
+        for (const p of movingPaths) {
+          renaming.current.delete(p);
+          if (pending.current.has(p)) void flushPath(p);
+        }
         setSaveError(`Couldn't move folder: ${e}`);
         return;
       }
+      for (const p of movingPaths) renaming.current.delete(p);
 
       // Migrate any pending edit / save timer keyed by a moving OLD path to its
       // new path — a keystroke landing during the renameFolder IPC would else
@@ -3941,11 +3978,14 @@ export default function App() {
           pending.current.delete(oldP);
           pending.current.set(newP, p);
         }
+        // The timer still names the old path; the edit is flushed below instead.
         const t = saveTimers.current.get(oldP);
         if (t !== undefined) {
+          window.clearTimeout(t);
           saveTimers.current.delete(oldP);
-          saveTimers.current.set(newP, t);
         }
+        renamedTo.current.set(oldP, newP);
+        renamedTo.current.delete(newP);
       }
 
       // Post-move note list + resolver (same content, new rel/path/name).
@@ -4020,11 +4060,11 @@ export default function App() {
       }
       // Unmoved notes whose links were rewritten (their path is unchanged).
       for (const [path, u] of updates) if (!postToOld.has(path)) index.current.setNote(u);
-      setNotes(() =>
-        postNotes
-          .map((n) => updates.get(n.path) ?? n)
-          .sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
-      );
+      const nextNotes = postNotes
+        .map((n) => updates.get(n.path) ?? n)
+        .sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase()));
+      notesRef.current = nextNotes;
+      setNotes(() => nextNotes);
       setAttachmentsList((prev) =>
         prev.map((a) =>
           a.rel.startsWith(oldPrefix)
@@ -4083,6 +4123,7 @@ export default function App() {
       }
       setPanes((ps) => Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, repoint(pane)])));
       bumpStructure();
+      for (const newP of oldToNewPath.values()) if (pending.current.has(newP)) void flushPath(newP);
 
       // Repoint canvas file-node embeds of every moved note AND moved
       // attachment (canvas file-nodes can embed images/PDFs/nested canvases, not
@@ -4100,7 +4141,7 @@ export default function App() {
         folderFails.length > 0 ? `Folder moved, but link updates failed in: ${folderFails.join(", ")}` : null,
       );
     },
-    [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs],
   );
 
   // Move a note into a folder (rel, "" = root) by renaming — reuses the
@@ -4523,6 +4564,7 @@ export default function App() {
           ) : (
             <EditorPane
               key={`${id}:${path}`}
+              paneId={id}
               path={path}
               selfRel={rel}
               pluginVersion={pluginVersion}

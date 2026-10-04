@@ -32,6 +32,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   other extended attributes.
 - "Keep mine" on a note that was deleted elsewhere writes your text back
   instead of discarding it.
+- Typing while a note is being renamed no longer recreates the old file or
+  drops what you typed, and the caret stays where you were typing. A save to a
+  note that was renamed or deleted elsewhere raises "Changed on disk" instead
+  of bringing the old file back.
 - Renaming a note rewrites links inside properties, and table-escaped
   `[[Note\|alias]]` links.
 - Links resolve in Obsidian's order (the linking note's folder first, then the
