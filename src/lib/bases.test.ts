@@ -797,3 +797,19 @@ describe("this (the file a base is shown for)", () => {
     expect(runView(def, def.views[0], rows, { nowMs: NOW }).total).toBe(0);
   });
 });
+
+describe("groupOrder (Obsidian 1.14)", () => {
+  const src = "views:\n  - type: table\n    name: T\n    groupBy:\n      property: status\n      direction: ASC\n    groupOrder:\n      - todo\n      - done\n";
+  it("is kept while the view still groups by the same property", () => {
+    const def = parseBase(src)!;
+    const out = serializeBase({ ...def, views: [{ ...def.views[0], limit: 5 }] });
+    expect(out).toContain("groupOrder");
+  });
+  it("is dropped when the group property changes or grouping is removed", () => {
+    const def = parseBase(src)!;
+    const regrouped = serializeBase({ ...def, views: [{ ...def.views[0], groupBy: { property: "owner", direction: "ASC" } }] });
+    expect(regrouped).not.toContain("groupOrder");
+    const ungrouped = serializeBase({ ...def, views: [{ ...def.views[0], groupBy: undefined }] });
+    expect(ungrouped).not.toContain("groupOrder");
+  });
+});

@@ -278,6 +278,10 @@ function buildViews(def: BaseDef): Record<string, unknown>[] {
     put(o, "image", v.image);
     // groupBy: { property, direction } — the documented Obsidian shape.
     put(o, "groupBy", v.groupBy ? { property: v.groupBy.property, direction: v.groupBy.direction } : undefined);
+    // Obsidian 1.14's groupOrder lists values of the grouped property; after a
+    // switch to another property (or none) it's stale, so drop it.
+    const rawGroup = (v.raw?.groupBy as { property?: unknown } | undefined)?.property;
+    if (rawGroup !== v.groupBy?.property) delete o.groupOrder;
     // filters: rewrite a simple string OR a FLAT and/or-of-strings group (the
     // shapes the editor edits); a deeper/`not` tree stays as raw verbatim
     // (re-serializing the parsed FilterNode could drop shapes filterNode()
