@@ -605,9 +605,19 @@ export default function App() {
   const backlinksOf = useCallback((path: string) => index.current.backlinkRels(path), []);
   const embedsOf = useCallback((path: string) => index.current.embedsOf(path), []);
 
+  // Saves that landed while a vault read was in flight: the listing predates
+  // them, so their notes keep the saved text instead of the stale listing.
+  const saveSeq = useRef(0);
+  const lastSave = useRef<Map<string, { seq: number; content: string }>>(new Map());
   const loadVault = useCallback(async () => {
-    const [list, atts] = await Promise.all([readVault(), listAttachments()]);
+    const startSeq = saveSeq.current;
+    const [read, atts] = await Promise.all([readVault(), listAttachments()]);
+    const list = read.map((n) => {
+      const w = lastSave.current.get(n.path);
+      return w && w.seq > startSeq ? { ...n, content: w.content } : n;
+    });
     index.current.build(list);
+    notesRef.current = list; // the next save's baseline, before React re-renders
     setNotes(list);
     setAttachmentsList(atts);
     bumpStructure();
@@ -680,6 +690,7 @@ export default function App() {
           // Record AFTER a successful write (a failed write leaves no stale
           // suppression), keyed by the rel + content the watcher will see.
           rememberSelfWrite(meta.rel, doc);
+          lastSave.current.set(path, { seq: ++saveSeq.current, content: doc });
           // Local version-history snapshot (throttled + pruned inside).
           const vkey = vaultRef.current;
           if (vkey) void recordSnapshot(vkey, meta.rel, doc, Date.now());
@@ -1855,6 +1866,8 @@ export default function App() {
       // An oversized note is listed without content: that's "unknown", not empty.
       const unknown = still.content === "" && (still.size ?? 0) > 0;
       if (unknown || prev === undefined || still.content === prev) continue;
+      // Disk holding our own last save isn't someone else's edit.
+      if (dirty && selfWrites.current.get(still.rel) === still.content) continue;
       if (dirty) addConflict(p.active); // changed on disk under unsaved edits
       else patchPane(p.id, { doc: still.content });
     }
@@ -2131,9 +2144,17 @@ export default function App() {
     clearConflict(path);
     try {
       const doc = await readNote(path);
-      // A viewer's save baseline lives in selfWrites (notes use the index copy).
+      // The text just read is the new save baseline: selfWrites for a viewer,
+      // the index copy for a note (else the next save conflicts again).
       const att = isViewerPath(path) ? attachmentsRef.current.find((a) => a.path === path) : undefined;
       if (att) rememberSelfWrite(att.rel, doc);
+      const meta = att ? undefined : notesRef.current.find((n) => n.path === path);
+      if (meta && meta.content !== doc) {
+        const updated: VaultNote = { ...meta, content: doc };
+        index.current.setNote(updated);
+        notesRef.current = notesRef.current.map((n) => (n.path === path ? updated : n));
+        setNotes((prev) => prev.map((n) => (n.path === path ? updated : n)));
+      }
       // Sync every pane showing this note to the on-disk version.
       for (const p of Object.values(panesRef.current)) {
         if (p.active === path) patchPane(p.id, { doc, scrollToLine: undefined });

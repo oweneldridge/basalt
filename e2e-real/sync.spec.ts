@@ -206,3 +206,24 @@ test("the event stream recovers after a reconnect is answered with a 502", async
   await expect(page.locator(".pane:not(.dock) .cm-content").first()).toContainText("changed during the outage", { timeout: 20000 });
   expect(failNext).toBe(false);
 });
+
+test("after Reload clears a refused save, the next edit saves normally", async ({ page, vault }) => {
+  // No event stream: the only way Basalt learns of the external edit is the
+  // core refusing the save, which is the path whose baseline Reload must fix.
+  await page.route("**/api/events", (route) => route.abort());
+  await openApp(page, vault);
+  await openNote(page, "Ideas");
+  vault.write("Ideas.md", "# Ideas\n\nexternal\n");
+  await caretToEnd(page);
+  await page.keyboard.type("\nmine");
+  const badge = page.locator(".conflict");
+  await expect(badge).toBeVisible({ timeout: 5000 });
+  await badge.getByRole("button", { name: "Reload" }).click();
+  await expect(editor(page)).toContainText("external");
+  for (const word of ["first", "second"]) {
+    await caretToEnd(page);
+    await page.keyboard.type(` ${word}`);
+    await expect.poll(() => vault.read("Ideas.md")).toContain(word);
+    await expect(badge).toBeHidden();
+  }
+});
