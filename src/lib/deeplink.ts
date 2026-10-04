@@ -24,3 +24,13 @@ export function parseBasaltUri(raw: string): DeepLinkOpen | null {
   const note = u.searchParams.get("note");
   return { vault, note: note || undefined };
 }
+
+/** What to do with a link's vault: a link can come from any web page, so only
+ * vaults the user has opened before open straight away. Network paths are
+ * refused, since merely resolving one can send the user's credentials. */
+export function deepLinkVaultPolicy(vault: string, known: readonly string[]): "open" | "confirm" | "refuse" {
+  const v = vault.trim();
+  if (/^(\\\\|\/\/)/.test(v) || /^[a-z][a-z0-9+.-]*:\/\//i.test(v)) return "refuse";
+  const norm = (p: string) => p.replace(/[\\/]+$/, "");
+  return known.some((k) => norm(k) === norm(v)) ? "open" : "confirm";
+}

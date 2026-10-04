@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseBasaltUri } from "./deeplink";
+import { deepLinkVaultPolicy, parseBasaltUri } from "./deeplink";
 
 describe("parseBasaltUri", () => {
   it("parses open links with a vault and optional note", () => {
@@ -23,5 +23,18 @@ describe("parseBasaltUri", () => {
     expect(parseBasaltUri("basalt://open?note=x.md")).toBeNull(); // no vault
     expect(parseBasaltUri("not a url")).toBeNull();
     expect(parseBasaltUri("")).toBeNull();
+  });
+});
+
+describe("deepLinkVaultPolicy", () => {
+  it("opens a known vault, asks about an unknown one, refuses network paths", () => {
+    const known = ["/Users/o/Notes", "C:\\Vaults\\Work"];
+    expect(deepLinkVaultPolicy("/Users/o/Notes/", known)).toBe("open");
+    expect(deepLinkVaultPolicy("C:\\Vaults\\Work", known)).toBe("open");
+    expect(deepLinkVaultPolicy("/", known)).toBe("confirm");
+    expect(deepLinkVaultPolicy("/Users/o/Downloads/shared", known)).toBe("confirm");
+    expect(deepLinkVaultPolicy("\\\\attacker\\share", known)).toBe("refuse");
+    expect(deepLinkVaultPolicy("//attacker/share", known)).toBe("refuse");
+    expect(deepLinkVaultPolicy("smb://attacker/share", known)).toBe("refuse");
   });
 });

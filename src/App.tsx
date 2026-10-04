@@ -81,7 +81,7 @@ import { EditorPane } from "./components/EditorPane";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec, type BuiltinView } from "./lib/leafViews";
-import { parseBasaltUri } from "./lib/deeplink";
+import { deepLinkVaultPolicy, parseBasaltUri } from "./lib/deeplink";
 import { Outline } from "./components/Outline";
 import { Backlinks } from "./components/Backlinks";
 import { Tags } from "./components/Tags";
@@ -1526,7 +1526,21 @@ export default function App() {
         if (target) openInPane(ensureWorkspace(), target.path);
         return;
       }
-      openVault(parsed.vault, parsed.note).catch((e) => setSaveError(`Couldn't open link: ${e}`));
+      const policy = deepLinkVaultPolicy(parsed.vault, loadRecentVaults().map((r) => r.path));
+      if (policy === "refuse") {
+        setSaveError("A link asked Basalt to open a network folder; it was ignored");
+        return;
+      }
+      void (async () => {
+        if (policy === "confirm") {
+          const ok = await confirm(`A link asked Basalt to open "${parsed.vault}" as a vault. Open it?`, {
+            title: "Open vault from link",
+            kind: "warning",
+          });
+          if (!ok) return;
+        }
+        await openVault(parsed.vault, parsed.note);
+      })().catch((e) => setSaveError(`Couldn't open link: ${e}`));
     };
     takePendingDeepLink()
       .then((u) => {
