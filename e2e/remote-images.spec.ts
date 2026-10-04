@@ -1,6 +1,27 @@
 import { test, expect, type Page } from "@playwright/test";
 
 const extra = {
+  "Sneaky.md": [
+    "# Sneaky",
+    "",
+    '<div><img src="&#1;https://img.example.test/ctrl.png" alt="a"></div>',
+    "",
+    '<div><img src="ht&#9;tps://img.example.test/tab.png" alt="b"></div>',
+    "",
+    '<div><img src="\\\\img.example.test/bs.png" alt="c"></div>',
+    "",
+    '<div><img src="/\\img.example.test/bs2.png" alt="d"></div>',
+    "",
+    '<div><svg width="10" height="10"><rect width="10" height="10" fill="url(https://img.example.test/fill.svg#p)"/></svg></div>',
+    "",
+    "```mermaid",
+    "flowchart LR",
+    '  A@{ img: "https://img.example.test/mermaid.png", label: "pic", pos: "t", w: 20, h: 20 }',
+    "```",
+    "",
+    "end of sneaky",
+    "",
+  ].join("\n"),
   "Tricky.md": [
     "# Tricky",
     "",
@@ -26,7 +47,7 @@ const png = Buffer.from(
 
 async function open(page: Page, remote: boolean): Promise<string[]> {
   const hits: string[] = [];
-  await page.route("https://img.example.test/**", (route) => {
+  await page.route(/img\.example\.test/, (route) => {
     hits.push(route.request().url());
     return route.fulfill({ status: 200, contentType: "image/png", body: png });
   });
@@ -80,6 +101,18 @@ test("with remote images off, no other kind of tag or link fetches one either", 
   await page.waitForTimeout(500);
   await page.locator('button[title^="Toggle Reading view"]').click();
   await expect(pane(page).locator(".reading-view")).toContainText("cell");
+  await page.waitForTimeout(800);
+  expect(hits).toEqual([]);
+});
+
+test("odd URL spellings, SVG url() references and Mermaid images don't fetch either", async ({ page }) => {
+  const hits = await open(page, false);
+  await page.locator(".tree-row.file", { hasText: "Sneaky" }).click();
+  await expect(pane(page).locator(".cm-content")).toContainText("end of sneaky");
+  await page.waitForTimeout(800);
+  await page.locator('button[title^="Toggle Reading view"]').click();
+  await expect(pane(page).locator(".reading-view")).toContainText("end of sneaky");
+  await expect(pane(page).locator(".reading-view .md-mermaid svg")).toBeVisible({ timeout: 15000 });
   await page.waitForTimeout(800);
   expect(hits).toEqual([]);
 });

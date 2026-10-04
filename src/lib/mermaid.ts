@@ -4,6 +4,8 @@
 // the output and disables HTML labels / click handlers — the source is user
 // content, so the produced SVG must be safe to inject.
 
+import { isRemoteUrl, remoteImagesAllowed } from "./remoteImages";
+
 type MermaidApi = {
   initialize: (cfg: Record<string, unknown>) => void;
   render: (id: string, text: string) => Promise<{ svg: string }>;
@@ -27,10 +29,24 @@ async function getMermaid(): Promise<MermaidApi> {
 
 export type MermaidResult = { svg: string } | { error: string };
 
+// Mermaid draws into the live page while laying a diagram out, so a remote
+// image in it would load before the SVG could be checked. With remote images
+// off, image nodes, label <img> sources and url() references that point off
+// this site become a blank image first.
+const BLANK = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+export function withoutRemoteImages(src: string): string {
+  const blank = (m: string, pre: string, q: string, url: string) => (isRemoteUrl(url) ? `${pre}${q}${BLANK}${q}` : m);
+  return src
+    .replace(/(\bimg\s*:\s*)(["'])(.*?)\2/gi, blank)
+    .replace(/(\bsrc\s*=\s*)(["'])(.*?)\2/gi, blank)
+    .replace(/url\(\s*['"]?\s*(?:https?:|[\\/]{2})[^)]*\)/gi, "none");
+}
+
 /** Render Mermaid source to an SVG string (cached). Never throws. */
 export async function renderMermaid(source: string): Promise<MermaidResult> {
-  const src = source.trim();
-  if (!src) return { error: "empty diagram" };
+  const trimmed = source.trim();
+  if (!trimmed) return { error: "empty diagram" };
+  const src = remoteImagesAllowed() ? trimmed : withoutRemoteImages(trimmed);
   const theme = mermaidTheme();
   const key = `${theme}\n${src}`;
   const hit = cache.get(key);

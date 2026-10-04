@@ -9,6 +9,7 @@ import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { renderMermaid } from "../lib/mermaid";
+import { inertFragment } from "../lib/remoteImages";
 
 class MermaidWidget extends WidgetType {
   constructor(readonly source: string) {
@@ -24,7 +25,7 @@ class MermaidWidget extends WidgetType {
     void renderMermaid(this.source).then((r) => {
       if ("svg" in r) {
         wrap.textContent = "";
-        wrap.innerHTML = r.svg; // sanitized by mermaid (securityLevel: strict)
+        wrap.replaceChildren(inertFragment(r.svg)); // sanitized by mermaid (securityLevel: strict)
       } else {
         wrap.className = "cm-mermaid cm-mermaid-error";
         wrap.textContent = `Mermaid error: ${r.error}`;

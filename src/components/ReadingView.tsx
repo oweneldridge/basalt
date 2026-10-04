@@ -5,7 +5,7 @@ import { renderQuerySource } from "../lib/queryHost";
 import { codeBlockProcessor } from "../lib/plugins";
 import { renderEmbedSource } from "../lib/transclude";
 import { internalMdHref } from "../lib/markdown";
-import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "../lib/remoteImages";
+import { blockedImage, inertFragment, isRemoteUrl, remoteImagesAllowed } from "../lib/remoteImages";
 
 interface Props {
   doc: string;
@@ -127,7 +127,7 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
         const box = document.createElement("div");
         if ("svg" in r) {
           box.className = "md-mermaid";
-          box.innerHTML = r.svg; // sanitized by mermaid (securityLevel: strict)
+          box.replaceChildren(inertFragment(r.svg)); // sanitized by mermaid (securityLevel: strict)
         } else {
           box.className = "md-mermaid md-mermaid-error";
           box.textContent = `Mermaid error: ${r.error}`;

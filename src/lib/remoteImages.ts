@@ -12,11 +12,20 @@ export function remoteImagesAllowed(): boolean {
   return allowed;
 }
 
-/** An http(s) or protocol-relative URL. `https:host/x.png` counts too: the
- * browser reads it as `https://host/x.png`. */
+/** Text the way the URL parser reads it: leading control characters and
+ * spaces dropped, tabs and newlines anywhere ignored. */
+const asUrl = (s: string) => s.replace(/^[\u0000-\u0020]+/, "").replace(/[\t\n\r]/g, "");
+
+/** An http(s) or protocol-relative URL, spelled any way the browser accepts:
+ * `https:host/x.png`, `ht<tab>tps://…`, or `\\host/x` (backslashes count as
+ * slashes). */
 export function isRemoteUrl(src: string): boolean {
-  return /^(https?:|\/\/)/i.test(src.trim());
+  return /^(https?:|[\\/]{2})/i.test(asUrl(src));
 }
+
+/** A CSS or SVG `url(…)` that points off this site. */
+const REMOTE_REF = /url\(\s*['"]?\s*(?:https?:|[\\/]{2})/i;
+const REMOTE_REF_ALL = /url\(\s*['"]?\s*(?:https?:|[\\/]{2})[^)]*\)/gi;
 
 const remoteInSet = (set: string) => set.split(",").some((c) => isRemoteUrl(c.trim()));
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -56,6 +65,14 @@ export function blockRemoteImages(root: ParentNode): void {
     }
     const set = el.getAttribute("srcset");
     if (set !== null && remoteInSet(set)) el.removeAttribute("srcset");
+    // fill, stroke, mask, clip-path, filter… = "url(https://…)" fetch too.
+    if (el.namespaceURI === SVG_NS) {
+      for (const a of [...el.attributes]) if (REMOTE_REF.test(asUrl(a.value))) el.removeAttributeNode(a);
+    }
+    // Only Mermaid output has <style>; the sanitizer drops it from notes.
+    if (el.localName === "style" && el.textContent) {
+      el.textContent = el.textContent.replace(/@import[^;]*;?/gi, "").replace(REMOTE_REF_ALL, "none");
+    }
     if (el.namespaceURI === SVG_NS && /^(image|use|feimage)$/i.test(el.localName)) {
       const href = el.getAttribute("href");
       if (href !== null && isRemoteUrl(href)) el.removeAttribute("href");
@@ -63,4 +80,13 @@ export function blockRemoteImages(root: ParentNode): void {
       if (xhref !== null && isRemoteUrl(xhref)) el.removeAttributeNS(XLINK_NS, "href");
     }
   });
+}
+
+/** HTML (or SVG markup) as nodes ready to insert, built in an inert template
+ * so remote images, when they're off, are dropped before anything loads. */
+export function inertFragment(html: string): DocumentFragment {
+  const t = document.createElement("template");
+  t.innerHTML = html;
+  blockRemoteImages(t.content);
+  return t.content;
 }
