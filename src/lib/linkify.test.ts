@@ -22,3 +22,15 @@ describe("linkifyMention", () => {
     expect(linkifyMention("nothing here", "Beta")).toBeNull();
   });
 });
+
+describe("linkifyMention, Obsidian's link form", () => {
+  it("writes a folder path with the surface text as alias when given one", () => {
+    expect(linkifyMention("met about meeting notes", "Meeting", "Work/Meeting")).toBe("met about [[Work/Meeting|meeting]] notes");
+    expect(linkifyMention("the Meeting today", "Meeting", "Meeting")).toBe("the [[Meeting]] today");
+  });
+  it("leaves mentions inside URLs and tags alone", () => {
+    expect(linkifyMention("see https://wiki.example/Meeting for it", "Meeting")).toBeNull();
+    expect(linkifyMention("tagged #Meeting only", "Meeting")).toBeNull();
+    expect(linkifyMention("https://x.example/Meeting and Meeting", "Meeting")).toBe("https://x.example/Meeting and [[Meeting]]");
+  });
+});

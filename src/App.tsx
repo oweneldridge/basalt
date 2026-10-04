@@ -3588,7 +3588,7 @@ export default function App() {
   // the one line, writes, and reconciles index/notes/panes — like a rename's
   // link rewrite. Returns whether it changed anything.
   const linkifyInNote = useCallback(
-    async (sourcePath: string, line: number, targetName: string): Promise<boolean> => {
+    async (sourcePath: string, line: number, target: VaultNote): Promise<boolean> => {
       if (conflictsRef.current.has(sourcePath)) {
         setSaveError("Resolve the “Changed on disk” conflict before linking mentions");
         return false;
@@ -3603,7 +3603,16 @@ export default function App() {
       const lines = disk.split("\n");
       const idx = line - 1;
       if (idx < 0 || idx >= lines.length) return false;
-      const next = linkifyMention(lines[idx], targetName);
+      // What Obsidian would write: the bare name if it resolves to the target
+      // from this note, else a path in the vault's link format.
+      const srcRel = notesRef.current.find((n) => n.path === sourcePath)?.rel ?? null;
+      const fmt = getLinkFormat();
+      const bareWorks = index.current.resolve(target.name, sourcePath) === target.path;
+      const linkText =
+        fmt === "shortest" && bareWorks
+          ? target.name
+          : linkTargetForFormat(fmt, target.rel.replace(/\.md$/i, ""), !bareWorks, srcRel);
+      const next = linkifyMention(lines[idx], target.name, linkText);
       if (next === null) return false;
       lines[idx] = next;
       const content = lines.join("\n");
@@ -3626,23 +3635,23 @@ export default function App() {
       bumpStructure(); // the mention is now a real link → backlinks/unlinked recompute
       return true;
     },
-    [flushPath, rememberSelfWrite, patchPane, bumpStructure],
+    [flushPath, rememberSelfWrite, patchPane, bumpStructure, getLinkFormat],
   );
 
   const handleLinkMention = useCallback(
     (m: { path: string; line: number }) => {
-      const name = notesRef.current.find((n) => n.path === activePathRef.current)?.name;
-      if (name) void linkifyInNote(m.path, m.line, name);
+      const target = notesRef.current.find((n) => n.path === activePathRef.current);
+      if (target) void linkifyInNote(m.path, m.line, target);
     },
     [linkifyInNote],
   );
 
   const handleLinkAllMentions = useCallback(
     async (mentions: { path: string; line: number }[]) => {
-      const name = notesRef.current.find((n) => n.path === activePathRef.current)?.name;
-      if (!name) return;
+      const target = notesRef.current.find((n) => n.path === activePathRef.current);
+      if (!target) return;
       // Snapshot the list; line numbers stay valid (linkify never adds lines).
-      for (const m of [...mentions]) await linkifyInNote(m.path, m.line, name);
+      for (const m of [...mentions]) await linkifyInNote(m.path, m.line, target);
     },
     [linkifyInNote],
   );
