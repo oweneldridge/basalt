@@ -413,7 +413,7 @@ function BaseEditor({
           ))}
         </ul>
         {unused.length > 0 && (
-          <select className="base-add-col" value="" onChange={(e) => addCol(e.target.value)}>
+          <select className="base-add-col" aria-label="Add a column" value="" onChange={(e) => addCol(e.target.value)}>
             <option value="">+ Add column…</option>
             {unused.map((k) => (
               <option key={k} value={k}>{def.display[k] ?? k}</option>
@@ -430,6 +430,7 @@ function BaseEditor({
               <label className="base-filter-combinator">
                 Match
                 <select
+                  aria-label="Match all or any condition"
                   value={combinator}
                   onChange={(e) => {
                     const c = e.target.value as "and" | "or";
@@ -480,6 +481,7 @@ function BaseEditor({
         <div className="base-editor-title">Group by</div>
         <div className="base-editor-row">
           <select
+            aria-label="Group by"
             value={view.groupBy?.property ?? ""}
             onChange={(e) => {
               const property = e.target.value;

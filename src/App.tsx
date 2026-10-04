@@ -545,6 +545,11 @@ export default function App() {
       ? { path: focusedPane.active, doc: docFor(focusedPane), scrollToLine: focusedPane.scrollToLine }
       : null;
   const changedOnDisk = !!(active && conflicts.has(active.path));
+  // Name the page after the open note, for screen readers and browser tabs.
+  const titleNote = active ? (notes.find((n) => n.path === active.path)?.name ?? active.path.split(/[\\/]/).pop()) : null;
+  useEffect(() => {
+    document.title = titleNote ? `${titleNote} · Basalt` : "Basalt";
+  }, [titleNote]);
   // A focused .canvas/.base is a read-only viewer, not an editable note: the
   // toolbar, outline, export/print, and reading/source toggles must not treat
   // it as one.
@@ -4601,6 +4606,7 @@ export default function App() {
             className={readingMode ? "link-btn toggled" : "link-btn"}
             onClick={toggleReading}
             title="Toggle Reading view (rendered, read-only)"
+            aria-pressed={readingMode}
             disabled={activeIsViewer}
           >
             Reading
@@ -4609,6 +4615,7 @@ export default function App() {
             className={sourceMode ? "link-btn toggled" : "link-btn"}
             onClick={toggleSourceMode}
             title="Toggle Source mode (raw Markdown)"
+            aria-pressed={sourceMode}
             disabled={readingMode || activeIsViewer}
           >
             Source

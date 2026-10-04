@@ -170,10 +170,11 @@ export function SettingsModal({
           <div className="settings-label">Appearance</div>
           <div className="settings-row">
             <span className="settings-row-label">Theme</span>
-            <div className="seg">
+            <div className="seg" role="group" aria-label="Theme">
               {THEME_OPTIONS.map((o) => (
                 <button
                   key={o.value}
+                  aria-pressed={themeMode === o.value}
                   className={themeMode === o.value ? "seg-btn active" : "seg-btn"}
                   onClick={() => onThemeMode(o.value)}
                 >
@@ -182,26 +183,26 @@ export function SettingsModal({
               ))}
             </div>
           </div>
-          <div className="settings-row">
+          <label className="settings-row">
             <span className="settings-row-label">Readable line length</span>
             <input
               type="checkbox"
               checked={readableWidth}
               onChange={(e) => onReadableWidth(e.target.checked)}
             />
-          </div>
-          <div className="settings-row">
+          </label>
+          <label className="settings-row">
             <span className="settings-row-label">Spellcheck</span>
             <input type="checkbox" checked={spellcheck} onChange={(e) => onSpellcheck(e.target.checked)} />
-          </div>
-          <div className="settings-row">
+          </label>
+          <label className="settings-row">
             <span className="settings-row-label">Vim key bindings</span>
             <input type="checkbox" checked={vim} onChange={(e) => onVim(e.target.checked)} />
-          </div>
-          <div className="settings-row">
+          </label>
+          <label className="settings-row">
             <span className="settings-row-label">Right-to-left (RTL)</span>
             <input type="checkbox" checked={rtl} onChange={(e) => onRtl(e.target.checked)} />
-          </div>
+          </label>
           <div className="settings-row">
             <span className="settings-row-label">Font size</span>
             <span className="settings-inline">

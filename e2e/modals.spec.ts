@@ -128,3 +128,20 @@ test("context menus open and work from the keyboard", async ({ page }) => {
   await expect(menu).toHaveCount(0);
   await expect(row).toBeFocused();
 });
+
+test("pane resizers are separators that move with the arrow keys", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await expect(page.locator(".sidebar")).toBeVisible();
+  const dock = page.locator(".pane.dock-left");
+  const before = (await dock.boundingBox())!.width;
+  const sep = page.getByRole("separator", { name: "Resize panes" }).first();
+  await sep.focus();
+  for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowRight");
+  expect((await dock.boundingBox())!.width).toBeGreaterThan(before + 20);
+});
+
+test("the window title names the open note", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  await expect(page).toHaveTitle("Ideas · Basalt");
+});
