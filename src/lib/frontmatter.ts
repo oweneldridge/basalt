@@ -338,6 +338,17 @@ function itemYaml(x: unknown, flow: boolean): string {
   return serializeScalar(x);
 }
 
+/** Obsidian treats these as lists even when a note holds a single value. */
+const LIST_KEYS = new Set(["tags", "tag", "aliases", "alias", "cssclasses", "cssclass"]);
+
+/** Whether the value on line `end` goes on below it (the next non-blank line
+ * is indented): a wrapped flow list or a plain value over several lines. */
+function continuesBelow(body: string[], end: number): boolean {
+  let i = end + 1;
+  while (i < body.length && body[i].trim() === "") i++;
+  return i < body.length && /^\s+\S/.test(body[i]);
+}
+
 /** A line's value text after `key:`, without a trailing comment. A `#` inside
  * quotes is part of the value. */
 function rawValue(line: string): string {
@@ -395,7 +406,7 @@ export function mergeTemplateProps(note: string, props: string[]): string {
       body.splice(np.start, np.end - np.start + 1, ...lines);
     } else if (np.kind === "complex" || (typeof v === "object" && !Array.isArray(v))) {
       continue; // nested lists and maps aren't merged
-    } else if (Array.isArray(v) || np.kind === "list" || np.kind === "inline") {
+    } else if (Array.isArray(v) || np.kind === "list" || np.kind === "inline" || LIST_KEYS.has(name.toLowerCase())) {
       // A template single value joins a list the note already has.
       const items = Array.isArray(v) ? v : [v];
       if (!items.every(isScalar)) continue;
@@ -408,18 +419,19 @@ export function mergeTemplateProps(note: string, props: string[]): string {
       } else if (np.kind === "inline") {
         const line = cur.body[np.start];
         const close = line.lastIndexOf("]");
-        const sep = /\[\s*$/.test(line.slice(0, close)) ? "" : ", ";
-        body[np.start] = line.slice(0, close) + sep + add.map((x) => itemYaml(x, true)).join(", ") + line.slice(close);
+        const head = line.slice(0, close).replace(/\s+$/, "");
+        const sep = head.endsWith("[") ? "" : head.endsWith(",") ? " " : ", ";
+        body[np.start] = head + sep + add.map((x) => itemYaml(x, true)).join(", ") + line.slice(close);
       } else {
         // A single value meets a list: keep it as the list's first item. A value
         // spanning lines, or a flow collection behind a comment, stays as it is.
         const raw = rawValue(cur.body[np.start]);
-        const continued = /^\s+\S/.test(cur.body[np.end + 1] ?? "");
-        if (np.end !== np.start || continued || /^[[{]/.test(raw)) continue;
+        if (np.end !== np.start || continuesBelow(cur.body, np.end) || /^[[{]/.test(raw)) continue;
         const keyPart = cur.body[np.start].slice(0, cur.body[np.start].indexOf(":") + 1);
         body.splice(np.start, 1, keyPart, `  - ${raw}`, ...add.map((x) => `  - ${itemYaml(x, false)}`));
       }
     } else {
+      if (continuesBelow(cur.body, np.end)) continue; // a value over several lines stays
       body.splice(np.start, np.end - np.start + 1, ...lines);
     }
     out = rebuild(cur, body);

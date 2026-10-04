@@ -2249,11 +2249,14 @@ export default function App() {
         // goes in at the caret, as in Obsidian. At the very top of a note with no
         // properties the whole template goes in as it is.
         const own = splitTemplate(api.getText());
-        // Text never goes inside or above the note's own properties block.
-        const inProps = own !== null && api.selectionFrom() < own.offset;
+        // Text never goes inside or above the note's own properties block, nor
+        // onto its closing `---` when nothing follows it.
+        const noteText = api.getText();
+        const at = api.selectionFrom();
+        const inProps = own !== null && (at < own.offset || (at === own.offset && noteText[own.offset - 1] !== "\n"));
         const insertBody = (body: string, caret: number | undefined) => {
           if (!own || !inProps) return api.insertAtCursor(body, caret);
-          const nl = own.offset > 0 && api.getText()[own.offset - 1] !== "\n" ? "\n" : "";
+          const nl = own.offset > 0 && noteText[own.offset - 1] !== "\n" ? "\n" : "";
           api.insertAt(own.offset, nl + body, caret === undefined ? undefined : caret + nl.length);
         };
         const split = api.atStart() && !own ? null : splitTemplate(res.text);

@@ -347,3 +347,24 @@ describe("template merge, second pass", () => {
     expect(out).toBe('---\ntags: [a, "line\\nnext, more"]\n---\nBody\n');
   });
 });
+
+describe("template merge, third pass", () => {
+  const m = (note: string, props: string[]) => mergeTemplateProps(`---\n${note}\n---\nBody\n`, props);
+  it("leaves a flow list that wraps onto more lines alone", () => {
+    const note = "tags: [project, meeting,\n  client-x]";
+    expect(m(note, ["tags: q3"])).toBe(`---\n${note}\n---\nBody\n`);
+  });
+  it("appends after a trailing comma without a doubled one", () => {
+    expect(m("tags: [a, b,]", ["tags: [meeting]"])).toBe("---\ntags: [a, b, meeting]\n---\nBody\n");
+    expect(m("tags: [a, ]", ["tags: b"])).toBe("---\ntags: [a, b]\n---\nBody\n");
+  });
+  it("leaves a value continued after a blank line alone", () => {
+    const note = "note: first\n\n  continued";
+    expect(m(note, ["note: [x]"])).toBe(`---\n${note}\n---\nBody\n`);
+  });
+  it("merges a single tag or alias with the template's instead of replacing it", () => {
+    expect(m("tags: work", ["tags: meeting"])).toBe("---\ntags:\n  - work\n  - meeting\n---\nBody\n");
+    expect(m("aliases: Old", ["aliases: New"])).toBe("---\naliases:\n  - Old\n  - New\n---\nBody\n");
+    expect(m("status: done", ["status: draft"])).toBe("---\nstatus: draft\n---\nBody\n");
+  });
+});
