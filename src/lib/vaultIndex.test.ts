@@ -358,3 +358,14 @@ describe("resolveFromRel", () => {
     expect(idx.resolveFromRel("../A/Plan", "B/Hub.md")).toMatch(/A\/Plan\.md$/);
   });
 });
+
+describe("property links and block scalars", () => {
+  it("a quoted link inside a block scalar isn't a backlink", () => {
+    const idx = indexOf([
+      note("A.md"),
+      note("Quoted.md", '---\nsummary: |\n  "[[A]]"\n---\nBody\n'),
+      note("Linked.md", '---\nup: "[[A]]"\n---\nBody\n'),
+    ]);
+    expect(idx.backlinkRels("/v/A.md")).toEqual(["Linked"]);
+  });
+});

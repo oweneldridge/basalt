@@ -37,7 +37,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   note that was renamed or deleted elsewhere raises "Changed on disk" instead
   of bringing the old file back.
 - Renaming a note rewrites links inside properties, and table-escaped
-  `[[Note\|alias]]` links.
+  `[[Note\|alias]]` links. Text inside a `|` or `>` block scalar is left alone, as
+  Obsidian doesn't treat it as a link.
 - Links resolve in Obsidian's order (the linking note's folder first, then the
   shortest path), so a rename updates the same links Obsidian would. Folder
   moves leave links to notes that didn't move alone.

@@ -3,7 +3,6 @@
 // filesystem rename, then read-modify-write each affected source FROM DISK.
 import {
   encodeMdPath,
-  frontmatterEnd,
   internalFileHref,
   mdLinkRegexGlobal,
   proseMask,
@@ -11,6 +10,7 @@ import {
   wikilinkRegex,
   yamlEscape,
   yamlLinkAt,
+  yamlValueLines,
   yamlUnescape,
 } from "./markdown";
 
@@ -86,11 +86,11 @@ export function rewriteLinks(
 ): string | null {
   const lines = content.split("\n");
   const prose = proseMask(lines);
-  const fmEnd = frontmatterEnd(lines);
+  const yamlLines = yamlValueLines(lines);
   let changed = false;
   for (let i = 0; i < lines.length; i++) {
     // Property values hold links too (Obsidian rewrites them on rename).
-    const yaml = i > 0 && i < fmEnd;
+    const yaml = yamlLines[i];
     if (!prose[i] && !yaml) continue;
     const original = lines[i];
     // Mask inline code with same-length blanks; offsets stay identical, so

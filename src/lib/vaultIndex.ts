@@ -15,8 +15,8 @@ import {
   normalizeName,
   parseMarkdownLink,
   proseMask,
-  frontmatterEnd,
   yamlLinkAt,
+  yamlValueLines,
   yamlUnescape,
   tagRegex,
   targetPathPart,
@@ -93,10 +93,10 @@ function extractLinks(content: string): LinkOccurrence[] {
   const out: LinkOccurrence[] = [];
   const lines = content.split("\n");
   const prose = proseMask(lines); // skip frontmatter + fenced code
-  const fmEnd = frontmatterEnd(lines);
+  const yamlLines = yamlValueLines(lines);
   for (let i = 0; i < lines.length; i++) {
     // Property values are scanned too, as rewriteLinks does on rename.
-    const yaml = i > 0 && i < fmEnd;
+    const yaml = yamlLines[i];
     if (!prose[i] && !yaml) continue;
     const line = yaml ? lines[i] : lines[i].replace(INLINE_CODE_RE, " "); // `[[x]]` in code isn't a link
     const ctxAt = (pos: number, len: number) => (yaml ? yamlLinkAt(line, pos, len) : { ok: true, quote: null });

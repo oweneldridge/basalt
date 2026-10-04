@@ -59,6 +59,26 @@ export function frontmatterEnd(lines: string[]): number {
   return -1;
 }
 
+/** Per-line mask of frontmatter lines that can hold a property link: inside
+ * the block, but not the text of a `|` or `>` block scalar, which is one
+ * multi-line string and never a link. */
+export function yamlValueLines(lines: string[]): boolean[] {
+  const mask = new Array<boolean>(lines.length).fill(false);
+  const end = frontmatterEnd(lines);
+  let block = -1; // indent of the key that opened a block scalar, or -1
+  for (let i = 1; i < end; i++) {
+    const line = lines[i];
+    const indent = line.length - line.trimStart().length;
+    if (block !== -1) {
+      if (line.trim() === "" || indent > block) continue;
+      block = -1;
+    }
+    mask[i] = true;
+    if (/(?::|^\s*-)\s+[|>][+-]?\d*\s*(?:#.*)?$/.test(line)) block = indent;
+  }
+  return mask;
+}
+
 /** YAML scalar context at `pos` on one frontmatter line: the quote style of the
  * scalar it sits in, and whether it's inside a `# comment`. */
 export function yamlContextAt(line: string, pos: number): { quote: '"' | "'" | null; comment: boolean } {

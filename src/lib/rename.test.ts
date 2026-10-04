@@ -2,7 +2,7 @@
 // the app: it edits OTHER notes' content, so every preserved detail matters.
 import { describe, expect, it } from "vitest";
 import { linkTargetFor, rewriteLinks } from "./rename";
-import { targetPathPart } from "./markdown";
+import { targetPathPart, yamlValueLines } from "./markdown";
 
 // A mapper that renames targets whose path part matches `oldName` (markdown
 // links arrive with their .md extension).
@@ -200,5 +200,42 @@ describe("inline code inside link parts survives rewriting", () => {
     expect(rewriteLinks("[[Old#My `code` heading]]", renameMap("Old", "New"))).toBe(
       "[[New#My `code` heading]]",
     );
+  });
+});
+
+describe("block scalars in properties", () => {
+  const note = [
+    "---",
+    "summary: |",
+    '  "[[A]]"',
+    "",
+    '  more "[[A]]"',
+    "notes:",
+    "  - >-",
+    '    "[[A]]"',
+    'up: "[[A]]"',
+    "---",
+    '"[[A]]" in the body',
+  ].join("\n");
+
+  it("marks only lines that can hold a property value", () => {
+    expect(yamlValueLines(note.split("\n"))).toEqual([false, true, false, false, false, true, true, false, true, false, false]);
+  });
+
+  it("rewrites the property link but not the block scalar text", () => {
+    const out = rewriteLinks(note, renameMap("A", "B"))!;
+    expect(out.split("\n")).toEqual([
+      "---",
+      "summary: |",
+      '  "[[A]]"',
+      "",
+      '  more "[[A]]"',
+      "notes:",
+      "  - >-",
+      '    "[[A]]"',
+      'up: "[[B]]"',
+      "---",
+      '"[[B]]" in the body',
+    ]);
   });
 });
