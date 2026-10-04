@@ -113,10 +113,20 @@ fn rel_has_ignored_component(rel: &str) -> bool {
 /// symlink (a dangling symlink would otherwise let a write escape the vault).
 fn ensure_in_vault(root: &Path, path: &str) -> Result<PathBuf, String> {
     let target = PathBuf::from(path);
+    if lexically_within(root, &target) {
+        return resolve_in_vault(root, &target);
+    }
+    // Another spelling of a vault path (through a symlinked parent such as
+    // macOS's /var) still works, but every failure reads the same, so the reply
+    // never reveals what exists outside the vault.
+    resolve_in_vault(root, &target).map_err(|_| "path escapes vault".to_string())
+}
+
+fn resolve_in_vault(root: &Path, target: &Path) -> Result<PathBuf, String> {
     let resolved = if target.exists() {
-        fs::canonicalize(&target).map_err(|e| format!("path: {e}"))?
+        fs::canonicalize(target).map_err(|e| format!("path: {e}"))?
     } else {
-        let is_dangling_symlink = fs::symlink_metadata(&target)
+        let is_dangling_symlink = fs::symlink_metadata(target)
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(false);
         if is_dangling_symlink {
@@ -132,6 +142,24 @@ fn ensure_in_vault(root: &Path, path: &str) -> Result<PathBuf, String> {
     } else {
         Err("path escapes vault".into())
     }
+}
+
+/// Whether `target`, with `.` and `..` resolved as text, sits under `root`.
+fn lexically_within(root: &Path, target: &Path) -> bool {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in target.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    return false;
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out.starts_with(root)
 }
 
 /// Atomically replace `path` with `content`: write a hidden non-`.md` temp in
@@ -1995,6 +2023,33 @@ mod tests {
         assert_eq!(fs::read_to_string(&f).unwrap(), "two\n");
         assert_eq!(get("com.apple.metadata:_kMDItemUserTags"), "Red");
         assert_eq!(get("com.apple.LaunchServices.OpenWith"), "Typora");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ensure_in_vault_gives_one_answer_outside_the_vault() {
+        let root = scratch_vault("oracle");
+        let outside = std::env::temp_dir();
+        for p in [
+            outside.join("basalt-no-such-dir-x9/note.md"),
+            outside.join("basalt-no-such-file-x9.md"),
+            root.join("../escape.md"),
+            PathBuf::from("/etc/hosts"),
+        ] {
+            assert_eq!(ensure_in_vault(&root, &p.to_string_lossy()).unwrap_err(), "path escapes vault", "{p:?}");
+        }
+        fs::create_dir_all(root.join("sub")).unwrap();
+        let inside = ensure_in_vault(&root, &root.join("sub/../a.md").to_string_lossy()).unwrap();
+        assert_eq!(inside, root.join("a.md"));
+        // A path through a symlinked parent of the vault still resolves inside it.
+        #[cfg(unix)]
+        {
+            let alias = std::env::temp_dir().join(format!("basalt-alias-{}", std::process::id()));
+            let _ = fs::remove_file(&alias);
+            std::os::unix::fs::symlink(&root, &alias).unwrap();
+            assert_eq!(ensure_in_vault(&root, &alias.join("a.md").to_string_lossy()).unwrap(), root.join("a.md"));
+            let _ = fs::remove_file(&alias);
+        }
         let _ = fs::remove_dir_all(&root);
     }
 
