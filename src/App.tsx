@@ -369,9 +369,24 @@ export default function App() {
   const [recentVaults, setRecentVaults] = useState<RecentVault[]>(() => loadRecentVaults());
   // Sidebar visibility + UI zoom (Obsidian parity: ⌘\ / ⌘⌥\ , ⌘+ / ⌘- / ⌘0).
   // Resizable sidebar widths (persisted). Clamped so neither can swallow the editor.
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(() => {
+    try {
+      return Number(localStorage.getItem("basalt-zoom")) || 1;
+    } catch {
+      return 1;
+    }
+  });
   useEffect(() => {
-    document.documentElement.style.fontSize = `${Math.round(16 * zoom)}px`;
+    // A percentage of the user's own default size, and nothing at 100%, so a
+    // larger browser or OS font setting still applies.
+    const root = document.documentElement.style;
+    if (zoom === 1) root.removeProperty("font-size");
+    else root.fontSize = `${Math.round(zoom * 100)}%`;
+    try {
+      localStorage.setItem("basalt-zoom", String(zoom));
+    } catch {
+      /* private mode */
+    }
   }, [zoom]);
   const zoomBy = useCallback((d: number) => setZoom((z) => Math.max(0.6, Math.min(2, Math.round((z + d) * 20) / 20))), []);
   // A pending template prompt (tp.system.prompt) awaiting user input.
@@ -417,7 +432,8 @@ export default function App() {
   // Appearance: base font size (px) + accent override ("" = theme default).
   const [fontSize, setFontSize] = useState(() => Number(localStorage.getItem("basalt-font-size")) || 16);
   useEffect(() => {
-    document.documentElement.style.setProperty("--font-size", `${fontSize}px`);
+    // In rem so the editor scales with zoom and the user's default font size.
+    document.documentElement.style.setProperty("--font-size", `${fontSize / 16}rem`);
     localStorage.setItem("basalt-font-size", String(fontSize));
   }, [fontSize]);
   const [accent, setAccent] = useState(() => localStorage.getItem("basalt-accent") ?? "");
@@ -1951,13 +1967,14 @@ export default function App() {
         e.preventDefault();
         if (e.altKey) toggleRightDock();
         else toggleLeftDock();
-      } else if (e.key === "=" || e.key === "+") {
+      } else if (isTauri && (e.key === "=" || e.key === "+")) {
+        // In a browser the browser's own zoom is better; only the desktop shell needs ours.
         e.preventDefault();
         zoomBy(0.1);
-      } else if (e.key === "-") {
+      } else if (isTauri && e.key === "-") {
         e.preventDefault();
         zoomBy(-0.1);
-      } else if (e.key === "0") {
+      } else if (isTauri && e.key === "0") {
         e.preventDefault();
         setZoom(1);
       }

@@ -37,3 +37,16 @@ test("the editor and glyph-only buttons have accessible names", async ({ page })
     await expect(page.getByRole("button", { name }).first()).toBeVisible();
   }
 });
+
+test("the root font size is the user's own until they zoom, and zoom persists", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await expect(page.locator(".sidebar")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.style.fontSize)).toBe("");
+  await page.keyboard.press("ControlOrMeta+Equal");
+  await expect.poll(() => page.evaluate(() => document.documentElement.style.fontSize)).toBe("110%");
+  await page.reload();
+  await expect(page.locator(".sidebar")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.style.fontSize)).toBe("110%");
+  await page.keyboard.press("ControlOrMeta+Digit0");
+  await expect.poll(() => page.evaluate(() => document.documentElement.style.fontSize)).toBe("");
+});
