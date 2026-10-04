@@ -71,7 +71,7 @@ export function blockedImage(src: string, alt = ""): HTMLElement {
  * or <video> src, and the href of an SVG <image>, <use> or <feImage>. Links
  * are left alone. Run it on inert content (a template), before insertion. */
 export function blockRemoteImages(root: ParentNode): void {
-  if (allowed) return;
+  if (remoteImagesAllowed()) return;
   root.querySelectorAll<HTMLImageElement>("img").forEach((img) => {
     const src = img.getAttribute("src") ?? "";
     const set = img.getAttribute("srcset") ?? "";

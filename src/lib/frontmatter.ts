@@ -341,6 +341,28 @@ function itemYaml(x: unknown, flow: boolean): string {
 /** Obsidian treats these as lists even when a note holds a single value. */
 const LIST_KEYS = new Set(["tags", "tag", "aliases", "alias", "cssclasses", "cssclass"]);
 
+/** Split a value on commas outside quotes (how aliases and tags written as
+ * `a, b` are read), keeping each part's own quoting. */
+function splitCommas(value: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let q = "";
+  for (const ch of value) {
+    if (q) {
+      cur += ch;
+      if (ch === q) q = "";
+    } else if (ch === '"' || ch === "'") {
+      cur += ch;
+      q = ch;
+    } else if (ch === ",") {
+      out.push(cur.trim());
+      cur = "";
+    } else cur += ch;
+  }
+  out.push(cur.trim());
+  return out.filter((p) => p !== "");
+}
+
 /** Whether the value on line `end` goes on below it (the next non-blank line
  * is indented): a wrapped flow list or a plain value over several lines. */
 function continuesBelow(body: string[], end: number): boolean {
@@ -423,12 +445,19 @@ export function mergeTemplateProps(note: string, props: string[]): string {
         const sep = head.endsWith("[") ? "" : head.endsWith(",") ? " " : ", ";
         body[np.start] = head + sep + add.map((x) => itemYaml(x, true)).join(", ") + line.slice(close);
       } else {
-        // A single value meets a list: keep it as the list's first item. A value
-        // spanning lines, or a flow collection behind a comment, stays as it is.
+        // A single value meets a list: it becomes the list's first item (or
+        // items, for aliases and tags written `a, b`). A value spanning lines,
+        // or a flow collection behind a comment, stays as it is.
         const raw = rawValue(cur.body[np.start]);
         if (np.end !== np.start || continuesBelow(cur.body, np.end) || /^[[{]/.test(raw)) continue;
+        const parts = LIST_KEYS.has(name.toLowerCase()) ? splitCommas(raw) : [raw];
+        const quoted = (p: string) => /^(["']).*\1$/.test(p);
+        const plain = parts.map((p) => (quoted(p) ? p.slice(1, -1) : p));
+        const extra = add.filter((x) => !plain.includes(String(x)));
+        if (extra.length === 0) continue;
+        const items = parts.length === 1 ? parts : parts.map((p, i) => (quoted(p) ? p : itemYaml(plain[i], false)));
         const keyPart = cur.body[np.start].slice(0, cur.body[np.start].indexOf(":") + 1);
-        body.splice(np.start, 1, keyPart, `  - ${raw}`, ...add.map((x) => `  - ${itemYaml(x, false)}`));
+        body.splice(np.start, 1, keyPart, ...[...items, ...extra.map((x) => itemYaml(x, false))].map((x) => `  - ${x}`));
       }
     } else {
       if (continuesBelow(cur.body, np.end)) continue; // a value over several lines stays

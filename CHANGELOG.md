@@ -74,8 +74,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Inserting a template that has properties merges them into the note's own
   instead of dropping a second `---` block into the middle of the note. New
   keys are added and lists gain the missing items; nothing the note already
-  has is lost or retyped. With the caret at the very top, the body goes after
-  the note's properties.
+  has is lost or retyped. Aliases and tags written `a, b` stay separate items.
+  With the caret at the very top, the body goes after the note's properties.
 - Adding a row or column to a table inside a list item, blockquote or callout
   keeps its indent and `>` markers, and a quoted table no longer shows `>` as
   its first column.

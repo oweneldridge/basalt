@@ -368,3 +368,17 @@ describe("template merge, third pass", () => {
     expect(m("status: done", ["status: draft"])).toBe("---\nstatus: draft\n---\nBody\n");
   });
 });
+
+describe("template merge with comma-separated aliases and tags", () => {
+  const m = (note: string, props: string[]) => mergeTemplateProps(`---\n${note}\n---\nBody\n`, props);
+  it("keeps each comma-separated alias or tag as its own item", () => {
+    expect(m("aliases: Foo, Bar", ["aliases: New"])).toBe("---\naliases:\n  - Foo\n  - Bar\n  - New\n---\nBody\n");
+    expect(m("tags: work, home", ["tags: [home, q3]"])).toBe("---\ntags:\n  - work\n  - home\n  - q3\n---\nBody\n");
+    expect(m('aliases: "Smith, John"', ["aliases: JS"])).toBe('---\naliases:\n  - "Smith, John"\n  - JS\n---\nBody\n');
+    expect(m("aliases: Foo, *Bar", ["aliases: New"])).toBe('---\naliases:\n  - Foo\n  - "*Bar"\n  - New\n---\nBody\n');
+  });
+  it("leaves the note alone when the template adds nothing new", () => {
+    const note = "---\naliases: Foo, Bar\n---\nBody\n";
+    expect(mergeTemplateProps(note, ["aliases: Bar"])).toBe(note);
+  });
+});
