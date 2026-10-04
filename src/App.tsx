@@ -615,7 +615,10 @@ export default function App() {
   }
 
   const bumpIndex = useCallback(() => setIndexVersion((v) => v + 1), []);
+  // Counts in-app structural changes, so a vault read can tell it went stale.
+  const structGen = useRef(0);
   const bumpStructure = useCallback(() => {
+    structGen.current += 1;
     setIndexVersion((v) => v + 1);
     setStructureVersion((v) => v + 1);
   }, []);
@@ -633,8 +636,16 @@ export default function App() {
   const saveSeq = useRef(0);
   const lastSave = useRef<Map<string, { seq: number; content: string }>>(new Map());
   const loadVault = useCallback(async () => {
-    const startSeq = saveSeq.current;
-    const [read, atts] = await Promise.all([readVault(), listAttachments()]);
+    let startSeq = saveSeq.current;
+    let startGen = structGen.current;
+    let [read, atts] = await Promise.all([readVault(), listAttachments()]);
+    // A note created, renamed or deleted in the app during the read isn't in
+    // that listing, and taking it would drop or revive one: read again.
+    for (let retry = 0; retry < 3 && structGen.current !== startGen; retry++) {
+      startSeq = saveSeq.current;
+      startGen = structGen.current;
+      [read, atts] = await Promise.all([readVault(), listAttachments()]);
+    }
     const list = read.map((n) => {
       const w = lastSave.current.get(n.path);
       return w && w.seq > startSeq ? { ...n, content: w.content } : n;

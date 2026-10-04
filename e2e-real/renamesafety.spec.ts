@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { test, expect, openApp, openNote, caretToEnd, settle } from "./fixture";
 
 test("edits to a new note at a renamed note's old path never land in the renamed note", async ({ page, vault }) => {
@@ -86,4 +86,30 @@ test("after Keep mine brings back a note deleted elsewhere, typing saves normall
   await settle(page, 1500);
   await expect(conflict).toBeHidden();
   expect(vault.read("Ideas.md")).toContain("mine more again");
+});
+
+test("a note created while a rescan is reading saves without a false conflict", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await openNote(page, "Ideas");
+  let slow = true;
+  // The listing is taken at once; its reply arrives late, after the new note.
+  await page.route("**/api/invoke", async (route) => {
+    if (!slow || !(route.request().postData() ?? "").includes('"cmd":"read_vault"')) return route.continue().catch(() => {});
+    const response = await route.fetch();
+    await new Promise((r) => setTimeout(r, 2500));
+    await route.fulfill({ response }).catch(() => {});
+  });
+  mkdirSync(vault.path("trigger-rescan")); // a folder event makes the app re-read the vault
+  await page.waitForTimeout(400);
+  await page.getByRole("button", { name: "New note" }).first().click();
+  await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText(/Untitled/);
+  const name = (await page.locator(".pane:not(.dock) .tab.active .tab-name").first().textContent())!;
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await page.keyboard.type("typed during the rescan");
+  await page.waitForTimeout(3000);
+  slow = false;
+  await page.keyboard.type(" and after");
+  await settle(page, 1500);
+  await expect(page.locator(".conflict")).toBeHidden();
+  await expect.poll(() => vault.read(`${name}.md`)).toContain("typed during the rescan and after");
 });

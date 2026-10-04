@@ -44,7 +44,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   later takes the old name can never write into the renamed one. Text typed in
   a note while its folder is being moved is saved too.
 - After "Keep mine" writes back a note deleted elsewhere, later edits save
-  normally, and focus returns to the editor after Keep mine or Reload. A save to a
+  normally, and focus returns to the editor after Keep mine or Reload.
+- A note created or renamed while the vault was being re-read keeps saving:
+  the app reads again instead of taking a listing that predates the change. A save to a
   note that was renamed or deleted elsewhere raises "Changed on disk" instead
   of bringing the old file back.
 - Renaming a note rewrites links inside properties, and table-escaped
