@@ -78,6 +78,32 @@ sudo tailscale serve --https=10016 off
   conflict handling + the SSE watcher keep it safe; unison syncs to iCloud.
 - **Big first load**: `read_vault` ships the whole vault once (gzipped ~5×). Over
   the tailnet that's a few seconds on first open; edits are instant after.
-- **Update**: `git pull && docker compose up -d --build`.
+- **Update**: build on the Mac rather than on Spectre, which is short on memory.
+  See "Updating from the Mac" below.
 - **The build pulls no Tauri/webkit deps** — it compiles only `basalt-server` +
   `basalt-core` via a minimal 2-member workspace in the Dockerfile.
+
+## Updating from the Mac
+
+Spectre runs low on RAM, so build the image on the Mac and load it there. The
+load moves `:latest`, so snapshot the vault and tag the running image first.
+
+```sh
+# On Spectre
+tar -C /opt/arrstack/silverbullet -czf /mnt/backup/basalt-snapshots/space-$(date +%Y-%m-%d-%H%M).tar.gz space
+docker tag basalt-server-basalt-web:latest basalt-server-basalt-web:rollback-$(date +%Y-%m-%d)
+
+# On the Mac, from the repo root
+docker buildx build --builder desktop-linux --platform linux/amd64 \
+  -f basalt-server/Dockerfile \
+  --label org.opencontainers.image.revision=$(git rev-parse HEAD) \
+  -t basalt-server-basalt-web:latest --load .
+docker save basalt-server-basalt-web:latest | gzip -1 | ssh becspk 'gunzip | docker load'
+
+# On Spectre
+cd /opt/arrstack/basalt/basalt-server && docker compose up -d --no-build basalt-web
+```
+
+To roll back, tag the rollback image as `:latest` again and run the same
+`docker compose up -d --no-build basalt-web`. Check the result read-only: the
+vault folder syncs into the real vault.
