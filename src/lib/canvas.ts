@@ -87,7 +87,7 @@ export function serializeCanvas(data: CanvasData): string {
     o.width = r(n.width);
     o.height = r(n.height);
     put(o, "color", n.color);
-    if (n.type === "text") put(o, "text", n.text);
+    if (n.type === "text") o.text = n.text ?? ""; // required by the spec, even when empty
     else if (n.type === "file") {
       put(o, "file", n.file);
       put(o, "subpath", n.subpath);

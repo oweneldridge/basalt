@@ -248,3 +248,12 @@ describe("rewriteCanvasFileRefs — minimal, non-destructive", () => {
     expect(o.metadata).toEqual({ custom: true }); // top-level unmodeled key kept
   });
 });
+
+describe("empty text cards", () => {
+  it("keep their required text key, so they reload as cards", () => {
+    const data = parseCanvas(JSON.stringify({ nodes: [{ id: "a", type: "text", text: "", x: 0, y: 0, width: 100, height: 50 }], edges: [] }))!;
+    const out = serializeCanvas(data);
+    expect(JSON.parse(out).nodes[0]).toHaveProperty("text", "");
+    expect(parseCanvas(out)!.nodes.map((n) => n.id)).toEqual(["a"]);
+  });
+});
