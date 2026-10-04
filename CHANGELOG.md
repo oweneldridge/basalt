@@ -50,6 +50,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its first column.
 - Editing one Bases view no longer rewrites the others: their comments and
   layout stay as written, and flow lists keep the `[a, b]` style.
+- Bookmarking a file writes `bookmarks.json` the way Obsidian does: other
+  entries keep their key order, the new one gets a `ctime` and no fixed title
+  (so its name follows renames), and there's no trailing newline.
 - Renaming a folder updates markdown-style attachment links such as
   `![](Media/pic.png)`, not only `![[...]]` embeds.
 - Moving a note to another folder keeps its own links pointing where they did:

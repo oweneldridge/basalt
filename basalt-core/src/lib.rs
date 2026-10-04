@@ -1390,12 +1390,6 @@ pub fn toggle_file_bookmark(root: &Path, path: String) -> Result<bool, String> {
     let rel = rel_under(&root, &resolved)
         .ok_or("path escapes vault")?
         .replace('\\', "/");
-    let title = Path::new(&rel)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(rel.as_str())
-        .to_string();
-
     let bpath = root.join(".obsidian/bookmarks.json");
     // An ABSENT or empty file starts fresh; a file that exists but doesn't parse
     // to a JSON object is REFUSED (never silently clobber the user's data).
@@ -1412,11 +1406,16 @@ pub fn toggle_file_bookmark(root: &Path, path: String) -> Result<bool, String> {
         }
     };
 
-    let (v, now_bookmarked) = toggle_bookmark_in_value(existing, &rel, &title)?;
+    let ctime = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let (v, now_bookmarked) = toggle_bookmark_in_value(existing, &rel, ctime)?;
 
     fs::create_dir_all(root.join(".obsidian")).map_err(|e| format!("create .obsidian: {e}"))?;
-    let mut out = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-    out.push('\n');
+    // Written the way Obsidian writes it (key order kept, two-space indent, no
+    // trailing newline), so a toggle changes only the bookmark it touches.
+    let out = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
     atomic_write(&bpath, out.as_bytes())?;
     Ok(now_bookmarked)
 }
@@ -1460,7 +1459,7 @@ fn remove_file_bookmark(items: &mut Vec<serde_json::Value>, rel: &str) -> bool {
 fn toggle_bookmark_in_value(
     mut v: serde_json::Value,
     rel: &str,
-    title: &str,
+    ctime: u64,
 ) -> Result<(serde_json::Value, bool), String> {
     let obj = v.as_object_mut().ok_or("bookmarks: not an object")?;
     let items = obj.entry("items").or_insert_with(|| serde_json::json!([]));
@@ -1471,7 +1470,8 @@ fn toggle_bookmark_in_value(
     let now_bookmarked = if remove_file_bookmark(arr, rel) {
         false
     } else {
-        arr.push(serde_json::json!({ "type": "file", "path": rel, "title": title }));
+        // As Obsidian adds one: no title, so the name follows the file.
+        arr.push(serde_json::json!({ "type": "file", "ctime": ctime, "path": rel }));
         true
     };
     Ok((v, now_bookmarked))
@@ -1804,7 +1804,7 @@ mod tests {
             "someUnknownSetting": true
         });
         // Add a new file bookmark.
-        let (v, on) = toggle_bookmark_in_value(src.clone(), "Notes/A.md", "A").unwrap();
+        let (v, on) = toggle_bookmark_in_value(src.clone(), "Notes/A.md", 1).unwrap();
         assert!(on);
         let items = v["items"].as_array().unwrap();
         assert_eq!(items.len(), 3); // group + search preserved, one appended
@@ -1813,15 +1813,39 @@ mod tests {
         assert_eq!(items[0]["items"][0]["path"], "Work/Todo.md");
         assert_eq!(items[2]["path"], "Notes/A.md");
         // Toggling the same path again removes exactly that top-level entry.
-        let (v2, off) = toggle_bookmark_in_value(v, "Notes/A.md", "A").unwrap();
+        let (v2, off) = toggle_bookmark_in_value(v, "Notes/A.md", 1).unwrap();
         assert!(!off);
         assert_eq!(v2["items"].as_array().unwrap().len(), 2);
         assert_eq!(v2["someUnknownSetting"], serde_json::json!(true));
     }
 
     #[test]
+    fn bookmark_toggle_writes_obsidians_format() {
+        let root = scratch_vault("bookmarks");
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        let file = root.join(".obsidian/bookmarks.json");
+        let before = "{\n  \"items\": [\n    {\n      \"type\": \"file\",\n      \"ctime\": 1707190166271,\n      \"path\": \"Wiki/✅ Icons.md\",\n      \"title\": \"Icons\"\n    }\n  ]\n}";
+        fs::write(&file, before).unwrap();
+        fs::write(root.join("New.md"), "x").unwrap();
+        let new_note = root.join("New.md").to_string_lossy().to_string();
+        assert!(toggle_file_bookmark(&root, new_note.clone()).unwrap());
+        let after = fs::read_to_string(&file).unwrap();
+        let head = &before[..before.len() - "\n  ]\n}".len()];
+        assert!(after.starts_with(head), "existing entry rewritten: {after}");
+        let added: serde_json::Value = serde_json::from_str(&after).unwrap();
+        let item = &added["items"][1];
+        let keys: Vec<&String> = item.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["type", "ctime", "path"]);
+        assert_eq!(item["path"], "New.md");
+        assert!(!after.ends_with('\n'));
+        assert!(!toggle_file_bookmark(&root, new_note).unwrap());
+        assert_eq!(fs::read_to_string(&file).unwrap(), before);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn bookmark_toggle_seeds_missing_items() {
-        let (v, on) = toggle_bookmark_in_value(serde_json::json!({}), "A.md", "A").unwrap();
+        let (v, on) = toggle_bookmark_in_value(serde_json::json!({}), "A.md", 1).unwrap();
         assert!(on);
         assert_eq!(v["items"][0]["path"], "A.md");
     }
@@ -1835,7 +1859,7 @@ mod tests {
                 { "type": "file", "path": "Dashboard.md", "title": "Home" }
             ]}]
         });
-        let (v, on) = toggle_bookmark_in_value(src, "Dashboard.md", "Dashboard").unwrap();
+        let (v, on) = toggle_bookmark_in_value(src, "Dashboard.md", 1).unwrap();
         assert!(!on); // now un-bookmarked
         assert_eq!(v["items"][0]["items"].as_array().unwrap().len(), 0); // removed from the group
         // No stray top-level duplicate was created.
@@ -1853,7 +1877,7 @@ mod tests {
             ]
         });
         // No whole-file bookmark exists → toggle ADDS one, leaving both subpath entries.
-        let (v, on) = toggle_bookmark_in_value(src, "Note.md", "Note").unwrap();
+        let (v, on) = toggle_bookmark_in_value(src, "Note.md", 1).unwrap();
         assert!(on);
         let items = v["items"].as_array().unwrap();
         assert_eq!(items.len(), 3); // both heading/block kept + one whole-file added
