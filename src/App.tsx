@@ -669,6 +669,13 @@ export default function App() {
     }
   }, []);
 
+  // What a pane opening `path` should show after reading `disk`: unsaved text or
+  // another pane's live text wins, since either may be newer than the read.
+  const freshDoc = (path: string, disk: string): string =>
+    pending.current.get(path) ??
+    (Object.values(panesRef.current).some((p) => p.active === path) ? liveDocs.current.get(path) : undefined) ??
+    disk;
+
   // Forget live text for notes no pane shows, so it can't seed a later open.
   useEffect(() => {
     const shown = new Set(Object.values(panes).map((p) => p.active));
@@ -1027,7 +1034,7 @@ export default function App() {
       try {
         // Unsaved text another pane holds wins over disk (a failed or conflicted
         // save would otherwise be overwritten by this pane's first keystroke).
-        doc = pending.current.get(path) ?? (await readNote(path));
+        doc = freshDoc(path, pending.current.get(path) ?? (await readNote(path)));
       } catch (e) {
         setSaveError(`Couldn't open note: ${e}`);
         return;
@@ -1169,7 +1176,7 @@ export default function App() {
       let active: string | null = neighbor;
       if (neighbor) {
         try {
-          doc = pending.current.get(neighbor) ?? (await readNote(neighbor));
+          doc = freshDoc(neighbor, pending.current.get(neighbor) ?? (await readNote(neighbor)));
         } catch (e) {
           // Never mount an editable editor on text we couldn't read: a keystroke
           // would save it over the real note. Leave the tab for a retry.
@@ -1722,7 +1729,7 @@ export default function App() {
     setFocusedId(focus);
     for (const { id, neighbor } of toLoad) {
       void readNote(neighbor)
-        .then((doc) => patchPane(id, { active: neighbor, doc, scrollToLine: undefined }))
+        .then((doc) => patchPane(id, { active: neighbor, doc: freshDoc(neighbor, doc), scrollToLine: undefined }))
         .catch(() => {
           /* neighbor gone too — the next prune pass handles it */
         });
