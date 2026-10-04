@@ -167,3 +167,24 @@ test.describe("stacked columns and notes changed elsewhere", () => {
     expect(vault.readBytes("Lat.md").equals(latin1)).toBe(true);
   });
 });
+
+test("a column whose first read fails loads once the network is back", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await openNote(page, "Welcome");
+  await openNote(page, "Ideas");
+  let failed = false;
+  await page.route("**/api/invoke", async (route) => {
+    const body = route.request().postData() ?? "";
+    if (!failed && body.includes('"cmd":"read_note"') && body.includes("Welcome.md")) {
+      failed = true;
+      await route.abort();
+      return;
+    }
+    await route.continue().catch(() => {});
+  });
+  await page.locator(".tab-stack").first().click();
+  const col = page.locator(".stacked-col").filter({ has: page.locator(".stacked-col-head", { hasText: "Welcome" }) });
+  await expect(col.locator(".placeholder")).toHaveText("Couldn't load this note.");
+  expect(failed).toBe(true);
+  await expect(col.locator(".cm-content")).toBeVisible({ timeout: 10000 });
+});

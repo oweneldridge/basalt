@@ -56,6 +56,43 @@ export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody
     };
   }, [tabs, docs, readNote]);
 
+  // A failed read may have been a network blip: read again every few seconds,
+  // keeping the error up meanwhile (the app's own copy may be decoded lossily).
+  const [attempt, setAttempt] = useState(0);
+  const failedKey = tabs.filter((t) => docs[t.path] === null).map((t) => t.path).join("\n");
+  useEffect(() => {
+    if (!failedKey) return;
+    const failed = failedKey.split("\n");
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void Promise.all(
+        failed.map(async (path) => {
+          try {
+            return [path, await readNote(path)] as const;
+          } catch {
+            return null;
+          }
+        }),
+      ).then((pairs) => {
+        if (cancelled) return;
+        const read = pairs.filter((p) => p !== null);
+        if (read.length === 0) {
+          setAttempt((a) => a + 1);
+          return;
+        }
+        setDocs((prev) => {
+          const next = { ...prev };
+          for (const [p, c] of read) if (next[p] === null) next[p] = c;
+          return next;
+        });
+      });
+    }, 4000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [failedKey, readNote, attempt]);
+
   return (
     <div className="stacked-tabs">
       {tabs.map((t) => {
