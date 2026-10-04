@@ -8,6 +8,7 @@
 // of the source note's folder. `folder/Note`, `/Note` (root-anchored), and
 // `./`/`../` relative forms are all supported.
 import type { VaultNote } from "./vault";
+import { linkpathDest } from "./linkpath";
 import {
   internalMdHref,
   mdLinkRegexGlobal,
@@ -82,14 +83,7 @@ function dedupeKey(p: string): string {
   return p.replace(/\\/g, "/").replace(/\.md$/i, "").normalize("NFC").trim().toLowerCase();
 }
 
-function folderOf(normRel: string): string {
-  const i = normRel.lastIndexOf("/");
-  return i >= 0 ? normRel.slice(0, i) : "";
-}
 
-function depthOf(normRel: string): number {
-  return (normRel.match(/\//g) ?? []).length;
-}
 
 const INLINE_CODE_RE = /`[^`\n]*`/g;
 
@@ -415,29 +409,20 @@ export class VaultIndex {
     for (const a of m.aliases ?? []) drop(this.byAlias, a);
   }
 
-  /** Pick the best of several same-basename candidates: root-most (shortest
-   * path) wins, alphabetical tie-break — matching Obsidian's vault-wide
-   * semantics (Obsidian does NOT prefer the source's folder). */
+  /** Shortest path first, then alphabetical (used for alias owners). */
   private pickBest(paths: string[]): string {
     if (paths.length === 1) return paths[0];
     return [...paths].sort((a, b) => {
       const ra = normalizeRel(this.meta.get(a)?.rel ?? "");
       const rb = normalizeRel(this.meta.get(b)?.rel ?? "");
-      return depthOf(ra) - depthOf(rb) || ra.localeCompare(rb);
+      return ra.length - rb.length || ra.localeCompare(rb);
     })[0];
-  }
-
-  /** Find candidates whose normalized rel exactly equals `wantRel`. */
-  private exactRel(candidates: string[], wantRel: string): string[] {
-    return candidates.filter((path) => normalizeRel(this.meta.get(path)?.rel ?? "") === wantRel);
   }
 
   /**
    * Resolve a raw wikilink target (from `sourcePath`) to a concrete note path,
-   * or null if no such note exists. Forms supported (all Obsidian-compatible):
-   * bare `[[Note]]` (vault-wide, root-most wins), `[[folder/Note]]` (path
-   * suffix), `[[/Note]]` (root-anchored exact), and `[[./N]]`/`[[../N]]`
-   * (relative to the source note's folder).
+   * or null if no such note exists, the way Obsidian does (see linkpath.ts):
+   * bare `[[Note]]`, `[[folder/Note]]`, `[[/Note]]`, `[[./N]]`/`[[../N]]`.
    */
   resolve(rawTarget: string, sourcePath: string): string | null {
     const p = targetPathPart(rawTarget);
@@ -457,43 +442,12 @@ export class VaultIndex {
       candidates = this.byName.get(normalizeName(lastSeg));
     }
     const real = candidates ?? [];
-
-    // Root-anchored: [[/folder/Note]] or [[/Note]] — exact path from the root.
-    if (p.startsWith("/") || p.startsWith("\\")) {
-      const wantRel = normalizeRel(p.replace(/^[/\\]+/, ""));
-      const matches = this.exactRel(real, wantRel);
-      return matches.length ? this.pickBest(matches) : null;
-    }
-
-    // Relative: any `.`/`..` segment — join against the source note's folder.
-    if (segments.some((s) => s === "." || s === "..")) {
-      const srcFolder = folderOf(normalizeRel(this.meta.get(sourcePath)?.rel ?? ""));
-      const stack = srcFolder ? srcFolder.split("/") : [];
-      for (const seg of segments) {
-        if (seg === "" || seg === ".") continue;
-        if (seg === "..") {
-          if (stack.length === 0) return null; // escapes the vault root
-          stack.pop();
-        } else {
-          stack.push(seg);
-        }
-      }
-      const wantRel = normalizeRel(stack.join("/"));
-      const matches = this.exactRel(real, wantRel);
-      return matches.length ? this.pickBest(matches) : null;
-    }
-
-    if (segments.length > 1) {
-      // Folder-qualified: keep only notes whose path ends with the given path.
-      const wantRel = normalizeRel(p);
-      const matches = real.filter((path) => {
-        const rel = normalizeRel(this.meta.get(path)?.rel ?? "");
-        return rel === wantRel || rel.endsWith(`/${wantRel}`);
-      });
-      return matches.length ? this.pickBest(matches) : null;
-    }
-    // Bare name: a real file wins; only if none matches do aliases apply.
-    if (real.length) return this.pickBest(real);
+    const sourceRel = this.meta.get(sourcePath)?.rel ?? null;
+    const hit = linkpathDest(p, sourceRel, real, (path) => this.meta.get(path)?.rel ?? "", ".md");
+    if (hit) return hit;
+    // A bare name with no such file: Basalt also tries aliases (Obsidian leaves
+    // these unresolved, so nothing is ever rewritten through one).
+    if (segments.length > 1 || real.length) return null;
     const aliasCands = basename ? this.byAlias.get(basename) : undefined;
     return aliasCands && aliasCands.length ? this.pickBest(aliasCands) : null;
   }

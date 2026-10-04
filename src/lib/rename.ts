@@ -208,8 +208,8 @@ export interface FolderMoveCtx {
   nameTaken: (name: string, exceptPath: string) => boolean;
   format: LinkFormat;
   // --- attachments (optional) ---
-  resolveAttPre?: (raw: string) => string | null;
-  resolveAttPost?: (raw: string) => string | null;
+  resolveAttPre?: (raw: string, fromPath: string) => string | null;
+  resolveAttPost?: (raw: string, fromPath: string) => string | null;
   movedAttNewPathByOld?: Map<string, string>;
   attAt?: (path: string) => { rel: string; name: string } | undefined;
   attNameTaken?: (name: string, exceptPath: string) => boolean;
@@ -221,6 +221,17 @@ export interface FolderMoveCtx {
  * resolves to its intended note, e.g. an intra-folder relative link or a bare
  * shortest link, is left untouched). `sourceOldPath`/`sourcePostPath` are the
  * source note's pre/post paths; `sourcePostRel` seeds the relative format. */
+/** A folder-qualified link names its target's real folders, not just a string
+ * suffix of them: Obsidian's resolver lets `proj/x` reach `newproj/x`, but a
+ * folder rename should still rewrite that link (Obsidian's updater does). */
+function namesFolders(raw: string, destRel: string, ext: string): boolean {
+  const p = targetPathPart(raw).replace(/\\/g, "/").normalize("NFC").toLowerCase();
+  if (!p.includes("/") || p.startsWith(".") || p.startsWith("/")) return true;
+  const want = p.endsWith(ext) ? p : p + ext;
+  const rel = destRel.normalize("NFC").toLowerCase();
+  return rel === want || rel.endsWith(`/${want}`);
+}
+
 export function folderMoveMapper(
   ctx: FolderMoveCtx,
   sourceOldPath: string,
@@ -231,7 +242,8 @@ export function folderMoveMapper(
     const destOld = ctx.resolvePre(raw, sourceOldPath);
     if (destOld) {
       const destPost = ctx.movedNewPathByOld.get(destOld) ?? destOld;
-      if (ctx.resolvePost(raw, sourcePostPath) === destPost) return null; // still resolves
+      const destRel = ctx.noteAt(destPost)?.rel ?? "";
+      if (ctx.resolvePost(raw, sourcePostPath) === destPost && namesFolders(raw, destRel, ".md")) return null; // still resolves
       const dest = ctx.noteAt(destPost);
       if (!dest) return null;
       return linkTargetForFormat(
@@ -243,10 +255,11 @@ export function folderMoveMapper(
     }
     // Not a note target — maybe an attachment (image/PDF/audio/video) that moved.
     if (ctx.resolveAttPre && ctx.resolveAttPost && ctx.movedAttNewPathByOld && ctx.attAt && ctx.attNameTaken) {
-      const attOld = ctx.resolveAttPre(raw);
+      const attOld = ctx.resolveAttPre(raw, sourceOldPath);
       if (!attOld) return null;
       const attPost = ctx.movedAttNewPathByOld.get(attOld) ?? attOld;
-      if (ctx.resolveAttPost(raw) === attPost) return null; // still resolves
+      const attRel = ctx.attAt(attPost)?.rel ?? "";
+      if (ctx.resolveAttPost(raw, sourcePostPath) === attPost && namesFolders(raw, attRel, "")) return null; // still resolves
       const att = ctx.attAt(attPost);
       if (!att) return null;
       // Attachments keep their extension — pass the full rel as the "toRel".

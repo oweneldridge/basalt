@@ -190,3 +190,33 @@ test("rename leaves a linking note with an open conflict alone and says so", asy
   await expect(page.locator(".pane:not(.dock) .cm-content").first()).toContainText("mine, unsaved");
   expect(vault.read("Projects/Alpha.md")).toContain("[[Ideas Renamed]]");
 });
+
+test.describe("link resolution order", () => {
+  test.use({
+    vaultFiles: {
+      "Archive/Meeting.md": "# old meeting\n",
+      "Work/Meeting.md": "# current meeting\n",
+      "Work/Index.md": "Next: [[Meeting]]\n",
+    },
+  });
+  const renameRow = async (page: import("@playwright/test").Page, rel: string, to: string) => {
+    // Both rows read "Meeting" in the tree; filter results carry the full path.
+    await page.locator(".sidebar .filter").fill("Meeting");
+    await page.locator(`.note-item[title="${rel}"]`).click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+    await page.locator(".prompt-input").fill(to);
+    await page.locator(".prompt-input").press("Enter");
+  };
+  test("renaming the copy Obsidian doesn't resolve to leaves the link alone", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await renameRow(page, "Archive/Meeting.md", "Archive/Meeting 2019");
+    await expect.poll(() => vault.exists("Archive/Meeting 2019.md")).toBe(true);
+    await settle(page);
+    expect(vault.read("Work/Index.md")).toBe("Next: [[Meeting]]\n");
+  });
+  test("renaming the copy in the linking note's folder rewrites the link", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await renameRow(page, "Work/Meeting.md", "Work/Standup");
+    await expect.poll(() => vault.read("Work/Index.md")).toBe("Next: [[Standup]]\n");
+  });
+});

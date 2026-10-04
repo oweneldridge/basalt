@@ -79,6 +79,13 @@ describe("folder-move link rewrite (shortest format)", () => {
     expect(idx.resolve("proj/b", "/v/top.md")).toBe("/v/archive/proj/b.md");
   });
 
+  it("rewrites a folder-qualified link whose folder name was renamed, even if a string suffix still matches", () => {
+    // `newproj/b.md` ends with `proj/b.md`, so Obsidian's resolver still finds
+    // it, but the link names a folder that no longer exists.
+    const notes = [note("top.md", "see [[proj/b]]"), note("proj/b.md")];
+    expect(moveAndRewrite(notes, "proj", "newproj", "top.md")).toBe("see [[b]]");
+  });
+
   it("rewrites a ROOT-ANCHORED link that breaks (exact rel, not suffix)", () => {
     const notes = [note("top.md", "see [[/proj/b]]"), note("proj/b.md")];
     const out = moveAndRewrite(notes, "proj", "archive/proj", "top.md");
@@ -154,8 +161,8 @@ function moveWithAtts(
     noteAt: () => undefined,
     nameTaken: () => false,
     format: "shortest",
-    resolveAttPre: (raw) => resolveAttachment(preAtts, raw)?.path ?? null,
-    resolveAttPost: (raw) => resolveAttachment(postAtts, raw)?.path ?? null,
+    resolveAttPre: (raw, f) => resolveAttachment(preAtts, raw, preNotes.find((n) => n.path === f)?.rel ?? null)?.path ?? null,
+    resolveAttPost: (raw, f) => resolveAttachment(postAtts, raw, postNotes.find((n) => n.path === f)?.rel ?? null)?.path ?? null,
     movedAttNewPathByOld,
     attAt: (p) => postAttByPath.get(p),
     attNameTaken: (name, except) =>

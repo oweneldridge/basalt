@@ -3,26 +3,20 @@
 // note resolution (root-most wins on ambiguity).
 import type { Attachment } from "./vault";
 import { targetPathPart } from "./markdown";
+import { linkpathDest } from "./linkpath";
 
 const norm = (s: string) => s.normalize("NFC").trim().toLowerCase();
 
 export function resolveAttachment(
   attachments: Attachment[],
   rawTarget: string,
+  sourceRel: string | null = null,
 ): Attachment | null {
   const p = targetPathPart(rawTarget);
   if (!p) return null;
-  const want = norm(p.replace(/^[/\\]+/, "")).replace(/\\/g, "/");
-  const matches = attachments.filter((a) => {
-    const rel = norm(a.rel).replace(/\\/g, "/");
-    return rel === want || rel.endsWith(`/${want}`) || norm(a.name) === want;
-  });
-  if (matches.length === 0) return null;
-  return matches.sort((a, b) => {
-    const da = (a.rel.match(/\//g) ?? []).length;
-    const db = (b.rel.match(/\//g) ?? []).length;
-    return da - db || a.rel.localeCompare(b.rel);
-  })[0];
+  const file = norm(p.replace(/\\/g, "/").split("/").pop() ?? "");
+  const cands = attachments.filter((a) => norm(a.name) === file);
+  return linkpathDest(p, sourceRel, cands, (a) => a.rel);
 }
 
 /** True if the link target looks like a file with a non-md extension. */

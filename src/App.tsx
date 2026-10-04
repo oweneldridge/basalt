@@ -2577,7 +2577,8 @@ export default function App() {
       // An attachment target: .canvas/.base open in the in-app viewer pane;
       // everything else opens in the system viewer. Never auto-create a junk
       // "Report.pdf.md" note for one.
-      const att = resolveAttachment(attachmentsRef.current, target);
+      const fromRel = notesRef.current.find((n) => n.path === activePathRef.current)?.rel ?? null;
+      const att = resolveAttachment(attachmentsRef.current, target, fromRel);
       if (att) {
         if (isViewerPath(att.path)) void openNoteByPath(att.path);
         else void openPath(att.path).catch((e) => setSaveError(`Couldn't open: ${e}`));
@@ -3734,8 +3735,10 @@ export default function App() {
         nameTaken: (name: string, except: string) =>
           postNotes.some((n) => n.path !== except && normalizeName(n.name) === normalizeName(name)),
         format: fmt,
-        resolveAttPre: (raw: string) => resolveAttachment(preAtts, raw)?.path ?? null,
-        resolveAttPost: (raw: string) => resolveAttachment(postAtts, raw)?.path ?? null,
+        resolveAttPre: (raw: string, from: string) =>
+          resolveAttachment(preAtts, raw, preNotes.find((n) => n.path === from)?.rel ?? null)?.path ?? null,
+        resolveAttPost: (raw: string, from: string) =>
+          resolveAttachment(postAtts, raw, postByPath.get(from)?.rel ?? null)?.path ?? null,
         movedAttNewPathByOld,
         attAt: (path: string) => postAttByPath.get(path),
         attNameTaken: (name: string, except: string) =>

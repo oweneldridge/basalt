@@ -79,9 +79,9 @@ describe("VaultIndex.resolve — Obsidian semantics", () => {
   it("relative ./ and ../ resolve against the source folder", () => {
     expect(idx.resolve("./A", "/v/Folder/B.md")).toBe("/v/Folder/A.md");
     expect(idx.resolve("../A", "/v/Folder/B.md")).toBe("/v/A.md");
-    expect(idx.resolve("../../A", "/v/Folder/B.md")).toBeNull(); // escapes root
+    expect(idx.resolve("../../A", "/v/Folder/B.md")).toBe("/v/A.md"); // Obsidian clamps at the root
   });
-  it("ambiguous bare link prefers shallower then alphabetical", () => {
+  it("ambiguous bare link from the root prefers the shortest path", () => {
     expect(idx.resolve("C", "/v/A.md")).toBe("/v/Other/C.md"); // depth 1 beats depth 2
   });
   it("heading/block suffixes are ignored for resolution", () => {
