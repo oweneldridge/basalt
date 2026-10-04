@@ -202,9 +202,16 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
         .unwrap_or(0);
     let n = WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
     let temp = parent.join(format!(".basalt-tmp-{nanos}-{n}.tmp"));
+    let original = fs::metadata(path).ok();
     let result = (|| -> Result<(), String> {
         let mut f = fs::File::create(&temp).map_err(|e| format!("temp: {e}"))?;
         f.write_all(content).map_err(|e| format!("write: {e}"))?;
+        // The rename replaces the file, so carry over what Obsidian and Dataview
+        // read from it: permissions and the creation time (file.ctime/cday).
+        if let Some(m) = &original {
+            let _ = f.set_permissions(m.permissions());
+            keep_created(&f, m);
+        }
         f.sync_all().map_err(|e| format!("fsync: {e}"))?;
         fs::rename(&temp, path).map_err(|e| format!("rename: {e}"))
     })();
@@ -213,6 +220,25 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
     }
     result
 }
+
+#[cfg(target_os = "macos")]
+fn keep_created(f: &fs::File, m: &fs::Metadata) {
+    use std::os::macos::fs::FileTimesExt;
+    if let Ok(created) = m.created() {
+        let _ = f.set_times(fs::FileTimes::new().set_created(created));
+    }
+}
+
+#[cfg(windows)]
+fn keep_created(f: &fs::File, m: &fs::Metadata) {
+    use std::os::windows::fs::FileTimesExt;
+    if let Ok(created) = m.created() {
+        let _ = f.set_times(fs::FileTimes::new().set_created(created));
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn keep_created(_f: &fs::File, _m: &fs::Metadata) {}
 
 /// Remove stale atomic-write temp files (left by a crash) under `dir`.
 fn sweep_temps(dir: &Path, depth: usize) {
@@ -537,15 +563,15 @@ pub fn delete_note(root: &Path, path: String) -> Result<(), String> {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let stem = name.strip_suffix(".md").unwrap_or(&name);
-        dest = trash.join(format!("{stem} {nanos}.md"));
+        // Keep the real extension so a trashed .canvas or image stays openable.
+        dest = match name.rfind('.') {
+            Some(i) if i > 0 => trash.join(format!("{} {nanos}{}", &name[..i], &name[i..])),
+            _ => trash.join(format!("{name} {nanos}")),
+        };
     }
     fs::rename(&resolved, &dest).map_err(|e| format!("trash move: {e}"))
 }
 
-/// Move a whole FOLDER (by vault-relative path) to the vault trash —
-/// recoverable, like note deletion. Refuses the root and dot-folders
-/// (.obsidian/.basalt/.trash live outside the note tree).
 /// Resolve a vault-relative folder to its canonical path, refusing the root,
 /// `..`/absolute forms, and anything whose real location is outside the vault
 /// or under a dot-folder (a symlink can alias `.obsidian` or point outside).
@@ -576,6 +602,9 @@ fn contained_folder(root: &Path, rel: &str) -> Result<PathBuf, String> {
 /// Deepest folder nesting the recursive walkers will descend.
 const MAX_WALK_DEPTH: usize = 64;
 
+/// Move a whole FOLDER (by vault-relative path) to the vault trash —
+/// recoverable, like note deletion. Refuses the root and dot-folders
+/// (.obsidian/.basalt/.trash live outside the note tree).
 pub fn delete_folder(root: &Path, rel: String) -> Result<(), String> {
     let r = rel.trim().trim_matches(['/', '\\']);
     if r.is_empty() {
@@ -1435,9 +1464,9 @@ pub fn classify_change(root: &Path, metadata_only: bool, paths: &[PathBuf]) -> (
                 path: p.to_string_lossy().to_string(),
                 rel,
             });
-        } else if p.extension().is_none() || is_attachment_ext(p) {
-            // No extension: almost certainly a directory event (folder
-            // create/rename/delete). An attachment (.canvas/image/pdf…)
+        } else if p.extension().is_none() || is_attachment_ext(p) || p.is_dir() {
+            // No extension, or an existing directory (a folder name can contain
+            // a dot): a directory event (folder create/rename/delete). An attachment (.canvas/image/pdf…)
             // created/edited/deleted/renamed: the file tree, the attachment
             // list, and any open .canvas viewer pane must refresh. A full
             // rescan keeps the index honest and prunes panes for a file
@@ -1989,6 +2018,55 @@ mod tests {
         assert!(list_subfolders(&root, "obsalias".into()).is_err());
         assert!(root.join(".obsidian/app.json").is_file());
         assert!(!root.join("moved").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn atomic_write_keeps_permissions_and_creation_time() {
+        let root = scratch_vault("meta");
+        let note = root.join("M.md");
+        fs::write(&note, "v1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&note, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let before = fs::metadata(&note).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        write_note(&root, note.to_string_lossy().into(), "v2\n".into(), None).unwrap();
+        let after = fs::metadata(&note).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "v2\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(after.permissions().mode() & 0o777, 0o600);
+        }
+        #[cfg(any(target_os = "macos", windows))]
+        assert_eq!(after.created().unwrap(), before.created().unwrap());
+        let _ = before;
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn trash_collision_keeps_the_extension() {
+        let root = scratch_vault("trash");
+        fs::create_dir_all(root.join(".trash")).unwrap();
+        fs::write(root.join(".trash/Board.canvas"), "{}").unwrap();
+        fs::write(root.join("Board.canvas"), "{\"nodes\":[]}").unwrap();
+        delete_note(&root, root.join("Board.canvas").to_string_lossy().into()).unwrap();
+        let names: Vec<String> = fs::read_dir(root.join(".trash")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into()).collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.iter().all(|n| n.ends_with(".canvas")), "{names:?}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_folder_with_a_dot_in_its_name_triggers_a_rescan() {
+        let root = scratch_vault("dotted");
+        let dir = root.join("Vol.2");
+        fs::create_dir_all(&dir).unwrap();
+        let (changed, rescan) = classify_change(&root, false, &[dir]);
+        assert!(changed.is_empty() && rescan);
         fs::remove_dir_all(&root).unwrap();
     }
 
