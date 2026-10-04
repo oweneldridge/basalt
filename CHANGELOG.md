@@ -15,8 +15,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Bases `file.backlinks`, `file.embeds`, and `median()`/`stddev()` on lists, plus
   a Stddev summary.
 - Images from the web (`https:`) load in the desktop app. A "Load remote
-  images" setting turns them off: they show as placeholders, so opening a note
-  never contacts another server. This covers raw HTML images too.
+  images" setting turns them off: they show as placeholders, and the page adds
+  a Content Security Policy so the browser itself refuses any remote image or
+  media file, however a note spells it. Turning them back on applies after a
+  reload.
 - `obsidian://open` and `obsidian://search` links in notes that point at the
   open vault (by name or by path) open in Basalt. Links to other vaults, and
   ones that would write (`new`, `append`), still go to the system.

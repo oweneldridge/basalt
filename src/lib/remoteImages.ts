@@ -1,15 +1,34 @@
 // Whether images from the web load in notes. Off means opening a note never
 // contacts another server for an image; the image shows as a labelled
 // placeholder instead. Local and data: images are unaffected.
+//
+// Turning them off also adds a Content Security Policy to the page, so the
+// browser itself refuses any remote image or media file, however a note
+// spells or hides the URL. A policy can't be lifted, so turning them back on
+// takes effect after a reload.
 
 let allowed = true;
+let locked = false;
+
+const OWN = "'self' data: blob: asset: http://asset.localhost";
 
 export function setRemoteImages(on: boolean): void {
   allowed = on;
+  if (on || locked || typeof document === "undefined") return;
+  const meta = document.createElement("meta");
+  meta.httpEquiv = "Content-Security-Policy";
+  meta.content = `img-src ${OWN}; media-src ${OWN}`;
+  document.head.append(meta);
+  locked = true;
 }
 
 export function remoteImagesAllowed(): boolean {
-  return allowed;
+  return allowed && !locked;
+}
+
+/** Turned back on after being off: the page must reload before they load. */
+export function remoteImagesNeedReload(): boolean {
+  return allowed && locked;
 }
 
 /** Text the way the URL parser reads it: leading control characters and

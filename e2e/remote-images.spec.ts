@@ -14,6 +14,13 @@ const extra = {
     "",
     '<div><svg width="10" height="10"><rect width="10" height="10" fill="url(https://img.example.test/fill.svg#p)"/></svg></div>',
     "",
+    '<div><svg width="10" height="10"><rect width="10" height="10" mask="url(\\68ttps://img.example.test/escaped.png)"/></svg></div>',
+    "",
+    "```mermaid",
+    "flowchart LR",
+    "  B@{ img: https://img.example.test/unquoted.png, label: u }",
+    "```",
+    "",
     "```mermaid",
     "flowchart LR",
     '  A@{ img: "https://img.example.test/mermaid.png", label: "pic", pos: "t", w: 20, h: 20 }',
@@ -92,6 +99,9 @@ test("the setting is a labelled checkbox in Settings", async ({ page }) => {
   await expect(box).toBeChecked();
   await box.uncheck();
   expect(await page.evaluate(() => localStorage.getItem("basalt-remote-images"))).toBe("false");
+  // The page now refuses remote images until it reloads, and says so.
+  await box.check();
+  await expect(page.getByRole("checkbox", { name: /Load remote images \(after a reload\)/ })).toBeChecked();
 });
 
 test("with remote images off, no other kind of tag or link fetches one either", async ({ page }) => {
@@ -112,7 +122,7 @@ test("odd URL spellings, SVG url() references and Mermaid images don't fetch eit
   await page.waitForTimeout(800);
   await page.locator('button[title^="Toggle Reading view"]').click();
   await expect(pane(page).locator(".reading-view")).toContainText("end of sneaky");
-  await expect(pane(page).locator(".reading-view .md-mermaid svg")).toBeVisible({ timeout: 15000 });
+  await expect(pane(page).locator(".reading-view .md-mermaid svg").first()).toBeVisible({ timeout: 15000 });
   await page.waitForTimeout(800);
   expect(hits).toEqual([]);
 });

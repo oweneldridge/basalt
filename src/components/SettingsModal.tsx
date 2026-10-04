@@ -50,6 +50,8 @@ interface Props {
   spellcheck: boolean;
   onSpellcheck: (on: boolean) => void;
   remoteImages: boolean;
+  /** Turned back on this session: they load after a reload. */
+  remoteImagesReload?: boolean;
   onRemoteImages: (on: boolean) => void;
   vim: boolean;
   onVim: (on: boolean) => void;
@@ -103,6 +105,7 @@ export function SettingsModal({
   spellcheck,
   onSpellcheck,
   remoteImages,
+  remoteImagesReload,
   onRemoteImages,
   vim,
   onVim,
@@ -200,7 +203,9 @@ export function SettingsModal({
             <input type="checkbox" checked={spellcheck} onChange={(e) => onSpellcheck(e.target.checked)} />
           </label>
           <label className="settings-row">
-            <span className="settings-row-label">Load remote images</span>
+            <span className="settings-row-label">
+              Load remote images{remoteImagesReload ? " (after a reload)" : ""}
+            </span>
             <input type="checkbox" checked={remoteImages} onChange={(e) => onRemoteImages(e.target.checked)} />
           </label>
           <label className="settings-row">

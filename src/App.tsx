@@ -72,7 +72,7 @@ import { listPlugins, writePluginData, listCssSnippets, deleteFolder, renameFold
 import type { EditorApi } from "./components/EditorPane";
 import type { NoteRef } from "./editor/wikilink";
 import { clearImageCache, resolveImage } from "./lib/assets";
-import { setRemoteImages } from "./lib/remoteImages";
+import { remoteImagesNeedReload, setRemoteImages } from "./lib/remoteImages";
 import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { Ribbon } from "./components/Ribbon";
@@ -4999,6 +4999,7 @@ export default function App() {
           spellcheck={spellcheck}
           onSpellcheck={setSpellcheck}
           remoteImages={remoteImages}
+          remoteImagesReload={remoteImagesNeedReload()}
           onRemoteImages={setRemoteImagesOn}
           vim={vim}
           onVim={setVim}
