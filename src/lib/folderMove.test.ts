@@ -206,4 +206,25 @@ describe("folder-move attachment link rewrite", () => {
     );
     expect(out).toBe("![[proj/pic.png]]");
   });
+
+  const pic = [{ rel: "proj/pic.png" }];
+  it("rewrites a markdown image link on a folder rename", () => {
+    const out = moveWithAtts([note("top.md", "![](proj/pic.png)")], pic, "proj", "newproj", "top.md");
+    expect(out).toBe("![](pic.png)");
+  });
+
+  it("keeps the encoding, link text and a PDF fragment", () => {
+    const atts = [{ rel: "proj/my pic.png" }, { rel: "proj/paper.pdf" }];
+    const src = "![a photo](proj/my%20pic.png) and [p3](proj/paper.pdf#page=3)";
+    const out = moveWithAtts([note("top.md", src)], atts, "proj", "newproj", "top.md");
+    expect(out).toBe("![a photo](my%20pic.png) and [p3](paper.pdf#page=3)");
+  });
+
+  it("leaves markdown links that still resolve, URLs and extensionless hrefs alone", () => {
+    const src = "![](pic.png) ![](https://x.test/proj/pic.png) [r](proj/readme)";
+    expect(moveWithAtts([note("top.md", src)], pic, "proj", "newproj", "top.md")).toBe(src);
+    expect(moveWithAtts([note("top.md", "![](proj/pic.png)")], pic, "proj", "archive/proj", "top.md")).toBe(
+      "![](proj/pic.png)",
+    );
+  });
 });

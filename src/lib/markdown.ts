@@ -182,6 +182,13 @@ export function mdLinkRegexGlobal(): RegExp {
  * external/anchor/non-md hrefs.
  */
 export function internalMdHref(href: string): { path: string; fragment: string } | null {
+  const file = internalFileHref(href);
+  return file && /\.md$/i.test(file.path) ? file : null;
+}
+
+/** Like internalMdHref, but for any vault file with an extension: a note or an
+ * attachment such as `assets/pic.png` or `paper.pdf#page=3`. */
+export function internalFileHref(href: string): { path: string; fragment: string } | null {
   if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//") || href.startsWith("#")) {
     return null;
   }
@@ -193,7 +200,7 @@ export function internalMdHref(href: string): { path: string; fragment: string }
   } catch {
     /* malformed escapes: keep raw */
   }
-  if (!/\.md$/i.test(path)) return null;
+  if (!/\.[a-z0-9]{1,10}$/i.test(path)) return null;
   return { path, fragment };
 }
 

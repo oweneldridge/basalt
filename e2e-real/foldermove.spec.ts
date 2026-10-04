@@ -44,3 +44,26 @@ test("unmoved linking note: a folder move's link rewrite survives the next keyst
   expect(disk).toContain("typed in welcome!");
   expect(disk).not.toContain("[[Projects/Alpha]]");
 });
+
+test.describe("attachment links", () => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  test.use({
+    vaultFiles: {
+      "Media/shot one.png": png,
+      "Gallery.md": "# Gallery\n\n![first](Media/shot%20one.png)\n![[Media/shot one.png]]\n",
+    },
+  });
+
+  test("a folder rename rewrites markdown and wiki attachment links on disk", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await renameFolder(page, "Media", "Images");
+    await expect.poll(() => vault.exists("Images/shot one.png")).toBe(true);
+    await expect.poll(() => vault.read("Gallery.md")).not.toContain("Media/");
+    const disk = vault.read("Gallery.md");
+    expect(disk).toContain("![first](shot%20one.png)");
+    expect(disk).toContain("![[shot one.png]]");
+  });
+});

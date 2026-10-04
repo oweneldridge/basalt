@@ -4,7 +4,7 @@
 import {
   encodeMdPath,
   frontmatterEnd,
-  internalMdHref,
+  internalFileHref,
   mdLinkRegexGlobal,
   proseMask,
   targetPathPart,
@@ -43,16 +43,18 @@ function rewriteMdLine(
     let urlToken = yamlUnescape(parts[2], ctx?.quote ?? null);
     const angled = urlToken.startsWith("<") && urlToken.endsWith(">");
     const href = angled ? urlToken.slice(1, -1) : urlToken;
-    const internal = internalMdHref(href);
+    const internal = internalFileHref(href);
     if (!internal) continue;
     const newPathPart = mapTarget(internal.path + internal.fragment);
     if (newPathPart === null) continue;
+    // Note targets come back without `.md`; attachment targets keep their extension.
+    const newPath = /\.md$/i.test(internal.path) ? `${newPathPart}.md` : newPathPart;
     // A raw fragment with whitespace/parens is only valid inside <…>; keep the
     // angle form there (raw path, the way angled hrefs are authored).
     urlToken =
       angled && /[\s()]/.test(internal.fragment)
-        ? `<${newPathPart}.md${internal.fragment}>`
-        : encodeMdPath(`${newPathPart}.md`) + internal.fragment;
+        ? `<${newPath}${internal.fragment}>`
+        : encodeMdPath(newPath) + internal.fragment;
     urlToken = yamlEscape(urlToken, ctx?.quote ?? null);
     // `parts` matched the code-MASKED copy: splice the prefix (link text) and
     // tail (title + close) from `original` BY OFFSET — the mask is

@@ -37,6 +37,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Links resolve in Obsidian's order (the linking note's folder first, then the
   shortest path), so a rename updates the same links Obsidian would. Folder
   moves leave links to notes that didn't move alone.
+- Renaming a folder updates markdown-style attachment links such as
+  `![](Media/pic.png)`, not only `![[...]]` embeds.
 - "Link" on an unlinked mention writes Obsidian's link text (a path when the
   name is ambiguous) and skips mentions inside URLs and tags.
 - Rename no longer rewrites a note that has unsaved edits or a conflict; it
