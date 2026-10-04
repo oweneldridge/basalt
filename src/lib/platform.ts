@@ -135,6 +135,8 @@ export function confirm(message: string, options?: Parameters<typeof tauriConfir
 // --- opener ---
 export function openUrl(url: string): Promise<void> {
   if (isTauri) return tauriOpenUrl(url);
+  // Same schemes the desktop opener allows; never javascript:, data: or file:.
+  if (!/^(https?:|mailto:|tel:)/i.test(url.trim())) return Promise.reject(new Error(`Won't open ${url.split(":")[0]}: links`));
   window.open(url, "_blank", "noopener");
   return Promise.resolve();
 }

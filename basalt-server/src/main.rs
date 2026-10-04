@@ -81,9 +81,9 @@ async fn main() {
     // than silently booting with auth disabled.
     let auth = match std::env::var("BASALT_AUTH") {
         Ok(s) => match s.split_once(':') {
-            Some((u, p)) => Some((u.to_string(), p.to_string())),
-            None => {
-                eprintln!("BASALT_AUTH must be in 'user:pass' form; refusing to start with auth misconfigured");
+            Some((u, p)) if !u.is_empty() && !p.is_empty() => Some((u.to_string(), p.to_string())),
+            _ => {
+                eprintln!("BASALT_AUTH must be 'user:pass' with both parts set; refusing to start with auth misconfigured");
                 std::process::exit(1);
             }
         },
@@ -194,7 +194,9 @@ fn frame(event: &str, payload: Value) -> String {
 /// which is what lets same-origin EventSource carry them).
 async fn basic_auth(State(expected): State<Arc<String>>, req: Request, next: Next) -> Response {
     let provided = req.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok());
-    if provided.is_some_and(|p| ct_eq(p.as_bytes(), expected.as_bytes())) {
+    // The scheme name is case-insensitive (RFC 7235); compare the rest exactly.
+    let normalized = provided.and_then(|p| p.split_once(' ')).map(|(_, cred)| format!("Basic {}", cred.trim()));
+    if normalized.is_some_and(|p| ct_eq(p.as_bytes(), expected.as_bytes())) {
         next.run(req).await
     } else {
         (

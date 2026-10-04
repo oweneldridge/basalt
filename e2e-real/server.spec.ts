@@ -132,5 +132,21 @@ test.describe("with auth on", () => {
     }
     const ok = await invoke(vault, "read_note", { path: vault.path("Ideas.md") }, good);
     expect(ok.body?.result).toContain("# Ideas");
+    // The scheme name is case-insensitive.
+    const lower = { Authorization: `basic ${Buffer.from("owner:correct horse").toString("base64")}` };
+    expect((await invoke(vault, "read_note", { path: vault.path("Ideas.md") }, lower)).status).toBe(200);
   });
+});
+
+test("the server refuses to start with an empty user or password", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const { join } = await import("node:path");
+  const { ROOT } = await import("./fixture");
+  for (const auth of [":", "user:", ":pass"]) {
+    const r = spawnSync(join(ROOT, "target/debug/basalt-server"), ["--vault", join(ROOT, "e2e-real/vault")], {
+      env: { ...process.env, BASALT_AUTH: auth, BASALT_PORT: "1" },
+      timeout: 5000,
+    });
+    expect(r.status, auth).toBe(1);
+  }
 });
