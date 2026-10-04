@@ -10,6 +10,7 @@ import {
   type Side,
 } from "../lib/canvas";
 import { renderMarkdown } from "../lib/render";
+import { ContextMenu } from "./ContextMenu";
 
 interface Props {
   /** The .canvas file's JSON content. */
@@ -624,8 +625,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
         ))}
       </div>
       {menu && (
-        <div className="ctx-overlay" onMouseDown={() => setMenu(null)} onContextMenu={(e) => e.preventDefault()}>
-          <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <ContextMenu x={menu.x} y={menu.y} label="Canvas actions" onClose={() => setMenu(null)}>
             {menu.kind === "node" ? (
               <>
                 <button className="ctx-item" onClick={() => { setMenu(null); duplicateSelection(); }}>
@@ -640,8 +640,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
                 Add card here
               </button>
             )}
-          </div>
-        </div>
+          </ContextMenu>
       )}
     </div>
   );

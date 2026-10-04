@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import type { Attachment, VaultNote } from "../lib/vault";
 import { ancestorFolders, buildTree, type TreeNode, type SortOrder } from "../lib/tree";
+import { menuKeyOpens } from "./ContextMenu";
 
 interface Props {
   notes: VaultNote[];
@@ -195,6 +196,10 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
                   e.preventDefault();
                   onContextMenu(n.path, e.clientX, e.clientY);
                 }}
+                onKeyDown={(e) => {
+                  const at = menuKeyOpens(e);
+                  if (at) onContextMenu(n.path, at.x, at.y);
+                }}
                 title={n.rel}
               >
                 {n.name}
@@ -208,6 +213,10 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
                 onContextMenu={(e) => {
                   e.preventDefault();
                   onAttachmentContextMenu(a.path, e.clientX, e.clientY);
+                }}
+                onKeyDown={(e) => {
+                  const at = menuKeyOpens(e);
+                  if (at) onAttachmentContextMenu(a.path, at.x, at.y);
                 }}
                 title={a.rel}
               >
@@ -229,6 +238,10 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
                 onContextMenu={(e) => {
                   e.preventDefault();
                   onFolderContextMenu(node.path, e.clientX, e.clientY);
+                }}
+                onKeyDown={(e) => {
+                  const at = menuKeyOpens(e);
+                  if (at) onFolderContextMenu(node.path, at.x, at.y);
                 }}
                 onDragOver={(e) => {
                   if (e.dataTransfer.types.includes(DND_MIME)) {
@@ -258,6 +271,12 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
                   e.preventDefault();
                   if (node.attachment) onAttachmentContextMenu(node.path, e.clientX, e.clientY);
                   else onContextMenu(node.path, e.clientX, e.clientY);
+                }}
+                onKeyDown={(e) => {
+                  const at = menuKeyOpens(e);
+                  if (!at) return;
+                  if (node.attachment) onAttachmentContextMenu(node.path, at.x, at.y);
+                  else onContextMenu(node.path, at.x, at.y);
                 }}
                 title={node.name}
               >

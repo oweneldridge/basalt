@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { menuKeyOpens } from "./ContextMenu";
 
 export interface TabItem {
   path: string;
@@ -89,7 +90,11 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
             else if (e.key === "End") go(list.length - 1);
             else if (e.key === "Enter" || e.key === " ") onSelect(t.path);
             else if ((e.key === "Delete" || e.key === "Backspace") && !t.pinned) onClose(t.path);
-            else return;
+            else {
+              const at = menuKeyOpens(e);
+              if (at) onContextMenu(t.path, at.x, at.y);
+              return;
+            }
             e.preventDefault();
           }}
           className={`tab${t.path === activePath ? " active" : ""}${t.pinned ? " pinned" : ""}${t.view ? " view-tab" : ""}${dropAt === i ? " drop-before" : ""}`}

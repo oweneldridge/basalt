@@ -112,3 +112,19 @@ test("links can be followed from the keyboard in the editor and in Reading view"
   await page.keyboard.press("Enter");
   await expect(activeTab).toHaveText("Ideas");
 });
+
+test("context menus open and work from the keyboard", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await expect(page.locator(".sidebar")).toBeVisible();
+  const row = page.locator(".tree-row.file", { hasText: "Ideas" }).first();
+  await row.focus();
+  await page.keyboard.press("Shift+F10");
+  const menu = page.getByRole("menu", { name: "File actions" });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitem").first()).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("menuitem").nth(1)).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(row).toBeFocused();
+});

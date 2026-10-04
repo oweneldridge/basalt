@@ -114,6 +114,7 @@ import {
 import { GraphView } from "./components/GraphView";
 import { Palette } from "./components/Palette";
 import { PromptModal } from "./components/PromptModal";
+import { ContextMenu } from "./components/ContextMenu";
 import { SettingsModal } from "./components/SettingsModal";
 import {
   applyResolvedTheme,
@@ -4888,8 +4889,7 @@ export default function App() {
             fn();
           };
           return (
-            <div className="ctx-overlay" onMouseDown={() => setTabMenu(null)} onContextMenu={(e) => e.preventDefault()}>
-              <div className="ctx-menu" style={{ left: tabMenu.x, top: tabMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+            <ContextMenu x={tabMenu.x} y={tabMenu.y} label="Tab actions" onClose={() => setTabMenu(null)}>
                 <button className="ctx-item" onClick={() => run(() => void closeTab(tabMenu.paneId, tabMenu.path))}>
                   Close
                 </button>
@@ -4915,8 +4915,7 @@ export default function App() {
                     </button>
                   </>
                 )}
-              </div>
-            </div>
+              </ContextMenu>
           );
         })()}
       {editorMenu &&
@@ -4928,8 +4927,7 @@ export default function App() {
             fn?.();
           };
           return (
-            <div className="ctx-overlay" onMouseDown={() => setEditorMenu(null)} onContextMenu={(e) => e.preventDefault()}>
-              <div className="ctx-menu" style={{ left: editorMenu.x, top: editorMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+            <ContextMenu x={editorMenu.x} y={editorMenu.y} label="Edit actions" onClose={() => setEditorMenu(null)}>
                 <button className="ctx-item" disabled={!hasSel} onClick={() => run(api?.cut)}>
                   Cut
                 </button>
@@ -4946,17 +4944,11 @@ export default function App() {
                 <button className="ctx-item" onClick={() => run(api?.italic)}>
                   Italic
                 </button>
-              </div>
-            </div>
+              </ContextMenu>
           );
         })()}
       {fileMenu && (
-        <div className="ctx-overlay" onMouseDown={() => setFileMenu(null)} onContextMenu={(e) => e.preventDefault()}>
-          <div
-            className="ctx-menu"
-            style={{ left: fileMenu.x, top: fileMenu.y }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
+        <ContextMenu x={fileMenu.x} y={fileMenu.y} label="File actions" onClose={() => setFileMenu(null)}>
             <button
               className="ctx-item"
               onClick={() => {
@@ -5044,16 +5036,10 @@ export default function App() {
             >
               Delete
             </button>
-          </div>
-        </div>
+          </ContextMenu>
       )}
       {attMenu && (
-        <div className="ctx-overlay" onMouseDown={() => setAttMenu(null)} onContextMenu={(e) => e.preventDefault()}>
-          <div
-            className="ctx-menu"
-            style={{ left: attMenu.x, top: attMenu.y }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
+        <ContextMenu x={attMenu.x} y={attMenu.y} label="Attachment actions" onClose={() => setAttMenu(null)}>
             <button
               className="ctx-item"
               onClick={() => {
@@ -5074,12 +5060,10 @@ export default function App() {
             >
               Delete
             </button>
-          </div>
-        </div>
+          </ContextMenu>
       )}
       {folderMenu && (
-        <div className="ctx-overlay" onMouseDown={() => setFolderMenu(null)} onContextMenu={(e) => e.preventDefault()}>
-          <div className="ctx-menu" style={{ left: folderMenu.x, top: folderMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <ContextMenu x={folderMenu.x} y={folderMenu.y} label="Folder actions" onClose={() => setFolderMenu(null)}>
             <button
               className="ctx-item"
               onClick={() => {
@@ -5120,8 +5104,7 @@ export default function App() {
             >
               Delete folder
             </button>
-          </div>
-        </div>
+          </ContextMenu>
       )}
       {renameFolderTarget !== null && (
         <PromptModal
