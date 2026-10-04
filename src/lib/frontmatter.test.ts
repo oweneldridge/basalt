@@ -264,3 +264,18 @@ describe("3d review regressions", () => {
     }
   });
 });
+
+describe("lists that aren't plain", () => {
+  it("treats a list of maps or flow items as complex", () => {
+    const maps = parseFm("---\npeople:\n  - name: Ann\n    role: lead\n  - name: Cy\nnext: 1\n---\n")!;
+    expect(maps.props.find((p) => p.key === "people")?.kind).toBe("complex");
+    expect(maps.props.find((p) => p.key === "next")?.values).toEqual(["1"]);
+    const flow = parseFm("---\nxs:\n  - [a, b]\n---\n")!;
+    expect(flow.props[0].kind).toBe("complex");
+  });
+  it("keeps plain scalar lists editable, including URLs and quoted links", () => {
+    const fm = parseFm('---\nsee:\n  - "[[Note]]"\n  - https://example.com/a\n  - 10:30\n---\n')!;
+    expect(fm.props[0].kind).toBe("list");
+    expect(fm.props[0].values).toEqual(["[[Note]]", "https://example.com/a", "10:30"]);
+  });
+});

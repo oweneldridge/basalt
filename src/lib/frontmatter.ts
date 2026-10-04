@@ -167,14 +167,23 @@ export function parseFm(source: string): ParsedFm | null {
       // Block list, block scalar / nested map (incl. blank-line-separated), or
       // a truly empty value.
       if (i + 1 < body.length && /^\s*-\s+/.test(body[i + 1])) {
-        prop.kind = "list";
-        let j = i + 1;
-        for (; j < body.length; j++) {
+        // A plain list only if every item is a scalar. Items that are maps
+        // (`- name: Ann` + indented keys), flow collections or multi-line make
+        // it complex, since list edits would rewrite them as strings.
+        let complex = false;
+        for (let j = i + 1; j < body.length; j++) {
           const li = /^\s*-\s+(.*)$/.exec(body[j]);
-          if (!li) break;
-          prop.values.push(unquote(li[1]));
-          prop.end = j;
+          if (li) {
+            const v = li[1].trim();
+            if (/^[[{]/.test(v) || /^[^"'][^:]*:(\s|$)/.test(v)) complex = true;
+            prop.values.push(unquote(li[1]));
+            prop.end = j;
+          } else if (body[j].trim() !== "" && /^\s+\S/.test(body[j])) {
+            complex = true;
+            prop.end = j;
+          } else break;
         }
+        prop.kind = complex ? "complex" : "list";
         i = prop.end;
       } else if (nextNonBlankIndented(i)) {
         prop.kind = "complex"; // nested map / block scalar body (maybe after a blank)
