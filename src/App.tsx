@@ -2491,29 +2491,45 @@ export default function App() {
     requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
   }, []);
 
-  /** Open (creating if needed) today's daily note, honoring daily-notes.json. */
-  const openDailyNote = useCallback(async () => {
+  // The daily note's vault-relative path (no extension) for a date, per
+  // daily-notes.json. An unsupported format falls back to YYYY-MM-DD.
+  const dailyNoteRel = useCallback((date: Date): { relNoExt: string; name: string; fallback: string | null } => {
     const cfg = obsConfigRef.current;
-    const now = new Date();
     const fmt = cfg?.dailyNotesFormat || "YYYY-MM-DD";
     let name: string;
+    let fallback: string | null = null;
     try {
-      name = formatMoment(now, fmt);
+      name = formatMoment(date, fmt);
     } catch (e) {
       // Never guess at an unsupported format — a wrong filename pollutes the
       // shared vault. Fall back and say so.
-      name = formatMoment(now, "YYYY-MM-DD");
+      name = formatMoment(date, "YYYY-MM-DD");
       if (e instanceof UnsupportedTokenError) {
-        setSaveError(
-          `Daily-note format "${fmt}" isn't fully supported (${e.message}); used YYYY-MM-DD`,
-        );
+        fallback = `Daily-note format "${fmt}" isn't fully supported (${e.message}); used YYYY-MM-DD`;
       }
     }
     const folder = (cfg?.dailyNotesFolder ?? "").replace(/^\/+|\/+$/g, "");
     // Sanitize exactly like the Rust build_note_path, so the existence lookup
     // finds the file the backend actually created (else every open after the
     // first fails with "note already exists").
-    const relNoExt = sanitizeNoteRel(folder ? `${folder}/${name}` : name);
+    return { relNoExt: sanitizeNoteRel(folder ? `${folder}/${name}` : name), name, fallback };
+  }, []);
+
+  const hasDailyNote = useCallback(
+    (date: Date) => {
+      const want = normRelKey(`${dailyNoteRel(date).relNoExt}.md`);
+      return notesRef.current.some((n) => normRelKey(n.rel) === want);
+    },
+    [dailyNoteRel],
+  );
+
+  /** Open (creating if needed) the daily note for a date (default today),
+   * honoring daily-notes.json. */
+  const openDailyNote = useCallback(async (date: Date = new Date()) => {
+    const cfg = obsConfigRef.current;
+    const now = date;
+    const { relNoExt, name, fallback } = dailyNoteRel(date);
+    if (fallback) setSaveError(fallback);
     const want = normRelKey(`${relNoExt}.md`);
     const existing = notesRef.current.find((n) => normRelKey(n.rel) === want);
     if (existing) {
@@ -2549,6 +2565,9 @@ export default function App() {
       setSaveError(`Couldn't open daily note: ${e}`);
     }
   }, [openNoteByPath, rememberSelfWrite, bumpStructure]);
+  // The plugin host reads these through a ref, so it isn't reinstalled.
+  const dailyNoteApi = useRef({ open: openDailyNote, has: hasDailyNote });
+  dailyNoteApi.current = { open: openDailyNote, has: hasDailyNote };
 
   const handleOpenUrl = useCallback((url: string) => {
     void openUrl(url).catch(() => {
@@ -3086,6 +3105,8 @@ export default function App() {
         };
       },
       insertAtCursor: (text, caretOffset) => editorApiRef.current?.insertAtCursor(text, caretOffset),
+      openDailyNote: (date) => dailyNoteApi.current.open(date),
+      hasDailyNote: (date) => dailyNoteApi.current.has(date),
       onRegistryChanged: () => setPluginVersion((v) => v + 1),
     };
     installHost(deps);

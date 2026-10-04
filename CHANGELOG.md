@@ -53,6 +53,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Bookmarking a file writes `bookmarks.json` the way Obsidian does: other
   entries keep their key order, the new one gets a `ctime` and no fixed title
   (so its name follows renames), and there's no trailing newline.
+- The Calendar plugin opens and creates daily notes with the vault's Daily
+  notes settings (folder, date format, template), marks days whose notes use a
+  custom format, and its days are buttons you can reach from the keyboard.
 - Renaming a folder updates markdown-style attachment links such as
   `![](Media/pic.png)`, not only `![[...]]` embeds.
 - Moving a note to another folder keeps its own links pointing where they did:

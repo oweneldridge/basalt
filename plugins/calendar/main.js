@@ -1,11 +1,12 @@
-// Calendar — a month grid in the sidebar for daily notes. A day with a
-// `YYYY-MM-DD` note gets a dot; clicking a day opens that note, or creates it
-// (in the configured folder) if it doesn't exist yet. Today and the currently
-// open daily note are highlighted. Prev/next month + Today navigation.
+// Calendar — a month grid in the sidebar for daily notes. A day with a daily
+// note gets a dot; clicking a day opens that note, or creates it if it doesn't
+// exist yet. Today and the currently open daily note are highlighted.
+// Prev/next month + Today navigation.
 //
-// Daily notes are detected by a `YYYY-MM-DD` in the filename (Obsidian's
-// default). NOT full Obsidian-Calendar: no week notes, no per-day dot counts
-// beyond presence, no custom filename formats, single daily-note folder.
+// Daily notes follow the vault's Daily notes settings (folder, date format,
+// template) through Basalt's dailyNotes API. On a host without it, a
+// `YYYY-MM-DD` filename in the configured folder is used instead. NOT full
+// Obsidian-Calendar: no week notes, no per-day dot counts beyond presence.
 const { Plugin, Notice, PluginSettingTab } = require("basalt");
 
 const pad2 = (n) => String(n).padStart(2, "0");
@@ -69,6 +70,12 @@ module.exports = class Calendar extends Plugin {
     const tab = new PluginSettingTab(this.app, this);
     tab.display = function () {
       this.containerEl.replaceChildren();
+      if (self.app.dailyNotes) {
+        const note = document.createElement("p");
+        note.className = "cal-setting";
+        note.textContent = "Daily notes use the vault's Daily notes settings: folder, date format and template.";
+        this.containerEl.appendChild(note);
+      }
       const folderRow = document.createElement("label");
       folderRow.className = "cal-setting";
       folderRow.textContent = "Daily notes folder";
@@ -81,7 +88,7 @@ module.exports = class Calendar extends Plugin {
         await self.saveData(self.settings);
       });
       folderRow.appendChild(folder);
-      this.containerEl.appendChild(folderRow);
+      if (!self.app.dailyNotes) this.containerEl.appendChild(folderRow);
 
       const wkRow = document.createElement("label");
       wkRow.className = "cal-setting";
@@ -109,6 +116,11 @@ module.exports = class Calendar extends Plugin {
   }
 
   async openDaily(key) {
+    const daily = this.app.dailyNotes;
+    if (daily) {
+      await daily.open(parseDailyDate(key));
+      return;
+    }
     const has = this.datedNoteKeys().has(key);
     if (!has) {
       const path = dailyNotePath(key, this.settings.folder);
@@ -181,7 +193,8 @@ module.exports = class Calendar extends Plugin {
         grid.appendChild(wd);
       }
 
-      const keys = this.datedNoteKeys();
+      const daily = this.app.dailyNotes;
+      const keys = daily ? null : this.datedNoteKeys();
       const todayKey = dailyKey(new Date());
       const activeFile = this.app.workspace.getActiveFile();
       const activeDate = activeFile ? parseDailyDate(activeFile.path.split("/").pop() || activeFile.path) : null;
@@ -189,14 +202,19 @@ module.exports = class Calendar extends Plugin {
 
       for (const week of monthMatrix(state.year, state.month, this.settings.weekStart)) {
         for (const day of week) {
-          const cell = document.createElement("div");
+          const cell = document.createElement("button");
+          cell.type = "button";
+          const hasNote = daily ? daily.has(day.date) : keys.has(day.key);
           let cls = "cal-day";
           if (!day.inMonth) cls += " is-outside";
           if (day.key === todayKey) cls += " is-today";
           if (day.key === activeKey) cls += " is-active";
-          if (keys.has(day.key)) cls += " has-note";
+          if (hasNote) cls += " has-note";
           cell.className = cls;
           cell.setAttribute("data-date", day.key);
+          const label = day.date.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+          cell.setAttribute("aria-label", hasNote ? `${label}, has a daily note` : label);
+          if (day.key === todayKey) cell.setAttribute("aria-current", "date");
           const num = document.createElement("span");
           num.className = "cal-day-num";
           num.textContent = String(day.date.getDate());

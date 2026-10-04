@@ -84,6 +84,11 @@ export interface HostDeps {
    * the caret `caretOffset` chars into the inserted text. No-op if no editor.
    * Optional so older host wirings still satisfy the type. */
   insertAtCursor?: (text: string, caretOffset?: number) => void;
+  /** Open (creating if needed) the daily note for a date, using the vault's
+   * Daily notes settings: folder, date format and template. */
+  openDailyNote?: (date: Date) => Promise<void>;
+  /** Whether the daily note for a date exists. */
+  hasDailyNote?: (date: Date) => boolean;
   /** Re-render open editors/reading views after processors/commands change. */
   onRegistryChanged: () => void;
 }
@@ -284,6 +289,12 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       on: (name: VaultEventName, cb: (...args: unknown[]) => void): EventRef =>
         subscribe(vaultListeners, name, cb),
     },
+    /** Daily notes as the vault's Daily notes settings define them. Absent on
+     * hosts that don't provide them. */
+    dailyNotes:
+      host.openDailyNote && host.hasDailyNote
+        ? { open: (date: Date) => host.openDailyNote!(date), has: (date: Date) => host.hasDailyNote!(date) }
+        : undefined,
     metadataCache: {
       /** Parsed metadata for a note (accepts a `{path}` or a rel string). */
       getFileCache: (file: { path: string } | string): FileCache | null =>
