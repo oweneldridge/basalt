@@ -329,3 +329,34 @@ test.describe("typing in the renamed note while its own links are read", () => {
     await expect.poll(() => vault.read("Target Renamed.md"), { timeout: 8000 }).toBe("Self [[Target Renamed]] link.\n\nlast TYPED\n");
   });
 });
+
+test.describe("typing while a link rewrite's reply is slow", () => {
+  test.use({ vaultFiles: { "Target.md": "# Target\n", "Src.md": "Top [[Target]] here.\n\nmid\n" } });
+
+  test("raises no false conflict and keeps the typing and the fix", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Src");
+    let held = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      if (!held && body.includes('"cmd":"write_note"') && body.includes("Src.md") && body.includes("Target Renamed")) {
+        held = true;
+        const response = await route.fetch();
+        await new Promise((r) => setTimeout(r, 3000));
+        return route.fulfill({ response }).catch(() => {});
+      }
+      await route.continue().catch(() => {});
+    });
+    await page.locator(".tree-row.file", { hasText: "Target" }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+    await page.locator(".prompt-input").fill("Target Renamed");
+    await page.locator(".prompt-input").press("Enter");
+    await expect.poll(() => held).toBe(true);
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "mid" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" TYPED");
+    await settle(page, 5000);
+    await expect(page.locator(".conflict")).toBeHidden();
+    await expect.poll(() => vault.read("Src.md"), { timeout: 8000 }).toBe("Top [[Target Renamed]] here.\n\nmid TYPED\n");
+  });
+});

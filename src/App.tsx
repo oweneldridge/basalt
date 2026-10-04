@@ -3635,6 +3635,21 @@ export default function App() {
     [rememberSelfWrite, patchPane],
   );
 
+  // A link pass's write joins the note's save queue: a save typed meanwhile
+  // waits for it, then compares against the rewrite rather than the old text.
+  const queueWrite = useCallback(<T,>(path: string, job: () => Promise<T>): Promise<T> => {
+    const run = (saveChains.current.get(path) ?? Promise.resolve()).then(job);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    saveChains.current.set(path, settled);
+    void settled.then(() => {
+      if (saveChains.current.get(path) === settled) saveChains.current.delete(path);
+    });
+    return run;
+  }, []);
+
   // A link pass (note rename or folder move) writes rewritten links to disk.
   // Each rewrite is registered at once, in React state too so a re-render can't
   // undo it, and a save typed meanwhile compares against what's on disk.
@@ -3802,24 +3817,27 @@ export default function App() {
         // Fix the note's own links on disk, unless it's being typed into; either
         // way reconcileRewrites then makes sure the newest text, typed or
         // saved, carries the fix.
-        let disk = oldNote.content;
-        try {
-          disk = await readNote(newPath);
-        } catch {
-          /* keep the last known content */
-        }
-        const ownRewritten = rewriteLinks(disk, ownMap);
-        if (ownRewritten !== null) {
-          if (!pending.current.has(newPath)) {
+        const own = await queueWrite(newPath, async () => {
+          let disk = oldNote.content;
+          try {
+            disk = await readNote(newPath);
+          } catch {
+            /* keep the last known content */
+          }
+          const next = rewriteLinks(disk, ownMap);
+          if (next !== null && !pending.current.has(newPath)) {
+            rememberSelfWrite(newRel, next); // before the write: its echo isn't an outside edit
             try {
-              await writeNote(newPath, ownRewritten, disk);
-              rememberSelfWrite(newRel, ownRewritten);
-              registerRewrite({ ...moved, content: ownRewritten });
+              await writeNote(newPath, next, disk);
+              registerRewrite({ ...moved, content: next });
             } catch (e) {
               if (!isWriteConflict(e)) throw e; // changed meanwhile: reconciled below
             }
           }
-          reconcileRewrites([{ path: newPath, base: disk, next: ownRewritten, mapper: ownMap }]);
+          return { disk, next };
+        });
+        if (own.next !== null) {
+          reconcileRewrites([{ path: newPath, base: own.disk, next: own.next, mapper: ownMap }]);
         }
 
         // Rewrite affected sources. Candidates are found via the in-memory
@@ -3851,13 +3869,15 @@ export default function App() {
           }
           try {
             const mapper = sourceMap(note.path, note.rel);
-            const disk = await readNote(note.path);
-            const next = rewriteLinks(disk, mapper);
-            if (next === null) continue;
-            await writeNote(note.path, next, disk);
-            rememberSelfWrite(note.rel, next);
-            registerRewrite({ ...note, content: next });
-            done.push({ path: note.path, base: disk, next, mapper });
+            await queueWrite(note.path, async () => {
+              const disk = await readNote(note.path);
+              const next = rewriteLinks(disk, mapper);
+              if (next === null) return;
+              rememberSelfWrite(note.rel, next); // before the write: its echo isn't an outside edit
+              await writeNote(note.path, next, disk);
+              registerRewrite({ ...note, content: next });
+              done.push({ path: note.path, base: disk, next, mapper });
+            });
           } catch (e) {
             failures.push(note.rel);
             console.error("[basalt] link rewrite failed", note.rel, e);
@@ -3883,7 +3903,7 @@ export default function App() {
         setSaveError(`Couldn't rename: ${e}`);
       }
     },
-    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs, registerRewrite, reconcileRewrites],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs, registerRewrite, reconcileRewrites, queueWrite],
   );
   // Renames and folder moves run one at a time: a second one waits for the
   // first to finish rewriting links, so it never starts from stale paths.
@@ -4251,13 +4271,15 @@ export default function App() {
           continue;
         }
         try {
-          const disk = await readNote(post.path);
-          const next = rewriteLinks(disk, mapper);
-          if (next === null) continue;
-          await writeNote(post.path, next, disk);
-          rememberSelfWrite(post.rel, next);
-          registerRewrite({ ...post, content: next });
-          done.push({ path: post.path, base: disk, next, mapper });
+          await queueWrite(post.path, async () => {
+            const disk = await readNote(post.path);
+            const next = rewriteLinks(disk, mapper);
+            if (next === null) return;
+            rememberSelfWrite(post.rel, next); // before the write: its echo isn't an outside edit
+            await writeNote(post.path, next, disk);
+            registerRewrite({ ...post, content: next });
+            done.push({ path: post.path, base: disk, next, mapper });
+          });
         } catch (e) {
           failures.push(post.rel);
           console.error("[basalt] folder-move link rewrite failed", post.rel, e);
@@ -4281,7 +4303,7 @@ export default function App() {
         folderFails.length > 0 ? `Folder moved, but link updates failed in: ${folderFails.join(", ")}` : null,
       );
     },
-    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs, registerRewrite, reconcileRewrites],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs, registerRewrite, reconcileRewrites, queueWrite],
   );
   const handleRenameFolder = useCallback(
     (folderRel: string, newFolderRel: string) => enqueueRename(() => renameFolderNow(folderRel, newFolderRel)),
