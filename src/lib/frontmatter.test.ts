@@ -2,6 +2,7 @@
 // byte 0, so the central guarantee is: editing one property NEVER disturbs any
 // other line — comments, blanks, block scalars, nested maps all survive.
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import {
   parseFm,
   splitTemplate,
@@ -376,6 +377,10 @@ describe("template merge with comma-separated aliases and tags", () => {
     expect(m("tags: work, home", ["tags: [home, q3]"])).toBe("---\ntags:\n  - work\n  - home\n  - q3\n---\nBody\n");
     expect(m('aliases: "Smith, John"', ["aliases: JS"])).toBe('---\naliases:\n  - "Smith, John"\n  - JS\n---\nBody\n');
     expect(m("aliases: Foo, *Bar", ["aliases: New"])).toBe('---\naliases:\n  - Foo\n  - "*Bar"\n  - New\n---\nBody\n');
+  });
+  it("keeps an escaped quote inside a quoted alias", () => {
+    const out = m('aliases: "a\\"b, c"', ["aliases: New"]);
+    expect(parse(out.split("---")[1])).toEqual({ aliases: ['a"b, c', "New"] });
   });
   it("leaves the note alone when the template adds nothing new", () => {
     const note = "---\naliases: Foo, Bar\n---\nBody\n";

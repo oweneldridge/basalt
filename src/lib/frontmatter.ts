@@ -347,8 +347,11 @@ function splitCommas(value: string): string[] {
   const out: string[] = [];
   let cur = "";
   let q = "";
-  for (const ch of value) {
-    if (q) {
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (q === '"' && ch === "\\") {
+      cur += ch + (value[++i] ?? "");
+    } else if (q) {
       cur += ch;
       if (ch === q) q = "";
     } else if (ch === '"' || ch === "'") {
