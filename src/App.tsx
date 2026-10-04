@@ -650,9 +650,14 @@ export default function App() {
       startGen = structGen.current;
       [read, atts] = await Promise.all([readVault(), listAttachments()]);
     }
+    const seenBefore = new Map(notesRef.current.map((n) => [n.path, n.content]));
     const list = read.map((n) => {
       const w = lastSave.current.get(n.path);
-      return w && w.seq > startSeq ? { ...n, content: w.content } : n;
+      if (w && w.seq > startSeq) return { ...n, content: w.content };
+      // A note over the index cap is listed without its text. Keep the text last
+      // seen on disk: it's the baseline that makes its next save compare-and-swap.
+      const seen = n.content === "" && (n.size ?? 0) > 0 ? seenBefore.get(n.path) : undefined;
+      return seen ? { ...n, content: seen } : n;
     });
     index.current.build(list);
     notesRef.current = list; // the next save's baseline, before React re-renders
@@ -661,6 +666,24 @@ export default function App() {
     bumpStructure();
     return { notes: list, attachments: atts };
   }, [bumpStructure]);
+
+  // Opening a note listed without its text (over the index cap) records what
+  // was read, so its first save is compare-and-swap too.
+  const learnText = useCallback((path: string, text: string) => {
+    const n = notesRef.current.find((x) => x.path === path);
+    if (!n || n.content !== "" || (n.size ?? 0) === 0) return;
+    const known = { ...n, content: text };
+    notesRef.current = notesRef.current.map((x) => (x.path === path ? known : x));
+    setNotes((prev) => prev.map((x) => (x.path === path ? known : x)));
+  }, []);
+  const readToOpen = useCallback(
+    async (path: string) => {
+      const text = await readNote(path);
+      learnText(path, text);
+      return text;
+    },
+    [learnText],
+  );
 
   const rememberSelfWrite = useCallback((rel: string, content: string) => {
     selfWrites.current.delete(rel); // re-insert so eviction order is least-recent
@@ -1128,7 +1151,7 @@ export default function App() {
       try {
         // Unsaved text another pane holds wins over disk (a failed or conflicted
         // save would otherwise be overwritten by this pane's first keystroke).
-        doc = freshDoc(path, pending.current.get(path) ?? (await readNote(path)));
+        doc = freshDoc(path, pending.current.get(path) ?? (await readToOpen(path)));
       } catch (e) {
         setSaveError(`Couldn't open note: ${e}`);
         return;
@@ -1270,7 +1293,7 @@ export default function App() {
       let active: string | null = neighbor;
       if (neighbor) {
         try {
-          doc = freshDoc(neighbor, pending.current.get(neighbor) ?? (await readNote(neighbor)));
+          doc = freshDoc(neighbor, pending.current.get(neighbor) ?? (await readToOpen(neighbor)));
         } catch (e) {
           // Never mount an editable editor on text we couldn't read: a keystroke
           // would save it over the real note. Leave the tab for a retry.
@@ -1498,7 +1521,7 @@ export default function App() {
         let shown: string | null = active;
         if (!isViewPath(active)) {
           try {
-            doc = await readNote(active);
+            doc = await readToOpen(active);
           } catch {
             shown = null; // unreadable: no editor on placeholder text
           }
@@ -4668,7 +4691,7 @@ export default function App() {
           <StackedTabs
             tabs={pane.tabs.map((p) => ({ path: p, name: tabItemsFor([p])[0]?.name ?? p, rel: notes.find((n) => n.path === p)?.rel ?? "" }))}
             activePath={pane.active}
-            readNote={readNote}
+            readNote={readToOpen}
             liveDoc={(p) => {
               const known = notesRef.current.find((n) => n.path === p);
               const seen = known && !(known.content === "" && (known.size ?? 0) > 0) ? known.content : undefined;

@@ -270,3 +270,36 @@ test.describe("a save whose reply is slow", () => {
     });
   }
 });
+
+test.describe("a note too big for the index", () => {
+  const filler = ("lorem ipsum dolor sit amet ".repeat(40) + "\n").repeat(4800);
+  const big = `# Big\n\nhead line\n\n${filler}`;
+  test.use({ vaultFiles: { "Big.md": big } });
+
+  for (const saveFirst of [true, false]) {
+    test(`an edit made elsewhere while offline isn't overwritten (${saveFirst ? "saved" : "never saved"} before)`, async ({ page, vault }) => {
+      expect(Buffer.byteLength(big)).toBeGreaterThan(5_000_000);
+      await openApp(page, vault);
+      await openNote(page, "Big");
+      const editor = page.locator(".pane:not(.dock) .cm-content").first();
+      if (saveFirst) {
+        await editor.locator(".cm-line", { hasText: "head line" }).click();
+        await page.keyboard.press("End");
+        await page.keyboard.type(" A");
+        await expect.poll(() => vault.read("Big.md").slice(0, 40), { timeout: 10000 }).toContain("head line A");
+        await settle(page, 1000);
+      }
+      await vault.stop();
+      vault.write("Big.md", vault.read("Big.md").replace("head line", "head line PHONE"));
+      await vault.start();
+      await settle(page, 6000);
+      await editor.locator(".cm-line", { hasText: "head line" }).click();
+      await page.keyboard.press("End");
+      await page.keyboard.type(" B");
+      await settle(page, 3000);
+      const disk = vault.read("Big.md");
+      const conflict = await page.locator(".conflict").count();
+      expect(disk.includes("PHONE") || conflict > 0).toBe(true);
+    });
+  }
+});
