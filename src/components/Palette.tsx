@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Modal } from "./Modal";
 import type { ReactNode } from "react";
 
@@ -60,21 +60,33 @@ export function Palette<T>({
     }
   };
 
+  const listId = useId();
+  const optionId = (i: number) => `${listId}-opt-${i}`;
   return (
     <Modal className="palette-overlay" label={placeholder} onClose={onClose}>
       <div className="palette" onMouseDown={(e) => e.stopPropagation()}>
         <input
           className="palette-input"
           placeholder={placeholder}
+          aria-label={placeholder}
+          role="combobox"
+          aria-expanded={items.length > 0}
+          aria-controls={listId}
+          aria-autocomplete="list"
+          aria-activedescendant={items.length ? optionId(active) : undefined}
           value={query}
           autoFocus
           onChange={(e) => setQuery(e.currentTarget.value)}
           onKeyDown={onKeyDown}
         />
-        <div className="palette-list" ref={listRef}>
+        <div className="palette-list" ref={listRef} id={listId} role="listbox" aria-label={placeholder}>
           {items.map((item, i) => (
             <button
               key={itemKey(item, i)}
+              id={optionId(i)}
+              role="option"
+              aria-selected={i === active}
+              tabIndex={-1}
               className={`palette-item${i === active ? " active" : ""}`}
               onMouseEnter={() => setActive(i)}
               onClick={() => onSelect(item)}

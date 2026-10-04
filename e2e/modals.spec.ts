@@ -71,3 +71,18 @@ test("tabs work from the keyboard: arrows move, Enter opens, Delete closes", asy
   await expect(tabs).toHaveCount(1);
   await expect(page.getByRole("tablist", { name: "Open notes" })).toBeVisible();
 });
+
+test("the palette is a combobox whose active option is announced", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await expect(page.locator(".sidebar")).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+p");
+  const box = page.getByRole("dialog").getByRole("combobox");
+  await expect(box).toBeFocused();
+  const first = await box.getAttribute("aria-activedescendant");
+  expect(first).toBeTruthy();
+  await expect(page.locator(`[id="${first}"]`)).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("ArrowDown");
+  const second = await box.getAttribute("aria-activedescendant");
+  expect(second).not.toBe(first);
+  await expect(page.locator(`[id="${second}"]`)).toHaveAttribute("role", "option");
+});
