@@ -220,3 +220,29 @@ test.describe("link resolution order", () => {
     await expect.poll(() => vault.read("Work/Index.md")).toBe("Next: [[Standup]]\n");
   });
 });
+
+test.describe("moving a note keeps its own links pointing where they did", () => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  test.use({
+    vaultFiles: {
+      "A/Media/pic.png": png,
+      "A/Plan.md": "# Plan A\n",
+      "B/Plan.md": "# Plan B\n",
+      "A/Hub.md": "# Hub\n\n![](./Media/pic.png)\n![[./Media/pic.png]]\n[[Plan]]\n[[./Plan]]\n![[pic.png]]\n",
+    },
+  });
+
+  test("relative attachment links and folder-first names are re-pointed", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await page.locator(".tree-row.folder", { hasText: "A" }).first().click();
+    await renameFromTree(page, "Hub", "B/Hub");
+    await expect.poll(() => vault.exists("B/Hub.md")).toBe(true);
+    await expect.poll(() => vault.read("B/Hub.md")).not.toContain("./Media");
+    expect(vault.read("B/Hub.md")).toBe(
+      "# Hub\n\n![](pic.png)\n![[pic.png]]\n[[A/Plan]]\n[[A/Plan]]\n![[pic.png]]\n",
+    );
+  });
+});

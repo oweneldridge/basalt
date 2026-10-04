@@ -39,6 +39,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   moves leave links to notes that didn't move alone.
 - Renaming a folder updates markdown-style attachment links such as
   `![](Media/pic.png)`, not only `![[...]]` embeds.
+- Moving a note to another folder keeps its own links pointing where they did:
+  `./` attachment paths, and bare names Obsidian looks up in the note's folder
+  first.
 - "Link" on an unlinked mention writes Obsidian's link text (a path when the
   name is ambiguous) and skips mentions inside URLs and tags.
 - Rename no longer rewrites a note that has unsaved edits or a conflict; it

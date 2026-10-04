@@ -458,6 +458,12 @@ export class VaultIndex {
    * bare `[[Note]]`, `[[folder/Note]]`, `[[/Note]]`, `[[./N]]`/`[[../N]]`.
    */
   resolve(rawTarget: string, sourcePath: string): string | null {
+    return this.resolveFromRel(rawTarget, this.meta.get(sourcePath)?.rel ?? null);
+  }
+
+  /** resolve() for a link written in a note at `sourceRel`, which needn't be
+   * indexed: where a note's links would point after it moves. */
+  resolveFromRel(rawTarget: string, sourceRel: string | null): string | null {
     const p = targetPathPart(rawTarget);
     if (!p) return null;
     const segments = p.split(/[/\\]/);
@@ -475,7 +481,6 @@ export class VaultIndex {
       candidates = this.byName.get(normalizeName(lastSeg));
     }
     const real = candidates ?? [];
-    const sourceRel = this.meta.get(sourcePath)?.rel ?? null;
     const hit = linkpathDest(p, sourceRel, real, (path) => this.meta.get(path)?.rel ?? "", ".md");
     if (hit) return hit;
     // A bare name with no such file: Basalt also tries aliases (Obsidian leaves

@@ -345,3 +345,16 @@ describe("backlink and embed lists for Bases", () => {
     expect(idx.backlinkRels("/v/T.md")).toEqual(["Sub/B"]);
   });
 });
+
+describe("resolveFromRel", () => {
+  it("resolves a link as if written from another folder", () => {
+    const idx = new VaultIndex();
+    idx.build([note("A/Plan.md"), note("B/Plan.md"), note("A/Hub.md", "[[Plan]]")]);
+    const hub = idx.resolve("Plan", "/v/A/Hub.md");
+    expect(hub).toBe(idx.resolveFromRel("Plan", "A/Hub.md"));
+    expect(idx.resolveFromRel("Plan", "A/Hub.md")).toMatch(/A\/Plan\.md$/);
+    expect(idx.resolveFromRel("Plan", "B/Hub.md")).toMatch(/B\/Plan\.md$/);
+    expect(idx.resolveFromRel("./Plan", "B/Hub.md")).toMatch(/B\/Plan\.md$/);
+    expect(idx.resolveFromRel("../A/Plan", "B/Hub.md")).toMatch(/A\/Plan\.md$/);
+  });
+});

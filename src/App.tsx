@@ -3587,12 +3587,14 @@ export default function App() {
           preIndex.allAliases().some((a) => a.rel !== newRel && normalizeName(a.alias) === newBaseKey);
         const newRelNoExt = newRel.replace(/\.md$/i, "");
 
-        // The renamed note's own self-links retargeted and position-dependent
-        // ./.. links re-anchored.
+        // The renamed note's own links: self-links retargeted, and any link whose
+        // target changes with the move re-pointed at the file it meant (./ and
+        // ../ paths, and bare names Obsidian looks up in the note's folder
+        // first). Obsidian compares each link before and after the same way.
         const selfAliases = new Set(preIndex.aliasesOf(oldPath).map((a) => normalizeName(a)));
+        const atts = attachmentsRef.current;
         const ownMap = (raw: string): string | null => {
           const dest = preIndex.resolve(raw, oldPath);
-          if (!dest) return null;
           if (dest === oldPath) {
             // A self-link via an alias still resolves post-rename — leave it.
             const last = normalizeName(targetPathPart(raw).split(/[/\\]/).pop() ?? "");
@@ -3600,15 +3602,19 @@ export default function App() {
               return null;
             return linkTargetForFormat(fmt, newRelNoExt, taken, newRel); // self-link
           }
-          const pathPart = targetPathPart(raw);
-          const relative = pathPart.split(/[/\\]/).some((seg) => seg === "." || seg === "..");
-          if (!relative) return null; // position-independent links still resolve
-          const destNote = preNotes.find((n) => n.path === dest);
-          if (!destNote) return null;
-          const destTaken = preNotes.some(
-            (n) => n.path !== dest && normalizeName(n.name) === normalizeName(destNote.name),
-          );
-          return linkTargetForFormat(fmt, destNote.rel.replace(/\.md$/i, ""), destTaken, newRel);
+          if (dest) {
+            if (preIndex.resolveFromRel(raw, newRel) === dest) return null;
+            const destNote = preNotes.find((n) => n.path === dest);
+            if (!destNote) return null;
+            const destTaken = preNotes.some(
+              (n) => n.path !== dest && normalizeName(n.name) === normalizeName(destNote.name),
+            );
+            return linkTargetForFormat(fmt, destNote.rel.replace(/\.md$/i, ""), destTaken, newRel);
+          }
+          const att = resolveAttachment(atts, raw, oldNote.rel);
+          if (!att || resolveAttachment(atts, raw, newRel)?.path === att.path) return null;
+          const attTaken = atts.some((a) => a.path !== att.path && normalizeName(a.name) === normalizeName(att.name));
+          return linkTargetForFormat(fmt, att.rel, attTaken, newRel);
         };
         const typing = pending.current.get(newPath);
         if (typing !== undefined) {
