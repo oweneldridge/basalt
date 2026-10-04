@@ -2612,8 +2612,24 @@ export default function App() {
       void (async () => {
         const holder = notesRef.current.find((n) => n.content.includes(placeholder));
         if (!holder) return; // user removed it (or it was never saved) — drop
+        // Unsaved edits in that note: replace in the editor's text and let
+        // autosave write it, rather than writing disk underneath the editor.
+        const replaceInEditor = () => {
+          const live = pending.current.get(holder.path);
+          if (live === undefined) return false;
+          if (live.includes(placeholder)) {
+            const next = live.split(placeholder).join(replacement);
+            pending.current.set(holder.path, next);
+            for (const p of Object.values(panesRef.current)) {
+              if (p.active === holder.path) patchPane(p.id, { doc: next });
+            }
+          }
+          return true;
+        };
+        if (replaceInEditor()) return;
         try {
           const disk = await readNote(holder.path);
+          if (replaceInEditor()) return;
           if (!disk.includes(placeholder)) return;
           const next = disk.split(placeholder).join(replacement);
           await writeNote(holder.path, next, disk);
@@ -3684,6 +3700,10 @@ export default function App() {
       try {
         disk = await readNote(sourcePath);
       } catch {
+        return false;
+      }
+      if (pending.current.has(sourcePath)) {
+        setSaveError("Save this note before linking mentions");
         return false;
       }
       const lines = disk.split("\n");
