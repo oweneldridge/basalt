@@ -48,6 +48,9 @@ struct AppState {
     sem: Semaphore,
 }
 
+/// Largest request body accepted (a whole vault file can be written in one).
+const BODY_LIMIT: usize = 128 * 1024 * 1024;
+
 #[derive(Deserialize)]
 struct InvokeReq {
     cmd: String,
@@ -112,7 +115,7 @@ async fn main() {
         .layer(CompressionLayer::new()) // gzip — the 43MB read_vault → ~9MB
         // Room for base64 attachment writes (desktop has no limit; axum's 2MB
         // default would reject routine screenshot pastes with an opaque 413).
-        .layer(DefaultBodyLimit::max(128 * 1024 * 1024));
+        .layer(DefaultBodyLimit::max(BODY_LIMIT));
     // NO CORS layer: the app is same-origin in prod (server serves dist/) and in
     // dev (vite proxies /api), so it never needs cross-origin access. Permissive
     // CORS would only let a drive-by website read/destroy the vault — the
@@ -279,17 +282,34 @@ async fn events(State(app): State<Arc<AppState>>) -> Sse<impl Stream<Item = Resu
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-async fn invoke(State(app): State<Arc<AppState>>, Json(req): Json<InvokeReq>) -> Json<Value> {
-    // Cap concurrent command execution (read_vault is ~150MB peak); excess
-    // requests queue as backpressure instead of piling up toward an OOM.
+async fn invoke(State(app): State<Arc<AppState>>, request: Request) -> Response {
+    // Only JSON bodies: a cross-site form can't send one without a preflight,
+    // so cached Basic-auth credentials can't be used to post commands.
+    let is_json = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(';').next().unwrap_or("").trim().eq_ignore_ascii_case("application/json"));
+    if !is_json {
+        return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "expected application/json").into_response();
+    }
+    // Cap concurrent commands (read_vault is ~150MB peak), and take the permit
+    // before reading the body, so queued requests don't each buffer a large one.
     let _permit = app.sem.acquire().await;
+    let req: InvokeReq = match axum::body::to_bytes(request.into_body(), BODY_LIMIT).await {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(r) => r,
+            Err(e) => return (StatusCode::BAD_REQUEST, format!("bad request: {e}")).into_response(),
+        },
+        Err(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "request too large").into_response(),
+    };
     let root = app.root.clone();
     // Every core op is blocking fs work — keep it off the async worker threads.
     let out = tokio::task::spawn_blocking(move || dispatch(&root, &req.cmd, &req.args)).await;
     match out {
-        Ok(Ok(v)) => Json(json!({ "result": v })),
-        Ok(Err(e)) => Json(json!({ "error": e })),
-        Err(e) => Json(json!({ "error": format!("task failed: {e}") })),
+        Ok(Ok(v)) => Json(json!({ "result": v })).into_response(),
+        Ok(Err(e)) => Json(json!({ "error": e })).into_response(),
+        Err(e) => Json(json!({ "error": format!("task failed: {e}") })).into_response(),
     }
 }
 

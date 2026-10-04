@@ -150,3 +150,23 @@ test("the server refuses to start with an empty user or password", async () => {
     expect(r.status, auth).toBe(1);
   }
 });
+
+test("commands must be JSON, and a bad body gets a clear error", async ({ vault }) => {
+  const post = (body: string, type: string) =>
+    fetch(`${vault.url}/api/invoke`, { method: "POST", headers: { "Content-Type": type }, body });
+  const form = await post(JSON.stringify({ cmd: "read_note", args: { path: vault.path("Ideas.md") } }), "text/plain");
+  expect(form.status).toBe(415);
+  expect((await post("{not json", "application/json")).status).toBe(400);
+  const ok = await invoke(vault, "read_note", { path: vault.path("Ideas.md") });
+  expect(ok.status).toBe(200);
+  expect(String(ok.body?.result)).toContain("# Ideas");
+  const charset = await post(JSON.stringify({ cmd: "read_note", args: { path: vault.path("Ideas.md") } }), "application/json; charset=utf-8");
+  expect(charset.status).toBe(200);
+});
+
+test("a missing folder outside the vault reads the same as an existing one", async ({ vault }) => {
+  const a = await invoke(vault, "read_note", { path: `/etc/basalt-no-such-dir-${Date.now()}/x.md` });
+  const b = await invoke(vault, "read_note", { path: "/etc/x.md" });
+  expect(a.body?.error).toBe("path escapes vault");
+  expect(b.body?.error).toBe(a.body?.error);
+});
