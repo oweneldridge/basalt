@@ -2249,9 +2249,16 @@ export default function App() {
         // goes in at the caret, as in Obsidian. At the very top of a note with no
         // properties the whole template goes in as it is.
         const own = splitTemplate(api.getText());
+        // Text never goes inside or above the note's own properties block.
+        const inProps = own !== null && api.selectionFrom() < own.offset;
+        const insertBody = (body: string, caret: number | undefined) => {
+          if (!own || !inProps) return api.insertAtCursor(body, caret);
+          const nl = own.offset > 0 && api.getText()[own.offset - 1] !== "\n" ? "\n" : "";
+          api.insertAt(own.offset, nl + body, caret === undefined ? undefined : caret + nl.length);
+        };
         const split = api.atStart() && !own ? null : splitTemplate(res.text);
         if (!split) {
-          api.insertAtCursor(res.text, res.cursor ?? undefined);
+          insertBody(res.text, res.cursor ?? undefined);
           return;
         }
         let merge: (doc: string) => string;
@@ -2263,14 +2270,7 @@ export default function App() {
           return;
         }
         const cursor = res.cursor !== null && res.cursor >= split.offset ? res.cursor - split.offset : undefined;
-        if (own && api.selectionFrom() < own.offset) {
-          // The caret is in the note's properties: the body goes right after them.
-          const text = api.getText();
-          const nl = own.offset > 0 && text[own.offset - 1] !== "\n" ? "\n" : "";
-          api.insertAt(own.offset, nl + split.body, cursor === undefined ? undefined : cursor + nl.length);
-        } else {
-          api.insertAtCursor(split.body, cursor);
-        }
+        insertBody(split.body, cursor);
         api.transformDoc(merge);
       } catch (e) {
         setSaveError(`Couldn't insert template: ${e}`);

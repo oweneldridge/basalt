@@ -328,3 +328,22 @@ describe("template merge keeps what the note has", () => {
     expect(m("title: old", ['"title": new'])).toBe('---\n"title": new\n---\nBody\n');
   });
 });
+
+describe("template merge, second pass", () => {
+  const m = (note: string, props: string[]) => mergeTemplateProps(`---\n${note}\n---\nBody\n`, props);
+  it("keeps a quoted value whole when it becomes a list", () => {
+    expect(m('tags: "#a #b"', ["tags: [meeting]"])).toBe('---\ntags:\n  - "#a #b"\n  - meeting\n---\nBody\n');
+  });
+  it("a template single value joins the note's list instead of replacing it", () => {
+    expect(m("tags:\n  - work", ["tags: meeting"])).toBe("---\ntags:\n  - work\n  - meeting\n---\nBody\n");
+    expect(m("tags: [work]", ["tags: work"])).toBe("---\ntags: [work]\n---\nBody\n");
+  });
+  it("leaves shapes it can't extend safely alone", () => {
+    expect(m("tags: [a] # mine", ["tags: [b]"])).toBe("---\ntags: [a] # mine\n---\nBody\n");
+    expect(m("note: first\n  continued", ["note: [x]"])).toBe("---\nnote: first\n  continued\n---\nBody\n");
+  });
+  it("quotes flow items that need it as valid YAML", () => {
+    const out = m("tags: [a]", ['tags: ["line\\nnext, more"]']);
+    expect(out).toBe('---\ntags: [a, "line\\nnext, more"]\n---\nBody\n');
+  });
+});

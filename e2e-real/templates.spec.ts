@@ -52,3 +52,23 @@ test.describe("templates with properties", () => {
     expect(vault.read("Plain.md")).toBe("---\ntags: [meeting]\nstatus: draft\n---\n# Plain\n\nFirst line\n## Agenda\n");
   });
 });
+
+test.describe("a template without properties", () => {
+  test.use({
+    vaultFiles: {
+      "Templates/Plain body.md": "Just a line\n",
+      "Tagged.md": "---\ntags: [work]\n---\n# Tagged\n",
+    },
+  });
+
+  test("inserted at the very top, it goes after the note's properties", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Tagged");
+    await page.locator(".pane:not(.dock) .cm-content").first().click();
+    await page.keyboard.press("ControlOrMeta+Home");
+    await insertTemplate(page, "Plain body");
+    await expect.poll(() => vault.read("Tagged.md")).toContain("Just a line");
+    await settle(page);
+    expect(vault.read("Tagged.md")).toBe("---\ntags: [work]\n---\nJust a line\n# Tagged\n");
+  });
+});

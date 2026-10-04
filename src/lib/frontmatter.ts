@@ -330,27 +330,45 @@ function keyName(p: FmProp): string {
 const isScalar = (x: unknown) => x === null || ["string", "number", "boolean"].includes(typeof x);
 
 /** A list item as YAML: strings quoted when needed, numbers and booleans bare.
- * In a flow list `[a, b]`, commas and brackets also need quotes. */
+ * In a flow list `[a, b]`, commas and brackets also need quotes; a JSON string
+ * is a valid double-quoted YAML scalar. */
 function itemYaml(x: unknown, flow: boolean): string {
   if (typeof x !== "string") return String(x);
-  return flow && /[,[\]{}]/.test(x) ? `"${x.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : serializeScalar(x);
+  if (flow && (/[,[\]{}]/.test(x) || needsQuote(x))) return JSON.stringify(x);
+  return serializeScalar(x);
 }
 
-/** A line's value text after `key:`, without a trailing comment. */
+/** A line's value text after `key:`, without a trailing comment. A `#` inside
+ * quotes is part of the value. */
 function rawValue(line: string): string {
   const v = line.slice(line.indexOf(":") + 1);
-  const hash = v.search(/\s#/);
-  return (hash === -1 ? v : v.slice(0, hash)).trim();
+  let quote: string | null = null;
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i];
+    if (quote) {
+      if (quote === '"' && c === "\\") i++;
+      else if (c === quote) {
+        if (quote === "'" && v[i + 1] === "'") i++;
+        else quote = null;
+      }
+    } else if ((c === '"' || c === "'") && v.slice(0, i).trim() === "") {
+      quote = c;
+    } else if (c === "#" && (i === 0 || /\s/.test(v[i - 1]))) {
+      return v.slice(0, i).trim();
+    }
+  }
+  return v.trim();
 }
 
 /**
  * Merge a template's property lines into a note, close to Obsidian's
- * insertProperties: new keys are added and a list gains the template's items
- * it lacks. Unlike Obsidian, nothing the note already has is lost: a single
- * value meeting a template list becomes a list of both, an empty template
- * value leaves the note's alone, and a nested list or map in the note stays.
- * Only keys that change are rewritten; template values keep their formatting.
- * Throws if the template's YAML is invalid.
+ * insertProperties: new keys are added, a template value replaces a single
+ * value, and a list gains the template's items it lacks. Unlike Obsidian, lists
+ * never lose items: a single value meeting a list (either way round) joins it.
+ * An empty template value leaves the note's alone, and shapes that can't be
+ * extended safely (nested lists or maps, values spanning lines) stay as they
+ * are. Only keys that change are rewritten; template values keep their
+ * formatting. Throws if the template's YAML is invalid.
  */
 export function mergeTemplateProps(note: string, props: string[]): string {
   const values: unknown = parseYaml(props.join("\n")) ?? {};
@@ -377,10 +395,12 @@ export function mergeTemplateProps(note: string, props: string[]): string {
       body.splice(np.start, np.end - np.start + 1, ...lines);
     } else if (np.kind === "complex" || (typeof v === "object" && !Array.isArray(v))) {
       continue; // nested lists and maps aren't merged
-    } else if (Array.isArray(v)) {
-      if (!v.every(isScalar)) continue;
+    } else if (Array.isArray(v) || np.kind === "list" || np.kind === "inline") {
+      // A template single value joins a list the note already has.
+      const items = Array.isArray(v) ? v : [v];
+      if (!items.every(isScalar)) continue;
       const have = np.values;
-      const add = v.filter((x) => x !== null && !have.includes(String(x)));
+      const add = items.filter((x) => x !== null && !have.includes(String(x)));
       if (add.length === 0) continue;
       if (np.kind === "list") {
         const indent = /^(\s*)-/.exec(cur.body[np.start + 1] ?? "")?.[1] ?? "  ";
@@ -391,9 +411,13 @@ export function mergeTemplateProps(note: string, props: string[]): string {
         const sep = /\[\s*$/.test(line.slice(0, close)) ? "" : ", ";
         body[np.start] = line.slice(0, close) + sep + add.map((x) => itemYaml(x, true)).join(", ") + line.slice(close);
       } else {
-        // A single value meets a list: keep it as the list's first item.
+        // A single value meets a list: keep it as the list's first item. A value
+        // spanning lines, or a flow collection behind a comment, stays as it is.
+        const raw = rawValue(cur.body[np.start]);
+        const continued = /^\s+\S/.test(cur.body[np.end + 1] ?? "");
+        if (np.end !== np.start || continued || /^[[{]/.test(raw)) continue;
         const keyPart = cur.body[np.start].slice(0, cur.body[np.start].indexOf(":") + 1);
-        body.splice(np.start, 1, keyPart, `  - ${rawValue(cur.body[np.start])}`, ...add.map((x) => `  - ${itemYaml(x, false)}`));
+        body.splice(np.start, 1, keyPart, `  - ${raw}`, ...add.map((x) => `  - ${itemYaml(x, false)}`));
       }
     } else {
       body.splice(np.start, np.end - np.start + 1, ...lines);
