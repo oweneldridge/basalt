@@ -35,8 +35,8 @@ running in the page, and the work goes into where their code comes from.
   `new Function(...)`, so its call sites are unchanged. Unloading stays as it is;
   a reload adds a query string so the module cache doesn't return the old code.
 - **The web build.** `basalt-server` serves the same files at
-  `/api/plugin/<id>/<sha256>.js` (same origin, so `'self'` covers it), and the
-  web build gets the CSP it doesn't send today.
+  `/api/plugin/<id>/<sha256>.js` (same origin, so `'self'` covers it), and its
+  CSP (sent since 2026-10-04) drops the `'unsafe-eval'` it keeps until then.
 
 ## What it doesn't solve
 

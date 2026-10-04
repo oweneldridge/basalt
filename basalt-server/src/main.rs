@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{DefaultBodyLimit, Request, State},
-    http::{header, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::sse::{Event, KeepAlive, Sse},
     response::{IntoResponse, Response},
@@ -140,6 +140,9 @@ async fn main() {
         println!("[basalt-server] HTTP Basic auth: OFF (set BASALT_AUTH=user:pass to enable)");
     }
 
+    // Outermost, so 401s and every other response carry it too.
+    app = app.layer(middleware::from_fn(security_headers));
+
     // Bind host: default 127.0.0.1 (safe on bare metal — only localhost or a
     // reverse proxy like Tailscale Serve can reach it). In Docker, set
     // BASALT_HOST=0.0.0.0 so the container's published port (bound to 127.0.0.1
@@ -188,6 +191,24 @@ fn start_watcher(root: PathBuf, tx: broadcast::Sender<String>) -> notify::Result
 
 fn frame(event: &str, payload: Value) -> String {
     json!({ "event": event, "payload": payload }).to_string()
+}
+
+/// Defense in depth for the web app: scripts only from this server, nothing
+/// may frame it, and no `<base>`, form or plugin-object tricks. `'unsafe-eval'`
+/// stays only until plugins load as modules (DESIGN-plugin-loading.md); remote
+/// https images follow the app's own setting.
+const CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; \
+img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; media-src 'self' data: blob:; \
+object-src 'self' data: blob:; frame-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+async fn security_headers(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let h = res.headers_mut();
+    h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(CSP));
+    h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    // Note paths in URLs never reach the hosts of remote images.
+    h.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    res
 }
 
 /// HTTP Basic auth as a small middleware we control (tower-http 0.6 dropped

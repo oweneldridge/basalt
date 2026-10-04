@@ -108,6 +108,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- The web build sends a Content Security Policy: scripts only from the server
+  itself, no framing, no `<base>` or form tricks, plus `nosniff` and
+  `no-referrer`. `'unsafe-eval'` remains only until plugins load as modules.
 - A path outside the vault gets the same error whether or not it exists, so
   error text can't be used to probe the host's files.
 - The web server takes a request's concurrency slot before reading its body,
