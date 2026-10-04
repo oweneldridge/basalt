@@ -61,6 +61,11 @@ export interface EditorApi {
   insertAtCursor: (text: string, caretOffset?: number) => void;
   /** True when the selection starts at the very top of the note. */
   atStart: () => boolean;
+  /** The note's text and where the selection starts. */
+  getText: () => string;
+  selectionFrom: () => number;
+  /** Insert `text` at `pos` (not at the caret) and put the caret `caretOffset` into it. */
+  insertAt: (pos: number, text: string, caretOffset?: number) => void;
   /** Rewrite the note through `fn`, applied as the smallest edit so the caret stays put. */
   transformDoc: (fn: (doc: string) => string) => void;
   /** True when the editor has a non-empty selection. */
@@ -187,6 +192,19 @@ export function EditorPane({
         v.focus();
       },
       atStart: () => view.current?.state.selection.main.from === 0,
+      getText: () => view.current?.state.doc.toString() ?? "",
+      selectionFrom: () => view.current?.state.selection.main.from ?? 0,
+      insertAt: (pos, text, caretOffset) => {
+        const v = view.current;
+        if (!v) return;
+        const at = Math.min(pos, v.state.doc.length);
+        v.dispatch({
+          changes: { from: at, insert: text },
+          selection: EditorSelection.cursor(at + (caretOffset ?? text.length)),
+          scrollIntoView: true,
+        });
+        v.focus();
+      },
       transformDoc: (fn) => {
         const v = view.current;
         if (!v) return;

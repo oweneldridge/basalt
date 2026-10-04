@@ -29,6 +29,19 @@ test.describe("templates with properties", () => {
     );
   });
 
+  test("with the caret at the very top, the body goes after the note's properties", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Tagged");
+    await page.locator(".pane:not(.dock) .cm-content").first().click();
+    await page.keyboard.press("ControlOrMeta+Home");
+    await insertTemplate(page, "Meeting");
+    await expect.poll(() => vault.read("Tagged.md")).toContain("## Agenda");
+    await settle(page);
+    expect(vault.read("Tagged.md")).toBe(
+      "---\n# mine\ntags:\n  - work\n  - meeting\nstatus: draft\n---\n## Agenda\n# Tagged\n\nFirst line\n",
+    );
+  });
+
   test("a note without properties gets them at the top", async ({ page, vault }) => {
     await openApp(page, vault);
     await openNote(page, "Plain");

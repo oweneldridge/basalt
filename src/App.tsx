@@ -2234,9 +2234,11 @@ export default function App() {
         };
         const res = await applyTemplate(text, ctx);
         if (res.errors.length) setSaveError(res.errors[0]);
-        // Below the top of a note, a template's properties merge into the note's
-        // own and only its body goes in at the caret, as in Obsidian.
-        const split = api.atStart() ? null : splitTemplate(res.text);
+        // A template's properties merge into the note's own and only its body
+        // goes in at the caret, as in Obsidian. At the very top of a note with no
+        // properties the whole template goes in as it is.
+        const own = splitTemplate(api.getText());
+        const split = api.atStart() && !own ? null : splitTemplate(res.text);
         if (!split) {
           api.insertAtCursor(res.text, res.cursor ?? undefined);
           return;
@@ -2250,7 +2252,14 @@ export default function App() {
           return;
         }
         const cursor = res.cursor !== null && res.cursor >= split.offset ? res.cursor - split.offset : undefined;
-        api.insertAtCursor(split.body, cursor);
+        if (own && api.selectionFrom() < own.offset) {
+          // The caret is in the note's properties: the body goes right after them.
+          const text = api.getText();
+          const nl = own.offset > 0 && text[own.offset - 1] !== "\n" ? "\n" : "";
+          api.insertAt(own.offset, nl + split.body, cursor === undefined ? undefined : cursor + nl.length);
+        } else {
+          api.insertAtCursor(split.body, cursor);
+        }
         api.transformDoc(merge);
       } catch (e) {
         setSaveError(`Couldn't insert template: ${e}`);

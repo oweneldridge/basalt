@@ -308,3 +308,23 @@ describe("templates with properties", () => {
     expect(() => mergeTemplateProps("---\na: 1\n---\n", ["a: [unclosed"])).toThrow();
   });
 });
+
+describe("template merge keeps what the note has", () => {
+  const m = (note: string, props: string[]) => mergeTemplateProps(`---\n${note}\n---\nBody\n`, props);
+  it("a single value meeting a template list becomes a list of both", () => {
+    expect(m("tags: work", ["tags: [meeting]"])).toBe("---\ntags:\n  - work\n  - meeting\n---\nBody\n");
+  });
+  it("adds only missing items, keeps the note's lines and types", () => {
+    expect(m("nums:\n  - 1\n  - 2", ["nums: [2, 3]"])).toBe("---\nnums:\n  - 1\n  - 2\n  - 3\n---\nBody\n");
+    expect(m("tags: [a]", ["tags: [b, 'c, d']"])).toBe('---\ntags: [a, b, "c, d"]\n---\nBody\n');
+    const same = "tags: [a, b]";
+    expect(m(same, ["tags: [a]"])).toBe(`---\n${same}\n---\nBody\n`);
+  });
+  it("never writes a list of maps as strings, and an empty value wipes nothing", () => {
+    expect(m("people:\n  - Ann", ["people:", "  - name: Bob"])).toBe("---\npeople:\n  - Ann\n---\nBody\n");
+    expect(m("status: active", ['status: ""'])).toBe("---\nstatus: active\n---\nBody\n");
+  });
+  it("matches a quoted template key to the note's key", () => {
+    expect(m("title: old", ['"title": new'])).toBe('---\n"title": new\n---\nBody\n');
+  });
+});

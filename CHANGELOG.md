@@ -54,8 +54,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shortest path), so a rename updates the same links Obsidian would. Folder
   moves leave links to notes that didn't move alone.
 - Inserting a template that has properties merges them into the note's own
-  (new keys added, list items combined) instead of dropping a second `---`
-  block into the middle of the note, as Obsidian does.
+  instead of dropping a second `---` block into the middle of the note. New
+  keys are added and lists gain the missing items; nothing the note already
+  has is lost or retyped. With the caret at the very top, the body goes after
+  the note's properties.
 - Adding a row or column to a table inside a list item, blockquote or callout
   keeps its indent and `>` markers, and a quoted table no longer shows `>` as
   its first column.

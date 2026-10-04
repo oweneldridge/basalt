@@ -321,12 +321,36 @@ export function splitTemplate(text: string): { props: string[]; body: string; of
   return { props: parsed.body, body: text.slice(offset), offset };
 }
 
+/** A property's name: its key, or the text inside a quoted key. */
+function keyName(p: FmProp): string {
+  const q = /^\s*(["'])(.*?)\1\s*:/.exec(p.key);
+  return q ? q[2] : p.key;
+}
+
+const isScalar = (x: unknown) => x === null || ["string", "number", "boolean"].includes(typeof x);
+
+/** A list item as YAML: strings quoted when needed, numbers and booleans bare.
+ * In a flow list `[a, b]`, commas and brackets also need quotes. */
+function itemYaml(x: unknown, flow: boolean): string {
+  if (typeof x !== "string") return String(x);
+  return flow && /[,[\]{}]/.test(x) ? `"${x.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : serializeScalar(x);
+}
+
+/** A line's value text after `key:`, without a trailing comment. */
+function rawValue(line: string): string {
+  const v = line.slice(line.indexOf(":") + 1);
+  const hash = v.search(/\s#/);
+  return (hash === -1 ? v : v.slice(0, hash)).trim();
+}
+
 /**
- * Merge a template's property lines into a note, as Obsidian's insertProperties
- * does: new keys are added, lists gain the template's missing items, a nested
- * map already in the note stays, and any other template value replaces the
- * note's unless it is empty. Only keys that change are rewritten, and template
- * values keep their own formatting. Throws if the template's YAML is invalid.
+ * Merge a template's property lines into a note, close to Obsidian's
+ * insertProperties: new keys are added and a list gains the template's items
+ * it lacks. Unlike Obsidian, nothing the note already has is lost: a single
+ * value meeting a template list becomes a list of both, an empty template
+ * value leaves the note's alone, and a nested list or map in the note stays.
+ * Only keys that change are rewritten; template values keep their formatting.
+ * Throws if the template's YAML is invalid.
  */
 export function mergeTemplateProps(note: string, props: string[]): string {
   const values: unknown = parseYaml(props.join("\n")) ?? {};
@@ -339,22 +363,38 @@ export function mergeTemplateProps(note: string, props: string[]): string {
   }
   let out = note;
   for (const tp of tpl.props) {
-    const v = (values as Record<string, unknown>)[tp.key];
+    const name = keyName(tp);
+    const v = (values as Record<string, unknown>)[name];
     const cur = parseFm(out)!;
     const lines = tpl.body.slice(tp.start, tp.end + 1);
-    const np = cur.props.find((p) => p.key === tp.key);
+    const np = cur.props.find((p) => keyName(p) === name);
     const body = cur.body.slice();
     if (!np) {
       body.push(...lines);
-    } else if (v === null || v === undefined) {
-      continue;
-    } else if (Array.isArray(v) && (np.kind === "list" || np.kind === "inline")) {
-      const merged = [...np.values];
-      for (const x of v.map(String)) if (!merged.includes(x)) merged.push(x);
-      out = setProp(out, tp.key, merged, true);
-      continue;
-    } else if (typeof v === "object" && np.kind === "complex") {
-      continue;
+    } else if (v === null || v === undefined || v === "") {
+      continue; // an empty template value never wipes the note's
+    } else if (np.kind === "empty") {
+      body.splice(np.start, np.end - np.start + 1, ...lines);
+    } else if (np.kind === "complex" || (typeof v === "object" && !Array.isArray(v))) {
+      continue; // nested lists and maps aren't merged
+    } else if (Array.isArray(v)) {
+      if (!v.every(isScalar)) continue;
+      const have = np.values;
+      const add = v.filter((x) => x !== null && !have.includes(String(x)));
+      if (add.length === 0) continue;
+      if (np.kind === "list") {
+        const indent = /^(\s*)-/.exec(cur.body[np.start + 1] ?? "")?.[1] ?? "  ";
+        body.splice(np.end + 1, 0, ...add.map((x) => `${indent}- ${itemYaml(x, false)}`));
+      } else if (np.kind === "inline") {
+        const line = cur.body[np.start];
+        const close = line.lastIndexOf("]");
+        const sep = /\[\s*$/.test(line.slice(0, close)) ? "" : ", ";
+        body[np.start] = line.slice(0, close) + sep + add.map((x) => itemYaml(x, true)).join(", ") + line.slice(close);
+      } else {
+        // A single value meets a list: keep it as the list's first item.
+        const keyPart = cur.body[np.start].slice(0, cur.body[np.start].indexOf(":") + 1);
+        body.splice(np.start, 1, keyPart, `  - ${rawValue(cur.body[np.start])}`, ...add.map((x) => `  - ${itemYaml(x, false)}`));
+      }
     } else {
       body.splice(np.start, np.end - np.start + 1, ...lines);
     }
