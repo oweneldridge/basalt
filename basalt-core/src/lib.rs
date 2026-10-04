@@ -281,6 +281,7 @@ fn keep_xattrs(from: &Path, to: &Path) {
     const COPYFILE_ACL: u32 = 1 << 0;
     const COPYFILE_XATTR: u32 = 1 << 2;
     const COPYFILE_NOFOLLOW_SRC: u32 = 1 << 18;
+    const COPYFILE_NOFOLLOW_DST: u32 = 1 << 19;
     let (Ok(from), Ok(to)) = (
         CString::new(from.as_os_str().as_bytes()),
         CString::new(to.as_os_str().as_bytes()),
@@ -289,7 +290,12 @@ fn keep_xattrs(from: &Path, to: &Path) {
     };
     // SAFETY: both are NUL-terminated paths that outlive the call; a null state is allowed.
     unsafe {
-        copyfile(from.as_ptr(), to.as_ptr(), std::ptr::null_mut(), COPYFILE_ACL | COPYFILE_XATTR | COPYFILE_NOFOLLOW_SRC);
+        copyfile(
+            from.as_ptr(),
+            to.as_ptr(),
+            std::ptr::null_mut(),
+            COPYFILE_ACL | COPYFILE_XATTR | COPYFILE_NOFOLLOW_SRC | COPYFILE_NOFOLLOW_DST,
+        );
     }
 }
 
