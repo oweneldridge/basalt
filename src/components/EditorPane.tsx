@@ -46,13 +46,14 @@ interface Props {
   /** When set (the focused pane), receives an imperative handle for actions
    * that must target this live editor — e.g. inserting a template at the caret. */
   apiRef?: { current: EditorApi | null };
-  /** The pane this editor lives in. When a rename or folder move rebuilds the
-   * editor on the same text, the caret and scroll carry over. */
+  /** The pane this editor lives in, and the path of the note it replaces when
+   * a rename or folder move rebuilt it: then the caret and scroll carry over. */
   paneId?: string;
+  continuesFrom?: string;
 }
 
 // The last editor state each pane tore down, for the rebuild that follows a rename.
-const handoff = new Map<string, { text: string; selection: EditorSelection; scrollTop: number }>();
+const handoff = new Map<string, { path: string; text: string; selection: EditorSelection; scrollTop: number }>();
 
 export interface EditorApi {
   /** Replace the selection with `text`; place the caret at `caretOffset` into
@@ -64,6 +65,8 @@ export interface EditorApi {
   transformDoc: (fn: (doc: string) => string) => void;
   /** True when the editor has a non-empty selection. */
   hasSelection: () => boolean;
+  /** Put keyboard focus back in the editor. */
+  focus: () => void;
   /** Editor context-menu actions (operate on the current selection/caret). */
   copy: () => void;
   cut: () => void;
@@ -99,6 +102,7 @@ export function EditorPane({
   pluginVersion,
   apiRef,
   paneId,
+  continuesFrom,
 }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
   const view = useRef<EditorView | null>(null);
@@ -146,13 +150,13 @@ export function EditorPane({
     view.current = v;
     const prev = paneId ? handoff.get(paneId) : undefined;
     if (paneId) handoff.delete(paneId);
-    if (prev && prev.text === doc) {
+    if (prev && prev.path === continuesFrom && prev.text === doc) {
       v.dispatch({ selection: prev.selection });
       v.scrollDOM.scrollTop = prev.scrollTop;
     }
     v.focus();
     return () => {
-      if (paneId) handoff.set(paneId, { text: v.state.doc.toString(), selection: v.state.selection, scrollTop: v.scrollDOM.scrollTop });
+      if (paneId) handoff.set(paneId, { path, text: v.state.doc.toString(), selection: v.state.selection, scrollTop: v.scrollDOM.scrollTop });
       v.destroy();
       view.current = null;
     };
@@ -199,6 +203,7 @@ export function EditorPane({
         const v = view.current;
         return !!v && !v.state.selection.main.empty;
       },
+      focus: () => view.current?.focus(),
       copy: () => {
         const v = view.current;
         if (!v) return;

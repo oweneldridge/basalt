@@ -39,7 +39,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - "Keep mine" on a note that was deleted elsewhere writes your text back
   instead of discarding it.
 - Typing while a note is being renamed no longer recreates the old file or
-  drops what you typed, and the caret stays where you were typing. A save to a
+  drops what you typed, and the caret stays where you were typing. Edits
+  follow a renamed note only from the pane that showed it, so a new note that
+  later takes the old name can never write into the renamed one. Text typed in
+  a note while its folder is being moved is saved too.
+- After "Keep mine" writes back a note deleted elsewhere, later edits save
+  normally, and focus returns to the editor after Keep mine or Reload. A save to a
   note that was renamed or deleted elsewhere raises "Changed on disk" instead
   of bringing the old file back.
 - Renaming a note rewrites links inside properties, and table-escaped
