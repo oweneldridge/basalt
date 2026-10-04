@@ -22,8 +22,10 @@ WORKDIR /app
 COPY basalt-core ./basalt-core
 COPY basalt-server ./basalt-server
 # A minimal 2-member workspace so cargo never resolves/builds src-tauri (which
-# would pull tauri + its system deps). Deps fresh-resolve from the manifests.
+# would pull tauri + its system deps). The repo's Cargo.lock keeps the tested
+# versions; cargo only drops the entries this smaller workspace doesn't use.
 RUN printf '[workspace]\nmembers = ["basalt-core", "basalt-server"]\nresolver = "2"\n' > Cargo.toml
+COPY Cargo.lock ./
 RUN cargo build --release -p basalt-server
 
 # ---- 3. slim runtime ----
