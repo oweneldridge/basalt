@@ -353,6 +353,10 @@ pub fn read_note(root: &Path, path: String) -> Result<String, String> {
 /// frontend matches this exact text and raises its "Changed on disk" conflict.
 pub const WRITE_CONFLICT: &str = "Changed on disk since Basalt last read it";
 
+/// Held across check_unchanged and the write it guards, so two concurrent
+/// writers (web clients share one server process) can't both pass the check.
+static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Compare-and-swap guard for writes: with `expected` set, refuse unless the
 /// file still holds that content (or already holds `content`). A missing file
 /// passes, so a dirty note deleted elsewhere can still be saved back.
@@ -388,6 +392,7 @@ pub fn write_note(root: &Path, path: String, content: String, expected: Option<S
             resolved.display()
         ));
     }
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     check_unchanged(&resolved, expected.as_deref(), &content)?;
     // Preserve the file's existing line endings: the editor works in LF, so a
     // CRLF note would otherwise be silently rewritten to LF on first save.
@@ -414,6 +419,7 @@ pub fn write_canvas(root: &Path, path: String, content: String, expected: Option
     if !resolved.is_file() {
         return Err("canvas file does not exist".into());
     }
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     check_unchanged(&resolved, expected.as_deref(), &content)?;
     // Preserve the file's line endings like write_note (canvas/base are
     // normally LF, but never silently flip them).
@@ -435,6 +441,7 @@ pub fn write_base(root: &Path, path: String, content: String, expected: Option<S
     if !resolved.is_file() {
         return Err("base file does not exist".into());
     }
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     check_unchanged(&resolved, expected.as_deref(), &content)?;
     // Preserve the file's line endings like write_note (canvas/base are
     // normally LF, but never silently flip them).
@@ -1898,6 +1905,24 @@ mod tests {
         fs::remove_file(&note).unwrap();
         write_note(&root, p(), "back\n".into(), Some("forced\n".into())).unwrap();
         assert_eq!(fs::read_to_string(&note).unwrap(), "back\n");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_writes_from_one_base_let_exactly_one_through() {
+        let root = scratch_vault("cas-race");
+        let note = root.join("R.md");
+        for round in 0..20 {
+            fs::write(&note, "base\n").unwrap();
+            let handles: Vec<_> = (0..8)
+                .map(|i| {
+                    let (root, path) = (root.clone(), note.to_string_lossy().to_string());
+                    std::thread::spawn(move || write_note(&root, path, format!("writer {i}\n"), Some("base\n".into())).is_ok())
+                })
+                .collect();
+            let wins = handles.into_iter().map(|h| h.join().unwrap()).filter(|ok| *ok).count();
+            assert_eq!(wins, 1, "round {round}");
+        }
         fs::remove_dir_all(&root).unwrap();
     }
 
