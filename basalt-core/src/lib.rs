@@ -455,15 +455,27 @@ static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Compare-and-swap guard for writes: with `expected` set, refuse unless the
 /// file still holds that content (or already holds `content`). A missing file
-/// passes, so a dirty note deleted elsewhere can still be saved back.
+/// fails the check, so a save can't bring back a note renamed or deleted
+/// elsewhere. A file that isn't UTF-8 is never replaced, even unchecked: its
+/// text was only ever shown decoded lossily, so a write would corrupt it.
 fn check_unchanged(path: &Path, expected: Option<&str>, content: &str) -> Result<(), String> {
-    let Some(expected) = expected else { return Ok(()) };
     let current = match fs::read(path) {
-        Ok(bytes) => to_lf(&String::from_utf8_lossy(&bytes)),
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => to_lf(&text),
+            Err(_) => {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("This file");
+                return Err(format!(
+                    "“{name}” isn't UTF-8 encoded, so Basalt won't overwrite it. \
+                     Re-save it as UTF-8 in another editor first."
+                ));
+            }
+        },
+        Err(_) if expected.is_none() => return Ok(()),
         // Renamed or deleted since it was read: writing would bring it back.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(WRITE_CONFLICT.into()),
         Err(e) => return Err(format!("read {}: {e}", path.display())),
     };
+    let Some(expected) = expected else { return Ok(()) };
     if current == to_lf(expected) || current == to_lf(content) {
         Ok(())
     } else {
@@ -2148,6 +2160,26 @@ mod tests {
         assert_eq!((e1.as_str(), e2.as_str()), (WRITE_CONFLICT, WRITE_CONFLICT));
         write_canvas(&root, canvas.to_string_lossy().into(), "{}".into(), Some("{\"nodes\":[]}".into())).unwrap();
         assert_eq!(fs::read_to_string(&canvas).unwrap(), "{}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn writes_never_replace_a_file_that_isnt_utf8() {
+        let root = scratch_vault("not-utf8");
+        let note = root.join("Lat.md");
+        let latin1 = b"# caf\xE9\n\nline\n".to_vec();
+        fs::write(&note, &latin1).unwrap();
+        let p: String = note.to_string_lossy().into();
+        let lossy = String::from_utf8_lossy(&latin1).to_string();
+        assert!(write_note(&root, p.clone(), "x".into(), Some(lossy)).is_err());
+        assert!(write_note(&root, p.clone(), "x".into(), None).is_err());
+        assert_eq!(fs::read(&note).unwrap(), latin1);
+        let canvas = root.join("C.canvas");
+        fs::write(&canvas, b"{\"t\":\"\xE9\"}").unwrap();
+        assert!(write_canvas(&root, canvas.to_string_lossy().into(), "{}".into(), None).is_err());
+        // A new note, and a UTF-8 one, still save.
+        write_note(&root, root.join("New.md").to_string_lossy().into(), "ok".into(), None).unwrap();
+        write_note(&root, root.join("New.md").to_string_lossy().into(), "ok 2".into(), Some("ok".into())).unwrap();
         fs::remove_dir_all(&root).unwrap();
     }
 
