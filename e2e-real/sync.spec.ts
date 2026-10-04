@@ -227,3 +227,23 @@ test("after Reload clears a refused save, the next edit saves normally", async (
     await expect(badge).toBeHidden();
   }
 });
+
+test("a conflict in a note that isn't focused is still shown, and opens on click", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await openNote(page, "Ideas");
+  await page.locator('button:has-text("⊟")').first().click();
+  await expect(page.locator(".pane:not(.dock) .cm-editor")).toHaveCount(2);
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).click(); // one pane now shows Welcome
+  const ideasEditor = page.getByRole("textbox", { name: "Editing Ideas" });
+  const welcomeEditor = page.getByRole("textbox", { name: "Editing Welcome" });
+  await ideasEditor.first().click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type("\nmine");
+  vault.write("Ideas.md", "# Ideas\n\ntheirs\n");
+  await expect(page.locator(".conflict")).toBeVisible({ timeout: 5000 });
+  await welcomeEditor.first().click(); // focus Welcome; the Ideas conflict is now elsewhere
+  const elsewhere = page.locator(".conflict-elsewhere");
+  await expect(elsewhere).toHaveText(/Ideas changed on disk/);
+  await elsewhere.click();
+  await expect(page.locator(".conflict")).toBeVisible();
+});

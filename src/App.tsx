@@ -4627,6 +4627,16 @@ export default function App() {
           >
             ⊟
           </button>
+          {!changedOnDisk && [...conflicts].some((p) => p !== active?.path) && (() => {
+            // A conflict in a note that isn't focused holds its saves; say so.
+            const other = [...conflicts].find((p) => p !== active?.path)!;
+            const name = notes.find((n) => n.path === other)?.name ?? other.split(/[\\/]/).pop();
+            return (
+              <button className="badge-btn conflict-elsewhere" role="status" onClick={() => void openNoteByPath(other)}>
+                ⚠ {name} changed on disk
+              </button>
+            );
+          })()}
           {changedOnDisk && (
             <span className="conflict" role="alert">
               <span className="conflict-label">⚠ Changed on disk</span>
