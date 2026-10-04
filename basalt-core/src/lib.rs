@@ -211,6 +211,7 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
         if let Some(m) = &original {
             let _ = f.set_permissions(m.permissions());
             keep_created(&f, m);
+            keep_xattrs(path, &temp);
         }
         f.sync_all().map_err(|e| format!("fsync: {e}"))?;
         fs::rename(&temp, path).map_err(|e| format!("rename: {e}"))
@@ -239,6 +240,33 @@ fn keep_created(f: &fs::File, m: &fs::Metadata) {
 
 #[cfg(not(any(target_os = "macos", windows)))]
 fn keep_created(_f: &fs::File, _m: &fs::Metadata) {}
+
+/// Finder tags, "Open with" and other extended attributes (and any ACL) belong
+/// to the file the rename replaces, so copy them to the new one.
+#[cfg(target_os = "macos")]
+fn keep_xattrs(from: &Path, to: &Path) {
+    use std::ffi::{c_char, c_int, c_void, CString};
+    use std::os::unix::ffi::OsStrExt;
+    extern "C" {
+        fn copyfile(from: *const c_char, to: *const c_char, state: *mut c_void, flags: u32) -> c_int;
+    }
+    const COPYFILE_ACL: u32 = 1 << 0;
+    const COPYFILE_XATTR: u32 = 1 << 2;
+    const COPYFILE_NOFOLLOW_SRC: u32 = 1 << 18;
+    let (Ok(from), Ok(to)) = (
+        CString::new(from.as_os_str().as_bytes()),
+        CString::new(to.as_os_str().as_bytes()),
+    ) else {
+        return;
+    };
+    // SAFETY: both are NUL-terminated paths that outlive the call; a null state is allowed.
+    unsafe {
+        copyfile(from.as_ptr(), to.as_ptr(), std::ptr::null_mut(), COPYFILE_ACL | COPYFILE_XATTR | COPYFILE_NOFOLLOW_SRC);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keep_xattrs(_from: &Path, _to: &Path) {}
 
 /// Remove stale atomic-write temp files (left by a crash) under `dir`.
 fn sweep_temps(dir: &Path, depth: usize) {
@@ -1922,6 +1950,27 @@ mod tests {
         atomic_write(&f, b"replaced").expect("overwrite failed");
         assert_eq!(fs::read_to_string(&f).unwrap(), "replaced");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn atomic_write_keeps_extended_attributes() {
+        use std::process::Command;
+        let root = scratch_vault("xattr");
+        let f = root.join("Tagged.md");
+        fs::write(&f, "one\n").unwrap();
+        let set = |k: &str, v: &str| assert!(Command::new("xattr").args(["-w", k, v]).arg(&f).status().unwrap().success());
+        let get = |k: &str| {
+            let out = Command::new("xattr").args(["-p", k]).arg(&f).output().unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        set("com.apple.metadata:_kMDItemUserTags", "Red");
+        set("com.apple.LaunchServices.OpenWith", "Typora");
+        atomic_write(&f, b"two\n").unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "two\n");
+        assert_eq!(get("com.apple.metadata:_kMDItemUserTags"), "Red");
+        assert_eq!(get("com.apple.LaunchServices.OpenWith"), "Typora");
+        let _ = fs::remove_dir_all(&root);
     }
 
     fn scratch_vault(tag: &str) -> PathBuf {

@@ -28,7 +28,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (another tab or device, Obsidian, iCloud), you get "Changed on disk" instead
   of a silent overwrite. Saves to one note, canvas or base run one at a time.
 - Saving keeps a note's creation time and permissions, so Dataview's
-  `file.ctime` stays put.
+  `file.ctime` stays put. On macOS it also keeps Finder tags, "Open with" and
+  other extended attributes.
 - "Keep mine" on a note that was deleted elsewhere writes your text back
   instead of discarding it.
 - Renaming a note rewrites links inside properties, and table-escaped
