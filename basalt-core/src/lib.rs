@@ -231,6 +231,7 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
     let n = WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
     let temp = parent.join(format!(".basalt-tmp-{nanos}-{n}.tmp"));
     let original = fs::metadata(path).ok();
+    let mut created = false;
     let result = (|| -> Result<(), String> {
         // A fresh file only: never follow or reuse something already at the path.
         let mut f = fs::OpenOptions::new()
@@ -238,6 +239,7 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
             .create_new(true)
             .open(&temp)
             .map_err(|e| format!("temp: {e}"))?;
+        created = true;
         f.write_all(content).map_err(|e| format!("write: {e}"))?;
         // The rename replaces the file, so carry over what Obsidian and Dataview
         // read from it: permissions and the creation time (file.ctime/cday).
@@ -249,7 +251,8 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
         f.sync_all().map_err(|e| format!("fsync: {e}"))?;
         fs::rename(&temp, path).map_err(|e| format!("rename: {e}"))
     })();
-    if result.is_err() {
+    // Clean up only a temp this call made, never a file that was already there.
+    if result.is_err() && created {
         let _ = fs::remove_file(&temp);
     }
     result
