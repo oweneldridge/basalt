@@ -7,9 +7,9 @@
   page can show "tasks linking to this note" without a per-note base.
 - First version is read-only: no writes to the `.base` file or the note, so it
   adds no new write path. View tabs switch locally.
-- One React component renders the result in every surface (Live Preview,
-  Reading view, opened `.base` files), mounted into editor widgets with
-  `createRoot`.
+- The existing `BaseView` renders every surface (Live Preview, Reading view,
+  opened `.base` files); without `onChange` it is already read-only. Embeds
+  mount it with `createRoot`.
 - Size: medium. Pure engine change (`this`) plus two renderers and their tests.
 
 ## What Obsidian does
@@ -37,17 +37,17 @@ From the Bases help pages (syntax, views) and the 1.9 to 1.10 changelogs:
 
 ## Rendering
 
-- `src/components/BaseResult.tsx`: the view tabs plus the existing table and
-  cards renderers, pulled out of `BaseView.tsx` so the full editor and the embed
-  share them. No editing toolbar.
-- `src/lib/baseEmbedHost.ts`: a host singleton App installs, like the
+- `BaseView` gains `initialView` (the `#View` name) and `thisRel` (defaults to
+  the base file itself).
+- `src/lib/baseEmbedHost.ts`: a small host singleton App installs, like the
   transclusion and query hosts. It hands the renderer the notes, attachments,
-  structure version, index accessors (tags, links, backlinks, embeds),
-  `readFile`, `openFile` and image resolution, plus a subscribe hook so embeds
-  re-render when the vault changes.
-- `mountBaseEmbed(el, source, thisRel)` creates a React root and returns an
-  unmount function. `source` is `{ file: rel, view?: name }` or
-  `{ yaml: string }`.
+  structure version, index accessors (tags, links, backlinks, embeds), file
+  reads, file opening and image resolution, and carries the "vault changed"
+  signal. It doesn't import the renderer, so the YAML engine stays lazy.
+- `src/lib/baseEmbed.tsx` (loaded on first use): `mountBaseEmbed(el, source,
+  thisRel)` creates a React root and returns an unmount function. `source` is
+  `{ target: "File.base#View" }` or `{ yaml }`. Roots whose element has left the
+  page are swept on the next vault change.
 - Live Preview: `transcludeBlocks.ts` routes a `.base` target to a base widget;
   a new `baseBlocks.ts` StateField renders `base` fences (caret inside shows the
   YAML, like `query.ts`). `base` joins the reserved code-block languages so a

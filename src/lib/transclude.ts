@@ -262,6 +262,14 @@ export function renderEmbedElement(
     return wrap;
   }
 
+  // A base renders its table here instead (`#View` picks the view); `this`
+  // inside it is the note doing the embedding.
+  if (/\.base$/i.test(splitSubpath(rawTarget).target.trim())) {
+    wrap.classList.add("embed-base");
+    void import("./baseEmbed").then((m) => m.mountBaseEmbed(wrap, { target: rawTarget }, sourceRel));
+    return wrap;
+  }
+
   const resolved = host.resolve(rawTarget, sourceRel);
   const { subpath } = splitSubpath(rawTarget);
   if (!resolved) {

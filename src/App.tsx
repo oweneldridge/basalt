@@ -82,6 +82,7 @@ import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec, type BuiltinView } from "./lib/leafViews";
 import { deepLinkVaultPolicy, parseBasaltUri } from "./lib/deeplink";
+import { setBaseEmbedHost, notifyBaseEmbeds } from "./lib/baseEmbedHost";
 import { Outline } from "./components/Outline";
 import { Backlinks } from "./components/Backlinks";
 import { Tags } from "./components/Tags";
@@ -2740,6 +2741,27 @@ export default function App() {
   const handleRenameNoteRef = useRef<(oldPath: string, newName: string) => Promise<void>>(async () => {});
   const structureVersionRef = useRef(structureVersion);
   structureVersionRef.current = structureVersion;
+
+  // Install the embedded-base host (![[x.base]] and ```base blocks) and re-render
+  // mounted embeds whenever the vault changes.
+  useEffect(() => {
+    setBaseEmbedHost({
+      notes: () => notesRef.current,
+      attachments: () => attachmentsRef.current,
+      structureVersion: () => structureVersionRef.current,
+      tagsOf,
+      linkKeysOf,
+      backlinksOf,
+      embedsOf,
+      onOpenFile: (rel) => openViewerFileRef.current(rel),
+      resolveImageRel,
+      resolveBase: (target, fromRel) =>
+        resolveAttachment(attachmentsRef.current.filter((a) => /\.base$/i.test(a.path)), target, fromRel),
+      read: (path) => readNote(path),
+    });
+    return () => setBaseEmbedHost(null);
+  }, [tagsOf, linkKeysOf, backlinksOf, embedsOf, resolveImageRel]);
+  useEffect(() => notifyBaseEmbeds(), [notes, attachmentsList, structureVersion]);
   useEffect(() => {
     setQueryHost({
       run: (source, selfPath) => {

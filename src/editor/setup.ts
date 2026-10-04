@@ -94,6 +94,7 @@ import { headingFold, foldKeymap } from "./headingFold";
 import { mermaid } from "./mermaid";
 import { math } from "./math";
 import { query, notePathFacet } from "./query";
+import { baseBlocks } from "./baseBlocks";
 import { pluginBlocks } from "./pluginBlocks";
 import { transcludeBlocks } from "./transcludeBlocks";
 import { pasteLink } from "./pasteLink";
@@ -191,6 +192,7 @@ function renderExtensions(cb: EditorCallbacks): Extension[] {
     mermaid,
     math,
     query,
+    baseBlocks,
     pluginBlocks,
     transcludeBlocks,
     codeBlocks,

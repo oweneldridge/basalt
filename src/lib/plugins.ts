@@ -98,7 +98,7 @@ export interface PluginCommand {
 }
 
 // Languages Basalt renders itself — a plugin can't shadow them.
-const RESERVED_LANGS = new Set(["mermaid", "dataview", "query", "basalt-query"]);
+const RESERVED_LANGS = new Set(["mermaid", "dataview", "query", "basalt-query", "base"]);
 
 const commands = new Map<string, PluginCommand>();
 const processors = new Map<string, { pluginId: string; fn: CodeBlockProcessor }>();

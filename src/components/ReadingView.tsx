@@ -47,6 +47,23 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
       pre.replaceWith(renderQuerySource(code.textContent ?? "", selfRel));
     });
 
+    // ```base blocks render their table (read-only); `this` is this note.
+    const unmounts: (() => void)[] = [];
+    const baseBlocks = [...el.querySelectorAll<HTMLElement>("pre.md-code > code.language-base")];
+    if (baseBlocks.length) {
+      void import("../lib/baseEmbed").then((m) => {
+        if (cancelled) return;
+        for (const code of baseBlocks) {
+          const pre = code.parentElement;
+          if (!pre) continue;
+          const box = document.createElement("div");
+          box.className = "base-block";
+          pre.replaceWith(box);
+          unmounts.push(m.mountBaseEmbed(box, { yaml: code.textContent ?? "" }, selfRel));
+        }
+      });
+    }
+
     // Transclude ![[Note]] / ![[Note#Heading]] / ![[Note#^block]] embeds inline.
     el.querySelectorAll<HTMLElement>("span.md-embed-ref[data-basalt-embed]").forEach((marker) => {
       const target = marker.dataset.basaltEmbed ?? "";
@@ -134,6 +151,7 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
     });
     return () => {
       cancelled = true;
+      unmounts.forEach((u) => u());
     };
   }, [doc, selfRel, resolveImage, dark]);
 

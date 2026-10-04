@@ -49,6 +49,11 @@ interface Props {
   /** When provided, the base is EDITABLE: view/column/sort/filter edits are
    * serialized to YAML and passed here (autosaved by the parent). */
   onChange?: (yaml: string) => void;
+  /** View to show first, by name (`![[x.base#View]]`). */
+  initialView?: string;
+  /** Vault path of the file `this` refers to (the embedding note); defaults to
+   * the base file itself, as when it's opened directly. */
+  thisRel?: string;
 }
 
 /** Async cell image: resolves a vault target to a data URL like embeds do. */
@@ -120,9 +125,14 @@ export const BaseView = memo(function BaseView({
   onOpenFile,
   resolveImageRel,
   onChange,
+  initialView,
+  thisRel,
 }: Props) {
   const def = useMemo(() => parseBase(doc), [doc]);
-  const [viewIdx, setViewIdx] = useState(0);
+  const [viewIdx, setViewIdx] = useState(() => {
+    const i = initialView ? (def?.views.findIndex((v) => v.name.toLowerCase() === initialView.toLowerCase()) ?? -1) : -1;
+    return Math.max(0, i);
+  });
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
 
@@ -148,11 +158,14 @@ export const BaseView = memo(function BaseView({
     return (target: string) => byKey.get(target.replace(/\.md$/i, "").toLowerCase()) ?? byKey.get(target.toLowerCase()) ?? null;
   }, [rows]);
 
+  const thisPath = thisRel ?? sourceRel;
+  const thisRow = useMemo(() => rows.find((r) => r.path === thisPath) ?? null, [rows, thisPath]);
+
   const result: ViewResult | null = useMemo(() => {
     if (!def) return null;
     const idx = Math.min(viewIdx, def.views.length - 1);
-    return runView(def, def.views[idx], rows, { lookupFile });
-  }, [def, viewIdx, rows, lookupFile]);
+    return runView(def, def.views[idx], rows, { lookupFile, thisRow });
+  }, [def, viewIdx, rows, lookupFile, thisRow]);
 
   // Reset the expand toggle whenever the shown view or data changes.
   useEffect(() => setExpanded(false), [viewIdx, doc]);

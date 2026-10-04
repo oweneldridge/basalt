@@ -42,6 +42,13 @@ const files = new Map<string, string>([
   [CANVAS_PATH, canvasContent],
   [BASE_PATH, baseContent],
 ]);
+// A test can add files before the app loads via page.addInitScript:
+// window.__mockExtraFiles = { "Note.md": "...", "Other.base": "..." }.
+const extra = (globalThis as { __mockExtraFiles?: Record<string, string> }).__mockExtraFiles ?? {};
+for (const [rel, content] of Object.entries(extra)) {
+  if (/\.md$/i.test(rel)) seed(rel, content);
+  else files.set(`${VAULT}/${rel}`, content);
+}
 
 export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const a = args ?? {};
@@ -89,10 +96,12 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
       });
 
     case "list_attachments":
-      return ok([
-        { path: CANVAS_PATH, rel: "Board.canvas", name: "Board.canvas", mtime: now, ctime: now, size: canvasContent.length },
-        { path: BASE_PATH, rel: "Notes.base", name: "Notes.base", mtime: now, ctime: now, size: baseContent.length },
-      ] as Attachment[]);
+      return ok(
+        [...files].map(([path, content]) => {
+          const rel = path.slice(VAULT.length + 1);
+          return { path, rel, name: rel.split("/").pop() ?? rel, mtime: now, ctime: now, size: content.length };
+        }) as Attachment[],
+      );
     case "read_obsidian_bookmarks":
       return ok(bookmarks.slice());
     case "toggle_file_bookmark": {
