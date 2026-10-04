@@ -12,6 +12,7 @@ import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { parseMarkdownLink, internalMdHref } from "../lib/markdown";
 import { frontmatterRange, treeChanged } from "./regions";
+import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "../lib/remoteImages";
 
 export interface LivePreviewOptions {
   /** Open an external URL (a clicked Markdown link). */
@@ -46,6 +47,7 @@ export class ImgWidget extends WidgetType {
     return other.src === this.src && other.alt === this.alt && other.width === this.width;
   }
   toDOM(): HTMLElement {
+    if (isRemoteUrl(this.src) && !remoteImagesAllowed()) return blockedImage(this.src, this.alt);
     const img = document.createElement("img");
     img.className = "cm-md-image";
     img.alt = this.alt;

@@ -14,6 +14,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   itself when opened directly.
 - Bases `file.backlinks`, `file.embeds`, and `median()`/`stddev()` on lists, plus
   a Stddev summary.
+- Images from the web (`https:`) load in the desktop app. A "Load remote
+  images" setting turns them off: they show as placeholders, so opening a note
+  never contacts another server. This covers raw HTML images too.
 - Bases list layout, as in Obsidian 1.10: bullets, numbers or no markers,
   properties on one line or indented under the first, and a custom separator.
 

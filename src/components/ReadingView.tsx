@@ -5,6 +5,7 @@ import { renderQuerySource } from "../lib/queryHost";
 import { codeBlockProcessor } from "../lib/plugins";
 import { renderEmbedSource } from "../lib/transclude";
 import { internalMdHref } from "../lib/markdown";
+import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "../lib/remoteImages";
 
 interface Props {
   doc: string;
@@ -139,7 +140,8 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
     el.querySelectorAll<HTMLImageElement>("img[data-basalt-img]").forEach((img) => {
       const target = img.dataset.basaltImg ?? "";
       if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//")) {
-        img.src = target; // already a URL
+        if (isRemoteUrl(target) && !remoteImagesAllowed()) img.replaceWith(blockedImage(target, img.alt));
+        else img.src = target; // already a URL
         return;
       }
       void resolveImage(target).then((url) => {

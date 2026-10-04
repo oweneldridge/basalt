@@ -8,7 +8,7 @@ import type { EditorState, Extension } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { htmlBlockRanges } from "../lib/htmlBlocks";
-import { sanitizeHtml } from "../lib/sanitize";
+import { sanitizeToFragment } from "../lib/sanitize";
 
 class HtmlBlockWidget extends WidgetType {
   constructor(readonly source: string) {
@@ -20,7 +20,7 @@ class HtmlBlockWidget extends WidgetType {
   toDOM(): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "cm-html-block";
-    wrap.innerHTML = sanitizeHtml(this.source); // DOMPurify — no scripts/styles/handlers
+    wrap.replaceChildren(sanitizeToFragment(this.source)); // DOMPurify: no scripts, styles or handlers
     return wrap;
   }
   ignoreEvent(): boolean {

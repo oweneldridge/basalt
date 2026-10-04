@@ -9,6 +9,7 @@
 
 import { renderMarkdown } from "./render";
 import { proseMask } from "./markdown";
+import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "./remoteImages";
 
 /** Split a raw wikilink target into the note part and the subpath (after #). */
 export function splitSubpath(raw: string): { target: string; subpath: string } {
@@ -316,7 +317,8 @@ export function renderEmbedElement(
       const target = img.dataset.basaltImg ?? "";
       img.removeAttribute("data-basalt-img");
       if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//")) {
-        img.src = target;
+        if (isRemoteUrl(target) && !remoteImagesAllowed()) img.replaceWith(blockedImage(target, img.alt));
+        else img.src = target;
         return;
       }
       void host.resolveImage(target, resolved.rel).then((url) => {

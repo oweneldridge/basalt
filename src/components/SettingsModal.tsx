@@ -49,6 +49,8 @@ interface Props {
   onReadableWidth: (on: boolean) => void;
   spellcheck: boolean;
   onSpellcheck: (on: boolean) => void;
+  remoteImages: boolean;
+  onRemoteImages: (on: boolean) => void;
   vim: boolean;
   onVim: (on: boolean) => void;
   rtl: boolean;
@@ -100,6 +102,8 @@ export function SettingsModal({
   onReadableWidth,
   spellcheck,
   onSpellcheck,
+  remoteImages,
+  onRemoteImages,
   vim,
   onVim,
   rtl,
@@ -196,6 +200,10 @@ export function SettingsModal({
             <input type="checkbox" checked={spellcheck} onChange={(e) => onSpellcheck(e.target.checked)} />
           </label>
           <label className="settings-row">
+            <span className="settings-row-label">Load remote images</span>
+            <input type="checkbox" checked={remoteImages} onChange={(e) => onRemoteImages(e.target.checked)} />
+          </label>
+          <label className="settings-row">
             <span className="settings-row-label">Vim key bindings</span>
             <input type="checkbox" checked={vim} onChange={(e) => onVim(e.target.checked)} />
           </label>
@@ -233,7 +241,9 @@ export function SettingsModal({
             </span>
           </div>
           <p className="settings-hint">
-            “System” follows your OS appearance. Stored per app, not in the vault.
+            “System” follows your OS appearance. With remote images off, images from
+            the web show as placeholders, so opening a note never contacts another
+            server. Stored per app, not in the vault.
           </p>
         </section>
 

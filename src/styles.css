@@ -1485,6 +1485,15 @@ button.primary:hover {
   vertical-align: middle;
 }
 
+.md-image-blocked {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
 .base-showmore {
   flex: none;
   margin: 8px auto;

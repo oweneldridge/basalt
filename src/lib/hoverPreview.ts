@@ -5,6 +5,7 @@
 import { renderMarkdown } from "./render";
 import { internalMdHref } from "./markdown";
 import { getTranscludeHost } from "./transclude";
+import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "./remoteImages";
 
 const SHOW_DELAY = 280;
 const HIDE_DELAY = 220;
@@ -76,7 +77,8 @@ async function show(anchor: HTMLElement, rawTarget: string, sourceRel: string): 
   body.querySelectorAll<HTMLImageElement>("img[data-basalt-img]").forEach((img) => {
     const t = img.dataset.basaltImg ?? "";
     img.removeAttribute("data-basalt-img");
-    if (/^[a-z][a-z0-9+.-]*:/i.test(t) || t.startsWith("//")) img.src = t;
+    if (isRemoteUrl(t) && !remoteImagesAllowed()) img.replaceWith(blockedImage(t, img.alt));
+    else if (/^[a-z][a-z0-9+.-]*:/i.test(t) || t.startsWith("//")) img.src = t;
     else void host.resolveImage(t, resolved.rel).then((u) => u && (img.src = u));
   });
   // Render math + sanitize raw HTML if present.

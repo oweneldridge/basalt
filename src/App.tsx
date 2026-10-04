@@ -72,6 +72,7 @@ import { listPlugins, writePluginData, listCssSnippets, deleteFolder, renameFold
 import type { EditorApi } from "./components/EditorPane";
 import type { NoteRef } from "./editor/wikilink";
 import { clearImageCache, resolveImage } from "./lib/assets";
+import { setRemoteImages } from "./lib/remoteImages";
 import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { Ribbon } from "./components/Ribbon";
@@ -491,6 +492,12 @@ export default function App() {
     applyThemePalette(importedPalette ? (dark ? importedPalette.dark : importedPalette.light) : null);
   }, [importedPalette, dark]);
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem("basalt-spellcheck") !== "false");
+  const [remoteImages, setRemoteImagesOn] = useState(() => localStorage.getItem("basalt-remote-images") !== "false");
+  // Set during render, so the first paint already respects it.
+  setRemoteImages(remoteImages);
+  useEffect(() => {
+    localStorage.setItem("basalt-remote-images", String(remoteImages));
+  }, [remoteImages]);
   useEffect(() => {
     localStorage.setItem("basalt-spellcheck", String(spellcheck));
   }, [spellcheck]);
@@ -4870,6 +4877,8 @@ export default function App() {
           onReadableWidth={setReadableWidth}
           spellcheck={spellcheck}
           onSpellcheck={setSpellcheck}
+          remoteImages={remoteImages}
+          onRemoteImages={setRemoteImagesOn}
           vim={vim}
           onVim={setVim}
           rtl={rtl}
