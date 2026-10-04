@@ -52,7 +52,6 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
   return (
     <div
       className="tab-bar"
-      role="tablist"
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes(TAB_MIME)) {
           e.preventDefault();
@@ -73,9 +72,26 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
         }
       }}
     >
+      <div className="tab-strip" role="tablist" aria-label={dock ? "Panel views" : "Open notes"}>
       {tabs.map((t, i) => (
         <div
           key={t.path}
+          // One Tab stop per bar (the active tab); arrows move between tabs.
+          tabIndex={t.path === activePath || (i === 0 && !tabs.some((x) => x.path === activePath)) ? 0 : -1}
+          aria-keyshortcuts={t.pinned ? undefined : "Delete"}
+          onKeyDown={(e) => {
+            const list = [...(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
+            const at = list.indexOf(e.currentTarget);
+            const go = (j: number) => list[(j + list.length) % list.length]?.focus();
+            if (e.key === "ArrowRight") go(at + 1);
+            else if (e.key === "ArrowLeft") go(at - 1);
+            else if (e.key === "Home") go(0);
+            else if (e.key === "End") go(list.length - 1);
+            else if (e.key === "Enter" || e.key === " ") onSelect(t.path);
+            else if ((e.key === "Delete" || e.key === "Backspace") && !t.pinned) onClose(t.path);
+            else return;
+            e.preventDefault();
+          }}
           className={`tab${t.path === activePath ? " active" : ""}${t.pinned ? " pinned" : ""}${t.view ? " view-tab" : ""}${dropAt === i ? " drop-before" : ""}`}
           role="tab"
           aria-selected={t.path === activePath}
@@ -114,6 +130,7 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
           {t.pinned && (
             <button
               className="tab-pin"
+              tabIndex={-1}
               aria-label={`Unpin ${t.name}`}
               title="Unpin"
               onMouseDown={(e) => {
@@ -129,6 +146,8 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
           {!t.pinned && (
             <button
               className="tab-close"
+              tabIndex={-1}
+              aria-hidden="true"
               aria-label={`Close ${t.name}`}
               onMouseDown={(e) => {
                 e.stopPropagation();
@@ -141,6 +160,7 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
           )}
         </div>
       ))}
+      </div>
       <span className={`tab-drop-end${dropAt === tabs.length ? " active" : ""}`} aria-hidden />
       {!dock && (
         <button className="tab-new" title="Open a note (⌘O)" aria-label="Open a note (⌘O)" onClick={onNew}>

@@ -50,3 +50,24 @@ test("the root font size is the user's own until they zoom, and zoom persists", 
   await page.keyboard.press("ControlOrMeta+Digit0");
   await expect.poll(() => page.evaluate(() => document.documentElement.style.fontSize)).toBe("");
 });
+
+test("tabs work from the keyboard: arrows move, Enter opens, Delete closes", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await page.evaluate(() => {
+    Object.keys(localStorage).filter((k) => k.includes("workspace")).forEach((k) => localStorage.removeItem(k));
+  });
+  await page.reload();
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  const tabs = page.locator(".pane:not(.dock) [role='tab']");
+  await expect(tabs).toHaveCount(2);
+  await tabs.filter({ hasText: "Ideas" }).focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(tabs.filter({ hasText: "Welcome" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(tabs.filter({ hasText: "Welcome" })).toHaveAttribute("aria-selected", "true");
+  await tabs.filter({ hasText: "Welcome" }).focus();
+  await page.keyboard.press("Delete");
+  await expect(tabs).toHaveCount(1);
+  await expect(page.getByRole("tablist", { name: "Open notes" })).toBeVisible();
+});

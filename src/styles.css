@@ -381,6 +381,9 @@ button.primary:hover {
 }
 
 /* Tab bar */
+.tab-strip {
+  display: contents;
+}
 .tab-bar {
   display: flex;
   align-items: stretch;
