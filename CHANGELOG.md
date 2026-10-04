@@ -6,25 +6,46 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Embedded bases: `![[Tasks.base]]`, `![[Tasks.base#View]]` and fenced `base`
+  blocks render in Live Preview and Reading view (read-only for now).
+- Bases `this`, the file a base is shown for: the embedding note, or the base
+  itself when opened directly.
+- Bases `file.backlinks`, `file.embeds`, and `median()`/`stddev()` on lists, plus
+  a Stddev summary.
+
 ### Fixed
 
-- Hiding a sidebar, toggling Reading view, editing a property or splitting a
-  pane no longer reverts what you typed since opening the note.
+- Hiding a sidebar, toggling Reading view, editing a property, splitting a
+  pane, moving a folder or renaming a note no longer reverts what you typed.
+- A vault rescan, Reload, or a slow read in another pane no longer reverts text
+  or raises a "Changed on disk" against your own save. Stacked columns follow
+  external edits.
 - Saves are compare-and-swap: if the file changed since Basalt last read it
   (another tab or device, Obsidian, iCloud), you get "Changed on disk" instead
-  of a silent overwrite. Saves to one note run one at a time.
+  of a silent overwrite. Saves to one note, canvas or base run one at a time.
+- Saving keeps a note's creation time and permissions, so Dataview's
+  `file.ctime` stays put.
 - "Keep mine" on a note that was deleted elsewhere writes your text back
   instead of discarding it.
 - Renaming a note rewrites links inside properties, and table-escaped
   `[[Note\|alias]]` links.
 - Links resolve in Obsidian's order (the linking note's folder first, then the
-  shortest path), so a rename updates the same links Obsidian would.
+  shortest path), so a rename updates the same links Obsidian would. Folder
+  moves leave links to notes that didn't move alone.
+- "Link" on an unlinked mention writes Obsidian's link text (a path when the
+  name is ambiguous) and skips mentions inside URLs and tags.
 - Rename no longer rewrites a note that has unsaved edits or a conflict; it
   reports it instead.
-- The Properties sidebar keeps YAML types and quoting, and doesn't write
-  fields you only clicked into.
+- The Properties sidebar keeps YAML types and quoting, doesn't write fields
+  you only clicked into, and leaves lists of maps alone.
 - Ticking a task in Reading view ticks that task, including inside callouts
-  and after `%%` comments. Tasks in embedded notes are read-only.
+  and after `%%` comments. Tasks in embedded notes are read-only. TASK queries
+  ignore checkboxes inside code fences and frontmatter.
+- Changing a Bases view's group-by drops a stale `groupOrder`; an empty canvas
+  card keeps its `text` key; trashing a file whose name is taken keeps its
+  extension; folders with a dot in their name trigger a rescan.
 - A failed read or an oversized note can no longer seed an editor with empty
   or placeholder text.
 - An external edit to an open canvas or base no longer blocks the next save
@@ -32,6 +53,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The web app's event stream recovers after a proxy answers a reconnect with
   an error.
 - Audio, video and PDF embeds load under the release build's content policy.
+- Obsidian's CSS snippets follow the enabled list in its `appearance.json`.
 
 ### Security
 
@@ -41,11 +63,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (add names with `BASALT_ALLOWED_HOSTS`), which blocks DNS rebinding.
 - The templater-lite preview block runs a template only when you ask.
 - HTML export picks its file in a native dialog run by the app, not the page.
+- `basalt://open` asks before opening a vault you haven't opened before, and
+  refuses network paths.
+- Attachments open in the system viewer through a command that checks the
+  file is in the vault; the unscoped open-path permission is gone.
+- The web app opens only http, https, mailto and tel links.
 - Mermaid 11.17.2 and DOMPurify 3.4.16.
 
 ### Accessibility
 
+- Modals are real dialogs: focus moves in and back, Escape closes, and typing
+  can't reach the note behind.
+- Tabs work from the keyboard (arrows, Enter, Delete); the editor and icon
+  buttons have names; panes follow keyboard focus.
 - Save errors and conflicts are announced; notices sit in a live region.
+- Text colors meet 4.5:1 contrast in both themes.
+- Basalt keeps your own font size and lets the browser zoom in the web app.
 - Visible focus rings for keyboard focus; reduced-motion and forced-colors
   settings are respected.
 
