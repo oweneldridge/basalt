@@ -80,7 +80,7 @@ export function RightPanel({
   onSearch,
 }: Props) {
   return (
-    <aside className="right-panel">
+    <aside className="right-panel" aria-label="Note details">
       <div className="right-tabs">
         {TABS.map((t) => (
           <button

@@ -134,7 +134,7 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
   }, [tree, expanded, filtered]);
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" aria-label="Files">
       <div
         className="sidebar-head"
         title="Drop a note here to move it to the vault root"

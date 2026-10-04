@@ -145,3 +145,14 @@ test("the window title names the open note", async ({ page }) => {
   await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
   await expect(page).toHaveTitle("Ideas · Basalt");
 });
+
+test("landmarks are named: the editor area and both side panels", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await expect(page.locator(".sidebar")).toBeVisible();
+  await expect(page.getByRole("main")).toHaveCount(1);
+  await expect(page.getByRole("complementary", { name: "Files" })).toBeVisible();
+  // Every side region has its own name, so they're told apart in a landmarks list.
+  const names = await page.getByRole("complementary").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
+  expect(names.length).toBeGreaterThan(0);
+  expect(names.every((n) => !!n)).toBe(true);
+});
