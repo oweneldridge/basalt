@@ -232,7 +232,12 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
     let temp = parent.join(format!(".basalt-tmp-{nanos}-{n}.tmp"));
     let original = fs::metadata(path).ok();
     let result = (|| -> Result<(), String> {
-        let mut f = fs::File::create(&temp).map_err(|e| format!("temp: {e}"))?;
+        // A fresh file only: never follow or reuse something already at the path.
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|e| format!("temp: {e}"))?;
         f.write_all(content).map_err(|e| format!("write: {e}"))?;
         // The rename replaces the file, so carry over what Obsidian and Dataview
         // read from it: permissions and the creation time (file.ctime/cday).
