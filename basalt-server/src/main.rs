@@ -167,7 +167,9 @@ fn start_watcher(root: PathBuf, tx: broadcast::Sender<String>) -> notify::Result
             event.kind,
             notify::EventKind::Modify(notify::event::ModifyKind::Metadata(_))
         );
-        let (changed, rescan) = basalt_core::classify_change(&root_for_cb, metadata_only, &event.paths);
+        let (changed, classified_rescan) = basalt_core::classify_change(&root_for_cb, metadata_only, &event.paths);
+        // The OS queue overflowed (inotify): events were lost, so resync fully.
+        let rescan = classified_rescan || event.need_rescan();
         if !changed.is_empty() {
             if let Ok(payload) = serde_json::to_value(&changed) {
                 let _ = tx.send(frame("vault-changed", payload));

@@ -359,7 +359,9 @@ fn start_watching(
             event.kind,
             notify::EventKind::Modify(notify::event::ModifyKind::Metadata(_))
         );
-        let (changed, rescan) = basalt_core::classify_change(&root_for_closure, metadata_only, &event.paths);
+        let (changed, classified_rescan) = basalt_core::classify_change(&root_for_closure, metadata_only, &event.paths);
+        // The OS queue overflowed (inotify): events were lost, so resync fully.
+        let rescan = classified_rescan || event.need_rescan();
         // Target ONLY the owning window — a change in one window's vault must
         // not reach another window watching a different vault.
         if !changed.is_empty() {
