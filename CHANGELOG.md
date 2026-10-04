@@ -87,6 +87,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- A path outside the vault gets the same error whether or not it exists, so
+  error text can't be used to probe the host's files.
+- The web server takes a request's concurrency slot before reading its body,
+  so a burst of large requests can't exhaust memory, and still accepts only
+  JSON (a cross-site form can't post commands).
 - Folder operations never follow symlinks, so a symlink inside the vault can't
   lead a folder delete or rename outside it.
 - `basalt-server` with auth off answers only `localhost`, `127.0.0.1` and `::1`
