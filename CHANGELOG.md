@@ -107,6 +107,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Accessibility
 
+- Graph view and Slides are dialogs: focus stays inside, Escape returns it to
+  where it was, and the rest of the app is inert. Slides announce "Slide 2 of
+  5" as you move. The graph's filter, mode buttons and canvas have names.
+- With reduced motion on, the graph is drawn once it settles instead of
+  animating; dragging a node still follows the pointer.
+- The two side panels are named landmarks ("Files", "Note details").
 - Modals are real dialogs: focus moves in and back, Escape closes, and typing
   can't reach the note behind.
 - Tabs work from the keyboard (arrows, Enter, Delete); the editor and icon

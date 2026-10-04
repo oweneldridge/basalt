@@ -156,3 +156,38 @@ test("landmarks are named: the editor area and both side panels", async ({ page 
   expect(names.length).toBeGreaterThan(0);
   expect(names.every((n) => !!n)).toBe(true);
 });
+
+test("the graph is a named dialog with labelled controls; Escape returns focus", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await expect(page.locator(".sidebar")).toBeVisible();
+  const opener = page.locator(".ribbon").getByRole("button", { name: "Graph view" });
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Graph view" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("searchbox", { name: "Filter notes" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Global" })).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByRole("img", { name: /^Graph of \d+ notes and \d+ links$/ })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+});
+
+test("with reduced motion the graph is drawn once it settles, not animated", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/app-harness.html");
+  await expect(page.locator(".sidebar")).toBeVisible();
+  await page.locator(".ribbon").getByRole("button", { name: "Graph view" }).click();
+  const snap = () => page.locator(".graph-canvas-wrap canvas").evaluate((c: HTMLCanvasElement) => c.toDataURL());
+  const blank = await page.evaluate(() => {
+    const c = document.querySelector<HTMLCanvasElement>(".graph-canvas-wrap canvas")!;
+    const e = document.createElement("canvas");
+    e.width = c.width;
+    e.height = c.height;
+    return e.toDataURL();
+  });
+  await expect.poll(snap, { timeout: 10000 }).not.toBe(blank);
+  const a = await snap();
+  await page.waitForTimeout(500);
+  expect(await snap()).toBe(a);
+});

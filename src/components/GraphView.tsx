@@ -8,6 +8,7 @@ import {
 } from "d3-force";
 import type { SimulationNodeDatum } from "d3-force";
 import type { GraphData } from "../lib/vaultIndex";
+import { Modal } from "./Modal";
 
 const idOf = (x: string | { id: string }): string => (typeof x === "string" ? x : x.id);
 
@@ -135,6 +136,9 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
     // Incremental refresh of a mostly-seeded layout barely needs to move;
     // a fresh (or heavily changed) graph gets a full settle.
     const fresh = newCount > nodes.length / 2;
+    // With reduced motion the layout isn't animated: it settles (faster) out of
+    // sight and is drawn once. Dragging a node still follows the pointer.
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     const sim = forceSimulation<GNode>(nodes)
       .force("charge", forceManyBody<GNode>().strength(-70))
       .force(
@@ -147,7 +151,7 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
       .force("center", forceCenter(0, 0))
       .force("collide", forceCollide<GNode>(9))
       .alpha(fresh ? 1 : 0.15)
-      .alphaDecay(0.03);
+      .alphaDecay(reduce ? 0.08 : 0.03);
 
     let hover: GNode | null = null;
 
@@ -248,7 +252,13 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
       ctx.restore();
     };
     redrawRef.current = draw;
-    sim.on("tick", draw);
+    sim.on("tick", () => {
+      if (!reduce || dragNode) draw();
+    });
+    if (reduce) {
+      sim.on("end", draw);
+      if (!fresh) draw();
+    }
 
     // ---------- interaction ----------
     const toGraph = (clientX: number, clientY: number) => {
@@ -372,17 +382,19 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
   }, [activePath]);
 
   return (
-    <div className="graph-overlay">
+    <Modal label="Graph view" className="graph-overlay" onClose={onClose}>
       <div className="graph-header">
         <div className="graph-modes">
           <button
             className={`graph-mode${mode === "global" ? " active" : ""}`}
+            aria-pressed={mode === "global"}
             onClick={() => onSetMode("global")}
           >
             Global
           </button>
           <button
             className={`graph-mode${mode === "local" ? " active" : ""}`}
+            aria-pressed={mode === "local"}
             onClick={() => onSetMode("local")}
           >
             Local
@@ -405,6 +417,7 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
           className="graph-search"
           type="search"
           placeholder="Filter notes…"
+          aria-label="Filter notes"
           value={search}
           onChange={(e) => setSearch(e.currentTarget.value)}
         />
@@ -424,7 +437,11 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
         </button>
       </div>
       <div className="graph-canvas-wrap" ref={wrapRef}>
-        <canvas ref={canvasRef} />
+        <canvas
+          ref={canvasRef}
+          role="img"
+          aria-label={`Graph of ${filtered.nodes.length} notes and ${filtered.links.length} links`}
+        />
         {colorByFolder && (
           <div className="graph-legend">
             {[...new Set(filtered.nodes.map((n) => n.group))]
@@ -438,6 +455,6 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }
