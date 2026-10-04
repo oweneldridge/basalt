@@ -3,6 +3,7 @@ import {
   parseProperties,
   parseBase,
   serializeBase,
+  listOptions,
   validateExpr,
   asFlatFilter,
   fromFlat,
@@ -811,5 +812,31 @@ describe("groupOrder (Obsidian 1.14)", () => {
     expect(regrouped).not.toContain("groupOrder");
     const ungrouped = serializeBase({ ...def, views: [{ ...def.views[0], groupBy: undefined }] });
     expect(ungrouped).not.toContain("groupOrder");
+  });
+});
+
+describe("list view options", () => {
+  const view = (yaml: string) => parseBase(`views:\n  - type: list\n    name: L\n${yaml}`)!.views[0];
+
+  it("defaults to bullets, no indent and a comma separator", () => {
+    expect(listOptions(view(""))).toEqual({ markers: "bullet", indent: false, separator: ", " });
+  });
+
+  it("reads markers, indentProperties and separator", () => {
+    const v = view("    markers: number\n    indentProperties: true\n    separator: ' | '\n");
+    expect(listOptions(v)).toEqual({ markers: "number", indent: true, separator: " | " });
+    expect(listOptions(view("    markers: none\n")).markers).toBe("none");
+  });
+
+  it("falls back like Obsidian on an unknown marker or empty separator", () => {
+    expect(listOptions(view("    markers: stars\n")).markers).toBe("bullet");
+    expect(listOptions(view("    separator: ''\n")).separator).toBe(", ");
+  });
+
+  it("keeps the options through a save", () => {
+    const def = parseBase("views:\n  - type: list\n    name: L\n    markers: number\n    indentProperties: true\n")!;
+    const out = parseBase(serializeBase({ ...def, views: [{ ...def.views[0], name: "Renamed" }] }))!.views[0];
+    expect(out.type).toBe("list");
+    expect(listOptions(out)).toMatchObject({ markers: "number", indent: true });
   });
 });

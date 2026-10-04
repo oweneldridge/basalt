@@ -11,6 +11,7 @@ import {
   fromFlat,
   rawFilterIsFlat,
   validateExpr,
+  listOptions,
   type BaseDef,
   type BaseViewDef,
   type BaseRow,
@@ -108,7 +109,7 @@ function Cell({
   );
 }
 
-/** Read-only Obsidian Bases viewer: tabs per view, table (or cards) over the
+/** Read-only Obsidian Bases viewer: tabs per view, table, cards or list over the
  * vault's files. Everything is computed from props — no writes anywhere.
  * Memoized so unrelated App re-renders (autosave ticks, theme, focus) don't
  * re-run the whole view; parent passes stable callbacks. */
@@ -274,6 +275,8 @@ export const BaseView = memo(function BaseView({
       )}
       {isCards ? (
         <Cards result={result} cap={cap} onOpenFile={onOpenFile} resolveImage={resolveImage} />
+      ) : result.view.type === "list" ? (
+        <List result={result} cap={cap} onOpenFile={onOpenFile} resolveImage={resolveImage} />
       ) : (
         <Table result={result} cap={cap} onOpenFile={onOpenFile} resolveImage={resolveImage} />
       )}
@@ -315,6 +318,15 @@ function BaseEditor({
   // entire vault. Re-sync when the underlying view changes (e.g. tab switch).
   const [nameDraft, setNameDraft] = useState(view.name);
   useEffect(() => setNameDraft(view.name), [view.name]);
+  const list = listOptions(view);
+  const [sepDraft, setSepDraft] = useState(list.separator);
+  useEffect(() => setSepDraft(list.separator), [list.separator]);
+  const patchRaw = (key: string, value: unknown) => {
+    const raw = { ...view.raw };
+    if (value === undefined) delete raw[key];
+    else raw[key] = value;
+    onPatchView({ raw });
+  };
   // Filter builder: a flat and/or list of string conditions (a deeper/`not`
   // tree — or one whose raw had an unmodeled element — stays read-only, so an
   // edit can't silently drop what parse couldn't represent). Local draft,
@@ -383,6 +395,7 @@ function BaseEditor({
           <select value={view.type} onChange={(e) => onPatchView({ type: e.target.value })}>
             <option value="table">Table</option>
             <option value="cards">Cards</option>
+            <option value="list">List</option>
           </select>
         </label>
         <label>
@@ -399,6 +412,38 @@ function BaseEditor({
           />
         </label>
       </div>
+
+      {view.type === "list" && (
+        <div className="base-editor-row">
+          <label>
+            Markers
+            <select value={list.markers} onChange={(e) => patchRaw("markers", e.target.value)}>
+              <option value="bullet">Bullets</option>
+              <option value="number">Numbers</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+          <label>
+            <input type="checkbox" checked={list.indent} onChange={(e) => patchRaw("indentProperties", e.target.checked)} />
+            Indent properties
+          </label>
+          {!list.indent && (
+            <label>
+              Separator
+              <input
+                type="text"
+                value={sepDraft}
+                onChange={(e) => setSepDraft(e.target.value)}
+                onBlur={() => {
+                  if (sepDraft !== list.separator) patchRaw("separator", sepDraft || undefined);
+                  if (!sepDraft) setSepDraft(list.separator);
+                }}
+                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              />
+            </label>
+          )}
+        </div>
+      )}
 
       <div className="base-editor-section">
         <div className="base-editor-title">Columns</div>
@@ -684,6 +729,79 @@ function Cards({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** Obsidian's list layout: one line per file showing the view's non-empty
+ * properties, joined by the separator or (indentProperties) nested under the
+ * first. A row with nothing to show is left out and not numbered. */
+function List({
+  result,
+  cap,
+  onOpenFile,
+  resolveImage,
+}: {
+  result: ViewResult;
+  cap: number;
+  onOpenFile: (t: string) => void;
+  resolveImage: (target: string) => Promise<string | null>;
+}) {
+  const { markers, indent, separator } = listOptions(result.view);
+  const item = (r: ViewResult["rows"][number], i: number) => {
+    const parts = r.cells.map(cellParts);
+    const shown = parts.filter((p) => p.length > 0);
+    if (shown.length === 0 || (indent && parts[0].length === 0)) return null;
+    const cell = (p: CellPart[], j: number) => (
+      <span key={j} className="base-list-prop">
+        <Cell parts={p} onOpenFile={onOpenFile} resolveImage={resolveImage} />
+      </span>
+    );
+    return (
+      <li key={`${r.row.path}:${i}`}>
+        {indent ? (
+          <>
+            {cell(shown[0], 0)}
+            {shown.length > 1 && <ul className="base-list-nested">{shown.slice(1).map((p, j) => <li key={j}>{cell(p, j)}</li>)}</ul>}
+          </>
+        ) : (
+          shown.map((p, j) => (
+            <span key={j}>
+              {j > 0 && <span className="base-list-sep">{separator}</span>}
+              {cell(p, j)}
+            </span>
+          ))
+        )}
+      </li>
+    );
+  };
+  const list = (rows: ViewResult["rows"], label?: string) => {
+    const items = rows.map(item);
+    const cls = `base-list base-list-${markers}`;
+    return markers === "number" ? (
+      <ol className={cls} aria-label={label}>{items}</ol>
+    ) : (
+      <ul className={cls} role={markers === "none" ? "list" : undefined} aria-label={label}>{items}</ul>
+    );
+  };
+
+  let budget = cap;
+  return (
+    <div className="base-scroll base-list-scroll">
+      {result.groups
+        ? result.groups.map((g) => {
+            if (budget <= 0) return null;
+            const slice = g.rows.slice(0, budget);
+            budget -= slice.length;
+            const label = g.label === "" ? "(none)" : g.label;
+            return (
+              <div key={g.label} className="base-list-group">
+                <div className="base-list-group-label">{label}</div>
+                {list(slice, label)}
+              </div>
+            );
+          })
+        : list(result.rows.slice(0, cap))}
     </div>
   );
 }

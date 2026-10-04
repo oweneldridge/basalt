@@ -1450,6 +1450,41 @@ button.primary:hover {
   min-width: 60px;
 }
 
+.base-list-scroll {
+  padding: 8px 12px;
+}
+.base-list {
+  margin: 0;
+  padding-left: 1.6em;
+  color: var(--text);
+  line-height: 1.6;
+}
+.base-list-none {
+  list-style: none;
+  padding-left: 0;
+}
+.base-list-nested {
+  margin: 0;
+  padding-left: 1.4em;
+  border-left: 1px solid var(--border);
+}
+.base-list-sep {
+  color: var(--text-muted);
+  white-space: pre;
+}
+.base-list-group + .base-list-group {
+  margin-top: 10px;
+}
+.base-list-group-label {
+  font-weight: 600;
+  padding: 4px 0;
+}
+.base-list .base-cell-img {
+  display: inline-block;
+  max-height: 1.6em;
+  vertical-align: middle;
+}
+
 .base-showmore {
   flex: none;
   margin: 8px auto;

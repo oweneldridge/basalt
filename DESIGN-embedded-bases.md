@@ -64,8 +64,8 @@ From the Bases help pages (syntax, views) and the 1.9 to 1.10 changelogs:
   embed. Embeds share the per-note row cache.
 - A malformed base shows the parse error in place of the table, inside the
   existing `ErrorBoundary`.
-- Not in this version: saving view edits, embedding in canvases, the list
-  layout, and Obsidian's `this` for the sidebar.
+- Not in this version: saving view edits, embedding in canvases, and
+  Obsidian's `this` for the sidebar.
 
 ## Tests
 

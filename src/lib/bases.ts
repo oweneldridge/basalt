@@ -2098,3 +2098,21 @@ export function cellParts(v: Val): CellPart[] {
   }
   return text === "" ? [] : [{ kind: "text", text }];
 }
+
+export interface ListOptions {
+  markers: "bullet" | "number" | "none";
+  indent: boolean;
+  separator: string;
+}
+
+/** A list view's options, read the way Obsidian reads them: an unknown marker
+ * falls back to bullets and an empty separator to ", ". */
+export function listOptions(view: BaseViewDef): ListOptions {
+  const raw = view.raw ?? {};
+  const m = raw.markers;
+  return {
+    markers: m === "number" || m === "none" ? m : "bullet",
+    indent: !!raw.indentProperties,
+    separator: String(raw.separator || ", "),
+  };
+}
