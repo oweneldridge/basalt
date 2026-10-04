@@ -771,3 +771,29 @@ describe("Bases vocabulary added in Obsidian 1.9 to 1.10", () => {
     expect(res.summary).toEqual(["2"]);
   });
 });
+
+describe("this (the file a base is shown for)", () => {
+  const alpha = row({ path: "Projects/Alpha.md", name: "Alpha.md", basename: "Alpha", folder: "Projects", properties: { status: "active", "due-date": "2026-10-10" } });
+  const withThis = (over: Partial<BaseRow> = {}) => ({ ...mkCtx(over), thisRow: alpha });
+  it("reads the embedding file's name and properties", () => {
+    expect(ev("this.file.name", withThis())).toBe("Alpha.md");
+    expect(ev("this.file.folder", withThis())).toBe("Projects");
+    expect(ev("this.status", withThis())).toBe("active");
+    expect(ev('this["due-date"]', withThis())).toBe("2026-10-10");
+  });
+  it("is null when the base isn't shown for a file", () => {
+    expect(ev("this", mkCtx())).toBeNull();
+    expect(ev("this.file.name", mkCtx())).toBeNull();
+  });
+  it("filters rows that link to the embedding note", () => {
+    const def = parseBase("filters: 'file.hasLink(this.file)'\nviews:\n  - type: table\n    order: [file.name]\n")!;
+    const rows = [
+      row({ path: "A.md", name: "A.md", basename: "A", linkKeys: ["alpha", "projects/alpha"] }),
+      row({ path: "B.md", name: "B.md", basename: "B", linkKeys: ["beta"] }),
+      row({ path: "C.md", name: "C.md", basename: "C", linkKeys: ["projects/alpha"] }),
+    ];
+    const res = runView(def, def.views[0], rows, { nowMs: NOW, thisRow: alpha });
+    expect(res.rows.map((r) => r.row.path)).toEqual(["A.md", "C.md"]);
+    expect(runView(def, def.views[0], rows, { nowMs: NOW }).total).toBe(0);
+  });
+});

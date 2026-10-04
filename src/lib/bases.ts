@@ -721,8 +721,8 @@ export const EXPR_METHODS = [
   "join", "flat", "unique", "sort", "filter", "map", "reduce", "mean", "median", "stddev",
   "date", "time", "format", "relative", "asFile", "linksTo", "length",
 ];
-/** Root namespaces: `file`, `note`, `formula`. */
-export const EXPR_NAMESPACES = ["file", "note", "formula"];
+/** Root namespaces: `file`, `note`, `formula`, `this`. */
+export const EXPR_NAMESPACES = ["file", "note", "formula", "this"];
 /** `file.*` members. */
 export const EXPR_FILE_MEMBERS = [
   "name", "basename", "path", "folder", "ext", "size", "ctime", "mtime", "tags", "links", "properties",
@@ -798,6 +798,9 @@ function cachedParse(src: string): Ast {
 export interface EvalCtx {
   row: BaseRow;
   formulas: Record<string, string>;
+  /** The file the base is shown for (`this`): the embedding note, or the base
+   * file itself when opened directly. Absent means `this` is null. */
+  thisRow?: BaseRow | null;
   /** resolve file("path") / link.asFile() against the vault */
   lookupFile?: (target: string) => BaseRow | null;
   nowMs?: number; // injectable clock for tests
@@ -1178,6 +1181,10 @@ function resolveIdent(name: string, ctx: EvalCtx): Val {
   if (vars?.has(name)) return vars.get(name)!;
   if (name === "file") return new FileVal(ctx.row);
   if (name === "note") return ctx.row.properties as Val;
+  if (name === "this") {
+    const t = ctx.thisRow;
+    return t ? ({ ...t.properties, file: new FileVal(t) } as Val) : null;
+  }
   if (name === "formula") throw new ExprError("formula must be used as formula.<name>");
   // Bare identifier = note property shorthand (`price` ≡ `note.price`).
   return fromYaml(ctx.row.properties[name]);
@@ -1737,7 +1744,7 @@ function fileMethod(f: FileVal, name: string, args: Ast[], ctx: EvalCtx): Val {
       const [v] = vals();
       const q =
         v instanceof FileVal
-          ? [v.row.path.toLowerCase(), v.row.basename.toLowerCase()]
+          ? [stripMd(v.row.path).toLowerCase(), v.row.basename.toLowerCase()]
           : v instanceof LinkVal
             ? [stripMd(v.target).toLowerCase()]
             : [stripMd(toText(v)).toLowerCase()];
@@ -1896,7 +1903,7 @@ export function runView(
   def: BaseDef,
   view: BaseViewDef,
   rows: BaseRow[],
-  opts?: { nowMs?: number; lookupFile?: (t: string) => BaseRow | null },
+  opts?: { nowMs?: number; lookupFile?: (t: string) => BaseRow | null; thisRow?: BaseRow | null },
 ): ViewResult {
   const errors: string[] = [];
   const seenErrors = new Set<string>();
@@ -1915,6 +1922,7 @@ export function runView(
   const mkCtx = (row: BaseRow): EvalCtx => ({
     row,
     formulas: def.formulas,
+    thisRow: opts?.thisRow ?? null,
     lookupFile: opts?.lookupFile,
     nowMs,
     _steps: { n: 0 },
