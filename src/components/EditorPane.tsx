@@ -6,6 +6,7 @@ import type { EditorCallbacks } from "../editor/setup";
 import type { NoteRef } from "../editor/wikilink";
 import type { LinkFormat } from "../lib/rename";
 import { toggleBold, toggleItalic } from "../editor/markdownKeys";
+import { textChanges } from "../lib/textDiff";
 
 interface Props {
   /** Active note path — changing this rebuilds the editor with fresh content. */
@@ -50,17 +51,6 @@ interface Props {
    * a rename or folder move rebuilt it: then the caret and scroll carry over. */
   paneId?: string;
   continuesFrom?: string;
-}
-
-/** The smallest single edit turning `from` into `to`, so a caret or selection
- * outside the changed span keeps its place. Null when they're equal. */
-export function minimalChange(from: string, to: string): { from: number; to: number; insert: string } | null {
-  if (from === to) return null;
-  let a = 0;
-  while (a < from.length && a < to.length && from[a] === to[a]) a++;
-  let b = 0;
-  while (b < from.length - a && b < to.length - a && from[from.length - 1 - b] === to[to.length - 1 - b]) b++;
-  return { from: a, to: from.length - b, insert: to.slice(a, to.length - b) };
 }
 
 // The last editor state each pane tore down, for the rebuild that follows a rename.
@@ -220,8 +210,8 @@ export function EditorPane({
         const v = view.current;
         if (!v) return;
         const doc = v.state.doc.toString();
-        const change = minimalChange(doc, fn(doc));
-        if (change) v.dispatch({ changes: change });
+        const changes = textChanges(doc, fn(doc));
+        if (changes.length) v.dispatch({ changes });
       },
       hasSelection: () => {
         const v = view.current;
@@ -282,17 +272,17 @@ export function EditorPane({
   }, [apiRef, path]);
 
   // Reconcile an external live-reload into the existing editor WITHOUT remounting,
-  // and without triggering a save-back. Applied as the smallest edit, so the
-  // caret maps through it and stays on the text it was on.
+  // and without triggering a save-back. Applied as separate small edits, so the
+  // caret maps through them and stays on the text it was on.
   useEffect(() => {
     const v = view.current;
     if (!v) return;
-    const change = minimalChange(v.state.doc.toString(), doc);
-    if (!change) return;
+    const changes = textChanges(v.state.doc.toString(), doc);
+    if (!changes.length) return;
     // Keep the reconcile OUT of undo history: Cmd-Z must never resurrect
     // pre-reload content (which would then autosave over the external edit).
     v.dispatch({
-      changes: change,
+      changes,
       annotations: [externalReload.of(true), Transaction.addToHistory.of(false)],
     });
   }, [doc, docRev]);

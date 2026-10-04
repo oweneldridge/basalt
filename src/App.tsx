@@ -3641,18 +3641,19 @@ export default function App() {
     setNotes((prev) => prev.map((n) => (n.path === updated.path ? updated : n)));
   }, []);
 
-  // After the pass, editors still holding the text a rewrite was made from show
-  // the rewrite. Where the user typed meanwhile, the same link fix is applied
-  // to their text instead, so neither the typing nor the fix is lost.
+  // After the pass, make sure each rewritten note ends up with the fix, judged
+  // from its newest text: what's typed, else what was last saved. Untouched, it
+  // gets the rewrite; typed into (and maybe saved meanwhile, over the rewrite),
+  // the same link fix is applied to that text. Whatever disk lacks is saved, so
+  // neither the typing nor the fix is lost.
   const reconcileRewrites = useCallback(
     (done: { path: string; base: string; next: string; mapper: (raw: string) => string | null }[]) => {
       for (const d of done) {
-        const live = pending.current.get(d.path) ?? liveDocs.current.get(d.path);
-        let doc = d.next;
-        if (live !== undefined && live !== d.base) {
-          const fixed = rewriteLinks(live, d.mapper);
-          if (fixed === null || fixed === live) continue;
-          doc = fixed;
+        const saved = notesRef.current.find((n) => n.path === d.path)?.content;
+        if (saved === undefined) continue; // deleted meanwhile: nothing to fix
+        const latest = pending.current.get(d.path) ?? liveDocs.current.get(d.path) ?? saved;
+        const doc = latest === d.base || latest === d.next ? d.next : (rewriteLinks(latest, d.mapper) ?? latest);
+        if (doc !== saved) {
           pending.current.set(d.path, doc);
           void flushPath(d.path);
         }

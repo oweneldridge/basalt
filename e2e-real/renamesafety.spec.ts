@@ -180,3 +180,75 @@ test.describe("typing during a folder move's link pass", () => {
     expect(disk).toContain("[[Beta]]");
   });
 });
+
+test.describe("link fixes survive typing during a rename's pass", () => {
+  test.use({
+    vaultFiles: {
+      "Target.md": "# Target\n",
+      "Src.md": "Top [[Target]] here.\n\nmid\n\nEnd [[Target]].\n",
+      "Z1.md": "[[Target]]\n",
+      "Z2.md": "[[Target]]\n",
+    },
+  });
+
+  async function renameTargetSlowly(page: import("@playwright/test").Page) {
+    let slow = true;
+    await page.route("**/api/invoke", async (route) => {
+      if (slow && (route.request().postData() ?? "").includes('"cmd":"read_note"')) await new Promise((r) => setTimeout(r, 1200));
+      await route.continue().catch(() => {});
+    });
+    await page.locator(".tree-row.file", { hasText: "Target" }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+    await page.locator(".prompt-input").fill("Target Renamed");
+    await page.locator(".prompt-input").press("Enter");
+    return () => (slow = false);
+  }
+
+  test("typing a character and deleting it doesn't leave the old links on disk", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Src");
+    const fast = await renameTargetSlowly(page);
+    await expect.poll(() => vault.read("Src.md"), { timeout: 10000 }).toContain("[[Target Renamed]]");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "mid" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("x");
+    await page.keyboard.press("Backspace");
+    await settle(page, 1200);
+    fast();
+    await expect.poll(() => vault.read("Z2.md"), { timeout: 15000 }).toContain("[[Target Renamed]]");
+    await settle(page, 1500);
+    expect(vault.read("Src.md")).toBe("Top [[Target Renamed]] here.\n\nmid\n\nEnd [[Target Renamed]].\n");
+  });
+
+  test("text typed, saved, then left for another note keeps the fix too", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Src");
+    const fast = await renameTargetSlowly(page);
+    await expect.poll(() => vault.read("Src.md"), { timeout: 10000 }).toContain("[[Target Renamed]]");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "mid" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" TYPED");
+    await expect.poll(() => vault.read("Src.md"), { timeout: 8000 }).toContain("mid TYPED");
+    await openNote(page, "Welcome");
+    fast();
+    await expect.poll(() => vault.read("Z2.md"), { timeout: 15000 }).toContain("[[Target Renamed]]");
+    await settle(page, 1500);
+    expect(vault.read("Src.md")).toBe("Top [[Target Renamed]] here.\n\nmid TYPED\n\nEnd [[Target Renamed]].\n");
+  });
+});
+
+test.describe("an outside edit above and below the caret", () => {
+  test.use({ vaultFiles: { "Lines.md": "one\ntwo\nthree [[A]]\nfour\nwhere I type\nsix\nseven [[A]]\n" } });
+
+  test("leaves the caret on its line", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Lines");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "where I type" }).click();
+    await page.keyboard.press("End");
+    vault.write("Lines.md", "one\ntwo\nthree [[A longer name]]\nfour\nwhere I type\nsix\nseven [[A longer name]]\n");
+    await expect(page.locator(".pane:not(.dock) .cm-content")).toContainText("seven A longer name", { timeout: 5000 });
+    await page.keyboard.type("Q");
+    await settle(page, 1500);
+    expect(vault.read("Lines.md")).toBe("one\ntwo\nthree [[A longer name]]\nfour\nwhere I typeQ\nsix\nseven [[A longer name]]\n");
+  });
+});
