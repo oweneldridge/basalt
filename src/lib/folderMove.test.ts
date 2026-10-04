@@ -86,6 +86,13 @@ describe("folder-move link rewrite (shortest format)", () => {
     expect(moveAndRewrite(notes, "proj", "newproj", "top.md")).toBe("see [[b]]");
   });
 
+  it("leaves a link to a note that didn't move alone, even one resolved by a string suffix", () => {
+    // `her/X` reaches Other/X.md through Obsidian's plain suffix match; moving an
+    // unrelated folder must not touch it.
+    const notes = [note("Work/Y.md", "see [[her/X]]"), note("Other/X.md"), note("Moving/Z.md")];
+    expect(moveAndRewrite(notes, "Moving", "Moved", "Work/Y.md")).toBe("see [[her/X]]");
+  });
+
   it("rewrites a ROOT-ANCHORED link that breaks (exact rel, not suffix)", () => {
     const notes = [note("top.md", "see [[/proj/b]]"), note("proj/b.md")];
     const out = moveAndRewrite(notes, "proj", "archive/proj", "top.md");

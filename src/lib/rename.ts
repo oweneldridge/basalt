@@ -243,7 +243,8 @@ export function folderMoveMapper(
     if (destOld) {
       const destPost = ctx.movedNewPathByOld.get(destOld) ?? destOld;
       const destRel = ctx.noteAt(destPost)?.rel ?? "";
-      if (ctx.resolvePost(raw, sourcePostPath) === destPost && namesFolders(raw, destRel, ".md")) return null; // still resolves
+      const moved = ctx.movedNewPathByOld.has(destOld);
+      if (ctx.resolvePost(raw, sourcePostPath) === destPost && (!moved || namesFolders(raw, destRel, ".md"))) return null; // still resolves
       const dest = ctx.noteAt(destPost);
       if (!dest) return null;
       return linkTargetForFormat(
@@ -259,7 +260,8 @@ export function folderMoveMapper(
       if (!attOld) return null;
       const attPost = ctx.movedAttNewPathByOld.get(attOld) ?? attOld;
       const attRel = ctx.attAt(attPost)?.rel ?? "";
-      if (ctx.resolveAttPost(raw, sourcePostPath) === attPost && namesFolders(raw, attRel, "")) return null; // still resolves
+      const attMoved = ctx.movedAttNewPathByOld.has(attOld);
+      if (ctx.resolveAttPost(raw, sourcePostPath) === attPost && (!attMoved || namesFolders(raw, attRel, ""))) return null; // still resolves
       const att = ctx.attAt(attPost);
       if (!att) return null;
       // Attachments keep their extension — pass the full rel as the "toRel".
