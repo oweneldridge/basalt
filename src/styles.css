@@ -336,6 +336,8 @@ button.primary:hover {
   cursor: pointer;
   padding: 4px 6px;
   border-radius: 6px;
+  min-width: 24px;
+  min-height: 24px;
 }
 .link-btn:hover {
   color: var(--text);
@@ -431,9 +433,16 @@ button.primary:hover {
   border-radius: 4px;
   padding: 1px 4px;
   opacity: 0;
+  /* WCAG 2.2 minimum pointer target. */
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .tab:hover .tab-close,
-.tab.active .tab-close {
+.tab.active .tab-close,
+.tab-close:focus-visible {
   opacity: 1;
 }
 .tab-close:hover {

@@ -191,3 +191,17 @@ test("with reduced motion the graph is drawn once it settles, not animated", asy
   await page.waitForTimeout(500);
   expect(await snap()).toBe(a);
 });
+
+test("buttons, tabs and checkboxes are at least 24 by 24 pixels", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await expect(page.locator(".sidebar")).toBeVisible();
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+  await expect(page.locator(".tab.active .tab-close").first()).toBeVisible();
+  const small = await page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>("button, [role=button], [role=tab], input[type=checkbox]")]
+      .map((el) => ({ el, r: el.getBoundingClientRect() }))
+      .filter(({ r }) => r.width > 0 && r.height > 0 && (r.width < 24 || r.height < 24))
+      .map(({ el, r }) => `${Math.round(r.width)}x${Math.round(r.height)} ${el.getAttribute("aria-label") ?? el.textContent}`),
+  );
+  expect(small).toEqual([]);
+});

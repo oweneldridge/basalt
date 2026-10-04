@@ -113,6 +113,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - With reduced motion on, the graph is drawn once it settles instead of
   animating; dragging a node still follows the pointer.
 - The two side panels are named landmarks ("Files", "Note details").
+- Tab close buttons and toolbar buttons are at least 24 by 24 pixels, and a
+  tab's close button shows when it has keyboard focus.
 - Modals are real dialogs: focus moves in and back, Escape closes, and typing
   can't reach the note behind.
 - Tabs work from the keyboard (arrows, Enter, Delete); the editor and icon
