@@ -517,3 +517,73 @@ export function saveEnabled(vault: string, ids: string[]): void {
     /* quota — non-fatal */
   }
 }
+
+// A plugin is enabled for the code the user agreed to run: its main.js hash is
+// recorded on enable, and changed code (a sync peer replacing the file) stays
+// off until the user turns it on again.
+const hashesKey = (vault: string) => `basalt.plugins.hashes.${vault}`;
+
+export async function codeHash(code: string): Promise<string> {
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle) {
+    const buf = await subtle.digest("SHA-256", new TextEncoder().encode(code));
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  // No WebCrypto (a plain-http page): FNV-1a plus length, enough to notice edits.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < code.length; i++) h = Math.imul(h ^ code.charCodeAt(i), 0x01000193) >>> 0;
+  return `fnv-${h.toString(16)}-${code.length}`;
+}
+
+function loadHashes(vault: string): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(hashesKey(vault));
+    const v = raw ? (JSON.parse(raw) as unknown) : {};
+    return v && typeof v === "object" ? (v as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveHashes(vault: string, hashes: Record<string, string>): void {
+  try {
+    localStorage.setItem(hashesKey(vault), JSON.stringify(hashes));
+  } catch {
+    /* quota — non-fatal */
+  }
+}
+
+/** Record the code the user just enabled. */
+export async function rememberPluginCode(vault: string, info: PluginInfo): Promise<void> {
+  const hashes = loadHashes(vault);
+  hashes[info.id] = await codeHash(info.code);
+  saveHashes(vault, hashes);
+}
+
+/** Split the enabled plugins into those safe to run and those whose code
+ * changed since they were enabled (which get switched off). A plugin enabled
+ * before hashes were recorded is trusted once and recorded now. */
+export async function vetEnabledPlugins(
+  vault: string,
+  infos: PluginInfo[],
+): Promise<{ run: PluginInfo[]; changed: PluginInfo[] }> {
+  const enabled = new Set(loadEnabled(vault));
+  const hashes = loadHashes(vault);
+  const run: PluginInfo[] = [];
+  const changed: PluginInfo[] = [];
+  for (const info of infos) {
+    if (!enabled.has(info.id)) continue;
+    const h = await codeHash(info.code);
+    if (hashes[info.id] === undefined || hashes[info.id] === h) {
+      hashes[info.id] = h;
+      run.push(info);
+    } else {
+      changed.push(info);
+      enabled.delete(info.id);
+    }
+  }
+  saveHashes(vault, hashes);
+  if (changed.length) saveEnabled(vault, [...enabled]);
+  return { run, changed };
+}
+

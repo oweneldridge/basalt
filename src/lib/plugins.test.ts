@@ -10,6 +10,8 @@ import {
   isLoaded,
   loadEnabled,
   saveEnabled,
+  rememberPluginCode,
+  vetEnabledPlugins,
   emitVaultEvent,
   emitWorkspaceEvent,
   pluginSettingTabs,
@@ -329,5 +331,35 @@ describe("plugin vault mutations", () => {
     `;
     await loadPlugin(info({ id: "vmut", code }));
     expect(calls).toEqual(["delete:A.md", "rename:A.md->B.md", "mkdir:Folder"]);
+  });
+});
+
+describe("enabled plugins are tied to their code", () => {
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    });
+  });
+  const plugin = (code: string): PluginInfo => ({ id: "p", name: "P", version: "1", description: "", author: "", minAppVersion: "", code, data: null });
+
+  it("runs the enabled code, and switches a plugin off when its code changes", async () => {
+    store.clear();
+    saveEnabled("/v", ["p"]);
+    await rememberPluginCode("/v", plugin("v1"));
+    expect((await vetEnabledPlugins("/v", [plugin("v1")])).run.map((p) => p.id)).toEqual(["p"]);
+    const swapped = await vetEnabledPlugins("/v", [plugin("v2 from a sync peer")]);
+    expect(swapped.run).toEqual([]);
+    expect(swapped.changed.map((p) => p.id)).toEqual(["p"]);
+    expect(loadEnabled("/v")).toEqual([]);
+  });
+
+  it("trusts a plugin enabled before hashes existed, once", async () => {
+    store.clear();
+    saveEnabled("/v", ["p"]);
+    expect((await vetEnabledPlugins("/v", [plugin("old")])).run).toHaveLength(1);
+    expect((await vetEnabledPlugins("/v", [plugin("new")])).changed).toHaveLength(1);
   });
 });

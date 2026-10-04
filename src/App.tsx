@@ -59,6 +59,8 @@ import {
   unloadAll,
   pluginCommands,
   loadEnabled,
+  vetEnabledPlugins,
+  rememberPluginCode,
   saveEnabled,
   emitVaultEvent,
   emitWorkspaceEvent,
@@ -3066,11 +3068,13 @@ export default function App() {
     }
     if (vaultRef.current !== v) return; // vault changed during the async list
     setInstalledPlugins(infos);
-    const enabled = new Set(loadEnabled(v));
+    const { run, changed } = await vetEnabledPlugins(v, infos);
+    for (const info of changed) {
+      showNotice(`Plugin "${info.name}" changed since you enabled it, so it's off. Turn it on again in Settings to run the new version.`, 10000);
+    }
     await unloadAll();
-    for (const info of infos) {
+    for (const info of run) {
       if (vaultRef.current !== v) break; // vault switched mid-load — stop
-      if (!enabled.has(info.id)) continue;
       try {
         await loadPlugin(info);
       } catch (e) {
@@ -3089,6 +3093,7 @@ export default function App() {
       if (enabled) cur.add(info.id);
       else cur.delete(info.id);
       saveEnabled(v, [...cur]);
+      if (enabled) await rememberPluginCode(v, info);
       try {
         if (enabled) await loadPlugin(info);
         else await unloadPlugin(info.id);
