@@ -418,7 +418,8 @@ fn check_unchanged(path: &Path, expected: Option<&str>, content: &str) -> Result
     let Some(expected) = expected else { return Ok(()) };
     let current = match fs::read(path) {
         Ok(bytes) => to_lf(&String::from_utf8_lossy(&bytes)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        // Renamed or deleted since it was read: writing would bring it back.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(WRITE_CONFLICT.into()),
         Err(e) => return Err(format!("read {}: {e}", path.display())),
     };
     if current == to_lf(expected) || current == to_lf(content) {
@@ -2003,9 +2004,13 @@ mod tests {
         write_note(&root, p(), "forced\n".into(), None).unwrap();
         assert_eq!(fs::read_to_string(&note).unwrap(), "forced\n");
 
-        // A missing file still saves, so a dirty note deleted elsewhere survives.
+        // Renamed or deleted since it was read: a save mustn't bring the old file
+        // back. The app keeps the text and asks; Keep mine writes it back.
         fs::remove_file(&note).unwrap();
-        write_note(&root, p(), "back\n".into(), Some("forced\n".into())).unwrap();
+        let err = write_note(&root, p(), "back\n".into(), Some("forced\n".into())).unwrap_err();
+        assert_eq!(err, WRITE_CONFLICT);
+        assert!(!note.exists());
+        write_note(&root, p(), "back\n".into(), None).unwrap();
         assert_eq!(fs::read_to_string(&note).unwrap(), "back\n");
         fs::remove_dir_all(&root).unwrap();
     }

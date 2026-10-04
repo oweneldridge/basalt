@@ -65,7 +65,7 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
     case "write_base": {
       const path = String(a.path);
       const current = files.get(path) ?? notes.get(path)?.content;
-      if (typeof a.expected === "string" && current !== undefined && current !== a.expected && current !== a.content) {
+      if (typeof a.expected === "string" && (current === undefined || (current !== a.expected && current !== a.content))) {
         return Promise.reject("Changed on disk since Basalt last read it");
       }
       if (files.has(path)) files.set(path, String(a.content));
