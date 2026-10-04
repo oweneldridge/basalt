@@ -153,10 +153,13 @@ export function EditorPane({
   const view = useRef<EditorView | null>(null);
   // Keep the latest callbacks in refs so the editor (rebuilt only per `path`)
   // always calls through to fresh closures without being torn down on every render.
-  // Fingerprints of the texts this editor reported lately. A `doc` prop equal to
-  // one of them, with no new docRev, is an echo of its own typing that a later
-  // keystroke has overtaken, and must not be applied.
-  const reported = useRef<number[]>([]);
+  // Fingerprints of the texts this editor reported lately, oldest first. A `doc`
+  // prop equal to one of them, with no new docRev, is an echo of its own typing
+  // and must not be applied. Echoes come back in order, so a text older than
+  // one already echoed was put back by someone else (another pane or device).
+  const reported = useRef<{ hash: number; seq: number }[]>([]);
+  const reportSeq = useRef(0);
+  const echoFloor = useRef(0);
   const lastDocRev = useRef(docRev);
   const cbs = useRef({ getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange, onCursor, onContextMenu });
   cbs.current = { getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange, onCursor, onContextMenu };
@@ -174,7 +177,7 @@ export function EditorPane({
     saveAttachment: (f) => cbs.current.saveAttachment(f),
     replacePlaceholder: (ph, rep) => cbs.current.replacePlaceholder(ph, rep),
     onChange: (d) => {
-      reported.current.push(textHash(d));
+      reported.current.push({ hash: textHash(d), seq: reportSeq.current++ });
       if (reported.current.length > 64) reported.current.shift();
       cbs.current.onChange(d);
     },
@@ -361,9 +364,17 @@ export function EditorPane({
     if (!v) return;
     const explicit = docRev !== lastDocRev.current;
     lastDocRev.current = docRev;
-    if (!explicit && reported.current.includes(textHash(doc))) return;
+    if (!explicit) {
+      const h = textHash(doc);
+      const echo = [...reported.current].reverse().find((r) => r.hash === h);
+      if (echo && echo.seq >= echoFloor.current) {
+        echoFloor.current = echo.seq;
+        return;
+      }
+    }
     const changes = textChanges(v.state.doc.toString(), doc);
     if (!changes.length) return;
+    echoFloor.current = reportSeq.current;
     // Keep the reconcile OUT of undo history: Cmd-Z must never resurrect
     // pre-reload content (which would then autosave over the external edit).
     v.dispatch({

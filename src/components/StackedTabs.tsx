@@ -58,22 +58,28 @@ export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody
 
   return (
     <div className="stacked-tabs">
-      {tabs.map((t) => (
-        <div key={t.path} className={`stacked-col${t.path === activePath ? " active" : ""}`}>
-          <button className="stacked-col-head" title={`Focus ${t.name}`} onClick={() => onFocusTab(t.path, liveDoc?.(t.path) ?? docs[t.path] ?? undefined)}>
-            {t.name}
-          </button>
-          <div className="stacked-col-body">
-            {/\.md$/i.test(t.path) && docs[t.path] === null ? (
-              <div className="placeholder">Couldn't load this note.</div>
-            ) : /\.md$/i.test(t.path) && docs[t.path] !== undefined ? (
-              renderBody(t, liveDoc?.(t.path) ?? (docs[t.path] as string), (d) => setDocs((prev) => ({ ...prev, [t.path]: d })))
-            ) : (
-              <div className="placeholder">{/\.md$/i.test(t.path) ? "Loading…" : "Open this tab to view it."}</div>
-            )}
+      {tabs.map((t) => {
+        const md = /\.md$/i.test(t.path);
+        // Text the app already holds (a renamed note, another pane's) shows at
+        // once, so a column rebuilt by a rename keeps the caret and typing.
+        const doc = md ? (liveDoc?.(t.path) ?? docs[t.path]) : undefined;
+        return (
+          <div key={t.path} className={`stacked-col${t.path === activePath ? " active" : ""}`}>
+            <button className="stacked-col-head" title={`Focus ${t.name}`} onClick={() => onFocusTab(t.path, doc ?? undefined)}>
+              {t.name}
+            </button>
+            <div className="stacked-col-body">
+              {doc === null ? (
+                <div className="placeholder">Couldn't load this note.</div>
+              ) : doc !== undefined ? (
+                renderBody(t, doc, (d) => setDocs((prev) => ({ ...prev, [t.path]: d })))
+              ) : (
+                <div className="placeholder">{md ? "Loading…" : "Open this tab to view it."}</div>
+              )}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
