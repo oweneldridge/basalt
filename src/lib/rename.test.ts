@@ -239,3 +239,25 @@ describe("block scalars in properties", () => {
     ]);
   });
 });
+
+describe("block scalar detection edge cases", () => {
+  it("a comment or a sibling key doesn't hide property links; |2- headers count", () => {
+    const lines = [
+      "---",
+      "related: # format: |",
+      '  - "[[A]]"',
+      "items:",
+      "  - note: |",
+      "      text",
+      '    up: "[[A]]"',
+      "poem: |2-",
+      '    "[[A]]"',
+      "---",
+    ];
+    expect(yamlValueLines(lines)).toEqual([false, true, true, true, true, false, true, true, false, false]);
+    const out = rewriteLinks(lines.join("\n"), renameMap("A", "B"))!;
+    expect(out).toContain('  - "[[B]]"');
+    expect(out).toContain('    up: "[[B]]"');
+    expect(out).toContain('    "[[A]]"\n---');
+  });
+});

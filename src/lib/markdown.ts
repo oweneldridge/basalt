@@ -65,7 +65,7 @@ export function frontmatterEnd(lines: string[]): number {
 export function yamlValueLines(lines: string[]): boolean[] {
   const mask = new Array<boolean>(lines.length).fill(false);
   const end = frontmatterEnd(lines);
-  let block = -1; // indent of the key that opened a block scalar, or -1
+  let block = -1; // column the block scalar's text must be indented past, or -1
   for (let i = 1; i < end; i++) {
     const line = lines[i];
     const indent = line.length - line.trimStart().length;
@@ -74,7 +74,20 @@ export function yamlValueLines(lines: string[]): boolean[] {
       block = -1;
     }
     mask[i] = true;
-    if (/(?::|^\s*-)\s+[|>][+-]?\d*\s*(?:#.*)?$/.test(line)) block = indent;
+    // The value part, without a trailing comment (a `#` outside quotes).
+    let cut = line.length;
+    for (let j = 0; j < line.length; j++) {
+      if (line[j] === "#" && (j === 0 || /\s/.test(line[j - 1])) && yamlContextAt(line, j).quote === null) {
+        cut = j;
+        break;
+      }
+    }
+    const value = line.slice(0, cut).trimEnd();
+    if (!/(?::|^\s*-)\s+[|>](?:[+-]?\d?|\d[+-])$/.test(value)) continue;
+    // `key: |` and `- key: |` indent past the key; a bare `- |` past its dash.
+    const lead = /^(\s*)((?:-\s+)*)/.exec(value)!;
+    const rest = value.slice(lead[0].length);
+    block = /^[|>]/.test(rest) && lead[2] ? lead[1].length + lead[2].trimEnd().lastIndexOf("-") : lead[0].length;
   }
   return mask;
 }
