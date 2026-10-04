@@ -51,3 +51,28 @@ test("right-click context menu: duplicate a node and add a card", async ({ page 
   await page.locator(".ctx-item", { hasText: "Add card here" }).click();
   await expect(page.locator(".canvas-node")).toHaveCount(5);
 });
+
+test("cards work from the keyboard: focus selects, arrows move, Enter edits, Delete removes", async ({ page }) => {
+  const cards = page.getByRole("group").filter({ has: page.locator(".canvas-node-content") });
+  await expect(cards).toHaveCount(3);
+  const first = page.locator(".canvas-node").first();
+  await expect(first).toHaveAttribute("aria-roledescription", "card");
+  await expect(first).toHaveAttribute("aria-label", /^Text: /);
+  await first.focus();
+  const box0 = (await first.boundingBox())!;
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Shift+ArrowDown");
+  const box1 = (await first.boundingBox())!;
+  expect(Math.round(box1.x - box0.x)).toBeGreaterThan(5);
+  expect(Math.round(box1.y - box0.y)).toBeGreaterThan(Math.round(box1.x - box0.x));
+  await page.keyboard.press("Enter");
+  const input = page.locator(".canvas-text-input");
+  await expect(input).toBeFocused();
+  await page.keyboard.type("Typed by keyboard");
+  await page.keyboard.press("Escape");
+  await expect(input).toHaveCount(0);
+  await expect(first).toBeFocused();
+  await expect(first).toContainText("Typed by keyboard");
+  await page.keyboard.press("Delete");
+  await expect(page.locator(".canvas-node")).toHaveCount(2);
+});

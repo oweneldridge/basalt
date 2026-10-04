@@ -117,6 +117,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tab's close button shows when it has keyboard focus.
 - Text fields and dropdowns have edges you can see: their borders meet 3:1
   against the panel behind them, in light and dark.
+- Canvas cards work from the keyboard. Tab reaches each card and names it,
+  focus selects it, Enter edits a text card or opens a note or link, arrow keys
+  move the selection (Shift for bigger steps), Delete removes it, and Escape
+  after editing returns to the card.
 - Modals are real dialogs: focus moves in and back, Escape closes, and typing
   can't reach the note behind.
 - Tabs work from the keyboard (arrows, Enter, Delete); the editor and icon
