@@ -73,7 +73,7 @@ module.exports = class Calendar extends Plugin {
       if (self.app.dailyNotes) {
         const note = document.createElement("p");
         note.className = "cal-setting";
-        note.textContent = "Daily notes use the vault's Daily notes settings: folder, date format and template.";
+        note.textContent = "Daily notes use the vault's Daily notes settings (folder, date format, template). The folder below applies only if the vault has none.";
         this.containerEl.appendChild(note);
       }
       const folderRow = document.createElement("label");
@@ -88,7 +88,7 @@ module.exports = class Calendar extends Plugin {
         await self.saveData(self.settings);
       });
       folderRow.appendChild(folder);
-      if (!self.app.dailyNotes) this.containerEl.appendChild(folderRow);
+      this.containerEl.appendChild(folderRow);
 
       const wkRow = document.createElement("label");
       wkRow.className = "cal-setting";
@@ -118,7 +118,7 @@ module.exports = class Calendar extends Plugin {
   async openDaily(key) {
     const daily = this.app.dailyNotes;
     if (daily) {
-      await daily.open(parseDailyDate(key));
+      await daily.open(parseDailyDate(key), this.settings.folder);
       return;
     }
     const has = this.datedNoteKeys().has(key);
@@ -204,7 +204,7 @@ module.exports = class Calendar extends Plugin {
         for (const day of week) {
           const cell = document.createElement("button");
           cell.type = "button";
-          const hasNote = daily ? daily.has(day.date) : keys.has(day.key);
+          const hasNote = daily ? daily.has(day.date, this.settings.folder) : keys.has(day.key);
           let cls = "cal-day";
           if (!day.inMonth) cls += " is-outside";
           if (day.key === todayKey) cls += " is-today";

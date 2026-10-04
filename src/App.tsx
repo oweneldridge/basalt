@@ -2527,7 +2527,7 @@ export default function App() {
 
   // The daily note's vault-relative path (no extension) for a date, per
   // daily-notes.json. An unsupported format falls back to YYYY-MM-DD.
-  const dailyNoteRel = useCallback((date: Date): { relNoExt: string; name: string; fallback: string | null } => {
+  const dailyNoteRel = useCallback((date: Date, folderIfUnset?: string): { relNoExt: string; name: string; fallback: string | null } => {
     const cfg = obsConfigRef.current;
     const fmt = cfg?.dailyNotesFormat || "YYYY-MM-DD";
     let name: string;
@@ -2542,7 +2542,8 @@ export default function App() {
         fallback = `Daily-note format "${fmt}" isn't fully supported (${e.message}); used YYYY-MM-DD`;
       }
     }
-    const folder = (cfg?.dailyNotesFolder ?? "").replace(/^\/+|\/+$/g, "");
+    // A folder from a plugin's own setting applies only without daily-notes.json.
+    const folder = (cfg?.dailyNotesFolder ?? folderIfUnset ?? "").replace(/^\/+|\/+$/g, "");
     // Sanitize exactly like the Rust build_note_path, so the existence lookup
     // finds the file the backend actually created (else every open after the
     // first fails with "note already exists").
@@ -2550,8 +2551,8 @@ export default function App() {
   }, []);
 
   const hasDailyNote = useCallback(
-    (date: Date) => {
-      const want = normRelKey(`${dailyNoteRel(date).relNoExt}.md`);
+    (date: Date, folderIfUnset?: string) => {
+      const want = normRelKey(`${dailyNoteRel(date, folderIfUnset).relNoExt}.md`);
       return notesRef.current.some((n) => normRelKey(n.rel) === want);
     },
     [dailyNoteRel],
@@ -2559,10 +2560,13 @@ export default function App() {
 
   /** Open (creating if needed) the daily note for a date (default today),
    * honoring daily-notes.json. */
-  const openDailyNote = useCallback(async (date: Date = new Date()) => {
+  const openDailyNote = useCallback(async (date: Date = new Date(), folderIfUnset?: string) => {
     const cfg = obsConfigRef.current;
-    const now = date;
-    const { relNoExt, name, fallback } = dailyNoteRel(date);
+    // The note's day with the current time, so a template's {{time}} is now.
+    const clock = new Date();
+    const now = new Date(date);
+    now.setHours(clock.getHours(), clock.getMinutes(), clock.getSeconds(), clock.getMilliseconds());
+    const { relNoExt, name, fallback } = dailyNoteRel(date, folderIfUnset);
     if (fallback) setSaveError(fallback);
     const want = normRelKey(`${relNoExt}.md`);
     const existing = notesRef.current.find((n) => normRelKey(n.rel) === want);
@@ -3168,8 +3172,8 @@ export default function App() {
         };
       },
       insertAtCursor: (text, caretOffset) => editorApiRef.current?.insertAtCursor(text, caretOffset),
-      openDailyNote: (date) => dailyNoteApi.current.open(date),
-      hasDailyNote: (date) => dailyNoteApi.current.has(date),
+      openDailyNote: (date, folderIfUnset) => dailyNoteApi.current.open(date, folderIfUnset),
+      hasDailyNote: (date, folderIfUnset) => dailyNoteApi.current.has(date, folderIfUnset),
       onRegistryChanged: () => setPluginVersion((v) => v + 1),
     };
     installHost(deps);
@@ -3735,12 +3739,15 @@ export default function App() {
             return linkTargetForFormat(fmt, newRelNoExt, taken, newRel); // self-link
           }
           if (dest) {
-            if (preIndex.resolveFromRel(raw, newRel) === dest) return null;
+            // A link whose name is now this note's own may resolve to itself.
+            const last = normalizeName((targetPathPart(raw).split(/[/\\]/).pop() ?? "").replace(/\.md$/i, ""));
+            const shadowed = last === normalizeName(newBase);
+            if (!shadowed && preIndex.resolveFromRel(raw, newRel) === dest) return null;
             const destNote = preNotes.find((n) => n.path === dest);
             if (!destNote) return null;
-            const destTaken = preNotes.some(
-              (n) => n.path !== dest && normalizeName(n.name) === normalizeName(destNote.name),
-            );
+            const destTaken =
+              shadowed ||
+              preNotes.some((n) => n.path !== dest && normalizeName(n.name) === normalizeName(destNote.name));
             return linkTargetForFormat(fmt, destNote.rel.replace(/\.md$/i, ""), destTaken, newRel);
           }
           const att = resolveAttachment(atts, raw, oldNote.rel);

@@ -71,6 +71,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   custom format, and its days are buttons you can reach from the keyboard.
 - Renaming a folder updates markdown-style attachment links such as
   `![](Media/pic.png)`, not only `![[...]]` embeds.
+- Renaming a note to the name of a note it links to keeps that link on the
+  other note (written with its folder) instead of turning it into a self-link.
+- Daily notes created from the Calendar fill `{{time}}` with the current time,
+  and the plugin's own folder setting applies when the vault has no Daily
+  notes settings.
 - Moving a note to another folder keeps its own links pointing where they did:
   `./` attachment paths, and bare names Obsidian looks up in the note's folder
   first.

@@ -85,10 +85,11 @@ export interface HostDeps {
    * Optional so older host wirings still satisfy the type. */
   insertAtCursor?: (text: string, caretOffset?: number) => void;
   /** Open (creating if needed) the daily note for a date, using the vault's
-   * Daily notes settings: folder, date format and template. */
-  openDailyNote?: (date: Date) => Promise<void>;
+   * Daily notes settings: folder, date format and template. `folderIfUnset` is
+   * used only when the vault has no Daily notes settings. */
+  openDailyNote?: (date: Date, folderIfUnset?: string) => Promise<void>;
   /** Whether the daily note for a date exists. */
-  hasDailyNote?: (date: Date) => boolean;
+  hasDailyNote?: (date: Date, folderIfUnset?: string) => boolean;
   /** Re-render open editors/reading views after processors/commands change. */
   onRegistryChanged: () => void;
 }
@@ -293,7 +294,10 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
      * hosts that don't provide them. */
     dailyNotes:
       host.openDailyNote && host.hasDailyNote
-        ? { open: (date: Date) => host.openDailyNote!(date), has: (date: Date) => host.hasDailyNote!(date) }
+        ? {
+            open: (date: Date, folderIfUnset?: string) => host.openDailyNote!(date, folderIfUnset),
+            has: (date: Date, folderIfUnset?: string) => host.hasDailyNote!(date, folderIfUnset),
+          }
         : undefined,
     metadataCache: {
       /** Parsed metadata for a note (accepts a `{path}` or a rel string). */

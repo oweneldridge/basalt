@@ -246,3 +246,15 @@ test.describe("moving a note keeps its own links pointing where they did", () =>
     );
   });
 });
+
+test.describe("renaming a note to the name of a note it links to", () => {
+  test.use({ vaultFiles: { "Folder1/Draft.md": "# Draft\n\nSee [[Plan]].\n", "Other/Plan.md": "# Plan\n" } });
+
+  test("the link keeps pointing at the other note, not at itself", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await page.locator(".tree-row.folder", { hasText: "Folder1" }).click();
+    await renameFromTree(page, "Draft", "Folder1/Plan");
+    await expect.poll(() => vault.exists("Folder1/Plan.md")).toBe(true);
+    await expect.poll(() => vault.read("Folder1/Plan.md")).toContain("[[Other/Plan]]");
+  });
+});
