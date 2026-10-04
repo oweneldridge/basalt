@@ -564,7 +564,7 @@ function saveHashes(vault: string, hashes: Record<string, string>): void {
   try {
     localStorage.setItem(hashesKey(vault), JSON.stringify(hashes));
   } catch {
-    /* quota — non-fatal */
+    /* quota, non-fatal */
   }
 }
 

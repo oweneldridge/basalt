@@ -1,4 +1,4 @@
-// Calendar — a month grid in the sidebar for daily notes. A day with a daily
+// Calendar: a month grid in the sidebar for daily notes. A day with a daily
 // note gets a dot; clicking a day opens that note, or creates it if it doesn't
 // exist yet. Today and the currently open daily note are highlighted.
 // Prev/next month + Today navigation.

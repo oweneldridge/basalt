@@ -175,7 +175,7 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
       {!dock && (
         <button
           className={`tab-link${linked ? " active" : ""}`}
-          title={linked ? "Linked — follows notes opened elsewhere (click to unlink)" : "Link this pane (follow notes opened elsewhere)"} aria-label={linked ? "Linked — follows notes opened elsewhere (click to unlink)" : "Link this pane (follow notes opened elsewhere)"}
+          title={linked ? "Linked: follows notes opened elsewhere (click to unlink)" : "Link this pane (follow notes opened elsewhere)"} aria-label={linked ? "Linked: follows notes opened elsewhere (click to unlink)" : "Link this pane (follow notes opened elsewhere)"}
           aria-pressed={linked}
           onClick={onToggleLink}
         >
