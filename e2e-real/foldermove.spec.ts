@@ -57,6 +57,15 @@ test.describe("attachment links", () => {
     },
   });
 
+  test("a markdown image with an encoded space shows in both views", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Gallery");
+    const pane = page.locator(".pane:not(.dock)").first();
+    await expect(pane.locator('img.cm-md-image[alt="first"]')).toHaveAttribute("src", /^data:image\/png/);
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await expect(pane.locator(".reading-view img.md-image")).toHaveAttribute("src", /^data:image\/png/);
+  });
+
   test("a folder rename rewrites markdown and wiki attachment links on disk", async ({ page, vault }) => {
     await openApp(page, vault);
     await renameFolder(page, "Media", "Images");

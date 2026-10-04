@@ -237,6 +237,19 @@ export function internalFileHref(href: string): { path: string; fragment: string
   return { path, fragment };
 }
 
+/** The file a markdown image names: a URL as written, a vault path without
+ * its `#fragment` and percent-decoded (`shot%20one.png` is `shot one.png`). */
+export function mdImageTarget(href: string): string {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//")) return href;
+  const hashAt = href.indexOf("#");
+  const path = hashAt >= 0 ? href.slice(0, hashAt) : href;
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
 /** Percent-encode a vault path for a markdown href the way Obsidian does:
  * spaces and parens encoded, slashes kept. */
 export function encodeMdPath(path: string): string {

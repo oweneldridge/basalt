@@ -323,3 +323,13 @@ describe("reading-view task lines", () => {
   });
 });
 
+
+describe("markdown image paths", () => {
+  it("names the decoded vault file, as Obsidian writes spaces and # encoded", () => {
+    expect(renderInline("![s](Media/shot%20one.png)")).toContain('data-basalt-img="Media/shot one.png"');
+    expect(renderInline("![s](a%23b.png)")).toContain('data-basalt-img="a#b.png"');
+    expect(renderInline("![s](<Media/shot one.png>)")).toContain('data-basalt-img="Media/shot one.png"');
+    expect(renderInline("![s](100%.png)")).toContain('data-basalt-img="100%.png"');
+    expect(renderInline("![s](https://x.test/a%20b.png)")).toContain('data-basalt-img="https://x.test/a%20b.png"');
+  });
+});

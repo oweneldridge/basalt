@@ -10,7 +10,7 @@ import type { Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
-import { parseMarkdownLink, internalMdHref } from "../lib/markdown";
+import { mdImageTarget, parseMarkdownLink, internalMdHref } from "../lib/markdown";
 import { frontmatterRange, treeChanged } from "./regions";
 import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "../lib/remoteImages";
 
@@ -224,7 +224,7 @@ function buildDecorations(
           builder.add(
             node.from,
             node.to,
-            Decoration.replace({ widget: new ImgWidget(alt, parsed.href, width, resolveImage) }),
+            Decoration.replace({ widget: new ImgWidget(alt, mdImageTarget(parsed.href), width, resolveImage) }),
           );
           return false;
         }

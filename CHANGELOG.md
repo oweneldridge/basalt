@@ -99,6 +99,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `![](Media/pic.png)`, not only `![[...]]` embeds, including files with `#`
   in the name (`a%23b.png`). Renaming a note named like the part before that
   `#` no longer turns such a link into a link to the note.
+- Markdown-style images whose path is percent-encoded, as Obsidian writes
+  spaces (`![](Media/shot%20one.png)`), show in Live Preview and Reading view
+  instead of as missing.
 - Renaming a note to the name of a note it links to keeps that link on the
   other note (written with its folder) instead of turning it into a self-link.
 - Daily notes created from the Calendar fill `{{time}}` with the current time,

@@ -9,7 +9,7 @@
 // Block structure is parsed line-by-line (the same shape proseMask uses for
 // fences/frontmatter); inline syntax reuses the app's link/tag/highlight
 // semantics so Reading mode and the editor agree on what a link/tag is.
-import { parseMarkdownLink, targetNoteName, proseMask } from "./markdown";
+import { mdImageTarget, parseMarkdownLink, targetNoteName, proseMask } from "./markdown";
 import { parseFm } from "./frontmatter";
 import { calloutIcon } from "./callouticons";
 
@@ -141,7 +141,7 @@ export function renderInline(text: string, depth = 0): string {
       if (!parsed) {
         out += escapeHtml(tok);
       } else if (tok.startsWith("!")) {
-        out += `<img class="md-image" data-basalt-img="${escapeHtml(parsed.href)}" alt="${escapeHtml(
+        out += `<img class="md-image" data-basalt-img="${escapeHtml(mdImageTarget(parsed.href))}" alt="${escapeHtml(
           parsed.text,
         )}" />`;
       } else {
