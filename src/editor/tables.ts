@@ -11,7 +11,7 @@ import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { renderInline } from "./inlineRender";
-import { parseTable, serializeTable, insertRow, deleteRow, insertColumn, deleteColumn } from "../lib/tableEdit";
+import { editTableSource, tablePrefix, insertRow, deleteRow, insertColumn, deleteColumn } from "../lib/tableEdit";
 import type { ParsedTable } from "../lib/tableEdit";
 
 // Split a table row into cells on UNescaped pipes, then unescape `\|`.
@@ -46,7 +46,10 @@ class TableWidget extends WidgetType {
     wrap.className = "cm-md-table-wrap";
     const table = document.createElement("table");
     table.className = "cm-md-table";
-    const lines = this.source.split("\n").filter((l) => l.trim().length > 0);
+    // A table in a list item or callout: its rows share an indent or `>` prefix.
+    const prefix = tablePrefix(this.source);
+    const raw = this.source.split("\n").filter((l) => l.trim().length > 0);
+    const lines = raw.map((l) => l.slice(prefix.length));
     if (lines.length === 0) {
       wrap.append(table);
       return wrap;
@@ -68,10 +71,10 @@ class TableWidget extends WidgetType {
     const edit = (fn: (t: ParsedTable) => ParsedTable) => (e: Event) => {
       e.preventDefault();
       e.stopPropagation();
-      const t = parseTable(this.source);
-      if (!t) return;
+      const next = editTableSource(this.source, fn);
+      if (next === null) return;
       const { from, to } = range();
-      view.dispatch({ changes: { from, to, insert: serializeTable(fn(t)) } });
+      view.dispatch({ changes: { from, to, insert: next } });
     };
     // Reveal the raw source with the caret inside a specific cell.
     const editCell = (lineIdx: number, col: number) => (e: Event) => {
@@ -80,8 +83,8 @@ class TableWidget extends WidgetType {
       e.preventDefault();
       e.stopPropagation();
       const { from } = range();
-      const before = lines.slice(0, lineIdx).reduce((n, l) => n + l.length + 1, 0);
-      const pos = from + before + cellOffsetInLine(lines[lineIdx], col);
+      const before = raw.slice(0, lineIdx).reduce((n, l) => n + l.length + 1, 0);
+      const pos = from + before + prefix.length + cellOffsetInLine(lines[lineIdx], col);
       view.dispatch({ selection: { anchor: pos } });
       view.focus();
     };
