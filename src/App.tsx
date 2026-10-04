@@ -3796,39 +3796,27 @@ export default function App() {
           const attTaken = atts.some((a) => a.path !== att.path && normalizeName(a.name) === normalizeName(att.name));
           return linkTargetForFormat(fmt, att.rel, attTaken, newRel);
         };
-        const typing = pending.current.get(newPath);
-        if (typing !== undefined) {
-          // The user is typing: fix the links in their text; autosave writes it.
-          const rewritten = rewriteLinks(typing, ownMap);
-          if (rewritten !== null) {
-            pending.current.set(newPath, rewritten);
-            for (const p of Object.values(panesRef.current)) {
-              if (p.active === newPath) patchPane(p.id, { doc: rewritten });
-            }
-          }
-        } else {
-          let disk = oldNote.content;
-          try {
-            disk = await readNote(newPath);
-          } catch {
-            /* keep the last known content */
-          }
-          const ownRewritten = rewriteLinks(disk, ownMap);
-          if (ownRewritten !== null && !pending.current.has(newPath)) {
+        // Fix the note's own links on disk, unless it's being typed into; either
+        // way reconcileRewrites then makes sure the newest text, typed or
+        // saved, carries the fix.
+        let disk = oldNote.content;
+        try {
+          disk = await readNote(newPath);
+        } catch {
+          /* keep the last known content */
+        }
+        const ownRewritten = rewriteLinks(disk, ownMap);
+        if (ownRewritten !== null) {
+          if (!pending.current.has(newPath)) {
             try {
               await writeNote(newPath, ownRewritten, disk);
               rememberSelfWrite(newRel, ownRewritten);
-              const updated: VaultNote = { ...moved, content: ownRewritten };
-              index.current.setNote(updated);
-              notesRef.current = notesRef.current.map((n) => (n.path === newPath ? updated : n));
-              setNotes((prev) => prev.map((n) => (n.path === newPath ? updated : n)));
-              for (const p of Object.values(panesRef.current)) {
-                if (p.active === newPath && !pending.current.has(newPath)) patchPane(p.id, { doc: ownRewritten });
-              }
+              registerRewrite({ ...moved, content: ownRewritten });
             } catch (e) {
-              if (!isWriteConflict(e)) throw e; // edited meanwhile: its own links stay as typed
+              if (!isWriteConflict(e)) throw e; // changed meanwhile: reconciled below
             }
           }
+          reconcileRewrites([{ path: newPath, base: disk, next: ownRewritten, mapper: ownMap }]);
         }
 
         // Rewrite affected sources. Candidates are found via the in-memory

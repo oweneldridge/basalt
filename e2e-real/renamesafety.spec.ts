@@ -303,3 +303,29 @@ test.describe("renaming back while the first rename's links are still being fixe
     expect(vault.read("B2.md")).toBe("[[Target]]\n");
   });
 });
+
+test.describe("typing in the renamed note while its own links are read", () => {
+  test.use({ vaultFiles: { "Target.md": "Self [[Target]] link.\n\nlast\n" } });
+
+  test("its self-link still gets fixed", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Target");
+    let reading = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      if (!(body.includes('"cmd":"read_note"') && body.includes("Target Renamed.md"))) return route.continue().catch(() => {});
+      // The note is read at once; the reply comes late, after the typing saves.
+      const response = await route.fetch();
+      reading = true;
+      await new Promise((r) => setTimeout(r, 2000));
+      await route.fulfill({ response }).catch(() => {});
+    });
+    await page.locator("input.inline-title").first().fill("Target Renamed");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "last" }).click();
+    await page.keyboard.press("End");
+    await expect.poll(() => reading).toBe(true); // the rename is reading the note now
+    await page.keyboard.type(" TYPED");
+    await settle(page, 3500);
+    await expect.poll(() => vault.read("Target Renamed.md"), { timeout: 8000 }).toBe("Self [[Target Renamed]] link.\n\nlast TYPED\n");
+  });
+});
