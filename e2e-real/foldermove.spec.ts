@@ -161,3 +161,33 @@ test.describe("moving a note while its title rename runs", () => {
     expect(vault.exists("Work/Alpha.md")).toBe(false);
   });
 });
+
+test("typing during a folder move with a slow reply raises no false conflict", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).click();
+  await openNote(page, "Alpha");
+  await page.route("**/api/invoke", async (route) => {
+    const slow = (route.request().postData() ?? "").includes('"cmd":"rename_folder"');
+    const res = await route.fetch().catch(() => null);
+    if (!res) return;
+    if (slow) await new Promise((r) => setTimeout(r, 2500));
+    await route.fulfill({ response: res }).catch(() => {});
+  });
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await renameFolder(page, "Projects", "Work");
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await page.keyboard.press("ControlOrMeta+End");
+  let conflicts = 0;
+  for (const ch of " typed-during-move") {
+    await page.keyboard.type(ch);
+    await page.waitForTimeout(120);
+    conflicts += await page.locator(".conflict").count();
+  }
+  await expect.poll(() => vault.exists("Work/Alpha.md"), { timeout: 10000 }).toBe(true);
+  await settle(page, 2500);
+  expect(conflicts).toBe(0);
+  await expect(page.locator(".conflict")).toHaveCount(0);
+  expect(vault.read("Work/Alpha.md")).toContain("typed-during-move");
+  expect(vault.exists("Projects")).toBe(false);
+});

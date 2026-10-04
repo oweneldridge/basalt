@@ -2030,11 +2030,18 @@ export default function App() {
           for (const c of event.payload) changedBuf.current.set(c.rel, c.path);
           if (changedBuf.current.size === 0) return;
           window.clearTimeout(watchTimer.current);
-          watchTimer.current = window.setTimeout(() => {
+          const flush = () => {
+            // Wait out a rename or folder move in flight: until it lands, its
+            // notes look deleted from where the open editors still have them.
+            if (renaming.current.size > 0) {
+              watchTimer.current = window.setTimeout(flush, 300);
+              return;
+            }
             const changes = Array.from(changedBuf.current, ([rel, path]) => ({ rel, path }));
             changedBuf.current.clear();
             void processChanges(changes);
-          }, 300);
+          };
+          watchTimer.current = window.setTimeout(flush, 300);
         });
         if (cancelled) {
           u1();
@@ -2043,9 +2050,11 @@ export default function App() {
         unlistenChanged = u1;
         const u2 = await listen("vault-rescan", () => {
           window.clearTimeout(rescanTimer.current);
-          rescanTimer.current = window.setTimeout(() => {
-            void handleRescan();
-          }, 300);
+          const run = () => {
+            if (renaming.current.size > 0) rescanTimer.current = window.setTimeout(run, 300);
+            else void handleRescan();
+          };
+          rescanTimer.current = window.setTimeout(run, 300);
         });
         if (cancelled) {
           u2();
