@@ -252,3 +252,54 @@ test.describe("an outside edit above and below the caret", () => {
     expect(vault.read("Lines.md")).toBe("one\ntwo\nthree [[A longer name]]\nfour\nwhere I typeQ\nsix\nseven [[A longer name]]\n");
   });
 });
+
+test.describe("focus after a rename", () => {
+  test.use({ vaultFiles: { "Target.md": "# Target\n\nbody\n", "Src.md": "# Src\n\nsrc line\n" } });
+
+  test("committing an inline-title rename by clicking another pane leaves the typing there", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Target");
+    await page.getByRole("button", { name: "Split right" }).first().click();
+    await page.locator(".tree-row.file", { hasText: "Src" }).first().click();
+    const panes = page.locator(".pane:not(.dock)");
+    await expect(panes).toHaveCount(2);
+    const left = panes.filter({ has: page.locator(".tab.active .tab-name", { hasText: /^Target$/ }) });
+    const right = panes.filter({ has: page.locator(".tab.active .tab-name", { hasText: /^Src$/ }) });
+    await left.locator("input.inline-title").fill("Target Renamed");
+    await right.locator(".cm-line", { hasText: "src line" }).click();
+    await page.keyboard.press("End");
+    await expect.poll(() => vault.exists("Target Renamed.md")).toBe(true);
+    await page.keyboard.type(" TYPED");
+    await settle(page, 1500);
+    expect(vault.read("Src.md")).toContain("src line TYPED");
+    expect(vault.read("Target Renamed.md")).not.toContain("TYPED");
+  });
+});
+
+test.describe("renaming back while the first rename's links are still being fixed", () => {
+  test.use({ vaultFiles: { "Target.md": "# Target\n", "B1.md": "[[Target]]\n", "B2.md": "[[Target]]\n" } });
+
+  test("leaves every link pointing at the note's final name", async ({ page, vault }) => {
+    await openApp(page, vault);
+    let slow = true;
+    await page.route("**/api/invoke", async (route) => {
+      if (slow && (route.request().postData() ?? "").includes('"cmd":"read_note"')) await new Promise((r) => setTimeout(r, 1200));
+      await route.continue().catch(() => {});
+    });
+    const rename = async (from: string, to: string) => {
+      await page.locator(".tree-row.file", { hasText: from }).first().click({ button: "right" });
+      await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+      await page.locator(".prompt-input").fill(to);
+      await page.locator(".prompt-input").press("Enter");
+    };
+    await rename("Target", "Typo");
+    await expect.poll(() => vault.exists("Typo.md")).toBe(true);
+    await rename("Typo", "Target");
+    slow = false;
+    await expect.poll(() => vault.exists("Target.md"), { timeout: 15000 }).toBe(true);
+    await settle(page, 4000);
+    expect(vault.exists("Typo.md")).toBe(false);
+    expect(vault.read("B1.md")).toBe("[[Target]]\n");
+    expect(vault.read("B2.md")).toBe("[[Target]]\n");
+  });
+});

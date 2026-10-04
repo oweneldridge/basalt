@@ -3664,7 +3664,7 @@ export default function App() {
     [flushPath, patchPane],
   );
 
-  const handleRenameNote = useCallback(
+  const renameNoteNow = useCallback(
     async (oldPath: string, newName: string) => {
       const root = vaultRef.current;
       if (!root) return;
@@ -3894,6 +3894,18 @@ export default function App() {
     },
     [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs, registerRewrite, reconcileRewrites],
   );
+  // Renames and folder moves run one at a time: a second one waits for the
+  // first to finish rewriting links, so it never starts from stale paths.
+  const renameQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const enqueueRename = useCallback(<T,>(job: () => Promise<T>): Promise<T> => {
+    const run = renameQueue.current.then(job);
+    renameQueue.current = run.catch(() => {});
+    return run;
+  }, []);
+  const handleRenameNote = useCallback(
+    (oldPath: string, newName: string) => enqueueRename(() => renameNoteNow(oldPath, newName)),
+    [enqueueRename, renameNoteNow],
+  );
   handleRenameNoteRef.current = handleRenameNote;
 
   // Convert an unlinked mention into a `[[wikilink]]` in its SOURCE note (the
@@ -4034,7 +4046,7 @@ export default function App() {
   // basename), then a SINGLE vault-wide link-rewrite pass fixes the links whose
   // resolution the move changed. O(vault) instead of O(notes × vault), and
   // FS-hostile basenames survive because the move never re-sanitizes them.
-  const handleRenameFolder = useCallback(
+  const renameFolderNow = useCallback(
     async (folderRel: string, newFolderRel: string) => {
       const root = vaultRef.current;
       if (!root || !newFolderRel || newFolderRel === folderRel) return;
@@ -4279,6 +4291,10 @@ export default function App() {
       );
     },
     [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs, registerRewrite, reconcileRewrites],
+  );
+  const handleRenameFolder = useCallback(
+    (folderRel: string, newFolderRel: string) => enqueueRename(() => renameFolderNow(folderRel, newFolderRel)),
+    [enqueueRename, renameFolderNow],
   );
 
   // Move a note into a folder (rel, "" = root) by renaming — reuses the

@@ -54,7 +54,11 @@ interface Props {
 }
 
 // The last editor state each pane tore down, for the rebuild that follows a rename.
-const handoff = new Map<string, { path: string; text: string; selection: EditorSelection; scrollTop: number }>();
+const handoff = new Map<string, { path: string; text: string; selection: EditorSelection; scrollTop: number; focused: boolean }>();
+
+// The editor that last had keyboard focus. Kept when focus leaves the page or
+// its element is removed; cleared once focus moves somewhere else.
+let focusedView: EditorView | null = null;
 
 export interface EditorApi {
   /** Replace the selection with `text`; place the caret at `caretOffset` into
@@ -154,15 +158,36 @@ export function EditorPane({
       parent: host.current,
     });
     view.current = v;
+    const onFocus = () => (focusedView = v);
+    const onBlur = (e: FocusEvent) => {
+      if (focusedView === v && e.relatedTarget) focusedView = null;
+    };
+    v.contentDOM.addEventListener("focus", onFocus);
+    v.contentDOM.addEventListener("blur", onBlur);
     const prev = paneId ? handoff.get(paneId) : undefined;
     if (paneId) handoff.delete(paneId);
-    if (prev && prev.path === continuesFrom && prev.text === doc) {
+    // Rebuilt by a rename: keep the place, and take focus only if the old editor
+    // had it (else typing in another pane would land here). A note being opened
+    // takes focus as usual.
+    const continuing = prev !== undefined && prev.path === continuesFrom;
+    if (continuing && prev.text === doc) {
       v.dispatch({ selection: prev.selection });
       v.scrollDOM.scrollTop = prev.scrollTop;
     }
-    v.focus();
+    if (!continuing || prev.focused) v.focus();
     return () => {
-      if (paneId) handoff.set(paneId, { path, text: v.state.doc.toString(), selection: v.state.selection, scrollTop: v.scrollDOM.scrollTop });
+      if (paneId) {
+        handoff.set(paneId, {
+          path,
+          text: v.state.doc.toString(),
+          selection: v.state.selection,
+          scrollTop: v.scrollDOM.scrollTop,
+          focused: focusedView === v,
+        });
+      }
+      if (focusedView === v) focusedView = null;
+      v.contentDOM.removeEventListener("focus", onFocus);
+      v.contentDOM.removeEventListener("blur", onBlur);
       v.destroy();
       view.current = null;
     };
