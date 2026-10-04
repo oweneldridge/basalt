@@ -3942,6 +3942,17 @@ export default function App() {
     [enqueueRename, renameNoteNow],
   );
   handleRenameNoteRef.current = handleRenameNote;
+  // A new name in the note's folder as of when the rename runs: a folder move
+  // queued ahead of it may have moved the note since the title was edited.
+  const handleRetitleNote = useCallback(
+    (path: string, newBase: string) =>
+      enqueueRename(() => {
+        const now = currentPath(path);
+        const rel = notesRef.current.find((n) => n.path === now)?.rel ?? "";
+        return renameNoteNow(now, rel.replace(/[^/\\]+$/, "") + newBase);
+      }),
+    [enqueueRename, renameNoteNow],
+  );
 
   // Convert an unlinked mention into a `[[wikilink]]` in its SOURCE note (the
   // "Link" / "Link all" backlink actions). Reads disk (authoritative), edits
@@ -4642,7 +4653,7 @@ export default function App() {
           <InlineTitle
             key={`title:${path}`}
             name={nameFromRel(rel)}
-            onRename={(newBase) => void handleRenameNote(path, rel.replace(/[^/\\]+$/, "") + newBase)}
+            onRename={(newBase) => void handleRetitleNote(path, newBase)}
             onDone={() => editorApiRef.current?.focus()}
           />
         )}
@@ -5418,7 +5429,14 @@ export default function App() {
               setSaveError("Note names cannot contain # ^ [ ] |");
               return;
             }
-            void handleRenameNote(t.path, value);
+            void handleRenameNote(t.path, value).then(() =>
+              requestAnimationFrame(() => {
+                // The row the menu came from was replaced; focus its new one.
+                if (document.activeElement && document.activeElement !== document.body) return;
+                const now = currentPath(t.path);
+                [...document.querySelectorAll<HTMLElement>(".tree-row.file")].find((r) => r.dataset.path === now)?.focus();
+              }),
+            );
           }}
           onClose={() => setRenameTarget(null)}
         />

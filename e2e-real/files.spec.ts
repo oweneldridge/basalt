@@ -258,3 +258,13 @@ test.describe("renaming a note to the name of a note it links to", () => {
     await expect.poll(() => vault.read("Folder1/Plan.md")).toContain("[[Other/Plan]]");
   });
 });
+
+test("after renaming from the file tree, focus is on the renamed note's row", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+  await page.locator(".prompt-input").fill("Ideas Two");
+  await page.locator(".prompt-input").press("Enter");
+  await expect.poll(() => vault.exists("Ideas Two.md")).toBe(true);
+  await expect(page.locator(".tree-row.file:focus")).toHaveText("Ideas Two");
+});

@@ -262,6 +262,7 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
             ) : (
               <button
                 key={`f:${node.path}`}
+                data-path={node.path}
                 className={`tree-row file${node.attachment ? " attachment" : ""}${node.path === activePath ? " active" : ""}`}
                 style={{ paddingLeft: 22 + depth * 14 }}
                 draggable={!node.attachment}

@@ -70,6 +70,18 @@ test("inline title renames the note", async ({ page }) => {
   await expect(page.locator(".tree-row.file", { hasText: "IdeasRenamed" })).toHaveCount(1);
 });
 
+test("Escape in the inline title cancels the rename", async ({ page }) => {
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  await expect(page.locator(".inline-title")).toHaveValue("Ideas");
+  await page.locator(".inline-title").fill("Typo Name");
+  await page.locator(".inline-title").press("Escape");
+  await expect(page.locator(".inline-title")).toHaveValue("Ideas");
+  await page.waitForTimeout(500);
+  await expect(page.locator(".pane:not(.dock) .tab.active .tab-name")).toHaveText("Ideas");
+  await expect(page.locator(".tree-row.file", { hasText: "Typo Name" })).toHaveCount(0);
+  await expect(page.locator(".cm-editor.cm-focused")).toHaveCount(1);
+});
+
 test("dragging a tree note into the editor inserts a wikilink", async ({ page }) => {
   await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
   await expect(page.locator(".cm-editor")).toBeVisible();

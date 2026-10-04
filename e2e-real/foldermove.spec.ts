@@ -67,3 +67,24 @@ test.describe("attachment links", () => {
     expect(disk).toContain("![[shot one.png]]");
   });
 });
+
+test("a title rename entered during a slow folder move keeps the note in the new folder", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).click();
+  await openNote(page, "Alpha");
+  await page.route("**/api/invoke", async (route) => {
+    const slow = (route.request().postData() ?? "").includes('"cmd":"rename_folder"');
+    const res = await route.fetch().catch(() => null);
+    if (!res) return;
+    if (slow) await new Promise((r) => setTimeout(r, 1500));
+    await route.fulfill({ response: res }).catch(() => {});
+  });
+  await renameFolder(page, "Projects", "Work");
+  const title = page.locator(".pane:not(.dock) input.inline-title").first();
+  await title.fill("Alpha2");
+  await title.press("Enter");
+  await expect.poll(() => vault.exists("Work/Alpha2.md"), { timeout: 10000 }).toBe(true);
+  await settle(page, 1500);
+  expect(vault.exists("Projects")).toBe(false);
+  expect(vault.exists("Work/Alpha.md")).toBe(false);
+});

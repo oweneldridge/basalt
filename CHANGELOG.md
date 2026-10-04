@@ -30,8 +30,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Hiding a sidebar, toggling Reading view, editing a property, splitting a
   pane, moving a folder or renaming a note no longer reverts what you typed.
 - A vault rescan, Reload, or a slow read in another pane no longer reverts text
-  or raises a "Changed on disk" against your own save. Stacked columns follow
-  external edits.
+  or raises a "Changed on disk" against your own save, nor does a save whose
+  reply arrives after the file watcher has seen it land. Stacked columns follow
+  external edits and edits made in other panes, even ones that put back text
+  typed earlier.
 - Saves are compare-and-swap: if the file changed since Basalt last read it
   (another tab or device, Obsidian, iCloud), you get "Changed on disk" instead
   of a silent overwrite. Saves to one note, canvas or base run one at a time.
@@ -52,7 +54,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in the inline title goes back to the note. A second rename or folder move
   waits for the first to finish fixing links, so renaming a note back right
   away leaves every link right, and a rename queued behind it follows the note
-  if it moved.
+  if it moved; a new title keeps the note in the folder it was moved to.
+  Renaming a note shown in a stacked column keeps the text being typed there
+  and its caret. Escape in the inline title cancels the rename, and after
+  renaming from the file tree, focus is on the renamed note.
 - A rename or folder move fixes links in notes being typed into inside their
   open editors, so typing in progress, even straight through the end of the
   pass, merges with the fix instead of undoing it or moving a character. Such
