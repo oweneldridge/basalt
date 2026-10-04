@@ -85,7 +85,7 @@ import { EditorPane } from "./components/EditorPane";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec, type BuiltinView } from "./lib/leafViews";
-import { deepLinkVaultPolicy, parseBasaltUri } from "./lib/deeplink";
+import { deepLinkVaultPolicy, parseBasaltUri, parseObsidianUri } from "./lib/deeplink";
 import { setBaseEmbedHost, notifyBaseEmbeds } from "./lib/baseEmbedHost";
 import { Outline } from "./components/Outline";
 import { Backlinks } from "./components/Backlinks";
@@ -2576,7 +2576,10 @@ export default function App() {
   const dailyNoteApi = useRef({ open: openDailyNote, has: hasDailyNote });
   dailyNoteApi.current = { open: openDailyNote, has: hasDailyNote };
 
+  // Set below, once the link resolver exists.
+  const followObsidianLink = useRef<(url: string) => boolean>(() => false);
   const handleOpenUrl = useCallback((url: string) => {
+    if (followObsidianLink.current(url)) return;
     void openUrl(url).catch(() => {
       /* opener unavailable or blocked URL — ignore */
     });
@@ -2803,6 +2806,32 @@ export default function App() {
     },
     [openNoteByPath, createAndOpen],
   );
+
+  // An obsidian:// open or search link that points at this vault (by folder
+  // name, as Obsidian names vaults) is followed here; links to other vaults go
+  // to the system. Following one never creates or edits a note.
+  followObsidianLink.current = (url: string): boolean => {
+    const link = parseObsidianUri(url);
+    const root = vaultRef.current;
+    if (!link || !root) return false;
+    const name = root.split(/[\\/]/).filter(Boolean).pop() ?? "";
+    const key = (v: string) => v.normalize("NFC").toLowerCase();
+    if (link.vault !== undefined && key(link.vault) !== key(name)) return false;
+    if (link.action === "search") {
+      setSearchSeed(link.query);
+      setModal("search");
+      return true;
+    }
+    let target = link.file;
+    if (link.path !== undefined) {
+      const slash = (p: string) => p.replace(/\\/g, "/");
+      const prefix = slash(root).replace(/\/+$/, "") + "/";
+      if (!slash(link.path).startsWith(prefix)) return false;
+      target = slash(link.path).slice(prefix.length);
+    }
+    if (target) void handleOpenWikilink(target, false);
+    return true;
+  };
 
   // Stable callbacks for the read-only viewers (canvas/base). Keeping these
   // memoized lets BaseView (React.memo) skip re-render on unrelated App ticks.

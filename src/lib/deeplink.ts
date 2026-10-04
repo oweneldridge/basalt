@@ -34,3 +34,49 @@ export function deepLinkVaultPolicy(vault: string, known: readonly string[]): "o
   const norm = (p: string) => p.replace(/[\\/]+$/, "");
   return known.some((k) => norm(k) === norm(v)) ? "open" : "confirm";
 }
+
+/** An `obsidian://` link Basalt can follow itself: open a note, or search. */
+export type ObsidianLink =
+  | { action: "open"; vault?: string; file?: string; path?: string }
+  | { action: "search"; vault?: string; query: string };
+
+/**
+ * Parse the `obsidian://` actions that only navigate: `open` (by vault and
+ * file, or by absolute path) and `search`, plus the shorthands
+ * `obsidian://vault/<vault>/<file>` and `obsidian:///<absolute path>`.
+ * Anything else, including an `open` that would prepend or append text, is
+ * null and goes to the system as before.
+ */
+export function parseObsidianUri(raw: string): ObsidianLink | null {
+  let u: URL;
+  try {
+    u = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "obsidian:") return null;
+  const q = (k: string) => u.searchParams.get(k) ?? undefined;
+  const segments = () =>
+    u.pathname
+      .split("/")
+      .filter(Boolean)
+      .map((s) => {
+        try {
+          return decodeURIComponent(s);
+        } catch {
+          return s;
+        }
+      });
+  const action = u.host.toLowerCase();
+  if (action === "" && u.pathname.length > 1) return { action: "open", path: "/" + segments().join("/") };
+  if (action === "vault") {
+    const [vault, ...file] = segments();
+    return vault ? { action: "open", vault, file: file.length ? file.join("/") : undefined } : null;
+  }
+  if (action === "open") {
+    if (q("prepend") !== undefined || q("append") !== undefined) return null;
+    return { action: "open", vault: q("vault"), file: q("file"), path: q("path") };
+  }
+  if (action === "search") return { action: "search", vault: q("vault"), query: q("query") ?? "" };
+  return null;
+}

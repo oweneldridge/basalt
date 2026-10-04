@@ -17,6 +17,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Images from the web (`https:`) load in the desktop app. A "Load remote
   images" setting turns them off: they show as placeholders, so opening a note
   never contacts another server. This covers raw HTML images too.
+- `obsidian://open` and `obsidian://search` links in notes that point at the
+  open vault (by name or by path) open in Basalt. Links to other vaults, and
+  ones that would write (`new`, `append`), still go to the system.
 - Bases list layout, as in Obsidian 1.10: bullets, numbers or no markers,
   properties on one line or indented under the first, and a custom separator.
 
