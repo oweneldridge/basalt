@@ -51,6 +51,7 @@ import { resolveThemePalettes, applyThemePalette, type ThemePalette } from "./li
 import { noteRow, tasksForNote } from "./lib/vaultRows";
 import { parseQuery, runQuery, type Task } from "./lib/query";
 import { applyTemplate, type TemplateCtx } from "./lib/templates";
+import { mergeTemplateProps, splitTemplate } from "./lib/frontmatter";
 import { parseProperties } from "./lib/bases";
 import {
   installHost,
@@ -2210,7 +2211,24 @@ export default function App() {
         };
         const res = await applyTemplate(text, ctx);
         if (res.errors.length) setSaveError(res.errors[0]);
-        api.insertAtCursor(res.text, res.cursor ?? undefined);
+        // Below the top of a note, a template's properties merge into the note's
+        // own and only its body goes in at the caret, as in Obsidian.
+        const split = api.atStart() ? null : splitTemplate(res.text);
+        if (!split) {
+          api.insertAtCursor(res.text, res.cursor ?? undefined);
+          return;
+        }
+        let merge: (doc: string) => string;
+        try {
+          mergeTemplateProps("", split.props);
+          merge = (doc) => mergeTemplateProps(doc, split.props);
+        } catch {
+          setSaveError("This template's properties aren't valid YAML");
+          return;
+        }
+        const cursor = res.cursor !== null && res.cursor >= split.offset ? res.cursor - split.offset : undefined;
+        api.insertAtCursor(split.body, cursor);
+        api.transformDoc(merge);
       } catch (e) {
         setSaveError(`Couldn't insert template: ${e}`);
       }

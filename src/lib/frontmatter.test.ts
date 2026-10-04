@@ -4,6 +4,8 @@
 import { describe, expect, it } from "vitest";
 import {
   parseFm,
+  splitTemplate,
+  mergeTemplateProps,
   needsQuote,
   serializeScalar,
   serializeProp,
@@ -277,5 +279,32 @@ describe("lists that aren't plain", () => {
     const fm = parseFm('---\nsee:\n  - "[[Note]]"\n  - https://example.com/a\n  - 10:30\n---\n')!;
     expect(fm.props[0].kind).toBe("list");
     expect(fm.props[0].values).toEqual(["[[Note]]", "https://example.com/a", "10:30"]);
+  });
+});
+
+describe("templates with properties", () => {
+  it("splits a template into its property lines and body", () => {
+    const t = "---\ntags: [a]\nstatus: draft\n---\n## Body\n";
+    const s = splitTemplate(t)!;
+    expect(s.props).toEqual(["tags: [a]", "status: draft"]);
+    expect(s.body).toBe("## Body\n");
+    expect(t.slice(s.offset)).toBe(s.body);
+    expect(splitTemplate("## No properties\n")).toBeNull();
+  });
+
+  it("adds a frontmatter block to a note without one", () => {
+    expect(mergeTemplateProps("Hello\n", ["status: draft"])).toBe("---\nstatus: draft\n---\nHello\n");
+  });
+
+  it("merges like Obsidian and leaves every other line alone", () => {
+    const note = "---\n# keep me\ntags:\n  - a\nstatus: done\nowner: Ann\nmeta:\n  x: 1\n---\nBody\n";
+    const out = mergeTemplateProps(note, ["tags: [a, b]", "status: 'draft'", "owner:", "meta:", "  y: 2", "due: 2026-10-04"]);
+    expect(out).toBe(
+      "---\n# keep me\ntags:\n  - a\n  - b\nstatus: 'draft'\nowner: Ann\nmeta:\n  x: 1\ndue: 2026-10-04\n---\nBody\n",
+    );
+  });
+
+  it("rejects invalid template YAML", () => {
+    expect(() => mergeTemplateProps("---\na: 1\n---\n", ["a: [unclosed"])).toThrow();
   });
 });

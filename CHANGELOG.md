@@ -41,6 +41,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Links resolve in Obsidian's order (the linking note's folder first, then the
   shortest path), so a rename updates the same links Obsidian would. Folder
   moves leave links to notes that didn't move alone.
+- Inserting a template that has properties merges them into the note's own
+  (new keys added, list items combined) instead of dropping a second `---`
+  block into the middle of the note, as Obsidian does.
 - Renaming a folder updates markdown-style attachment links such as
   `![](Media/pic.png)`, not only `![[...]]` embeds.
 - Moving a note to another folder keeps its own links pointing where they did:

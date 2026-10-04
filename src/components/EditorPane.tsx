@@ -58,6 +58,10 @@ export interface EditorApi {
   /** Replace the selection with `text`; place the caret at `caretOffset` into
    * the inserted text (default: end). */
   insertAtCursor: (text: string, caretOffset?: number) => void;
+  /** True when the selection starts at the very top of the note. */
+  atStart: () => boolean;
+  /** Rewrite the note through `fn`, applied as the smallest edit so the caret stays put. */
+  transformDoc: (fn: (doc: string) => string) => void;
   /** True when the editor has a non-empty selection. */
   hasSelection: () => boolean;
   /** Editor context-menu actions (operate on the current selection/caret). */
@@ -177,6 +181,19 @@ export function EditorPane({
           scrollIntoView: true,
         });
         v.focus();
+      },
+      atStart: () => view.current?.state.selection.main.from === 0,
+      transformDoc: (fn) => {
+        const v = view.current;
+        if (!v) return;
+        const doc = v.state.doc.toString();
+        const next = fn(doc);
+        let a = 0;
+        while (a < doc.length && a < next.length && doc[a] === next[a]) a++;
+        let b = 0;
+        while (b < doc.length - a && b < next.length - a && doc[doc.length - 1 - b] === next[next.length - 1 - b]) b++;
+        if (a === doc.length && a === next.length) return;
+        v.dispatch({ changes: { from: a, to: doc.length - b, insert: next.slice(a, next.length - b) } });
       },
       hasSelection: () => {
         const v = view.current;

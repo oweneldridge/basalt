@@ -10,6 +10,8 @@
 // Anything else is preserved but not offered for structured editing (edit the
 // raw YAML instead).
 
+import { parse as parseYaml } from "yaml";
+
 // "complex" = a value the simple model can't safely round-trip (block scalar
 // `|`/`>`, nested map, flow map, anchor/alias/tag). The UI shows it read-only.
 export type PropKind = "scalar" | "inline" | "list" | "empty" | "complex";
@@ -305,4 +307,58 @@ export function deleteProp(source: string, key: string): string {
   const body = parsed.body.slice();
   body.splice(existing.start, existing.end - existing.start + 1);
   return rebuild(parsed, body);
+}
+
+/** A template's properties and body, split the way Obsidian's Templates plugin
+ * splits one before inserting it anywhere but the very top of a note.
+ * `offset` is where the body starts in `text`. Null without frontmatter. */
+export function splitTemplate(text: string): { props: string[]; body: string; offset: number } | null {
+  const parsed = parseFm(text);
+  if (!parsed) return null;
+  const lines = text.split("\n");
+  const close = parsed.body.length + 1;
+  const offset = lines.slice(0, close + 1).join("\n").length + (close + 1 < lines.length ? 1 : 0);
+  return { props: parsed.body, body: text.slice(offset), offset };
+}
+
+/**
+ * Merge a template's property lines into a note, as Obsidian's insertProperties
+ * does: new keys are added, lists gain the template's missing items, a nested
+ * map already in the note stays, and any other template value replaces the
+ * note's unless it is empty. Only keys that change are rewritten, and template
+ * values keep their own formatting. Throws if the template's YAML is invalid.
+ */
+export function mergeTemplateProps(note: string, props: string[]): string {
+  const values: unknown = parseYaml(props.join("\n")) ?? {};
+  if (typeof values !== "object" || Array.isArray(values)) throw new Error("template properties aren't a map");
+  const tpl = parseFm(["---", ...props, "---"].join("\n"));
+  if (!tpl || tpl.props.length === 0) return note;
+  if (!parseFm(note)) {
+    const nl = note.includes("\r\n") ? "\r\n" : "\n";
+    return ["---", ...props, "---", note].join(nl);
+  }
+  let out = note;
+  for (const tp of tpl.props) {
+    const v = (values as Record<string, unknown>)[tp.key];
+    const cur = parseFm(out)!;
+    const lines = tpl.body.slice(tp.start, tp.end + 1);
+    const np = cur.props.find((p) => p.key === tp.key);
+    const body = cur.body.slice();
+    if (!np) {
+      body.push(...lines);
+    } else if (v === null || v === undefined) {
+      continue;
+    } else if (Array.isArray(v) && (np.kind === "list" || np.kind === "inline")) {
+      const merged = [...np.values];
+      for (const x of v.map(String)) if (!merged.includes(x)) merged.push(x);
+      out = setProp(out, tp.key, merged, true);
+      continue;
+    } else if (typeof v === "object" && np.kind === "complex") {
+      continue;
+    } else {
+      body.splice(np.start, np.end - np.start + 1, ...lines);
+    }
+    out = rebuild(cur, body);
+  }
+  return out;
 }
