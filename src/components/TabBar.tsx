@@ -143,14 +143,14 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
       ))}
       <span className={`tab-drop-end${dropAt === tabs.length ? " active" : ""}`} aria-hidden />
       {!dock && (
-        <button className="tab-new" title="Open a note (⌘O)" onClick={onNew}>
+        <button className="tab-new" title="Open a note (⌘O)" aria-label="Open a note (⌘O)" onClick={onNew}>
           +
         </button>
       )}
       {!dock && (
         <button
           className={`tab-link${linked ? " active" : ""}`}
-          title={linked ? "Linked — follows notes opened elsewhere (click to unlink)" : "Link this pane (follow notes opened elsewhere)"}
+          title={linked ? "Linked — follows notes opened elsewhere (click to unlink)" : "Link this pane (follow notes opened elsewhere)"} aria-label={linked ? "Linked — follows notes opened elsewhere (click to unlink)" : "Link this pane (follow notes opened elsewhere)"}
           aria-pressed={linked}
           onClick={onToggleLink}
         >
@@ -160,7 +160,7 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
       {!dock && tabs.length > 1 && (
         <button
           className={`tab-link tab-stack${stacked ? " active" : ""}`}
-          title={stacked ? "Unstack tabs" : "Stack tabs (spread all open notes)"}
+          title={stacked ? "Unstack tabs" : "Stack tabs (spread all open notes)"} aria-label={stacked ? "Unstack tabs" : "Stack tabs (spread all open notes)"}
           aria-pressed={stacked}
           onClick={onToggleStacked}
         >

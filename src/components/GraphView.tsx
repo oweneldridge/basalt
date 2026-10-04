@@ -419,7 +419,7 @@ export function GraphView({ data, activePath, mode, onSetMode, depth, onSetDepth
         <span className="graph-count">
           {filtered.nodes.length} notes · {filtered.links.length} links
         </span>
-        <button className="graph-close" onClick={onClose} title="Close (Esc)">
+        <button className="graph-close" onClick={onClose} title="Close (Esc)" aria-label="Close (Esc)">
           ✕
         </button>
       </div>

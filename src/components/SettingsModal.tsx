@@ -302,11 +302,12 @@ export function SettingsModal({
                   className={recording === c.id ? "hotkey-chord recording" : "hotkey-chord"}
                   onClick={() => setRecording(recording === c.id ? null : c.id)}
                   title={recording === c.id ? "Press a key combination (Esc to cancel)" : "Click to record a hotkey"}
+                  aria-label={`Hotkey for ${c.label}: ${hotkeys[c.id] ? chordLabel(hotkeys[c.id], isMac) : "none"}`}
                 >
                   {recording === c.id ? "Press keys…" : hotkeys[c.id] ? chordLabel(hotkeys[c.id], isMac) : "—"}
                 </button>
                 {hotkeys[c.id] && recording !== c.id && (
-                  <button className="hotkey-clear" title="Remove hotkey" onClick={() => onSetHotkey(c.id, null)}>
+                  <button className="hotkey-clear" title="Remove hotkey" aria-label="Remove hotkey" onClick={() => onSetHotkey(c.id, null)}>
                     ✕
                   </button>
                 )}

@@ -251,8 +251,10 @@ export function createEditorState(
   vimMode = false,
   rtl = false,
 ): EditorState {
+  const noteName = selfRel.split("/").pop()?.replace(/\.md$/i, "") ?? "";
   const extensions: Extension[] = [
     notePathFacet.of(selfRel),
+    EditorView.contentAttributes.of({ "aria-label": noteName ? `Editing ${noteName}` : "Note editor" }),
     // Vim keybindings (Obsidian's optional Vim mode) — in a compartment, placed
     // FIRST so its keymap wins in normal mode; toggled live via setVimMode().
     vimCompartment.of(vimMode ? vim() : []),

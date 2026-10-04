@@ -59,12 +59,12 @@ export function SlidesView({ doc, selfRel, dark, onOpenInternal, onOpenUrl, reso
         <span className="slides-count">
           {idx + 1} / {slides.length}
         </span>
-        <button className="slides-close" title="Exit (Esc)" onClick={onClose}>
+        <button className="slides-close" title="Exit (Esc)" aria-label="Exit (Esc)" onClick={onClose}>
           ✕
         </button>
       </div>
       <div className="slides-stage">
-        <button className="slides-nav prev" title="Previous (←)" disabled={idx === 0} onClick={() => setI((n) => Math.max(n - 1, 0))}>
+        <button className="slides-nav prev" title="Previous (←)" aria-label="Previous (←)" disabled={idx === 0} onClick={() => setI((n) => Math.max(n - 1, 0))}>
           ‹
         </button>
         <div className="slides-content">
@@ -81,7 +81,7 @@ export function SlidesView({ doc, selfRel, dark, onOpenInternal, onOpenUrl, reso
         </div>
         <button
           className="slides-nav next"
-          title="Next (→)"
+          title="Next (→)" aria-label="Next (→)"
           disabled={idx === slides.length - 1}
           onClick={() => setI((n) => Math.min(n + 1, slides.length - 1))}
         >

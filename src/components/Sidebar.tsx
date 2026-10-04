@@ -153,13 +153,13 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
         <span className="vault-name" title={vaultName ?? ""}>
           {vaultName ?? "No vault"}
         </span>
-        <button className="icon-btn" onClick={revealActive} title="Reveal active file" disabled={!activePath}>
+        <button className="icon-btn" onClick={revealActive} title="Reveal active file" aria-label="Reveal active file" disabled={!activePath}>
           ⊙
         </button>
-        <button className="icon-btn" onClick={() => setExpanded(new Set())} title="Collapse all">
+        <button className="icon-btn" onClick={() => setExpanded(new Set())} title="Collapse all" aria-label="Collapse all">
           ⇈
         </button>
-        <button className="icon-btn" onClick={onNewNote} title="New note">
+        <button className="icon-btn" onClick={onNewNote} title="New note" aria-label="New note">
           +
         </button>
       </div>

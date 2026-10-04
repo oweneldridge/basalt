@@ -95,7 +95,7 @@ export function VaultSwitcher({
                 {r.path === currentVault ? <span className="vault-badge">open here</span> : ago(r.ts, now)}
                 <button
                   className="vault-newwin"
-                  title="Open in a new window"
+                  title="Open in a new window" aria-label="Open in a new window"
                   onClick={(e) => {
                     e.stopPropagation();
                     onOpenNewWindow(r.path);

@@ -104,7 +104,7 @@ export function Properties({ doc, onChange }: Props) {
         <div className="prop-row" key={p.key}>
           <span className="prop-key" title={p.key}>{p.key}</span>
           <ValueEditor prop={p} onChange={onChange} />
-          <button className="prop-del" title={`Remove ${p.key}`} onClick={() => onChange((d) => deleteProp(d, p.key))}>
+          <button className="prop-del" title={`Remove ${p.key}`} aria-label={`Remove ${p.key}`} onClick={() => onChange((d) => deleteProp(d, p.key))}>
             ✕
           </button>
         </div>

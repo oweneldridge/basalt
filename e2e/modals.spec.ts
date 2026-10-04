@@ -28,3 +28,12 @@ test("the command palette is a labelled dialog that closes on Escape", async ({ 
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 });
+
+test("the editor and glyph-only buttons have accessible names", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+  await expect(page.getByRole("textbox", { name: "Editing Welcome" })).toBeVisible();
+  for (const name of ["Split right", "New note", "Collapse all", "Open a note (⌘O)"]) {
+    await expect(page.getByRole("button", { name }).first()).toBeVisible();
+  }
+});

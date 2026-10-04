@@ -4129,6 +4129,7 @@ export default function App() {
       <div
         className={`pane${focused ? " focused" : ""}${pane.dock ? ` dock dock-${pane.dock}` : ""}`}
         onMouseDownCapture={() => focusPane(id)}
+        onFocusCapture={() => focusPane(id)}
       >
         {pane.tabs.length > 0 && (
           <TabBar
@@ -4379,14 +4380,14 @@ export default function App() {
           <button
             className="link-btn"
             onClick={toggleTheme}
-            title={`Switch to ${dark ? "light" : "dark"} theme`}
+            title={`Switch to ${dark ? "light" : "dark"} theme`} aria-label={`Switch to ${dark ? "light" : "dark"} theme`}
           >
             {dark ? "☾" : "☀"}
           </button>
           <button
             className="link-btn"
             onClick={() => splitFocused("row")}
-            title="Split right"
+            title="Split right" aria-label="Split right"
             disabled={!active}
           >
             ⊟

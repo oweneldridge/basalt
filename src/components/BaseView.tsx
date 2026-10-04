@@ -389,9 +389,9 @@ function BaseEditor({
           {order.map((k, i) => (
             <li key={k}>
               <span className="base-col-key" title={k}>{def.display[k] ?? k}</span>
-              <button title="Move up" disabled={i === 0} onClick={() => moveCol(i, -1)}>↑</button>
-              <button title="Move down" disabled={i === order.length - 1} onClick={() => moveCol(i, 1)}>↓</button>
-              <button title="Remove column" onClick={() => onPatchView({ order: order.filter((c) => c !== k) })}>✕</button>
+              <button title="Move up" aria-label="Move up" disabled={i === 0} onClick={() => moveCol(i, -1)}>↑</button>
+              <button title="Move down" aria-label="Move down" disabled={i === order.length - 1} onClick={() => moveCol(i, 1)}>↓</button>
+              <button title="Remove column" aria-label="Remove column" onClick={() => onPatchView({ order: order.filter((c) => c !== k) })}>✕</button>
             </li>
           ))}
         </ul>
@@ -439,7 +439,7 @@ function BaseEditor({
                   {validateExpr(c) && <div className="expr-error">⚠ {validateExpr(c)}</div>}
                 </div>
                 <button
-                  title="Remove condition"
+                  title="Remove condition" aria-label="Remove condition"
                   onClick={() => {
                     const next = conds.filter((_, j) => j !== i);
                     setConds(next);
@@ -516,7 +516,7 @@ function BaseEditor({
                 {validateExpr(row.expr) && <div className="expr-error">⚠ {validateExpr(row.expr)}</div>}
               </div>
               <button
-                title="Remove formula"
+                title="Remove formula" aria-label="Remove formula"
                 onClick={() => {
                   const next = fRows.filter((_, j) => j !== i);
                   setFRows(next);
