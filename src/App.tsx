@@ -3843,6 +3843,12 @@ export default function App() {
       for (const post of postNotes) {
         const mapper = makeMapper(post);
         if (rewriteLinks(post.content, mapper) === null) continue; // unaffected
+        // As in note rename: a note with unsaved edits or a conflict is reported,
+        // not rewritten under the editor.
+        if (pending.current.has(post.path) || conflictsRef.current.has(post.path)) {
+          failures.push(`${post.rel} (unsaved edits)`);
+          continue;
+        }
         try {
           const disk = await readNote(post.path);
           const next = rewriteLinks(disk, mapper);
@@ -3914,17 +3920,25 @@ export default function App() {
         const activeUpdate = newActive ? updates.get(newActive) : undefined;
         if (!hasMoved && !activeUpdate) return pane; // nothing to change
         const map = (p: string) => pathMap.get(p) ?? p;
+        // Rewritten links come from disk; otherwise keep what the editor holds
+        // (pane.doc is only the text the note was opened with).
+        const live = pane.active ? (liveDocs.current.get(pane.active) ?? pending.current.get(newActive ?? "")) : undefined;
         return {
           ...pane,
           tabs: hasMoved ? pane.tabs.map(map) : pane.tabs,
           active: newActive,
-          doc: activeUpdate ? activeUpdate.content : pane.doc,
+          doc: activeUpdate ? activeUpdate.content : (live ?? pane.doc),
+          docRev: (pane.docRev ?? 0) + 1,
           pinned: hasMoved ? pane.pinned?.map(map) : pane.pinned,
         };
       };
+      const beforeRepoint = panesRef.current;
       panesRef.current = Object.fromEntries(
         Object.entries(panesRef.current).map(([id, pane]) => [id, repoint(pane)]),
       );
+      for (const [id, pane] of Object.entries(panesRef.current)) {
+        if (pane !== beforeRepoint[id] && pane.active) liveDocs.current.set(pane.active, pane.doc);
+      }
       setPanes((ps) => Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, repoint(pane)])));
       bumpStructure();
 
