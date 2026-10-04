@@ -317,6 +317,32 @@ function sameFormulas(model: Record<string, string>, raw: Record<string, unknown
   return mk.length === Object.keys(b).length && mk.every((k) => b[k] === model[k]);
 }
 
+// Replace the `views` sequence, keeping the original node (comments, layout)
+// of every view whose content didn't change; only edited views are re-emitted.
+function setViews(doc: YAML.Document, rawText: string, views: Record<string, unknown>[]): void {
+  const seq = doc.get("views", true);
+  const before = parseBase(rawText);
+  const rawViews = before?.raw?.views;
+  if (!YAML.isSeq(seq) || !before || !Array.isArray(rawViews) || seq.items.length !== rawViews.length) {
+    doc.set("views", views);
+    return;
+  }
+  // The YAML item behind each modeled view (parseBase skips non-map entries).
+  const itemOf: number[] = [];
+  rawViews.forEach((v, i) => {
+    if (asRecord(v)) itemOf.push(i);
+  });
+  const old = buildViews(before).map((v) => JSON.stringify(v));
+  const used = new Set<number>();
+  seq.items = views.map((v) => {
+    const key = JSON.stringify(v);
+    const j = old.findIndex((o, k) => o === key && !used.has(k) && itemOf[k] !== undefined);
+    if (j === -1) return doc.createNode(v);
+    used.add(j);
+    return seq.items[itemOf[j]];
+  });
+}
+
 export function serializeBase(def: BaseDef): string {
   const views = buildViews(def);
   // Only rewrite `formulas` when the user actually changed it AND the raw was
@@ -328,12 +354,13 @@ export function serializeBase(def: BaseDef): string {
     try {
       const doc = YAML.parseDocument(def.rawText);
       if (doc.errors.length === 0 && YAML.isMap(doc.contents)) {
-        doc.set("views", views);
+        setViews(doc, def.rawText, views);
         if (writeFormulas) {
           if (Object.keys(def.formulas).length) doc.set("formulas", def.formulas);
           else doc.delete("formulas");
         }
-        return doc.toString();
+        // Hand-written flow lists are almost always `[a, b]`, not `[ a, b ]`.
+        return doc.toString({ flowCollectionPadding: false });
       }
     } catch {
       /* fall through to a fresh serialize */

@@ -840,3 +840,35 @@ describe("list view options", () => {
     expect(listOptions(out)).toMatchObject({ markers: "number", indent: true });
   });
 });
+
+describe("serializeBase keeps views it didn't change", () => {
+  const src = [
+    "views:",
+    "  - type: table",
+    "    name: First",
+    "  # the second view",
+    "  - type: cards",
+    "    name: Second",
+    "    order: [file.name, status] # flow style",
+    "    limit: 5",
+    "",
+  ].join("\n");
+  const second = ["  # the second view", "  - type: cards", "    name: Second", "    order: [file.name, status] # flow style"];
+
+  it("editing one view leaves the others byte for byte", () => {
+    const def = parseBase(src)!;
+    const out = serializeBase({ ...def, views: def.views.map((v, i) => (i === 0 ? { ...v, limit: 3 } : v)) });
+    for (const line of second) expect(out).toContain(line);
+    expect(parseBase(out)!.views[0].limit).toBe(3);
+  });
+
+  it("deleting or adding a view keeps the rest", () => {
+    const def = parseBase(src)!;
+    const dropped = serializeBase({ ...def, views: def.views.slice(1) });
+    expect(dropped).toContain("order: [file.name, status] # flow style");
+    expect(parseBase(dropped)!.views.map((v) => v.name)).toEqual(["Second"]);
+    const added = serializeBase({ ...def, views: [...def.views, { type: "list", name: "Third" }] });
+    for (const line of second) expect(added).toContain(line);
+    expect(parseBase(added)!.views.map((v) => v.name)).toEqual(["First", "Second", "Third"]);
+  });
+});

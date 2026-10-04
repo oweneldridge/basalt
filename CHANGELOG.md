@@ -47,6 +47,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Adding a row or column to a table inside a list item, blockquote or callout
   keeps its indent and `>` markers, and a quoted table no longer shows `>` as
   its first column.
+- Editing one Bases view no longer rewrites the others: their comments and
+  layout stay as written, and flow lists keep the `[a, b]` style.
 - Renaming a folder updates markdown-style attachment links such as
   `![](Media/pic.png)`, not only `![[...]]` embeds.
 - Moving a note to another folder keeps its own links pointing where they did:
