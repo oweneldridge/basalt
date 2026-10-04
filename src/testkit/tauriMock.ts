@@ -133,6 +133,12 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
         },
       ]);
     case "list_css_snippets":
+      // One snippet of each kind; the CSS is a harmless custom property tests can read.
+      return ok([
+        { name: "mine", css: ":root{--probe-mine:1}", fromObsidian: false, enabledInObsidian: false },
+        { name: "obs-on", css: ":root{--probe-obs-on:1}", fromObsidian: true, enabledInObsidian: true },
+        { name: "obs-off", css: ":root{--probe-obs-off:1}", fromObsidian: true, enabledInObsidian: false },
+      ]);
     case "list_subfolders":
     case "list_foreign_files":
       return ok([]);

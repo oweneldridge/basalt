@@ -1622,20 +1622,32 @@ fn valid_plugin_id(id: &str) -> bool {
         && !id.starts_with('.')
 }
 
-/// A CSS snippet from `.basalt/snippets/*.css` (name = the file stem).
+/// A CSS snippet from `.basalt/snippets/*.css` or `.obsidian/snippets/*.css`
+/// (name = the file stem). Obsidian's own snippets carry whether Obsidian has
+/// them switched on, so a vault opened here looks the way it does there.
 #[derive(Serialize)]
 pub struct CssSnippet {
     name: String,
     css: String,
+    #[serde(rename = "fromObsidian")]
+    from_obsidian: bool,
+    #[serde(rename = "enabledInObsidian")]
+    enabled_in_obsidian: bool,
 }
 
 /// List the vault's CSS snippets (each capped at 1MB; non-.css files skipped).
 pub fn list_css_snippets(root: &Path) -> Result<Vec<CssSnippet>, String> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
+    let enabled_in_obsidian: std::collections::HashSet<String> = fs::read_to_string(root.join(".obsidian").join("appearance.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("enabledCssSnippets").and_then(|a| a.as_array()).cloned())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default();
     // Basalt's own snippets, plus an existing Obsidian vault's snippets so they
     // appear (and are toggleable) here too. On a name clash, .basalt wins.
-    for dir in [root.join(".basalt").join("snippets"), root.join(".obsidian").join("snippets")] {
+    for (from_obsidian, dir) in [(false, root.join(".basalt").join("snippets")), (true, root.join(".obsidian").join("snippets"))] {
         let Ok(entries) = fs::read_dir(&dir) else {
             continue; // folder may not exist
         };
@@ -1654,7 +1666,8 @@ pub fn list_css_snippets(root: &Path) -> Result<Vec<CssSnippet>, String> {
             let Ok(css) = fs::read_to_string(&path) else {
                 continue;
             };
-            out.push(CssSnippet { name, css });
+            let enabled = from_obsidian && enabled_in_obsidian.contains(&name);
+            out.push(CssSnippet { name, css, from_obsidian, enabled_in_obsidian: enabled });
         }
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -2067,6 +2080,27 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let (changed, rescan) = classify_change(&root, false, &[dir]);
         assert!(changed.is_empty() && rescan);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn obsidian_snippets_report_whether_obsidian_enables_them() {
+        let root = scratch_vault("snips");
+        fs::create_dir_all(root.join(".obsidian/snippets")).unwrap();
+        fs::create_dir_all(root.join(".basalt/snippets")).unwrap();
+        fs::write(root.join(".obsidian/snippets/on.css"), "a{}").unwrap();
+        fs::write(root.join(".obsidian/snippets/off.css"), "b{}").unwrap();
+        fs::write(root.join(".basalt/snippets/mine.css"), "c{}").unwrap();
+        fs::write(root.join(".obsidian/appearance.json"), r#"{"enabledCssSnippets":["on"]}"#).unwrap();
+        let got: Vec<(String, bool, bool)> = list_css_snippets(&root)
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.name, s.from_obsidian, s.enabled_in_obsidian))
+            .collect();
+        assert_eq!(
+            got,
+            vec![("mine".into(), false, false), ("off".into(), true, false), ("on".into(), true, true)]
+        );
         fs::remove_dir_all(&root).unwrap();
     }
 

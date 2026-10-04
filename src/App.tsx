@@ -2968,21 +2968,28 @@ export default function App() {
   // vault, on this device). CSS only — it can style, never execute.
   const [cssSnippets, setCssSnippets] = useState<CssSnippet[]>([]);
   const [disabledSnippets, setDisabledSnippets] = useState<Set<string>>(new Set());
-  // Reload the snippet list + disabled set when the vault changes.
+  // Obsidian snippets the user switched on here although Obsidian has them off.
+  const [enabledSnippets, setEnabledSnippets] = useState<Set<string>>(new Set());
+  // Reload the snippet list + both override sets when the vault changes.
   useEffect(() => {
     if (!vault) {
       setCssSnippets([]);
       setDisabledSnippets(new Set());
+      setEnabledSnippets(new Set());
       return;
     }
     let cancelled = false;
-    try {
-      const raw = localStorage.getItem(`basalt.disabledSnippets.${vault}`);
-      const arr = raw ? (JSON.parse(raw) as unknown) : [];
-      setDisabledSnippets(new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : []));
-    } catch {
-      setDisabledSnippets(new Set());
-    }
+    const readSet = (key: string) => {
+      try {
+        const raw = localStorage.getItem(`${key}.${vault}`);
+        const arr = raw ? (JSON.parse(raw) as unknown) : [];
+        return new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : []);
+      } catch {
+        return new Set<string>();
+      }
+    };
+    setDisabledSnippets(readSet("basalt.disabledSnippets"));
+    setEnabledSnippets(readSet("basalt.enabledSnippets"));
     void listCssSnippets()
       .then((snips) => {
         if (!cancelled) setCssSnippets(snips);
@@ -2994,12 +3001,23 @@ export default function App() {
       cancelled = true;
     };
   }, [vault]);
-  // Inject the ENABLED snippets as <style> tags; re-runs when the list or the
-  // disabled set changes. Removed wholesale on switch/close.
+  // Basalt's own snippets are on unless switched off; Obsidian's follow
+  // Obsidian's enabled list unless switched here.
+  const snippetsOff = useMemo(() => {
+    const off = new Set<string>();
+    for (const s of cssSnippets) {
+      const on = disabledSnippets.has(s.name)
+        ? false
+        : enabledSnippets.has(s.name) || !s.fromObsidian || !!s.enabledInObsidian;
+      if (!on) off.add(s.name);
+    }
+    return off;
+  }, [cssSnippets, disabledSnippets, enabledSnippets]);
+  // Inject the enabled snippets as <style> tags. Removed wholesale on switch/close.
   useEffect(() => {
     document.querySelectorAll("style[data-basalt-snippet]").forEach((el) => el.remove());
     for (const s of cssSnippets) {
-      if (disabledSnippets.has(s.name)) continue;
+      if (snippetsOff.has(s.name)) continue;
       const style = document.createElement("style");
       style.dataset.basaltSnippet = s.name;
       style.textContent = s.css;
@@ -3008,16 +3026,23 @@ export default function App() {
     return () => {
       document.querySelectorAll("style[data-basalt-snippet]").forEach((el) => el.remove());
     };
-  }, [cssSnippets, disabledSnippets]);
+  }, [cssSnippets, snippetsOff]);
   const toggleSnippet = useCallback((name: string, enabled: boolean) => {
-    setDisabledSnippets((prev) => {
-      const next = new Set(prev);
-      if (enabled) next.delete(name);
-      else next.add(name);
-      const v = vaultRef.current;
-      if (v) localStorage.setItem(`basalt.disabledSnippets.${v}`, JSON.stringify([...next]));
-      return next;
-    });
+    const v = vaultRef.current;
+    const update = (set: (f: (prev: Set<string>) => Set<string>) => void, key: string, add: boolean) =>
+      set((prev) => {
+        const next = new Set(prev);
+        if (add) next.add(name);
+        else next.delete(name);
+        try {
+          if (v) localStorage.setItem(`${key}.${v}`, JSON.stringify([...next]));
+        } catch {
+          /* private mode */
+        }
+        return next;
+      });
+    update(setDisabledSnippets, "basalt.disabledSnippets", !enabled);
+    update(setEnabledSnippets, "basalt.enabledSnippets", enabled);
   }, []);
 
   // One-shot "Import from Obsidian": map .obsidian appearance + hotkeys into
@@ -4551,7 +4576,7 @@ export default function App() {
           accent={accent || getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#a98be0"}
           onAccent={setAccent}
           cssSnippets={cssSnippets.map((s) => s.name)}
-          disabledSnippets={disabledSnippets}
+          disabledSnippets={snippetsOff}
           onToggleSnippet={toggleSnippet}
           commands={commands.map((c) => ({ id: c.id, label: c.label }))}
           hotkeys={hotkeys}

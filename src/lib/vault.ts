@@ -183,6 +183,10 @@ export function readObsidianImport(): Promise<ObsidianImportRaw> {
 export interface CssSnippet {
   name: string;
   css: string;
+  /** From `.obsidian/snippets` (else `.basalt/snippets`). */
+  fromObsidian?: boolean;
+  /** Listed in Obsidian's appearance.json `enabledCssSnippets`. */
+  enabledInObsidian?: boolean;
 }
 export function listCssSnippets(): Promise<CssSnippet[]> {
   return invoke<CssSnippet[]>("list_css_snippets");
