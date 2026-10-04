@@ -29,10 +29,10 @@ Obsidian features since 1.9 and where Basalt stands:
 | Obsidian | Feature | Basalt |
 |---|---|---|
 | 1.11.0 | Links in properties rewritten on rename; markdown links in properties | Done (whole quoted values, as Obsidian counts them) |
-| 1.9 to 1.10 | Embedded bases: `![[x.base#View]]`, `base` code blocks, `this` | Missing |
+| 1.9 to 1.10 | Embedded bases: `![[x.base#View]]`, `base` code blocks, `this` | Done, read-only (view changes aren't saved back yet) |
 | 1.10 | Bases list layout | Missing (table and cards only) |
-| 1.14 (early access) | Bases kanban layout, collapsible groups, group order | Missing |
-| 1.9 to 1.10 | `file.backlinks`, `file.embeds`, `median`/`stddev` list methods | Missing |
+| 1.14 (early access) | Bases kanban layout, collapsible groups, group order | Missing (a stale `groupOrder` is dropped when the group-by changes) |
+| 1.9 to 1.10 | `file.backlinks`, `file.embeds`, `median`/`stddev` list methods | Done |
 | 1.12.0 | Canvas files count as backlinks and graph links | Missing |
 | 1.11 | `obsidian://` URI actions with `paneType` | Missing (Basalt has `basalt://open`) |
 | 1.11 to 1.12 | Files & links: default file to open, attachment cleanup on delete | Missing |
