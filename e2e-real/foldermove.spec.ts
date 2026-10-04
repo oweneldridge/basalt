@@ -121,3 +121,34 @@ test.describe("attachments with # in the name", () => {
     expect(vault.read("Gallery.md")).toBe("# Gallery\n\n![first](Media/a%23b.png)\n");
   });
 });
+
+test.describe("moving a note while its title rename runs", () => {
+  test.use({ vaultFiles: { "Notes/Alpha.md": "# Alpha\n", "Work/keep.md": "# keep\n" } });
+
+  test("the move keeps the new title", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await page.locator(".tree-row.folder", { hasText: "Notes" }).click();
+    await openNote(page, "Alpha");
+    await page.route("**/api/invoke", async (route) => {
+      const slow = (route.request().postData() ?? "").includes('"cmd":"rename_note"');
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (slow) await new Promise((r) => setTimeout(r, 1500));
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    const title = page.locator(".pane:not(.dock) input.inline-title").first();
+    await title.fill("Alpha Retitled");
+    await title.press("Enter");
+    await page.waitForTimeout(100);
+    await page.evaluate(() => {
+      const target = [...document.querySelectorAll<HTMLElement>(".tree-row.folder")].find((r) => r.textContent?.includes("Work"))!;
+      const dt = new DataTransfer();
+      dt.setData("application/x-basalt-note", document.querySelector<HTMLElement>(".tree-row.file.active")!.dataset.path!);
+      target.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+    });
+    await expect.poll(() => vault.exists("Work/Alpha Retitled.md"), { timeout: 10000 }).toBe(true);
+    await settle(page, 1000);
+    expect(vault.exists("Notes/Alpha.md")).toBe(false);
+    expect(vault.exists("Work/Alpha.md")).toBe(false);
+  });
+});

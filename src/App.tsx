@@ -4359,9 +4359,15 @@ export default function App() {
       if (!note) return;
       const curFolder = note.rel.includes("/") ? note.rel.slice(0, note.rel.lastIndexOf("/")) : "";
       if (normalizeName(curFolder) === normalizeName(folderRel)) return;
-      void handleRenameNote(notePath, (folderRel ? `${folderRel}/` : "") + note.name);
+      // The name as of when the move runs: a title rename queued ahead of it
+      // may change it.
+      void enqueueRename(async () => {
+        const now = currentPath(notePath);
+        const cur = notesRef.current.find((n) => n.path === now);
+        if (cur) await renameNoteNow(now, (folderRel ? `${folderRel}/` : "") + cur.name);
+      });
     },
-    [handleRenameNote],
+    [enqueueRename, renameNoteNow],
   );
 
   // Blank-query switcher shows recently opened notes first.
