@@ -922,6 +922,20 @@ export default function App() {
     [flushPath],
   );
 
+  // After a flush, anything still pending couldn't be saved (a conflict or a
+  // failed write). Ask before an action that would drop it.
+  const okToDropUnsaved = useCallback(async (action: string): Promise<boolean> => {
+    if (pending.current.size === 0) return true;
+    const names = [...pending.current.keys()].map(
+      (p) => notesRef.current.find((n) => n.path === p)?.name ?? p.split(/[\\/]/).pop() ?? p,
+    );
+    const shown = names.slice(0, 5).join(", ") + (names.length > 5 ? ` and ${names.length - 5} more` : "");
+    return confirm(`Changes in ${shown} couldn't be saved. ${action} anyway and lose them?`, {
+      title: "Unsaved changes",
+      kind: "warning",
+    });
+  }, []);
+
   // Ensure there is a focused pane; create the first one if the workspace is
   // empty. Refs are updated synchronously so an immediate open finds the pane.
   const ensureWorkspace = useCallback((): string => {
@@ -1461,6 +1475,7 @@ export default function App() {
   const openVault = useCallback(
     async (path: string, openNoteRel?: string) => {
       await flushAll();
+      if (!(await okToDropUnsaved("Switch vaults"))) return;
       clearImageCache();
       const root = await openVaultBackend(path); // canonical; sets managed state
       // Read the saved workspace NOW (before any state reset fires the save
@@ -2001,6 +2016,10 @@ export default function App() {
           closing = true;
           event.preventDefault();
           await flushAll();
+          if (!(await okToDropUnsaved("Close the window"))) {
+            closing = false;
+            return;
+          }
           void win.close();
         });
       } catch {
