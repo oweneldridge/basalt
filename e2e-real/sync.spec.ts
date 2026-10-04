@@ -185,3 +185,24 @@ test("on a slow link, a second save waits for the first instead of conflicting w
   await page.waitForTimeout(1500);
   await expect(page.locator(".conflict")).toBeHidden();
 });
+
+test("the event stream recovers after a reconnect is answered with a 502", async ({ page, vault }) => {
+  let failNext = false;
+  await page.route("**/api/events", async (route) => {
+    if (failNext) {
+      failNext = false;
+      await route.fulfill({ status: 502, body: "Bad Gateway" });
+    } else {
+      await route.continue();
+    }
+  });
+  await openApp(page, vault);
+  await openNote(page, "Ideas");
+  await settle(page);
+  failNext = true;
+  await vault.stop();
+  vault.write("Ideas.md", "# Ideas\n\nchanged during the outage\n");
+  await vault.start();
+  await expect(page.locator(".pane:not(.dock) .cm-content").first()).toContainText("changed during the outage", { timeout: 20000 });
+  expect(failNext).toBe(false);
+});

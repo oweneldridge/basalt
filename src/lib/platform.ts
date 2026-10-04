@@ -50,10 +50,12 @@ type WebEvent = { payload: unknown };
 const webHandlers = new Map<string, Set<(e: WebEvent) => void>>();
 let es: EventSource | null = null;
 let connectedBefore = false;
+let retryMs = 1000;
 function ensureStream() {
   if (es) return;
   es = new EventSource(`${API}/api/events`);
   es.onopen = () => {
+    retryMs = 1000;
     // On RE-connect (laptop sleep/wake, a network blip, a server restart) the
     // stream missed any frames emitted during the gap, so an open note could be
     // stale and get silently clobbered by autosave. Force a full resync — App's
@@ -74,7 +76,14 @@ function ensureStream() {
     }
   };
   es.onerror = () => {
-    /* the browser auto-reconnects an EventSource; onopen fires again on success */
+    // The browser retries a dropped connection by itself, but a non-200 reply
+    // (a proxy's 502 during a redeploy) closes the stream for good. Start a new
+    // one; its onopen then resyncs like any reconnect.
+    if (!es || es.readyState !== EventSource.CLOSED) return;
+    es.close();
+    es = null;
+    window.setTimeout(ensureStream, retryMs);
+    retryMs = Math.min(retryMs * 2, 30000);
   };
 }
 export function listen<T>(event: string, handler: (e: { payload: T }) => void): Promise<UnlistenFn> {
