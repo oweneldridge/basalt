@@ -17,6 +17,7 @@ import {
   readVault,
   startWatching,
   writeNote,
+  isBeingWritten,
   writeCanvas,
   writeBase,
   isWriteConflict,
@@ -1851,12 +1852,13 @@ export default function App() {
         }),
       );
 
-      // Drop echoes of our own writes: disk content equals what we last wrote.
+      // Drop echoes of our own writes: disk content equals what we last wrote
+      // (or are writing now: a slow reply can trail the watcher).
       // Do NOT consume the entry on match — one save can produce several event
       // bursts (our rename + iCloud's own touches), and every echo must match.
       // The entry is replaced by the next save or evicted by the size cap.
       const results = reads.filter(
-        (r) => !(r.ok && selfWrites.current.get(r.rel) === r.content),
+        (r) => !(r.ok && (selfWrites.current.get(r.rel) === r.content || isBeingWritten(r.path, r.content))),
       );
       if (results.length === 0) return;
 
@@ -1940,7 +1942,7 @@ export default function App() {
             .then((fresh) => {
               // Our OWN write echoing back through the watcher — ignore it (same
               // content-based suppression notes get via processChanges).
-              if (rel !== undefined && selfWrites.current.get(rel) === fresh) return;
+              if ((rel !== undefined && selfWrites.current.get(rel) === fresh) || isBeingWritten(path, fresh)) return;
               if (fresh === prevDoc) return;
               // An editable canvas with unsaved edits: don't clobber them —
               // raise a conflict so the user chooses Reload / Keep mine.
@@ -1970,7 +1972,8 @@ export default function App() {
       const unknown = still.content === "" && (still.size ?? 0) > 0;
       if (unknown || prev === undefined || still.content === prev) continue;
       // Disk holding our own last save isn't someone else's edit.
-      if (dirty && selfWrites.current.get(still.rel) === still.content) continue;
+      const ours = selfWrites.current.get(still.rel) === still.content || isBeingWritten(still.path, still.content);
+      if (dirty && ours) continue;
       if (dirty) addConflict(p.active); // changed on disk under unsaved edits
       else patchPane(p.id, { doc: still.content });
     }
@@ -1988,7 +1991,7 @@ export default function App() {
       }
       if (still.content === "" && (still.size ?? 0) > 0) continue;
       if (prev === undefined || still.content === prev) continue;
-      if (selfWrites.current.get(still.rel) === still.content) continue;
+      if (selfWrites.current.get(still.rel) === still.content || isBeingWritten(path, still.content)) continue;
       addConflict(path);
     }
   }, [loadVault, addConflict, patchPane, rememberSelfWrite]);

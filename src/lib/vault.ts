@@ -76,18 +76,45 @@ export function isWriteConflict(e: unknown): boolean {
 
 /** Write a note. With `expected` (what the caller last saw on disk) the core
  * refuses with WRITE_CONFLICT if someone else changed the file in between. */
+// Text being written right now, by path. A write can land, and the watcher
+// read it, before its reply comes back; that text is Basalt's own.
+const inFlight = new Map<string, string[]>();
+
+async function tracked(path: string, content: string, write: Promise<void>): Promise<void> {
+  const list = inFlight.get(path) ?? [];
+  list.push(content);
+  inFlight.set(path, list);
+  try {
+    await write;
+  } finally {
+    // Dropped a tick later, so a read racing the caller's own bookkeeping
+    // after the reply still matches.
+    setTimeout(() => {
+      const l = inFlight.get(path);
+      if (!l) return;
+      l.splice(l.indexOf(content), 1);
+      if (l.length === 0) inFlight.delete(path);
+    }, 0);
+  }
+}
+
+/** Whether `content` is what Basalt is writing to `path` right now. */
+export function isBeingWritten(path: string, content: string): boolean {
+  return inFlight.get(path)?.includes(content) ?? false;
+}
+
 export function writeNote(path: string, content: string, expected?: string): Promise<void> {
-  return invoke<void>("write_note", { path, content, expected: expected ?? null });
+  return tracked(path, content, invoke<void>("write_note", { path, content, expected: expected ?? null }));
 }
 
 /** Atomically write an existing `.canvas` file (extension-gated in Rust). */
 export function writeCanvas(path: string, content: string, expected?: string): Promise<void> {
-  return invoke<void>("write_canvas", { path, content, expected: expected ?? null });
+  return tracked(path, content, invoke<void>("write_canvas", { path, content, expected: expected ?? null }));
 }
 
 /** Atomically write an existing `.base` file (extension-gated in Rust). */
 export function writeBase(path: string, content: string, expected?: string): Promise<void> {
-  return invoke<void>("write_base", { path, content, expected: expected ?? null });
+  return tracked(path, content, invoke<void>("write_base", { path, content, expected: expected ?? null }));
 }
 
 export function createNote(name: string): Promise<string> {

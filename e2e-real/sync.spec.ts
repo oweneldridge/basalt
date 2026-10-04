@@ -247,3 +247,26 @@ test("a conflict in a note that isn't focused is still shown, and opens on click
   await elsewhere.click();
   await expect(page.locator(".conflict")).toBeVisible();
 });
+
+test.describe("a save whose reply is slow", () => {
+  for (const delay of [600, 1500]) {
+    test(`no false conflict when the reply comes ${delay} ms after the write lands`, async ({ page, vault }) => {
+      await openApp(page, vault);
+      await openNote(page, "Ideas");
+      await page.route("**/api/invoke", async (route) => {
+        const slow = (route.request().postData() ?? "").includes('"cmd":"write_note"');
+        const res = await route.fetch().catch(() => null);
+        if (!res) return;
+        if (slow) await new Promise((r) => setTimeout(r, delay));
+        await route.fulfill({ response: res }).catch(() => {});
+      });
+      await page.locator(".pane:not(.dock) .cm-line", { hasText: "A list of things" }).click();
+      await page.keyboard.press("End");
+      const typed = " one two three four five six seven eight nine ten";
+      await page.keyboard.type(typed, { delay: 40 });
+      await settle(page, delay * 2 + 2000);
+      await expect(page.locator(".conflict")).toHaveCount(0);
+      expect(vault.read("Ideas.md")).toContain(`A list of things to try.${typed}\n`);
+    });
+  }
+});
