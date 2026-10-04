@@ -39,7 +39,7 @@ export function withoutRemoteImages(src: string): string {
   return src
     .replace(/(\bimg\s*:\s*)(["'])(.*?)\2/gi, blank)
     .replace(/(\bsrc\s*=\s*)(["'])(.*?)\2/gi, blank)
-    .replace(/url\(\s*['"]?\s*(?:https?:|[\\/]{2})[^)]*\)/gi, "none");
+    .replace(/url\(\s*['"]?\s*(?:https?:|[\\/]{2})[^)\s'"]*['"]?\s*\)/gi, "none");
 }
 
 /** Render Mermaid source to an SVG string (cached). Never throws. */

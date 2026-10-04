@@ -45,8 +45,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stacked column, never writes into the renamed one. Text typed while a rename
   or folder move rewrites links is saved, without a false conflict, and gets
   the same link fix.
-- Text changed on disk lands in an open editor as the smallest edit, so the
-  caret stays on the line it was on.
+- Text changed on disk lands in an open editor as separate small edits, so
+  the caret stays where it was, even when lines above and below it changed.
 - After "Keep mine" writes back a note deleted elsewhere, later edits save
   normally, and focus returns to the editor after Keep mine or Reload.
 - A note created or renamed while the vault was being re-read keeps saving:
@@ -109,8 +109,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Security
 
 - The web build sends a Content Security Policy: scripts only from the server
-  itself, no framing, no `<base>` or form tricks, plus `nosniff` and
+  itself, nothing may frame it, no `<base>` or form tricks, plus `nosniff` and
   `no-referrer`. `'unsafe-eval'` remains only until plugins load as modules.
+  CSS snippets can no longer `@import` styles or fonts from other sites there.
 - A path outside the vault gets the same error whether or not it exists, so
   error text can't be used to probe the host's files.
 - The web server takes a request's concurrency slot before reading its body,

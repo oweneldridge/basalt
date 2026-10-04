@@ -199,7 +199,7 @@ fn frame(event: &str, payload: Value) -> String {
 /// https images follow the app's own setting.
 const CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; \
 img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; media-src 'self' data: blob:; \
-object-src 'self' data: blob:; frame-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+object-src 'self' data: blob:; frame-src 'self' data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 async fn security_headers(req: Request, next: Next) -> Response {
     let mut res = next.run(req).await;

@@ -25,7 +25,7 @@ export function isRemoteUrl(src: string): boolean {
 
 /** A CSS or SVG `url(…)` that points off this site. */
 const REMOTE_REF = /url\(\s*['"]?\s*(?:https?:|[\\/]{2})/i;
-const REMOTE_REF_ALL = /url\(\s*['"]?\s*(?:https?:|[\\/]{2})[^)]*\)/gi;
+const REMOTE_REF_ALL = /url\(\s*['"]?\s*(?:https?:|[\\/]{2})[^)\s'"]*['"]?\s*\)/gi;
 
 const remoteInSet = (set: string) => set.split(",").some((c) => isRemoteUrl(c.trim()));
 const SVG_NS = "http://www.w3.org/2000/svg";
