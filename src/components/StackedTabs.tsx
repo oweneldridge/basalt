@@ -61,8 +61,9 @@ export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody
       {tabs.map((t) => {
         const md = /\.md$/i.test(t.path);
         // Text the app already holds (a renamed note, another pane's) shows at
-        // once, so a column rebuilt by a rename keeps the caret and typing.
-        const doc = md ? (liveDoc?.(t.path) ?? docs[t.path]) : undefined;
+        // once, so a column rebuilt by a rename keeps the caret and typing. A
+        // failed read wins: the app's copy of such a note may be decoded lossily.
+        const doc = !md ? undefined : docs[t.path] === null ? null : (liveDoc?.(t.path) ?? docs[t.path]);
         return (
           <div key={t.path} className={`stacked-col${t.path === activePath ? " active" : ""}`}>
             <button className="stacked-col-head" title={`Focus ${t.name}`} onClick={() => onFocusTab(t.path, doc ?? undefined)}>

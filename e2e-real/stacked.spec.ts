@@ -105,3 +105,65 @@ test.describe("a stacked column and a pane on the same note", () => {
     });
   }
 });
+
+test.describe("stacked columns and notes changed elsewhere", () => {
+  test.use({
+    vaultFiles: {
+      "Aaa.md": "# Aaa\n\nalpha line\n\nend a\n",
+      "Bbb.md": "# Bbb\n",
+      "Lat.md": "# cafe\n\nline\n",
+    },
+  });
+  const latin1 = Buffer.from([0x23, 0x20, 0x63, 0x61, 0x66, 0xe9, 0x0a, 0x0a, 0x6c, 0x69, 0x6e, 0x65, 0x0a]);
+
+  test("a phone edit to a note typed in earlier shows, and isn't overwritten", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Aaa");
+    await openNote(page, "Bbb");
+    await page.locator(".tab-stack").first().click();
+    const col = page.locator(".stacked-col").filter({ has: page.locator(".stacked-col-head", { hasText: "Aaa" }) });
+    await col.locator(".cm-line", { hasText: "alpha line" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" mine");
+    await expect.poll(() => vault.read("Aaa.md")).toContain("alpha line mine");
+    await settle(page, 1000);
+    vault.write("Aaa.md", "# Aaa\n\nTHEIRS FROM PHONE\n\nend a\n");
+    await expect.poll(() => col.locator(".cm-content").textContent(), { timeout: 5000 }).toContain("THEIRS FROM PHONE");
+    await col.locator(".cm-line", { hasText: "end a" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" k");
+    await settle(page, 1500);
+    expect(vault.read("Aaa.md")).toBe("# Aaa\n\nTHEIRS FROM PHONE\n\nend a k\n");
+  });
+
+  test("a column for a note that stopped being UTF-8 can't rewrite it", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Lat");
+    await openNote(page, "Aaa");
+    await page.locator(".tab-stack").first().click();
+    await expect(page.locator(".stacked-col")).toHaveCount(2);
+    await settle(page, 1500);
+    await vault.stop();
+    vault.write("Lat.md", latin1);
+    await vault.start();
+    await page.reload();
+    const col = page.locator(".stacked-col").filter({ has: page.locator(".stacked-col-head", { hasText: "Lat" }) });
+    await expect(col.locator(".placeholder")).toHaveText("Couldn't load this note.", { timeout: 10000 });
+    await expect(col.locator(".cm-content")).toHaveCount(0);
+    expect(vault.readBytes("Lat.md").equals(latin1)).toBe(true);
+  });
+
+  test("an open note that stops being UTF-8 while offline isn't rewritten by typing", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Lat");
+    await settle(page, 1000);
+    await vault.stop();
+    vault.write("Lat.md", latin1);
+    await vault.start();
+    await settle(page, 5000);
+    await page.locator(".pane:not(.dock) .cm-content").first().click().catch(() => {});
+    await page.keyboard.type("x");
+    await settle(page, 2000);
+    expect(vault.readBytes("Lat.md").equals(latin1)).toBe(true);
+  });
+});

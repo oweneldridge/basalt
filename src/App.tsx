@@ -4666,7 +4666,9 @@ export default function App() {
             liveDoc={(p) => {
               const known = notesRef.current.find((n) => n.path === p);
               const seen = known && !(known.content === "" && (known.size ?? 0) > 0) ? known.content : undefined;
-              return pending.current.get(p) ?? liveDocs.current.get(p) ?? seen;
+              // Without unsaved typing, the note's last known text is newest: the
+              // watcher, rescans and link fixes update it, not this column's copy.
+              return pending.current.get(p) ?? seen ?? liveDocs.current.get(p);
             }}
             onFocusTab={(p, colDoc) => {
               toggleStacked(id);
