@@ -9,6 +9,8 @@
   --bg-secondary: var(--bg-elev);
   --hover: rgba(127, 127, 127, 0.12); /* neutral hover-row background */
   --border: #383838;
+  /* Edges of inputs and selects: 3:1 against the panels they sit on. */
+  --control-border: #7a7a7a;
   --text: #dcddde;
   --text-muted: #999a9c;
   --text-faint: #939495;
@@ -37,6 +39,7 @@
   --bg-sidebar: #f4f5f7;
   --bg-elev: #e9ebee;
   --border: #d8dade;
+  --control-border: #767676;
   --text: #1f2125;
   --text-muted: #62656d;
   --text-faint: #64676e;
@@ -216,7 +219,7 @@ button.primary:hover {
 .filter {
   margin: 0 12px 8px;
   background: var(--bg-elev);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   color: var(--text);
   border-radius: 6px;
   padding: 6px 8px;
@@ -1172,7 +1175,7 @@ button.primary:hover {
 }
 .prompt-input {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 6px;
   color: var(--text);
   font-size: 0.95rem;
@@ -1957,7 +1960,7 @@ button.primary:hover {
 .base-editor label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-muted); }
 .base-editor input, .base-editor select {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 5px;
   padding: 4px 8px;
   color: var(--text);
@@ -2250,7 +2253,7 @@ button.primary:hover {
 /* ------- File sort control ------- */
 .sidebar-controls { display: flex; gap: 4px; align-items: center; padding: 0 6px; }
 .sidebar-controls .filter { flex: 1; }
-.file-sort { font-size: 11px; background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); border-radius: 5px; padding: 2px; max-width: 90px; }
+.file-sort { font-size: 11px; background: var(--bg); color: var(--text-muted); border: 1px solid var(--control-border); border-radius: 5px; padding: 2px; max-width: 90px; }
 
 /* ------- Unlinked mention Link buttons ------- */
 .ref-child-row { display: flex; align-items: center; }
@@ -2275,7 +2278,7 @@ button.primary:hover {
 .graph-depth-val { min-width: 10px; text-align: center; }
 
 /* ------- Graph filters ------- */
-.graph-search { font-size: 12px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); max-width: 160px; margin-left: 8px; }
+.graph-search { font-size: 12px; padding: 3px 8px; border: 1px solid var(--control-border); border-radius: 6px; background: var(--bg); color: var(--text); max-width: 160px; margin-left: 8px; }
 .graph-orphans { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); margin-left: 8px; }
 
 /* ------- Workspaces modal ------- */
@@ -2426,7 +2429,7 @@ button.primary:hover {
 
 /* ------- Bases expression input (CM6) ------- */
 .base-formula-exprwrap { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.expr-input { border: 1px solid var(--border); border-radius: 5px; background: var(--bg); overflow: hidden; }
+.expr-input { border: 1px solid var(--control-border); border-radius: 5px; background: var(--bg); overflow: hidden; }
 .expr-input:focus-within { border-color: var(--accent); }
 .expr-input .cm-editor { font-family: var(--font-mono, monospace); font-size: 0.85em; }
 .expr-input .cm-content { padding: 4px 8px; }
@@ -2465,7 +2468,7 @@ button.primary:hover {
 .properties { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
 .prop-row { display: flex; align-items: center; gap: 6px; }
 .prop-key { flex: 0 0 34%; font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.prop-value { flex: 1; min-width: 0; background: var(--bg-elev); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 3px 6px; font-size: 12px; }
+.prop-value { flex: 1; min-width: 0; background: var(--bg-elev); border: 1px solid var(--control-border); color: var(--text); border-radius: 5px; padding: 3px 6px; font-size: 12px; }
 .prop-value:focus { border-color: var(--accent); outline: none; }
 .prop-complex { flex: 1; font-size: 12px; color: var(--text-faint); font-style: italic; }
 .prop-del { background: none; border: none; color: var(--text-faint); cursor: pointer; padding: 0 4px; }
@@ -2548,7 +2551,7 @@ button.primary:hover {
   color: var(--text);
 }
 .tp-modal-input {
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   background: var(--bg);
   color: var(--text);
   font-size: 1rem;

@@ -115,6 +115,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The two side panels are named landmarks ("Files", "Note details").
 - Tab close buttons and toolbar buttons are at least 24 by 24 pixels, and a
   tab's close button shows when it has keyboard focus.
+- Text fields and dropdowns have edges you can see: their borders meet 3:1
+  against the panel behind them, in light and dark.
 - Modals are real dialogs: focus moves in and back, Escape closes, and typing
   can't reach the note behind.
 - Tabs work from the keyboard (arrows, Enter, Delete); the editor and icon
