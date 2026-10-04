@@ -69,7 +69,6 @@ import {
   type HostDeps,
 } from "./lib/plugins";
 import { listPlugins, writePluginData, listCssSnippets, deleteFolder, renameFolder, type PluginInfo, type CssSnippet } from "./lib/vault";
-import type { EditorApi } from "./components/EditorPane";
 import type { NoteRef } from "./editor/wikilink";
 import { clearImageCache, resolveImage } from "./lib/assets";
 import { remoteImagesNeedReload, setRemoteImages } from "./lib/remoteImages";
@@ -81,7 +80,7 @@ import { StackedTabs } from "./components/StackedTabs";
 import { SlidesView } from "./components/SlidesView";
 import { StatusBar } from "./components/StatusBar";
 import { InlineTitle } from "./components/InlineTitle";
-import { EditorPane } from "./components/EditorPane";
+import { EditorPane, fixOpenEditors, type EditorApi } from "./components/EditorPane";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec, type BuiltinView } from "./lib/leafViews";
@@ -3669,12 +3668,16 @@ export default function App() {
       for (const d of done) {
         const saved = notesRef.current.find((n) => n.path === d.path)?.content;
         if (saved === undefined) continue; // deleted meanwhile: nothing to fix
-        const latest = pending.current.get(d.path) ?? liveDocs.current.get(d.path) ?? saved;
-        const doc = latest === d.base || latest === d.next ? d.next : (rewriteLinks(latest, d.mapper) ?? latest);
-        if (doc !== saved) {
+        const fix = (t: string) => (t === d.base || t === d.next ? d.next : (rewriteLinks(t, d.mapper) ?? t));
+        // Editors on the note take the fix as an edit of their own text, so
+        // typing in progress merges with it; their change handler saves it.
+        const shown = fixOpenEditors(d.path, fix);
+        const doc = shown ?? fix(pending.current.get(d.path) ?? liveDocs.current.get(d.path) ?? saved);
+        if (doc !== saved && pending.current.get(d.path) !== doc) {
           pending.current.set(d.path, doc);
           void flushPath(d.path);
         }
+        if (shown !== null) continue;
         if (liveDocs.current.has(d.path) || pending.current.has(d.path)) liveDocs.current.set(d.path, doc);
         for (const p of Object.values(panesRef.current)) if (p.active === d.path) patchPane(p.id, { doc });
       }
@@ -3861,10 +3864,16 @@ export default function App() {
         for (const note of preNotes) {
           if (note.path === oldPath) continue;
           if (rewriteLinks(note.content, sourceMap(note.path, note.rel)) === null) continue; // unaffected
-          // Unsaved edits or an open conflict: rewriting disk under them would be
-          // reverted by the next keystroke (or drop "mine"). Report it instead.
-          if (pending.current.has(note.path) || conflictsRef.current.has(note.path)) {
+          // An open conflict: rewriting would drop "mine". Report it instead.
+          if (conflictsRef.current.has(note.path)) {
             failures.push(`${note.rel} (unsaved edits)`);
+            continue;
+          }
+          // Being typed into: fix the links in its editor, where they merge with
+          // the typing and get saved with it.
+          if (pending.current.has(note.path)) {
+            const map = sourceMap(note.path, note.rel);
+            if (fixOpenEditors(note.path, (t) => rewriteLinks(t, map) ?? t) === null) failures.push(`${note.rel} (unsaved edits)`);
             continue;
           }
           try {
@@ -4264,10 +4273,14 @@ export default function App() {
       for (const post of postNotes) {
         const mapper = makeMapper(post);
         if (rewriteLinks(post.content, mapper) === null) continue; // unaffected
-        // As in note rename: a note with unsaved edits or a conflict is reported,
-        // not rewritten under the editor.
-        if (pending.current.has(post.path) || conflictsRef.current.has(post.path)) {
+        // As in note rename: a conflict is reported; a note being typed into
+        // gets the fix in its editor, merged with the typing.
+        if (conflictsRef.current.has(post.path)) {
           failures.push(`${post.rel} (unsaved edits)`);
+          continue;
+        }
+        if (pending.current.has(post.path)) {
+          if (fixOpenEditors(post.path, (t) => rewriteLinks(t, mapper) ?? t) === null) failures.push(`${post.rel} (unsaved edits)`);
           continue;
         }
         try {

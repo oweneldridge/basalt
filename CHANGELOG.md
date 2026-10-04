@@ -51,6 +51,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   name takes focus only if it had it. A second rename or folder move waits for
   the first to finish fixing links, so renaming a note back right away leaves
   every link right.
+- A rename or folder move fixes links in notes being typed into inside their
+  open editors, so typing in progress, even straight through the end of the
+  pass, merges with the fix instead of undoing it or moving a character. Such
+  notes are no longer skipped with "link updates failed".
 - Text changed on disk lands in an open editor as separate small edits, so
   the caret stays where it was, even when lines above and below it changed.
 - After "Keep mine" writes back a note deleted elsewhere, later edits save

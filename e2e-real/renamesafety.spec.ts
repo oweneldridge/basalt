@@ -360,3 +360,78 @@ test.describe("typing while a link rewrite's reply is slow", () => {
     await expect.poll(() => vault.read("Src.md"), { timeout: 8000 }).toBe("Top [[Target Renamed]] here.\n\nmid TYPED\n");
   });
 });
+
+test.describe("typing straight through the end of a rename's link pass", () => {
+  test.use({
+    vaultFiles: {
+      "Target.md": "# Target\n",
+      "Src.md": "Top [[Target]] here.\n\nmid\n\nEnd [[Target]].\n",
+      "Z1.md": "[[Target]]\n",
+      "Z2.md": "[[Target]]\n",
+      "Z3.md": "[[Target]]\n",
+    },
+  });
+
+  test("keeps every typed character in order and the fix on disk", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Src");
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+    await page.route("**/api/invoke", async (route) => {
+      if ((route.request().postData() ?? "").includes('"cmd":"read_note"')) await new Promise((r) => setTimeout(r, 700));
+      await route.continue().catch(() => {});
+    });
+    await page.locator(".tree-row.file", { hasText: "Target" }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+    await page.locator(".prompt-input").fill("Target Renamed");
+    await page.locator(".prompt-input").press("Enter");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "mid" }).click();
+    await page.keyboard.press("End");
+    const typed = "abcdefghijklmnopqrstuvwxyz".repeat(6);
+    await page.keyboard.type(typed, { delay: 12 });
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    await expect.poll(() => vault.read("Z3.md"), { timeout: 20000 }).toContain("[[Target Renamed]]");
+    await settle(page, 2500);
+    await expect.poll(() => vault.read("Src.md"), { timeout: 8000 }).toBe(
+      `Top [[Target Renamed]] here.\n\nmid${typed}\n\nEnd [[Target Renamed]].\n`,
+    );
+  });
+});
+
+test.describe("typing that starts after the note's rewrite and runs past the pass", () => {
+  test.use({
+    vaultFiles: {
+      "Target.md": "# Target\n",
+      "Src.md": "Top [[Target]] here.\n\nmid\n\nEnd [[Target]].\n",
+      "Z1.md": "[[Target]]\n",
+      "Z2.md": "[[Target]]\n",
+      "Z3.md": "[[Target]]\n",
+    },
+  });
+
+  test("keeps every character in order and the fix on disk", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Src");
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+    await page.route("**/api/invoke", async (route) => {
+      if ((route.request().postData() ?? "").includes('"cmd":"read_note"')) await new Promise((r) => setTimeout(r, 700));
+      await route.continue().catch(() => {});
+    });
+    await page.locator(".tree-row.file", { hasText: "Target" }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+    await page.locator(".prompt-input").fill("Target Renamed");
+    await page.locator(".prompt-input").press("Enter");
+    await expect.poll(() => vault.read("Src.md"), { timeout: 15000 }).toContain("[[Target Renamed]]");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "mid" }).click();
+    await page.keyboard.press("End");
+    const typed = "abcdefghijklmnopqrstuvwxyz".repeat(6);
+    await page.keyboard.type(typed, { delay: 12 });
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    await expect.poll(() => vault.read("Z3.md"), { timeout: 20000 }).toContain("[[Target Renamed]]");
+    await settle(page, 2500);
+    await expect.poll(() => vault.read("Src.md"), { timeout: 8000 }).toBe(
+      `Top [[Target Renamed]] here.\n\nmid${typed}\n\nEnd [[Target Renamed]].\n`,
+    );
+  });
+});

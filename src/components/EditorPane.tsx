@@ -60,6 +60,36 @@ const handoff = new Map<string, { path: string; text: string; selection: EditorS
 // its element is removed; cleared once focus moves somewhere else.
 let focusedView: EditorView | null = null;
 
+/** A short fingerprint of a text (FNV-1a plus its length). */
+function textHash(t: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < t.length; i++) h = Math.imul(h ^ t.charCodeAt(i), 0x01000193);
+  return (h ^ t.length) >>> 0;
+}
+
+// Every live editor, by the path of the note it shows (panes and stacked columns).
+const openEditors = new Map<string, Set<EditorView>>();
+
+/**
+ * Rewrite the text of every open editor on `path` through `fn`, as small edits
+ * applied in the editor itself. Typing in progress merges with them instead of
+ * overwriting them, and the edit is reported like typing, so it gets saved;
+ * it's kept out of undo history. Returns the editors' text afterwards, or null
+ * when no editor shows the note.
+ */
+export function fixOpenEditors(path: string, fn: (text: string) => string): string | null {
+  const views = openEditors.get(path);
+  if (!views || views.size === 0) return null;
+  let text: string | null = null;
+  for (const v of views) {
+    const current = v.state.doc.toString();
+    const changes = textChanges(current, fn(current));
+    if (changes.length) v.dispatch({ changes, annotations: Transaction.addToHistory.of(false) });
+    text = v.state.doc.toString();
+  }
+  return text;
+}
+
 export interface EditorApi {
   /** Replace the selection with `text`; place the caret at `caretOffset` into
    * the inserted text (default: end). */
@@ -118,6 +148,11 @@ export function EditorPane({
   const view = useRef<EditorView | null>(null);
   // Keep the latest callbacks in refs so the editor (rebuilt only per `path`)
   // always calls through to fresh closures without being torn down on every render.
+  // Fingerprints of the texts this editor reported lately. A `doc` prop equal to
+  // one of them, with no new docRev, is an echo of its own typing that a later
+  // keystroke has overtaken, and must not be applied.
+  const reported = useRef<number[]>([]);
+  const lastDocRev = useRef(docRev);
   const cbs = useRef({ getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange, onCursor, onContextMenu });
   cbs.current = { getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange, onCursor, onContextMenu };
   // A stable adapter that always calls through to the freshest closures — used
@@ -133,7 +168,11 @@ export function EditorPane({
     resolveImage: (t) => cbs.current.resolveImage(t),
     saveAttachment: (f) => cbs.current.saveAttachment(f),
     replacePlaceholder: (ph, rep) => cbs.current.replacePlaceholder(ph, rep),
-    onChange: (d) => cbs.current.onChange(d),
+    onChange: (d) => {
+      reported.current.push(textHash(d));
+      if (reported.current.length > 64) reported.current.shift();
+      cbs.current.onChange(d);
+    },
     onCursor: (l, c, s) => cbs.current.onCursor?.(l, c, s),
     onContextMenu: (x, y) => cbs.current.onContextMenu?.(x, y),
   });
@@ -158,6 +197,9 @@ export function EditorPane({
       parent: host.current,
     });
     view.current = v;
+    const registered = openEditors.get(path) ?? new Set<EditorView>();
+    registered.add(v);
+    openEditors.set(path, registered);
     const onFocus = () => (focusedView = v);
     const onBlur = (e: FocusEvent) => {
       if (focusedView === v && e.relatedTarget) focusedView = null;
@@ -186,6 +228,8 @@ export function EditorPane({
         });
       }
       if (focusedView === v) focusedView = null;
+      registered.delete(v);
+      if (registered.size === 0 && openEditors.get(path) === registered) openEditors.delete(path);
       v.contentDOM.removeEventListener("focus", onFocus);
       v.contentDOM.removeEventListener("blur", onBlur);
       v.destroy();
@@ -302,6 +346,9 @@ export function EditorPane({
   useEffect(() => {
     const v = view.current;
     if (!v) return;
+    const explicit = docRev !== lastDocRev.current;
+    lastDocRev.current = docRev;
+    if (!explicit && reported.current.includes(textHash(doc))) return;
     const changes = textChanges(v.state.doc.toString(), doc);
     if (!changes.length) return;
     // Keep the reconcile OUT of undo history: Cmd-Z must never resurrect
