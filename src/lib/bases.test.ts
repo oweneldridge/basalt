@@ -748,3 +748,26 @@ describe("validateExpr", () => {
     expect(validateExpr("date(now())")).toBeNull(); // known fns nest fine
   });
 });
+
+describe("Bases vocabulary added in Obsidian 1.9 to 1.10", () => {
+  it("median and stddev on lists", () => {
+    const on = (xs: unknown[]) => mkCtx({ properties: { xs } });
+    expect(ev("xs.median()", on([1, 2, 3, 4]))).toBe(2.5);
+    expect(ev("xs.median()", on([3, 1, 2]))).toBe(2);
+    expect(ev("xs.stddev()", on([2, 4, 4, 4, 5, 5, 7, 9]))).toBe(2);
+    expect(ev("xs.stddev()", on([]))).toBeNull();
+  });
+  it("file.backlinks and file.embeds come from the row's accessors", () => {
+    const ctx = mkCtx({ backlinks: () => ["Daily/2026-10-03", "Index"], embeds: () => ["pic.png"] });
+    expect(ev("file.backlinks.length", ctx)).toBe(2);
+    expect(toText(ev("file.backlinks", ctx))).toContain("Index");
+    expect(toText(ev("file.embeds", ctx))).toContain("pic.png");
+    expect(ev("file.backlinks.length", mkCtx())).toBe(0);
+  });
+  it("a Stddev summary", () => {
+    const def = parseBase("views:\n  - type: table\n    order: [note.n]\n    summaries:\n      note.n: Stddev\n")!;
+    const rows = [2, 4, 4, 4, 5, 5, 7, 9].map((n, i) => row({ path: `N${i}.md`, properties: { n } }));
+    const res = runView(def, def.views[0], rows, { nowMs: NOW });
+    expect(res.summary).toEqual(["2"]);
+  });
+});

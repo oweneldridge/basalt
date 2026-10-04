@@ -30,6 +30,10 @@ export interface BaseRow {
   tags: string[];
   linkKeys: string[];
   properties: Record<string, unknown>;
+  /** Vault paths (no .md) of notes linking here, computed only when used. */
+  backlinks?: () => string[];
+  /** Raw targets of this note's `![[embeds]]`, computed only when used. */
+  embeds?: () => string[];
 }
 
 /** YAML-parse a note's frontmatter into typed property values. Returns {} for
@@ -714,7 +718,7 @@ export const EXPR_METHODS = [
   "contains", "containsAll", "containsAny", "endsWith", "startsWith", "lower", "title", "trim",
   "repeat", "reverse", "slice", "replace", "split",
   "abs", "ceil", "floor", "round", "toFixed",
-  "join", "flat", "unique", "sort", "filter", "map", "reduce", "mean",
+  "join", "flat", "unique", "sort", "filter", "map", "reduce", "mean", "median", "stddev",
   "date", "time", "format", "relative", "asFile", "linksTo", "length",
 ];
 /** Root namespaces: `file`, `note`, `formula`. */
@@ -722,6 +726,7 @@ export const EXPR_NAMESPACES = ["file", "note", "formula"];
 /** `file.*` members. */
 export const EXPR_FILE_MEMBERS = [
   "name", "basename", "path", "folder", "ext", "size", "ctime", "mtime", "tags", "links", "properties",
+  "backlinks", "embeds",
 ];
 /** Date members (on `file.ctime`, `date(...)`, …). */
 export const EXPR_DATE_MEMBERS = ["year", "month", "day", "hour", "minute", "second", "millisecond"];
@@ -1226,6 +1231,10 @@ function member(base: Val | typeof FORMULA_NS, name: string, ctx: EvalCtx, objAs
         return r.tags.slice();
       case "links":
         return r.linkKeys.map((k) => new LinkVal(k));
+      case "backlinks":
+        return (r.backlinks?.() ?? []).map((k) => new LinkVal(k));
+      case "embeds":
+        return (r.embeds?.() ?? []).map((k) => new LinkVal(k));
       case "properties":
         return r.properties as Val;
     }
@@ -1653,6 +1662,10 @@ function listMethod(list: Val[], name: string, args: Ast[], ctx: EvalCtx): Val {
       const nums = list.map(coerceNumber).filter((x): x is number => x !== null);
       return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
     }
+    case "median":
+      return BUILTIN_SUMMARIES.median(list);
+    case "stddev":
+      return BUILTIN_SUMMARIES.stddev(list);
   }
   return null;
 }
@@ -1854,6 +1867,13 @@ const BUILTIN_SUMMARIES: Record<string, (vals: Val[]) => Val> = {
     if (!n.length) return null;
     const mid = n.length >> 1;
     return n.length % 2 ? n[mid] : (n[mid - 1] + n[mid]) / 2;
+  },
+  // Population standard deviation, as Obsidian computes it.
+  stddev: (v) => {
+    const n = v.map(coerceNumber).filter((x): x is number => x !== null);
+    if (!n.length) return null;
+    const mean = n.reduce((a, b) => a + b, 0) / n.length;
+    return Math.sqrt(n.reduce((a, b) => a + (b - mean) ** 2, 0) / n.length);
   },
   earliest: (v) => {
     const ms = v.map(asDateMs).filter((x): x is number => x !== null);

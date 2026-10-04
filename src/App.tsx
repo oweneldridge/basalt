@@ -601,6 +601,8 @@ export default function App() {
   // plus per-note object identity).
   const tagsOf = useCallback((path: string) => index.current.tagsOf(path), []);
   const linkKeysOf = useCallback((path: string) => index.current.linkKeysOf(path), []);
+  const backlinksOf = useCallback((path: string) => index.current.backlinkRels(path), []);
+  const embedsOf = useCallback((path: string) => index.current.embedsOf(path), []);
 
   const loadVault = useCallback(async () => {
     const [list, atts] = await Promise.all([readVault(), listAttachments()]);
@@ -4298,6 +4300,8 @@ export default function App() {
                   structureVersion={structureVersion}
                   tagsOf={tagsOf}
                   linkKeysOf={linkKeysOf}
+                  backlinksOf={backlinksOf}
+                  embedsOf={embedsOf}
                   onOpenFile={openViewerFile}
                   resolveImageRel={resolveImageRel}
                   onChange={(yaml) => handleViewerChange(id, path, yaml)}

@@ -39,6 +39,8 @@ interface Props {
   structureVersion: number;
   tagsOf: (path: string) => string[];
   linkKeysOf: (path: string) => string[];
+  backlinksOf?: (path: string) => string[];
+  embedsOf?: (path: string) => string[];
   /** Open a vault file from a cell link (no-create, like the canvas). Receives
    * an exact vault-relative path. */
   onOpenFile: (rel: string) => void;
@@ -113,6 +115,8 @@ export const BaseView = memo(function BaseView({
   structureVersion,
   tagsOf,
   linkKeysOf,
+  backlinksOf,
+  embedsOf,
   onOpenFile,
   resolveImageRel,
   onChange,
@@ -129,10 +133,10 @@ export const BaseView = memo(function BaseView({
   );
 
   const rows = useMemo(() => {
-    const out: BaseRow[] = notes.map((n) => noteRow(n, structureVersion, tagsOf, linkKeysOf));
+    const out: BaseRow[] = notes.map((n) => noteRow(n, structureVersion, tagsOf, linkKeysOf, { backlinksOf, embedsOf }));
     for (const a of attachments) out.push(attachmentRow(a, structureVersion));
     return out;
-  }, [notes, attachments, structureVersion, tagsOf, linkKeysOf]);
+  }, [notes, attachments, structureVersion, tagsOf, linkKeysOf, backlinksOf, embedsOf]);
 
   const lookupFile = useMemo(() => {
     const byKey = new Map<string, BaseRow>();

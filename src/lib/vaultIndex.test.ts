@@ -330,3 +330,18 @@ describe("aliases — precedence and parsing (review fixes)", () => {
     expect(idx.allAliases().map((a) => a.alias)).toEqual(["Good"]);
   });
 });
+
+describe("backlink and embed lists for Bases", () => {
+  it("lists linking notes and a note's embeds", () => {
+    const idx = indexOf([
+      note("T.md", "![[pic.png]] and ![[Other]] and [[Other]]"),
+      note("A.md", "[[T]]"),
+      note("Sub/B.md", "see [[T#h]]"),
+      note("Other.md"),
+    ]);
+    expect(idx.backlinkRels("/v/T.md")).toEqual(["A", "Sub/B"]);
+    expect(idx.embedsOf("/v/T.md")).toEqual(["pic.png", "Other"]);
+    idx.setNote({ path: "/v/A.md", rel: "A.md", name: "A", content: "no links now" });
+    expect(idx.backlinkRels("/v/T.md")).toEqual(["Sub/B"]);
+  });
+});

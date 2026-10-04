@@ -31,6 +31,8 @@ export interface LinkOccurrence {
   line: number;
   /** Trimmed text of the line, for display. */
   snippet: string;
+  /** Written as an embed, `![[…]]`. */
+  embed?: boolean;
 }
 
 /** A reference from one note to another, for the backlinks UI. */
@@ -112,7 +114,7 @@ function extractLinks(content: string): LinkOccurrence[] {
       const key = dedupeKey(pathPart); // dedupe identical targets, keep distinct paths
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ rawTarget, line: i + 1, snippet: lines[i].trim() });
+      out.push({ rawTarget, line: i + 1, snippet: lines[i].trim(), embed: line[m.index - 1] === "!" });
     }
     // Markdown-style internal links: [text](Note.md), [t](folder/My%20Note.md#H)
     // — Obsidian vaults configured with "Use [[Wikilinks]]: off" are full of
@@ -279,6 +281,8 @@ export function extractTags(content: string): string[] {
 export class VaultIndex {
   private occ = new Map<string, LinkOccurrence[]>();
   private meta = new Map<string, Meta>();
+  /** target path -> sources linking to it; rebuilt on demand after any change. */
+  private reverse: Map<string, Set<string>> | null = null;
   // Resolution: normalized basename -> paths (an array, so case/Unicode-distinct
   // notes that share a basename all coexist). Slashed targets filter by path.
   private byName = new Map<string, string[]>();
@@ -289,6 +293,7 @@ export class VaultIndex {
   private tags = new Map<string, string[]>();
 
   build(notes: VaultNote[]): void {
+    this.reverse = null;
     this.occ.clear();
     this.meta.clear();
     this.byName.clear();
@@ -303,6 +308,7 @@ export class VaultIndex {
     const aliases = frontmatterAliases(note.content);
     this.meta.set(note.path, { rel: note.rel, name: note.name, aliases: aliases.length ? aliases : undefined });
     this.occ.set(note.path, extractLinks(note.content));
+    this.reverse = null;
     this.tags.set(note.path, extractTags(note.content));
     this.addToMaps(note.path, note.name, aliases);
   }
@@ -310,6 +316,7 @@ export class VaultIndex {
   removeNote(path: string): void {
     this.removeFromMaps(path);
     this.occ.delete(path);
+    this.reverse = null;
     this.tags.delete(path);
     this.meta.delete(path);
   }
@@ -361,6 +368,32 @@ export class VaultIndex {
       }
     }
     return [...keys];
+  }
+
+  /** Vault paths (no .md) of the notes that link to `targetPath`. */
+  backlinkRels(targetPath: string): string[] {
+    if (!this.reverse) {
+      const rev = new Map<string, Set<string>>();
+      for (const [source, occs] of this.occ) {
+        for (const o of occs) {
+          const dest = this.resolve(o.rawTarget, source);
+          if (!dest || dest === source) continue;
+          let set = rev.get(dest);
+          if (!set) rev.set(dest, (set = new Set()));
+          set.add(source);
+        }
+      }
+      this.reverse = rev;
+    }
+    return [...(this.reverse.get(targetPath) ?? [])]
+      .map((p) => (this.meta.get(p)?.rel ?? "").replace(/\.md$/i, ""))
+      .filter(Boolean)
+      .sort();
+  }
+
+  /** The raw targets of a note's `![[embeds]]`, in order. */
+  embedsOf(path: string): string[] {
+    return (this.occ.get(path) ?? []).filter((o) => o.embed).map((o) => o.rawTarget);
   }
 
   /** Every tag in the vault with the number of notes using it. Sorted by count
