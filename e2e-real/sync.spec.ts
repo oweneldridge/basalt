@@ -169,3 +169,19 @@ test("Keep mine on a note deleted elsewhere saves the user's text back", async (
   await expect(editor(page)).toContainText("words I asked to keep");
   await expect(badge).toBeHidden();
 });
+
+test("on a slow link, a second save waits for the first instead of conflicting with it", async ({ page, vault }) => {
+  await page.route("**/api/invoke", async (route) => {
+    if (route.request().postDataJSON()?.cmd === "write_note") await new Promise((r) => setTimeout(r, 1500));
+    await route.continue();
+  });
+  await openApp(page, vault);
+  await openNote(page, "Ideas");
+  await caretToEnd(page);
+  await page.keyboard.type("\nfirst burst");
+  await page.waitForTimeout(800);
+  await page.keyboard.type(" second burst");
+  await expect.poll(() => vault.read("Ideas.md"), { timeout: 10000 }).toContain("first burst second burst");
+  await page.waitForTimeout(1500);
+  await expect(page.locator(".conflict")).toBeHidden();
+});

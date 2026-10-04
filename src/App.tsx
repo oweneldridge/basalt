@@ -646,7 +646,7 @@ export default function App() {
     for (const k of [...liveDocs.current.keys()]) if (!shown.has(k)) liveDocs.current.delete(k);
   }, [panes]);
 
-  const flushSave = useCallback(
+  const writeSave = useCallback(
     async (path: string, doc: string, force = false) => {
       setSaving(true);
       try {
@@ -674,6 +674,8 @@ export default function App() {
           };
           index.current.setNote(updated);
           setNotes((prev) => prev.map((n) => (n.path === path ? updated : n)));
+          // The next queued save reads its baseline from here before React re-renders.
+          notesRef.current = notesRef.current.map((n) => (n.path === path ? updated : n));
           bumpIndex();
           emitVaultEvent("modify", { path: meta.rel, name: meta.name });
         }
@@ -711,6 +713,29 @@ export default function App() {
       }
     },
     [bumpIndex, rememberSelfWrite, addConflict],
+  );
+
+  // One save in flight per note. A save queued behind another writes whatever
+  // is newest when its turn comes (or nothing), and its compare-and-swap value
+  // then reflects the write before it, so a slow link can't raise a conflict
+  // against the user's own previous save.
+  const saveChains = useRef<Map<string, Promise<void>>>(new Map());
+  const flushSave = useCallback(
+    (path: string, doc: string, force = false): Promise<void> => {
+      const prev = saveChains.current.get(path) ?? Promise.resolve();
+      const run = prev.then(() => {
+        const latest = pending.current.get(path);
+        if (latest === undefined && !force) return;
+        if (!force && conflictsRef.current.has(path)) return;
+        return writeSave(path, latest ?? doc, force);
+      });
+      saveChains.current.set(path, run);
+      void run.finally(() => {
+        if (saveChains.current.get(path) === run) saveChains.current.delete(path);
+      });
+      return run;
+    },
+    [writeSave],
   );
 
   // Flush ONE editable viewer's (.canvas / .base) pending edit. Same
