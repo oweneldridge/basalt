@@ -2460,7 +2460,7 @@ export default function App() {
       // Sanitize + insert raw HTML blocks.
       if (dom.querySelector("[data-basalt-html]")) {
         const sanMod = await import("./lib/sanitize");
-        sanMod.fillRawHtml(dom.body);
+        sanMod.fillRawHtml(dom.body, false); // an exported file keeps its image URLs
       }
       // Render mermaid diagrams to inline SVG.
       await Promise.all(

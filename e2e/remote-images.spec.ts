@@ -1,6 +1,22 @@
 import { test, expect, type Page } from "@playwright/test";
 
 const extra = {
+  "Tricky.md": [
+    "# Tricky",
+    "",
+    "![noslash](https:img.example.test/noslash.png)",
+    "",
+    '<div><svg width="10" height="10"><image href="https://img.example.test/svg.png" width="10" height="10"/></svg></div>',
+    "",
+    '<div><video poster="https://img.example.test/poster.png"></video></div>',
+    "",
+    '<div><picture><source srcset="https://img.example.test/source.png"><img alt="pic"></picture></div>',
+    "",
+    '<div><table><tr><td background="https://img.example.test/bg.png">cell</td></tr></table></div>',
+    "",
+    '<div><input type="image" src="https://img.example.test/input.png" alt="go"></div>',
+    "",
+  ].join("\n"),
   "Pictures.md": '# Pictures\n\n![cat](https://img.example.test/cat.png)\n\n<div><img src="https://img.example.test/dog.png" alt="dog"></div>\n\nend\n',
 };
 const png = Buffer.from(
@@ -55,4 +71,15 @@ test("the setting is a labelled checkbox in Settings", async ({ page }) => {
   await expect(box).toBeChecked();
   await box.uncheck();
   expect(await page.evaluate(() => localStorage.getItem("basalt-remote-images"))).toBe("false");
+});
+
+test("with remote images off, no other kind of tag or link fetches one either", async ({ page }) => {
+  const hits = await open(page, false);
+  await page.locator(".tree-row.file", { hasText: "Tricky" }).click();
+  await expect(pane(page).locator(".cm-content")).toContainText("Tricky");
+  await page.waitForTimeout(500);
+  await page.locator('button[title^="Toggle Reading view"]').click();
+  await expect(pane(page).locator(".reading-view")).toContainText("cell");
+  await page.waitForTimeout(800);
+  expect(hits).toEqual([]);
 });

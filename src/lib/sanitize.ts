@@ -33,20 +33,21 @@ export function sanitizeHtml(dirty: string): string {
 }
 
 /** Sanitized HTML as nodes ready to insert. It's built in an inert template,
- * so remote images (when they're off) are swapped out before anything loads. */
-export function sanitizeToFragment(dirty: string): DocumentFragment {
+ * so remote images (when they're off) are swapped out before anything loads.
+ * Export passes `forDisplay = false`: a saved file keeps its image URLs. */
+export function sanitizeToFragment(dirty: string, forDisplay = true): DocumentFragment {
   const t = document.createElement("template");
   t.innerHTML = sanitizeHtml(dirty);
-  blockRemoteImages(t.content);
+  if (forDisplay) blockRemoteImages(t.content);
   return t.content;
 }
 
 /** Fill every `[data-basalt-html]` placeholder under `root` with the sanitized
  * raw HTML it carries (the placeholder text is the source HTML). */
-export function fillRawHtml(root: HTMLElement): void {
+export function fillRawHtml(root: HTMLElement, forDisplay = true): void {
   root.querySelectorAll<HTMLElement>("[data-basalt-html]").forEach((el) => {
     const raw = el.getAttribute("data-basalt-html") ?? "";
     el.removeAttribute("data-basalt-html");
-    el.replaceChildren(sanitizeToFragment(raw));
+    el.replaceChildren(sanitizeToFragment(raw, forDisplay));
   });
 }
