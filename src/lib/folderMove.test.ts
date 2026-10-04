@@ -168,8 +168,10 @@ function moveWithAtts(
     noteAt: () => undefined,
     nameTaken: () => false,
     format: "shortest",
-    resolveAttPre: (raw, f) => resolveAttachment(preAtts, raw, preNotes.find((n) => n.path === f)?.rel ?? null)?.path ?? null,
-    resolveAttPost: (raw, f) => resolveAttachment(postAtts, raw, postNotes.find((n) => n.path === f)?.rel ?? null)?.path ?? null,
+    resolveAttPre: (raw, f, lit) =>
+      resolveAttachment(preAtts, raw, preNotes.find((n) => n.path === f)?.rel ?? null, lit)?.path ?? null,
+    resolveAttPost: (raw, f, lit) =>
+      resolveAttachment(postAtts, raw, postNotes.find((n) => n.path === f)?.rel ?? null, lit)?.path ?? null,
     movedAttNewPathByOld,
     attAt: (p) => postAttByPath.get(p),
     attNameTaken: (name, except) =>
@@ -208,6 +210,15 @@ describe("folder-move attachment link rewrite", () => {
   });
 
   const pic = [{ rel: "proj/pic.png" }];
+  it("rewrites a markdown link to an attachment with # in its name", () => {
+    const hashed = [{ rel: "proj/a#b.png" }];
+    expect(moveWithAtts([note("top.md", "![](proj/a%23b.png)")], hashed, "proj", "newproj", "top.md")).toBe("![](a%23b.png)");
+    expect(moveWithAtts([note("top.md", "[x](proj/a%23b.png#page=2)")], hashed, "proj", "newproj", "top.md")).toBe("[x](a%23b.png#page=2)");
+    // A note named like the part before the # is not the link's target.
+    const withNote = [note("top.md", "![](proj/a%23b.png)"), note("proj/a.md")];
+    expect(moveWithAtts(withNote, hashed, "proj", "newproj", "top.md")).toBe("![](a%23b.png)");
+  });
+
   it("rewrites a markdown image link on a folder rename", () => {
     const out = moveWithAtts([note("top.md", "![](proj/pic.png)")], pic, "proj", "newproj", "top.md");
     expect(out).toBe("![](pic.png)");

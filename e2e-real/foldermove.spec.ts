@@ -88,3 +88,36 @@ test("a title rename entered during a slow folder move keeps the note in the new
   expect(vault.exists("Projects")).toBe(false);
   expect(vault.exists("Work/Alpha.md")).toBe(false);
 });
+
+test.describe("attachments with # in the name", () => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  test.use({
+    vaultFiles: {
+      "Media/a#b.png": png,
+      "Media/a.md": "# A\n",
+      "Gallery.md": "# Gallery\n\n![first](Media/a%23b.png)\n",
+    },
+  });
+
+  test("a folder rename updates the link", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await renameFolder(page, "Media", "Images");
+    await expect.poll(() => vault.exists("Images/a#b.png")).toBe(true);
+    await expect.poll(() => vault.read("Gallery.md")).not.toContain("Media/");
+    expect(vault.read("Gallery.md")).toBe("# Gallery\n\n![first](a%23b.png)\n");
+  });
+
+  test("renaming a note named like the part before # leaves the link alone", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await page.locator(".tree-row.folder", { hasText: "Media" }).click();
+    await openNote(page, "a");
+    await page.locator("input.inline-title").first().fill("z");
+    await page.locator(".pane:not(.dock) .cm-content").first().click();
+    await expect.poll(() => vault.exists("Media/z.md")).toBe(true);
+    await settle(page, 1500);
+    expect(vault.read("Gallery.md")).toBe("# Gallery\n\n![first](Media/a%23b.png)\n");
+  });
+});

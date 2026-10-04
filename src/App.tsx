@@ -128,7 +128,7 @@ import {
   watchSystemTheme,
   type ThemeMode,
 } from "./lib/theme";
-import { linkTargetForFormat, rewriteLinks, folderMoveMapper } from "./lib/rename";
+import { linkTargetForFormat, rewriteLinks, folderMoveMapper, type LinkMapper } from "./lib/rename";
 import { rewriteCanvasFileRefs } from "./lib/canvas";
 import { looksLikeAttachment, resolveAttachment } from "./lib/attachments";
 import { fillTemplate, formatMoment, UnsupportedTokenError } from "./lib/daily";
@@ -3668,7 +3668,7 @@ export default function App() {
   // the same link fix is applied to that text. Whatever disk lacks is saved, so
   // neither the typing nor the fix is lost.
   const reconcileRewrites = useCallback(
-    (done: { path: string; base: string; next: string; mapper: (raw: string) => string | null }[]) => {
+    (done: { path: string; base: string; next: string; mapper: LinkMapper }[]) => {
       for (const d of done) {
         const saved = notesRef.current.find((n) => n.path === d.path)?.content;
         if (saved === undefined) continue; // deleted meanwhile: nothing to fix
@@ -3797,8 +3797,8 @@ export default function App() {
         // first). Obsidian compares each link before and after the same way.
         const selfAliases = new Set(preIndex.aliasesOf(oldPath).map((a) => normalizeName(a)));
         const atts = attachmentsRef.current;
-        const ownMap = (raw: string): string | null => {
-          const dest = preIndex.resolve(raw, oldPath);
+        const ownMap: LinkMapper = (raw, literal = false) => {
+          const dest = literal ? null : preIndex.resolve(raw, oldPath);
           if (dest === oldPath) {
             // A self-link via an alias still resolves post-rename — leave it.
             const last = normalizeName(targetPathPart(raw).split(/[/\\]/).pop() ?? "");
@@ -3818,8 +3818,8 @@ export default function App() {
               preNotes.some((n) => n.path !== dest && normalizeName(n.name) === normalizeName(destNote.name));
             return linkTargetForFormat(fmt, destNote.rel.replace(/\.md$/i, ""), destTaken, newRel);
           }
-          const att = resolveAttachment(atts, raw, oldNote.rel);
-          if (!att || resolveAttachment(atts, raw, newRel)?.path === att.path) return null;
+          const att = resolveAttachment(atts, raw, oldNote.rel, literal);
+          if (!att || resolveAttachment(atts, raw, newRel, literal)?.path === att.path) return null;
           const attTaken = atts.some((a) => a.path !== att.path && normalizeName(a.name) === normalizeName(att.name));
           return linkTargetForFormat(fmt, att.rel, attTaken, newRel);
         };
@@ -3861,11 +3861,11 @@ export default function App() {
           const last = normalizeName(targetPathPart(raw).split(/[/\\]/).pop() ?? "");
           return aliasSet.has(last) && last !== normalizeName(newBase) && last !== normalizeName(oldNote.name);
         };
-        const sourceMap = (notePath: string, noteRel: string) => (raw: string) =>
-          preIndex.resolve(raw, notePath) === oldPath && !viaAlias(raw)
+        const sourceMap = (notePath: string, noteRel: string): LinkMapper => (raw, literal) =>
+          !literal && preIndex.resolve(raw, notePath) === oldPath && !viaAlias(raw)
             ? linkTargetForFormat(fmt, newRelNoExt, taken, noteRel)
             : null;
-        const done: { path: string; base: string; next: string; mapper: (raw: string) => string | null }[] = [];
+        const done: { path: string; base: string; next: string; mapper: LinkMapper }[] = [];
         const failures: string[] = [];
         for (const note of preNotes) {
           if (note.path === oldPath) continue;
@@ -4281,10 +4281,10 @@ export default function App() {
         nameTaken: (name: string, except: string) =>
           postNotes.some((n) => n.path !== except && normalizeName(n.name) === normalizeName(name)),
         format: fmt,
-        resolveAttPre: (raw: string, from: string) =>
-          resolveAttachment(preAtts, raw, preNotes.find((n) => n.path === from)?.rel ?? null)?.path ?? null,
-        resolveAttPost: (raw: string, from: string) =>
-          resolveAttachment(postAtts, raw, postByPath.get(from)?.rel ?? null)?.path ?? null,
+        resolveAttPre: (raw: string, from: string, literal?: boolean) =>
+          resolveAttachment(preAtts, raw, preNotes.find((n) => n.path === from)?.rel ?? null, literal)?.path ?? null,
+        resolveAttPost: (raw: string, from: string, literal?: boolean) =>
+          resolveAttachment(postAtts, raw, postByPath.get(from)?.rel ?? null, literal)?.path ?? null,
         movedAttNewPathByOld,
         attAt: (path: string) => postAttByPath.get(path),
         attNameTaken: (name: string, except: string) =>
@@ -4296,7 +4296,7 @@ export default function App() {
       // One pass: rewrite affected notes (moved and unmoved), reading DISK so a
       // fresher external edit is never reverted. Cheap in-memory pre-filter.
       // Each rewrite is registered as soon as it's written (see registerRewrite).
-      const done: { path: string; base: string; next: string; mapper: (raw: string) => string | null }[] = [];
+      const done: { path: string; base: string; next: string; mapper: LinkMapper }[] = [];
       const failures: string[] = [];
       for (const post of postNotes) {
         const mapper = makeMapper(post);

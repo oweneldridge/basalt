@@ -93,7 +93,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   notes settings (folder, date format, template), marks days whose notes use a
   custom format, and its days are buttons you can reach from the keyboard.
 - Renaming a folder updates markdown-style attachment links such as
-  `![](Media/pic.png)`, not only `![[...]]` embeds.
+  `![](Media/pic.png)`, not only `![[...]]` embeds, including files with `#`
+  in the name (`a%23b.png`). Renaming a note named like the part before that
+  `#` no longer turns such a link into a link to the note.
 - Renaming a note to the name of a note it links to keeps that link on the
   other note (written with its folder) instead of turning it into a self-link.
 - Daily notes created from the Calendar fill `{{time}}` with the current time,

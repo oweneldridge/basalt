@@ -11,8 +11,9 @@ export function resolveAttachment(
   attachments: Attachment[],
   rawTarget: string,
   sourceRel: string | null = null,
+  literal = false,
 ): Attachment | null {
-  const p = targetPathPart(rawTarget);
+  const p = literal ? rawTarget.trim() : targetPathPart(rawTarget);
   if (!p) return null;
   const file = norm(p.replace(/\\/g, "/").split("/").pop() ?? "");
   const cands = attachments.filter((a) => norm(a.name) === file);
