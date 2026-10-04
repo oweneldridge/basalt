@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Modal } from "./Modal";
 import type { ThemeMode } from "../lib/theme";
 import { chordOf, chordLabel, type Bindings } from "../lib/hotkeys";
 import type { ObsidianImportResult } from "../lib/obsidianImport";
@@ -156,7 +157,7 @@ export function SettingsModal({
   const linkPath = obsConfig?.newLinkFormat ?? "shortest";
 
   return (
-    <div className="palette-overlay" onMouseDown={onClose}>
+    <Modal className="palette-overlay" label="Settings" onClose={onClose}>
       <div className="settings" onMouseDown={(e) => e.stopPropagation()}>
         <div className="settings-head">
           <h2>Settings</h2>
@@ -380,6 +381,6 @@ export function SettingsModal({
           </p>
         </section>
       </div>
-    </div>
+    </Modal>
   );
 }

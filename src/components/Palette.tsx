@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Modal } from "./Modal";
 import type { ReactNode } from "react";
 
 interface PaletteProps<T> {
@@ -60,7 +61,7 @@ export function Palette<T>({
   };
 
   return (
-    <div className="palette-overlay" onMouseDown={onClose}>
+    <Modal className="palette-overlay" label={placeholder} onClose={onClose}>
       <div className="palette" onMouseDown={(e) => e.stopPropagation()}>
         <input
           className="palette-input"
@@ -84,6 +85,6 @@ export function Palette<T>({
           {items.length === 0 && <div className="palette-empty">{emptyText}</div>}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

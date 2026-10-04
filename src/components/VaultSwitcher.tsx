@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Modal } from "./Modal";
 
 export interface RecentVaultItem {
   path: string;
@@ -66,7 +67,7 @@ export function VaultSwitcher({
   };
 
   return (
-    <div className="palette-overlay" onMouseDown={onClose}>
+    <Modal className="palette-overlay" label="Switch vault" onClose={onClose}>
       <div
         className="vault-switcher"
         onMouseDown={(e) => e.stopPropagation()}
@@ -115,6 +116,6 @@ export function VaultSwitcher({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

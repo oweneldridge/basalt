@@ -2853,3 +2853,21 @@ textarea.tp-modal-input {
 .cm-content:focus-visible {
   outline: none;
 }
+
+/* Modals are native <dialog>s acting as their own full-screen overlay. */
+dialog.modal {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  color: inherit;
+}
+dialog.modal:not([open]) {
+  display: none;
+}
+dialog.modal::backdrop {
+  background: transparent;
+}
