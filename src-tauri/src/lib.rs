@@ -292,6 +292,17 @@ async fn export_file(app: tauri::AppHandle, default_name: String, content: Strin
     Ok(Some(path))
 }
 
+/// Open a vault attachment (PDF, image, media) in the system's default app.
+/// The opener runs from Rust after the core checks the path, instead of giving
+/// the webview an unscoped open-path permission.
+#[tauri::command]
+fn open_attachment(path: String, app: tauri::AppHandle, window: tauri::Window, state: State<VaultState>) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let root = current_root(&state, window.label())?;
+    let file = basalt_core::attachment_to_open(&root, &path)?;
+    app.opener().open_path(file.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn read_obsidian_config(window: tauri::Window, state: State<VaultState>) -> Result<basalt_core::ObsidianConfig, String> {
     let root = current_root(&state, window.label())?;
@@ -532,6 +543,7 @@ pub fn run() {
             read_obsidian_bookmarks,
             toggle_file_bookmark,
             export_file,
+            open_attachment,
             start_watching,
             read_image,
             list_plugins,

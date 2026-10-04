@@ -142,6 +142,11 @@ export function openPath(path: string): Promise<void> {
   if (isTauri) return tauriOpenPath(path);
   return Promise.resolve(); // a browser can't open a server-side filesystem path
 }
+/** Open a vault attachment in the OS's default app (the core checks the path). */
+export function openAttachment(path: string): Promise<void> {
+  if (isTauri) return tauriInvoke<void>("open_attachment", { path });
+  return Promise.resolve(); // a browser can't open a server-side filesystem path
+}
 export function revealItemInDir(path: string): Promise<void> {
   if (isTauri) return tauriReveal(path);
   return Promise.resolve();

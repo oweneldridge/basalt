@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { invoke, getCurrentWindow, listen, openPath, openUrl, revealItemInDir, confirm, isTauri } from "./lib/platform";
+import { invoke, getCurrentWindow, listen, openAttachment, openUrl, revealItemInDir, confirm, isTauri } from "./lib/platform";
 import {
   createNote,
   createFolder,
@@ -2433,7 +2433,7 @@ export default function App() {
         void openNoteByPath(path);
         return;
       }
-      void openPath(path).catch((e) => setSaveError(`Couldn't open: ${e}`));
+      void openAttachment(path).catch((e) => setSaveError(`Couldn't open: ${e}`));
     },
     [openNoteByPath],
   );
@@ -2612,7 +2612,7 @@ export default function App() {
       const att = resolveAttachment(attachmentsRef.current, target, fromRel);
       if (att) {
         if (isViewerPath(att.path)) void openNoteByPath(att.path);
-        else void openPath(att.path).catch((e) => setSaveError(`Couldn't open: ${e}`));
+        else void openAttachment(att.path).catch((e) => setSaveError(`Couldn't open: ${e}`));
         return;
       }
       if (looksLikeAttachment(pathPart)) return;
@@ -2642,7 +2642,7 @@ export default function App() {
         attachmentsRef.current.find((a) => a.rel === target);
       if (exact) {
         if (isMarkdownPath(exact.path) || isViewerPath(exact.path)) void openNoteByPath(exact.path);
-        else void openPath(exact.path).catch((e) => setSaveError(`Couldn't open: ${e}`));
+        else void openAttachment(exact.path).catch((e) => setSaveError(`Couldn't open: ${e}`));
         return;
       }
       void handleOpenWikilink(target, false); // fall back to link resolution, never create

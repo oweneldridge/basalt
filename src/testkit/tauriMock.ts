@@ -166,6 +166,7 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
     case "delete_folder":
     case "remove_empty_folder":
     case "rename_folder":
+    case "open_attachment":
     case "export_file":
       return ok(undefined);
     default:

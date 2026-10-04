@@ -911,6 +911,17 @@ fn is_attachment_ext(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// The checked path of a vault attachment to hand to the OS for opening: an
+/// existing file inside the vault with a known attachment extension, so the
+/// caller can't be used to launch an arbitrary program.
+pub fn attachment_to_open(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let resolved = ensure_in_vault(root, path)?;
+    if !resolved.is_file() || !is_attachment_ext(&resolved) {
+        return Err("not an attachment in this vault".into());
+    }
+    Ok(resolved)
+}
+
 /// A non-Markdown vault file (no content shipped; opened via the OS). Stats
 /// (ms epoch / bytes; 0 when unavailable) feed Bases' file.mtime/ctime/size.
 #[derive(Serialize, Clone)]
@@ -2101,6 +2112,20 @@ mod tests {
             got,
             vec![("mine".into(), false, false), ("off".into(), true, false), ("on".into(), true, true)]
         );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn only_vault_attachments_can_be_opened() {
+        let root = scratch_vault("open");
+        fs::write(root.join("doc.pdf"), "x").unwrap();
+        fs::write(root.join("run.command"), "x").unwrap();
+        fs::write(root.join("note.md"), "x").unwrap();
+        let p = |n: &str| root.join(n).to_string_lossy().to_string();
+        assert!(attachment_to_open(&root, &p("doc.pdf")).is_ok());
+        assert!(attachment_to_open(&root, &p("run.command")).is_err());
+        assert!(attachment_to_open(&root, &p("note.md")).is_err());
+        assert!(attachment_to_open(&root, "/bin/sh").is_err());
         fs::remove_dir_all(&root).unwrap();
     }
 
