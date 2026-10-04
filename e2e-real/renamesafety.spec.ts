@@ -113,3 +113,70 @@ test("a note created while a rescan is reading saves without a false conflict", 
   await expect(page.locator(".conflict")).toBeHidden();
   await expect.poll(() => vault.read(`${name}.md`)).toContain("typed during the rescan and after");
 });
+
+test("in stacked tabs, typing in a new note at a renamed note's old path stays in that note", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await openNote(page, "Welcome");
+  await openNote(page, "Ideas");
+  await page.locator("input.inline-title").first().fill("Ideas Renamed");
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await expect.poll(() => vault.exists("Ideas Renamed.md")).toBe(true);
+  await settle(page);
+  const renamed = vault.read("Ideas Renamed.md");
+  vault.write("Ideas.md", "# Fresh ideas\n\nnew note body\n");
+  const newRow = page.locator(".tree-row.file").filter({ has: page.getByText("Ideas", { exact: true }) });
+  await expect(newRow).toBeVisible();
+  await newRow.click();
+  await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Ideas");
+  await page.locator(".pane:not(.dock) .tab", { hasText: "Ideas Renamed" }).click();
+  await page.locator(".tab-stack").first().click();
+  const col = page.locator(".stacked-col").filter({ has: page.locator(".stacked-col-head", { hasText: /^Ideas$/ }) });
+  await expect(col.locator(".cm-content")).toContainText("new note body");
+  await col.locator(".cm-line", { hasText: "new note body" }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" TYPED-IN-NEW");
+  await settle(page, 1500);
+  expect(vault.read("Ideas Renamed.md")).toBe(renamed);
+  expect(vault.read("Ideas.md")).toContain("new note body TYPED-IN-NEW");
+});
+
+test.describe("typing during a folder move's link pass", () => {
+  test.use({
+    vaultFiles: {
+      "Projects/Gamma.md": "# Gamma\n\nSee [[Projects/Beta]].\n\nLast line\n",
+      "Projects/Beta.md": "# Beta\n",
+      "R1.md": "# R1\n\n[[Projects/Gamma]]\n",
+      "R2.md": "# R2\n\n[[Projects/Beta]]\n",
+    },
+  });
+
+  test("text typed after the note's own rewrite is saved, without a conflict, and keeps the fix", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await page.locator(".tree-row.folder", { hasText: "Projects" }).click();
+    await openNote(page, "Gamma");
+    let slow = true;
+    await page.route("**/api/invoke", async (route) => {
+      if (slow && (route.request().postData() ?? "").includes('"cmd":"read_note"')) await new Promise((r) => setTimeout(r, 1200));
+      await route.continue().catch(() => {});
+    });
+    await page.locator(".tree-row.folder", { hasText: "Projects" }).click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename folder…" }).click();
+    await page.locator(".prompt-input").fill("Work");
+    await page.locator(".prompt-input").press("Enter");
+    // Gamma's own link is fixed on disk while the pass goes on to R1 and R2.
+    await expect.poll(() => (vault.exists("Work/Gamma.md") ? vault.read("Work/Gamma.md") : ""), { timeout: 10000 }).toContain("[[Beta]]");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "Last line" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" TYPED", { delay: 30 });
+    await expect.poll(() => vault.read("Work/Gamma.md"), { timeout: 8000 }).toContain("Last line TYPED");
+    slow = false;
+    await expect.poll(() => vault.read("R2.md"), { timeout: 15000 }).toContain("[[Beta]]");
+    await settle(page, 1500);
+    await page.keyboard.type("!");
+    await settle(page, 1500);
+    await expect(page.locator(".conflict")).toBeHidden();
+    const disk = vault.read("Work/Gamma.md");
+    expect(disk).toContain("Last line TYPED!");
+    expect(disk).toContain("[[Beta]]");
+  });
+});

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { invoke, getCurrentWindow, listen, openAttachment, openUrl, revealItemInDir, confirm, isTauri } from "./lib/platform";
 import {
@@ -588,11 +588,15 @@ export default function App() {
   const pending = useRef<Map<string, string>>(new Map());
   // Paths whose rename is in flight: their saves wait, then follow the note.
   const renaming = useRef<Set<string>>(new Set());
-  // Per pane, the rename it was just repointed through. Until that pane's
-  // editor re-renders, its edits still carry the old path; they follow the note
-  // only while the same pane still shows it, never by path alone (a new note
-  // can take the old path).
-  const paneRenames = useRef<Map<string, { from: string; to: string }>>(new Map());
+  // Old path -> new path for a rename or folder move whose repoint React hasn't
+  // committed yet. Until then an editor (a pane's or a stacked column's) can
+  // still report the old path; afterwards every editor knows the new one, so
+  // the map is cleared after each commit and a note that later takes the old
+  // path is never redirected.
+  const renameWindow = useRef<Map<string, string>>(new Map());
+  useLayoutEffect(() => {
+    renameWindow.current.clear();
+  }, [panes]);
   // Most-recently-opened rels (per vault) — orders the blank-query switcher.
   const recents = useRef<string[]>([]);
   // rel -> exact content Basalt last wrote there. The watcher echo of our own
@@ -897,7 +901,8 @@ export default function App() {
   // An edit from an editable viewer (CanvasView / BaseView): same debounced,
   // conflict-safe, sibling-syncing path as note autosave (keyed by path).
   const handleViewerChange = useCallback(
-    (paneId: string, path: string, doc: string) => {
+    (paneId: string, viewerPath: string, doc: string) => {
+      const path = renameWindow.current.get(viewerPath) ?? viewerPath;
       pending.current.set(path, doc);
       liveDocs.current.set(path, doc);
       patchPane(paneId, { doc }); // keep the pane's doc current (restore/rescan)
@@ -927,12 +932,7 @@ export default function App() {
   const handleChange = useCallback(
     (paneId: string, editorPath: string, doc: string) => {
       if (!editorPath || !isMarkdownPath(editorPath)) return; // read-only viewers don't autosave
-      let path = editorPath;
-      const moved = paneRenames.current.get(paneId);
-      if (moved) {
-        if (editorPath === moved.from && panesRef.current[paneId]?.active === moved.to) path = moved.to;
-        else paneRenames.current.delete(paneId); // the editor caught up, or the pane moved on
-      }
+      const path = renameWindow.current.get(editorPath) ?? editorPath;
       pending.current.set(path, doc);
       liveDocs.current.set(path, doc);
       for (const p of Object.values(panesRef.current)) {
@@ -1576,7 +1576,7 @@ export default function App() {
       setConflicts(new Set());
       pending.current.clear();
       liveDocs.current.clear();
-      paneRenames.current.clear();
+      renameWindow.current.clear();
       saveTimers.current.forEach((t) => window.clearTimeout(t));
       saveTimers.current.clear();
       selfWrites.current.clear();
@@ -3632,6 +3632,37 @@ export default function App() {
     [rememberSelfWrite, patchPane],
   );
 
+  // A link pass (note rename or folder move) writes rewritten links to disk.
+  // Each rewrite is registered at once, in React state too so a re-render can't
+  // undo it, and a save typed meanwhile compares against what's on disk.
+  const registerRewrite = useCallback((updated: VaultNote) => {
+    index.current.setNote(updated);
+    notesRef.current = notesRef.current.map((n) => (n.path === updated.path ? updated : n));
+    setNotes((prev) => prev.map((n) => (n.path === updated.path ? updated : n)));
+  }, []);
+
+  // After the pass, editors still holding the text a rewrite was made from show
+  // the rewrite. Where the user typed meanwhile, the same link fix is applied
+  // to their text instead, so neither the typing nor the fix is lost.
+  const reconcileRewrites = useCallback(
+    (done: { path: string; base: string; next: string; mapper: (raw: string) => string | null }[]) => {
+      for (const d of done) {
+        const live = pending.current.get(d.path) ?? liveDocs.current.get(d.path);
+        let doc = d.next;
+        if (live !== undefined && live !== d.base) {
+          const fixed = rewriteLinks(live, d.mapper);
+          if (fixed === null || fixed === live) continue;
+          doc = fixed;
+          pending.current.set(d.path, doc);
+          void flushPath(d.path);
+        }
+        if (liveDocs.current.has(d.path) || pending.current.has(d.path)) liveDocs.current.set(d.path, doc);
+        for (const p of Object.values(panesRef.current)) if (p.active === d.path) patchPane(p.id, { doc });
+      }
+    },
+    [flushPath, patchPane],
+  );
+
   const handleRenameNote = useCallback(
     async (oldPath: string, newName: string) => {
       const root = vaultRef.current;
@@ -3701,9 +3732,7 @@ export default function App() {
             pinned: pane.pinned?.map((p) => (p === oldPath ? newPath : p)),
           };
         };
-        for (const pane of Object.values(panesRef.current)) {
-          if (pane.active === oldPath) paneRenames.current.set(pane.id, { from: oldPath, to: newPath });
-        }
+        renameWindow.current.set(oldPath, newPath);
         panesRef.current = Object.fromEntries(
           Object.entries(panesRef.current).map(([id, pane]) => [id, repoint(pane)]),
         );
@@ -3817,7 +3846,7 @@ export default function App() {
           preIndex.resolve(raw, notePath) === oldPath && !viaAlias(raw)
             ? linkTargetForFormat(fmt, newRelNoExt, taken, noteRel)
             : null;
-        const updates: VaultNote[] = [];
+        const done: { path: string; base: string; next: string; mapper: (raw: string) => string | null }[] = [];
         const failures: string[] = [];
         for (const note of preNotes) {
           if (note.path === oldPath) continue;
@@ -3829,27 +3858,22 @@ export default function App() {
             continue;
           }
           try {
+            const mapper = sourceMap(note.path, note.rel);
             const disk = await readNote(note.path);
-            const next = rewriteLinks(disk, sourceMap(note.path, note.rel));
+            const next = rewriteLinks(disk, mapper);
             if (next === null) continue;
             await writeNote(note.path, next, disk);
-            const updated: VaultNote = { ...note, content: next };
             rememberSelfWrite(note.rel, next);
-            index.current.setNote(updated);
-            updates.push(updated);
+            registerRewrite({ ...note, content: next });
+            done.push({ path: note.path, base: disk, next, mapper });
           } catch (e) {
             failures.push(note.rel);
             console.error("[basalt] link rewrite failed", note.rel, e);
           }
         }
-        if (updates.length > 0) {
-          const byPath = new Map(updates.map((u) => [u.path, u]));
-          setNotes((prev) => prev.map((n) => byPath.get(n.path) ?? n));
+        if (done.length > 0) {
           bumpStructure();
-          // Any pane showing a note whose links were rewritten reconciles in place.
-          for (const p of Object.values(panesRef.current)) {
-            if (p.active && byPath.has(p.active)) patchPane(p.id, { doc: byPath.get(p.active)!.content });
-          }
+          reconcileRewrites(done);
         }
         // Repoint canvas file-node embeds of the renamed note (canvases aren't
         // in the note link-rewrite loop above; without this they'd dangle).
@@ -3867,7 +3891,7 @@ export default function App() {
         setSaveError(`Couldn't rename: ${e}`);
       }
     },
-    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs, registerRewrite, reconcileRewrites],
   );
   handleRenameNoteRef.current = handleRenameNote;
 
@@ -4170,13 +4194,10 @@ export default function App() {
           pinned: pane.pinned?.map(map),
         };
       };
-      for (const pane of Object.values(panesRef.current)) {
-        const to = pane.active ? pathMap.get(pane.active) : undefined;
-        if (to) {
-          paneRenames.current.set(pane.id, { from: pane.active!, to });
-          const live = liveDocs.current.get(pane.active!);
-          if (live !== undefined) liveDocs.current.set(to, live);
-        }
+      for (const [from, to] of pathMap) {
+        renameWindow.current.set(from, to);
+        const live = liveDocs.current.get(from);
+        if (live !== undefined) liveDocs.current.set(to, live);
       }
       panesRef.current = Object.fromEntries(
         Object.entries(panesRef.current).map(([id, pane]) => [id, repoint(pane)]),
@@ -4213,9 +4234,8 @@ export default function App() {
 
       // One pass: rewrite affected notes (moved and unmoved), reading DISK so a
       // fresher external edit is never reverted. Cheap in-memory pre-filter.
-      // Each rewrite is registered as soon as it's written, so a save typed
-      // meanwhile compares against the text now on disk, not the old one.
-      const updates = new Map<string, VaultNote>();
+      // Each rewrite is registered as soon as it's written (see registerRewrite).
+      const done: { path: string; base: string; next: string; mapper: (raw: string) => string | null }[] = [];
       const failures: string[] = [];
       for (const post of postNotes) {
         const mapper = makeMapper(post);
@@ -4232,30 +4252,14 @@ export default function App() {
           if (next === null) continue;
           await writeNote(post.path, next, disk);
           rememberSelfWrite(post.rel, next);
-          const updated = { ...post, content: next };
-          updates.set(post.path, updated);
-          index.current.setNote(updated);
-          notesRef.current = notesRef.current.map((n) => (n.path === post.path ? updated : n));
+          registerRewrite({ ...post, content: next });
+          done.push({ path: post.path, base: disk, next, mapper });
         } catch (e) {
           failures.push(post.rel);
           console.error("[basalt] folder-move link rewrite failed", post.rel, e);
         }
       }
-      if (updates.size > 0) setNotes(() => notesRef.current);
-
-      // Show the rewritten links in any editor on those notes, unless the user
-      // typed into it meanwhile: their text wins, and saves over the rewrite.
-      const refresh = (pane: Pane): Pane => {
-        const u = pane.active ? updates.get(pane.active) : undefined;
-        if (!u || pending.current.has(u.path)) return pane;
-        return { ...pane, doc: u.content, docRev: (pane.docRev ?? 0) + 1 };
-      };
-      for (const pane of Object.values(panesRef.current)) {
-        const u = pane.active ? updates.get(pane.active) : undefined;
-        if (u && !pending.current.has(u.path)) liveDocs.current.set(u.path, u.content);
-      }
-      panesRef.current = Object.fromEntries(Object.entries(panesRef.current).map(([id, pane]) => [id, refresh(pane)]));
-      setPanes((ps) => Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, refresh(pane)])));
+      reconcileRewrites(done);
 
       // Repoint canvas file-node embeds of every moved note AND moved
       // attachment (canvas file-nodes can embed images/PDFs/nested canvases, not
@@ -4273,7 +4277,7 @@ export default function App() {
         folderFails.length > 0 ? `Folder moved, but link updates failed in: ${folderFails.join(", ")}` : null,
       );
     },
-    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs, registerRewrite, reconcileRewrites],
   );
 
   // Move a note into a folder (rel, "" = root) by renaming — reuses the
@@ -4697,7 +4701,7 @@ export default function App() {
             <EditorPane
               key={`${id}:${path}`}
               paneId={id}
-              continuesFrom={paneRenames.current.get(id)?.to === path ? paneRenames.current.get(id)!.from : undefined}
+              continuesFrom={[...renameWindow.current].find(([, to]) => to === path)?.[0]}
               path={path}
               selfRel={rel}
               pluginVersion={pluginVersion}

@@ -52,6 +52,17 @@ interface Props {
   continuesFrom?: string;
 }
 
+/** The smallest single edit turning `from` into `to`, so a caret or selection
+ * outside the changed span keeps its place. Null when they're equal. */
+export function minimalChange(from: string, to: string): { from: number; to: number; insert: string } | null {
+  if (from === to) return null;
+  let a = 0;
+  while (a < from.length && a < to.length && from[a] === to[a]) a++;
+  let b = 0;
+  while (b < from.length - a && b < to.length - a && from[from.length - 1 - b] === to[to.length - 1 - b]) b++;
+  return { from: a, to: from.length - b, insert: to.slice(a, to.length - b) };
+}
+
 // The last editor state each pane tore down, for the rebuild that follows a rename.
 const handoff = new Map<string, { path: string; text: string; selection: EditorSelection; scrollTop: number }>();
 
@@ -209,13 +220,8 @@ export function EditorPane({
         const v = view.current;
         if (!v) return;
         const doc = v.state.doc.toString();
-        const next = fn(doc);
-        let a = 0;
-        while (a < doc.length && a < next.length && doc[a] === next[a]) a++;
-        let b = 0;
-        while (b < doc.length - a && b < next.length - a && doc[doc.length - 1 - b] === next[next.length - 1 - b]) b++;
-        if (a === doc.length && a === next.length) return;
-        v.dispatch({ changes: { from: a, to: doc.length - b, insert: next.slice(a, next.length - b) } });
+        const change = minimalChange(doc, fn(doc));
+        if (change) v.dispatch({ changes: change });
       },
       hasSelection: () => {
         const v = view.current;
@@ -276,18 +282,17 @@ export function EditorPane({
   }, [apiRef, path]);
 
   // Reconcile an external live-reload into the existing editor WITHOUT remounting,
-  // preserving the caret (clamped) and not triggering a save-back.
+  // and without triggering a save-back. Applied as the smallest edit, so the
+  // caret maps through it and stays on the text it was on.
   useEffect(() => {
     const v = view.current;
     if (!v) return;
-    const current = v.state.doc.toString();
-    if (current === doc) return;
-    const head = Math.min(v.state.selection.main.head, doc.length);
+    const change = minimalChange(v.state.doc.toString(), doc);
+    if (!change) return;
     // Keep the reconcile OUT of undo history: Cmd-Z must never resurrect
     // pre-reload content (which would then autosave over the external edit).
     v.dispatch({
-      changes: { from: 0, to: current.length, insert: doc },
-      selection: EditorSelection.cursor(head),
+      changes: change,
       annotations: [externalReload.of(true), Transaction.addToHistory.of(false)],
     });
   }, [doc, docRev]);

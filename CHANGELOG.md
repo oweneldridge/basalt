@@ -40,9 +40,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of discarding it.
 - Typing while a note is being renamed no longer recreates the old file or
   drops what you typed, and the caret stays where you were typing. Edits
-  follow a renamed note only from the pane that showed it, so a new note that
-  later takes the old name can never write into the renamed one. Text typed in
-  a note while its folder is being moved is saved too.
+  still carrying a renamed note's old path follow it only until the editors
+  have redrawn, so a new note that later takes the old name, in any pane or
+  stacked column, never writes into the renamed one. Text typed while a rename
+  or folder move rewrites links is saved, without a false conflict, and gets
+  the same link fix.
+- Text changed on disk lands in an open editor as the smallest edit, so the
+  caret stays on the line it was on.
 - After "Keep mine" writes back a note deleted elsewhere, later edits save
   normally, and focus returns to the editor after Keep mine or Reload.
 - A note created or renamed while the vault was being re-read keeps saving:
