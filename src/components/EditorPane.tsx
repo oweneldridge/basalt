@@ -47,13 +47,15 @@ interface Props {
   /** When set (the focused pane), receives an imperative handle for actions
    * that must target this live editor — e.g. inserting a template at the caret. */
   apiRef?: { current: EditorApi | null };
-  /** The pane this editor lives in, and the path of the note it replaces when
-   * a rename or folder move rebuilt it: then the caret and scroll carry over. */
+  /** The pane (or a pane's stack) this editor lives in, and the path of the
+   * note it replaces when a rename or folder move rebuilt it: then the caret,
+   * scroll and focus carry over. */
   paneId?: string;
   continuesFrom?: string;
 }
 
-// The last editor state each pane tore down, for the rebuild that follows a rename.
+// The state of editors as they were torn down, by pane (or stack) and path, for
+// the rebuild that follows a rename.
 const handoff = new Map<string, { path: string; text: string; selection: EditorSelection; scrollTop: number; focused: boolean }>();
 
 // The editor that last had keyboard focus. Kept when focus leaves the page or
@@ -66,6 +68,9 @@ function textHash(t: string): number {
   for (let i = 0; i < t.length; i++) h = Math.imul(h ^ t.charCodeAt(i), 0x01000193);
   return (h ^ t.length) >>> 0;
 }
+
+// Editors built during the current commit; cleared on the next task.
+const mountedNow = new Set<Element>();
 
 // Every live editor, by the path of the note it shows (panes and stacked columns).
 const openEditors = new Map<string, Set<EditorView>>();
@@ -206,20 +211,28 @@ export function EditorPane({
     };
     v.contentDOM.addEventListener("focus", onFocus);
     v.contentDOM.addEventListener("blur", onBlur);
-    const prev = paneId ? handoff.get(paneId) : undefined;
-    if (paneId) handoff.delete(paneId);
     // Rebuilt by a rename: keep the place, and take focus only if the old editor
     // had it (else typing in another pane would land here). A note being opened
     // takes focus as usual.
-    const continuing = prev !== undefined && prev.path === continuesFrom;
+    const prevKey = paneId && continuesFrom ? `${paneId}|${continuesFrom}` : null;
+    const prev = prevKey ? handoff.get(prevKey) : undefined;
+    if (prevKey) handoff.delete(prevKey);
+    const continuing = prev !== undefined;
     if (continuing && prev.text === doc) {
       v.dispatch({ selection: prev.selection });
       v.scrollDOM.scrollTop = prev.scrollTop;
     }
-    if (!continuing || prev.focused) v.focus();
+    // Never pull focus out of another editor someone is typing in. One built in
+    // this same commit doesn't count: the last of those takes focus, as before.
+    mountedNow.add(v.dom);
+    setTimeout(() => mountedNow.delete(v.dom), 0);
+    const other = document.activeElement?.closest?.(".cm-editor");
+    const inOtherEditor = !!other && other !== v.dom && !mountedNow.has(other);
+    if (continuing ? prev.focused : !inOtherEditor) v.focus();
     return () => {
       if (paneId) {
-        handoff.set(paneId, {
+        if (handoff.size > 100) handoff.delete(handoff.keys().next().value!);
+        handoff.set(`${paneId}|${path}`, {
           path,
           text: v.state.doc.toString(),
           selection: v.state.selection,

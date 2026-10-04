@@ -1576,6 +1576,7 @@ export default function App() {
       pending.current.clear();
       liveDocs.current.clear();
       renameWindow.current.clear();
+      movedTo.current.clear();
       saveTimers.current.forEach((t) => window.clearTimeout(t));
       saveTimers.current.clear();
       selfWrites.current.clear();
@@ -3715,6 +3716,8 @@ export default function App() {
           if (newPath === oldPath && pending.current.has(oldPath)) void flushPath(oldPath);
         }
         if (newPath === oldPath) return;
+        movedTo.current.set(oldPath, newPath);
+        movedTo.current.delete(newPath);
         const newRel = newPath.startsWith(root)
           ? newPath.slice(root.length).replace(/^[/\\]+/, "")
           : newPath;
@@ -3917,13 +3920,22 @@ export default function App() {
   // Renames and folder moves run one at a time: a second one waits for the
   // first to finish rewriting links, so it never starts from stale paths.
   const renameQueue = useRef<Promise<unknown>>(Promise.resolve());
+  // Where finished renames and moves took each note. A rename queued behind
+  // them may name a path that has since moved; it follows the note, but only
+  // when nothing is at that path now.
+  const movedTo = useRef<Map<string, string>>(new Map());
+  const currentPath = (path: string) => {
+    let p = path;
+    for (let i = 0; i < 16 && movedTo.current.has(p) && !notesRef.current.some((n) => n.path === p); i++) p = movedTo.current.get(p)!;
+    return p;
+  };
   const enqueueRename = useCallback(<T,>(job: () => Promise<T>): Promise<T> => {
     const run = renameQueue.current.then(job);
     renameQueue.current = run.catch(() => {});
     return run;
   }, []);
   const handleRenameNote = useCallback(
-    (oldPath: string, newName: string) => enqueueRename(() => renameNoteNow(oldPath, newName)),
+    (oldPath: string, newName: string) => enqueueRename(() => renameNoteNow(currentPath(oldPath), newName)),
     [enqueueRename, renameNoteNow],
   );
   handleRenameNoteRef.current = handleRenameNote;
@@ -4229,6 +4241,8 @@ export default function App() {
       };
       for (const [from, to] of pathMap) {
         renameWindow.current.set(from, to);
+        movedTo.current.set(from, to);
+        movedTo.current.delete(to);
         const live = liveDocs.current.get(from);
         if (live !== undefined) liveDocs.current.set(to, live);
       }
@@ -4626,6 +4640,7 @@ export default function App() {
             key={`title:${path}`}
             name={nameFromRel(rel)}
             onRename={(newBase) => void handleRenameNote(path, rel.replace(/[^/\\]+$/, "") + newBase)}
+            onDone={() => editorApiRef.current?.focus()}
           />
         )}
         <div className="pane-body">
@@ -4655,6 +4670,8 @@ export default function App() {
             renderBody={(tab, doc, onDocChange) => (
               <EditorPane
                 key={`${id}:stacked:${tab.path}`}
+                paneId={`${id}:stack`}
+                continuesFrom={[...renameWindow.current].find(([, to]) => to === tab.path)?.[0]}
                 path={tab.path}
                 selfRel={tab.rel}
                 pluginVersion={pluginVersion}

@@ -48,9 +48,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or folder move rewrites links is saved, without a false conflict, and gets
   the same link fix.
 - After a rename, focus stays where you put it: an editor rebuilt for the new
-  name takes focus only if it had it. A second rename or folder move waits for
-  the first to finish fixing links, so renaming a note back right away leaves
-  every link right.
+  name, in a pane or a stacked column, takes focus only if it had it, and Enter
+  in the inline title goes back to the note. A second rename or folder move
+  waits for the first to finish fixing links, so renaming a note back right
+  away leaves every link right, and a rename queued behind it follows the note
+  if it moved.
 - A rename or folder move fixes links in notes being typed into inside their
   open editors, so typing in progress, even straight through the end of the
   pass, merges with the fix instead of undoing it or moving a character. Such

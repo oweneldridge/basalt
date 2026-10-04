@@ -5,11 +5,13 @@ interface Props {
   name: string;
   /** Commit a new basename (already validated non-empty + changed). */
   onRename: (newName: string) => void;
+  /** Enter or Escape: carry on in the note below. */
+  onDone?: () => void;
 }
 
 /** Obsidian's "inline title": the note's filename shown as an editable heading
  * above the content; committing it renames the note (staying in its folder). */
-export function InlineTitle({ name, onRename }: Props) {
+export function InlineTitle({ name, onRename, onDone }: Props) {
   const [draft, setDraft] = useState(name);
   const ref = useRef<HTMLInputElement | null>(null);
   useEffect(() => setDraft(name), [name]);
@@ -40,9 +42,11 @@ export function InlineTitle({ name, onRename }: Props) {
         if (e.key === "Enter") {
           e.preventDefault();
           e.currentTarget.blur();
+          onDone?.();
         } else if (e.key === "Escape") {
           setDraft(name);
           e.currentTarget.blur();
+          onDone?.();
         }
       }}
     />

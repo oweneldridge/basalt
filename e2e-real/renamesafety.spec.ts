@@ -435,3 +435,73 @@ test.describe("typing that starts after the note's rewrite and runs past the pas
     );
   });
 });
+
+test.describe("two title edits queued behind a slow rename", () => {
+  test.use({ vaultFiles: { "Yak.md": "# Yak\n", "B1.md": "[[Yak]]\n", "B2.md": "[[Yak]]\n", "Xen.md": "# Xen\n" } });
+
+  test("both apply, in order", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Xen");
+    let slow = true;
+    await page.route("**/api/invoke", async (route) => {
+      if (slow && (route.request().postData() ?? "").includes('"cmd":"read_note"')) await new Promise((r) => setTimeout(r, 1000));
+      await route.continue().catch(() => {});
+    });
+    await page.locator(".tree-row.file", { hasText: "Yak" }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+    await page.locator(".prompt-input").fill("Yak Two");
+    await page.locator(".prompt-input").press("Enter");
+    const title = page.locator(".pane:not(.dock) input.inline-title").first();
+    await title.fill("Xen One");
+    await title.press("Enter");
+    await title.fill("Xen Two");
+    await title.press("Enter");
+    slow = false;
+    await expect.poll(() => vault.exists("Xen Two.md"), { timeout: 20000 }).toBe(true);
+    await settle(page, 1500);
+    expect(vault.exists("Xen One.md")).toBe(false);
+    expect(vault.exists("Xen.md")).toBe(false);
+  });
+});
+
+test.describe("focus around inline-title renames", () => {
+  test.use({ vaultFiles: { "Ant.md": "# Ant\n\nant line\n", "Bee.md": "# Bee\n\nbee line\n" } });
+
+  test("Enter in the title goes back to the note, so typing continues there", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Ant");
+    const title = page.locator(".pane:not(.dock) input.inline-title").first();
+    await title.fill("Ant Renamed");
+    await title.press("Enter");
+    await expect.poll(() => vault.exists("Ant Renamed.md")).toBe(true);
+    await expect(page.locator(".pane:not(.dock) .cm-content").first()).toBeFocused();
+    await page.keyboard.press("ControlOrMeta+End");
+    await page.keyboard.type("TYPED");
+    await settle(page, 1500);
+    expect(vault.read("Ant Renamed.md")).toContain("TYPED");
+  });
+
+  test("a stacked column rebuilt by the rename doesn't take focus from the column you clicked", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Ant");
+    await page.getByRole("button", { name: "Split right" }).first().click();
+    const panes = page.locator(".pane:not(.dock)");
+    await expect(panes).toHaveCount(2);
+    // The new pane (focused) gets both notes as tabs, then stacks them.
+    await page.locator(".tree-row.file", { hasText: "Ant" }).first().click();
+    await page.locator(".tree-row.file", { hasText: "Bee" }).first().click();
+    const right = panes.filter({ has: page.locator(".tab", { hasText: "Bee" }) });
+    const left = panes.filter({ hasNot: page.locator(".tab", { hasText: "Bee" }) });
+    await expect(right.locator(".tab")).toHaveCount(2);
+    await right.getByRole("button", { name: /Stack tabs/ }).click();
+    await expect(right.locator(".stacked-col")).toHaveCount(2);
+    await left.locator("input.inline-title").fill("Ant Renamed");
+    await right.locator(".stacked-col .cm-line", { hasText: "bee line" }).click();
+    await page.keyboard.press("End");
+    await expect.poll(() => vault.exists("Ant Renamed.md")).toBe(true);
+    await page.keyboard.type(" TYPED");
+    await settle(page, 1500);
+    expect(vault.read("Bee.md")).toContain("bee line TYPED");
+    expect(vault.read("Ant Renamed.md")).not.toContain("TYPED");
+  });
+});
