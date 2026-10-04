@@ -356,3 +356,13 @@ describe("review fixes (DoS + correctness)", () => {
     expect(ev('icontains(xs, "apple")', c)).toBe(true);
   });
 });
+
+describe("extractTasks", () => {
+  it("skips checkboxes inside code fences and frontmatter", () => {
+    const doc = ["---", "todo: \"- [ ] not a task\"", "---", "- [ ] real", "```markdown", "- [ ] example only", "```", "- [x] done"].join("\n");
+    expect(extractTasks(doc, "N.md").map((t) => [t.text, t.line])).toEqual([
+      ["real", 3],
+      ["done", 7],
+    ]);
+  });
+});

@@ -23,6 +23,7 @@ import {
   type BaseRow,
   type CellPart,
 } from "./bases";
+import { proseMask } from "./markdown";
 
 export type { Val, CellPart, BaseRow };
 export { DateVal, DurVal, LinkVal };
@@ -663,7 +664,11 @@ const TASK_RE = /^(\s*)[-*+]\s+\[(.)\]\s+(.*)$/;
 export function extractTasks(content: string, path: string): Task[] {
   const out: Task[] = [];
   const lines = content.split("\n");
+  // Checkboxes inside code fences or frontmatter aren't tasks (Dataview reads
+  // list items, which never include them), and toggling one would edit code.
+  const prose = proseMask(lines);
   for (let i = 0; i < lines.length; i++) {
+    if (!prose[i]) continue;
     const m = TASK_RE.exec(lines[i].replace(/\r$/, ""));
     if (!m) continue;
     const text = m[3];
