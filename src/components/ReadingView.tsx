@@ -35,6 +35,12 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
     // Safe: renderMarkdown escapes all user text and emits only known tags.
     el.innerHTML = renderMarkdown(doc);
     el.scrollTop = 0;
+    // Note links are anchors without an href (the click handler routes them),
+    // so make them reachable and announced as links.
+    el.querySelectorAll<HTMLElement>("a.md-wikilink, a.md-link").forEach((a) => {
+      a.tabIndex = 0;
+      a.setAttribute("role", "link");
+    });
 
     let cancelled = false;
 
@@ -155,7 +161,7 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
     };
   }, [doc, selfRel, resolveImage, dark]);
 
-  const onClick = (e: React.MouseEvent) => {
+  const onClick = (e: React.MouseEvent | React.KeyboardEvent) => {
     const target = e.target as HTMLElement;
     // Interactive task checkbox: toggle the source line (Obsidian behavior).
     if (target instanceof HTMLInputElement && target.classList.contains("md-task-check")) {
@@ -181,8 +187,19 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
       const internal = internalMdHref(href);
       if (internal) onOpenInternal(internal.path + internal.fragment);
       else onOpenUrl(href);
+      return;
+    }
+    // A link inside raw HTML: open it like any external link instead of
+    // navigating the app window away.
+    const anchor = target.closest<HTMLAnchorElement>("a[href]");
+    if (anchor) {
+      e.preventDefault();
+      onOpenUrl(anchor.getAttribute("href") ?? "");
     }
   };
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && (e.target as HTMLElement).matches(".md-wikilink, .md-link")) onClick(e);
+  };
 
-  return <div className="reading-view" data-self-rel={selfRel} ref={host} onClick={onClick} />;
+  return <div className="reading-view" data-self-rel={selfRel} ref={host} onClick={onClick} onKeyDown={onKeyDown} />;
 }

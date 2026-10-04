@@ -14,13 +14,14 @@ import {
   EditorView,
   ViewPlugin,
   WidgetType,
+  keymap,
 } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import {
   autocompletion,
 } from "@codemirror/autocomplete";
 import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
-import { normalizeName, wikilinkRegex } from "../lib/markdown";
+import { internalMdHref, mdLinkRegexGlobal, normalizeName, parseMarkdownLink, wikilinkRegex } from "../lib/markdown";
 import { linkTargetForFormat, type LinkFormat } from "../lib/rename";
 import { isInExcludedRegion, treeChanged } from "./regions";
 
@@ -256,3 +257,40 @@ export function wikilinkModClickFollow(onOpen: (target: string) => void): Extens
     },
   });
 }
+
+/** Alt-Enter follows the link under the caret (Obsidian's default for "Follow
+ * link under cursor"): a wikilink, a markdown link, or a bare URL. */
+export function followLinkAtCursor(onOpen: (target: string) => void, onOpenUrl: (url: string) => void): Extension {
+  return keymap.of([
+    {
+      key: "Alt-Enter",
+      run: (view) => {
+        const pos = view.state.selection.main.head;
+        const line = view.state.doc.lineAt(pos);
+        const at = pos - line.from;
+        const hit = (re: RegExp, f: (m: RegExpExecArray) => void) => {
+          let m: RegExpExecArray | null;
+          while ((m = re.exec(line.text))) {
+            if (at >= m.index && at <= m.index + m[0].length) {
+              f(m);
+              return true;
+            }
+          }
+          return false;
+        };
+        return (
+          hit(wikilinkRegex(), (m) => onOpen(m[1].trim())) ||
+          hit(mdLinkRegexGlobal(), (m) => {
+            const parsed = parseMarkdownLink(m[0].replace(/^!/, ""));
+            if (!parsed) return;
+            const internal = internalMdHref(parsed.href);
+            if (internal) onOpen(internal.path + internal.fragment);
+            else onOpenUrl(parsed.href);
+          }) ||
+          hit(/\bhttps?:\/\/[^\s<>()[\]]+/g, (m) => onOpenUrl(m[0]))
+        );
+      },
+    },
+  ]);
+}
+

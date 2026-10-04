@@ -86,3 +86,29 @@ test("the palette is a combobox whose active option is announced", async ({ page
   expect(second).not.toBe(first);
   await expect(page.locator(`[id="${second}"]`)).toHaveAttribute("role", "option");
 });
+
+test("links can be followed from the keyboard in the editor and in Reading view", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await page.evaluate(() => {
+    Object.keys(localStorage).filter((k) => k.includes("workspace") || k.includes("reading") || k.includes("source")).forEach((k) => localStorage.removeItem(k));
+  });
+  await page.reload();
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+  const activeTab = page.locator(".pane:not(.dock) .tab.active .tab-name").first();
+  // Editor: Source mode shows the raw link; put the caret inside it.
+  await page.locator('button[title^="Toggle Source"], button:has-text("Source")').first().click();
+  await page.locator(".pane:not(.dock) .cm-line", { hasText: "[[Ideas]]" }).first().click();
+  await page.keyboard.press("Home");
+  for (let i = 0; i < 7; i++) await page.keyboard.press("ArrowRight"); // "See [[Id|eas]]"
+  await page.keyboard.press("Alt+Enter");
+  await expect(activeTab).toHaveText("Ideas");
+  // Reading view: Tab-reachable links that open on Enter.
+  await page.locator('button:has-text("Source")').first().click();
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+  await page.locator('button[title^="Toggle Reading view"]').click();
+  const link = page.locator(".reading-view a.md-wikilink", { hasText: "Ideas" }).first();
+  await expect(link).toHaveAttribute("role", "link");
+  await link.focus();
+  await page.keyboard.press("Enter");
+  await expect(activeTab).toHaveText("Ideas");
+});

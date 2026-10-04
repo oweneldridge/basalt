@@ -89,7 +89,7 @@ import { highlight } from "./highlight";
 import { tags } from "./tags";
 import { embeds } from "./embeds";
 import { attachments } from "./attachments";
-import { wikilinkAutocomplete, wikilinkDecorations, wikilinkModClickFollow, type NoteRef } from "./wikilink";
+import { wikilinkAutocomplete, wikilinkDecorations, wikilinkModClickFollow, followLinkAtCursor, type NoteRef } from "./wikilink";
 import { headingFold, foldKeymap } from "./headingFold";
 import { mermaid } from "./mermaid";
 import { math } from "./math";
@@ -304,6 +304,7 @@ export function createEditorState(
     // Cmd/Ctrl-click follows a raw [[link]] — the only navigation affordance
     // that must survive source mode (Obsidian behaves the same).
     wikilinkModClickFollow(cb.onOpenWikilink),
+    followLinkAtCursor(cb.onOpenWikilink, cb.onOpenUrl),
     // Real key precedence (higher first): completionKeymap (Prec.highest, injected
     // by autocompletion() in wikilink.ts) > markdownKeymap (Prec.high, injected by
     // markdown() — Enter continues lists/quotes/tasks, Backspace eats markup) >
