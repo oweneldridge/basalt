@@ -17,13 +17,17 @@ interface Props {
   /** Render a column's body for a markdown tab. `onDocChange` keeps the loaded
    * copy current as the user edits (so re-renders don't reset it). */
   renderBody: (tab: Tab, doc: string, onDocChange: (doc: string) => void) => ReactNode;
+  /** The app's current text for a note (unsaved edits, another pane's live
+   * text, or what was last seen on disk), so a column follows external and
+   * other-pane changes instead of its first load. */
+  liveDoc?: (path: string) => string | undefined;
 }
 
 /** Stacked tab group (Obsidian's "Stack tab group"): a horizontal spread of a
  * pane's open tabs as columns with title headers. Each markdown tab's content
  * is loaded lazily, cached, and rendered by the parent via `renderBody` (an
  * editable EditorPane) so edits in any column save back to that note. */
-export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody }: Props) {
+export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody, liveDoc }: Props) {
   // null = the read failed; never hand that to an editable editor.
   const [docs, setDocs] = useState<Record<string, string | null>>({});
 
@@ -56,14 +60,14 @@ export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody
     <div className="stacked-tabs">
       {tabs.map((t) => (
         <div key={t.path} className={`stacked-col${t.path === activePath ? " active" : ""}`}>
-          <button className="stacked-col-head" title={`Focus ${t.name}`} onClick={() => onFocusTab(t.path, docs[t.path] ?? undefined)}>
+          <button className="stacked-col-head" title={`Focus ${t.name}`} onClick={() => onFocusTab(t.path, liveDoc?.(t.path) ?? docs[t.path] ?? undefined)}>
             {t.name}
           </button>
           <div className="stacked-col-body">
             {/\.md$/i.test(t.path) && docs[t.path] === null ? (
               <div className="placeholder">Couldn't load this note.</div>
             ) : /\.md$/i.test(t.path) && docs[t.path] !== undefined ? (
-              renderBody(t, docs[t.path] as string, (d) => setDocs((prev) => ({ ...prev, [t.path]: d })))
+              renderBody(t, liveDoc?.(t.path) ?? (docs[t.path] as string), (d) => setDocs((prev) => ({ ...prev, [t.path]: d })))
             ) : (
               <div className="placeholder">{/\.md$/i.test(t.path) ? "Loading…" : "Open this tab to view it."}</div>
             )}

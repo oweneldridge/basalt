@@ -1898,6 +1898,23 @@ export default function App() {
       if (dirty) addConflict(p.active); // changed on disk under unsaved edits
       else patchPane(p.id, { doc: still.content });
     }
+    // Unsaved edits in a note no pane shows as active (a stacked column, a
+    // background tab) need the same check, or the next save overwrites the
+    // external change with the old baseline's blessing.
+    const activeNow = new Set(Object.values(panesRef.current).map((p) => p.active));
+    for (const path of pending.current.keys()) {
+      if (activeNow.has(path) || isViewerPath(path)) continue;
+      const still = byPath.get(path);
+      const prev = prevByPath.get(path);
+      if (!still) {
+        addConflict(path);
+        continue;
+      }
+      if (still.content === "" && (still.size ?? 0) > 0) continue;
+      if (prev === undefined || still.content === prev) continue;
+      if (selfWrites.current.get(still.rel) === still.content) continue;
+      addConflict(path);
+    }
   }, [loadVault, addConflict, patchPane, rememberSelfWrite]);
 
   // Listen for on-disk changes; debounce; then apply.
@@ -4341,6 +4358,11 @@ export default function App() {
             tabs={pane.tabs.map((p) => ({ path: p, name: tabItemsFor([p])[0]?.name ?? p, rel: notes.find((n) => n.path === p)?.rel ?? "" }))}
             activePath={pane.active}
             readNote={readNote}
+            liveDoc={(p) => {
+              const known = notesRef.current.find((n) => n.path === p);
+              const seen = known && !(known.content === "" && (known.size ?? 0) > 0) ? known.content : undefined;
+              return pending.current.get(p) ?? liveDocs.current.get(p) ?? seen;
+            }}
             onFocusTab={(p, colDoc) => {
               toggleStacked(id);
               // Carry the column's live (possibly edited) content so unstacking
