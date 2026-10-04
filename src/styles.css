@@ -11,7 +11,7 @@
   --border: #383838;
   --text: #dcddde;
   --text-muted: #999a9c;
-  --text-faint: #6b6c6e;
+  --text-faint: #939495;
   --code: #e0a472;
   --accent: #a98be0;
   --selection: rgba(169, 139, 224, 0.28);
@@ -38,14 +38,14 @@
   --bg-elev: #e9ebee;
   --border: #d8dade;
   --text: #1f2125;
-  --text-muted: #686b73;
-  --text-faint: #9a9da6;
-  --code: #b15c00;
-  --accent: #7c5cd0;
-  --selection: rgba(124, 92, 208, 0.22);
+  --text-muted: #62656d;
+  --text-faint: #64676e;
+  --code: #9c5000;
+  --accent: #6a4db5;
+  --selection: rgba(106, 77, 181, 0.22);
   --highlight: rgba(255, 206, 84, 0.5);
   --accent-text: #ffffff;
-  --accent-soft: rgba(124, 92, 208, 0.13);
+  --accent-soft: rgba(106, 77, 181, 0.13);
   --danger: #c0392b;
   --overlay: rgba(0, 0, 0, 0.32);
   --shadow: rgba(0, 0, 0, 0.18);
@@ -2206,7 +2206,7 @@ button.primary:hover {
 /* ------- Inline raw HTML (Live Preview) ------- */
 .cm-html-sup { vertical-align: super; font-size: 0.78em; }
 .cm-html-sub { vertical-align: sub; font-size: 0.78em; }
-.cm-html-mark { background: var(--highlight, #fef08a); color: #1f2125; border-radius: 2px; padding: 0 1px; }
+.cm-html-mark { background: var(--highlight, #fef08a); color: inherit; border-radius: 2px; padding: 0 1px; }
 .cm-html-kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.85em; }
 .cm-html-u, .cm-html-ins { text-decoration: underline; }
 .cm-html-s, .cm-html-del { text-decoration: line-through; }
