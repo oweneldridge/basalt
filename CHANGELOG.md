@@ -4,6 +4,51 @@ All notable changes to Basalt are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Basalt aims to
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Hiding a sidebar, toggling Reading view, editing a property or splitting a
+  pane no longer reverts what you typed since opening the note.
+- Saves are compare-and-swap: if the file changed since Basalt last read it
+  (another tab or device, Obsidian, iCloud), you get "Changed on disk" instead
+  of a silent overwrite. Saves to one note run one at a time.
+- "Keep mine" on a note that was deleted elsewhere writes your text back
+  instead of discarding it.
+- Renaming a note rewrites links inside properties, and table-escaped
+  `[[Note\|alias]]` links.
+- Links resolve in Obsidian's order (the linking note's folder first, then the
+  shortest path), so a rename updates the same links Obsidian would.
+- Rename no longer rewrites a note that has unsaved edits or a conflict; it
+  reports it instead.
+- The Properties sidebar keeps YAML types and quoting, and doesn't write
+  fields you only clicked into.
+- Ticking a task in Reading view ticks that task, including inside callouts
+  and after `%%` comments. Tasks in embedded notes are read-only.
+- A failed read or an oversized note can no longer seed an editor with empty
+  or placeholder text.
+- An external edit to an open canvas or base no longer blocks the next save
+  with a false conflict.
+- The web app's event stream recovers after a proxy answers a reconnect with
+  an error.
+- Audio, video and PDF embeds load under the release build's content policy.
+
+### Security
+
+- Folder operations never follow symlinks, so a symlink inside the vault can't
+  lead a folder delete or rename outside it.
+- `basalt-server` with auth off answers only `localhost`, `127.0.0.1` and `::1`
+  (add names with `BASALT_ALLOWED_HOSTS`), which blocks DNS rebinding.
+- The templater-lite preview block runs a template only when you ask.
+- HTML export picks its file in a native dialog run by the app, not the page.
+- Mermaid 11.17.2 and DOMPurify 3.4.16.
+
+### Accessibility
+
+- Save errors and conflicts are announced; notices sit in a live region.
+- Visible focus rings for keyboard focus; reduced-motion and forced-colors
+  settings are respected.
+
 ## [0.1.0] — first public alpha
 
 The first tagged release: a local-first Markdown editor that reads and writes

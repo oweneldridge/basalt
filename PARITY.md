@@ -8,6 +8,39 @@ Basalt clears the bar for a credible core-app foundation but not for full core-a
 
 **Weighted parity: ~67%** ((full + 0.5·partial) / in-scope features). Of 85 in-scope features: **37 full, 38 partial, 9 missing, 1 bonus**.
 
+## October 2026 update
+
+A second audit (2026-10-03) checked Obsidian's changelog from 1.9.0 through
+1.14.4 (latest public release 1.13.7; 1.14.x is early access) against the code,
+and ran security, data-loss, write-path and accessibility reviews with a new
+real-disk end-to-end suite (`npm run test:e2e:real`).
+
+Two earlier claims here were wrong and are corrected:
+
+- **Link resolution.** Obsidian does prefer the linking note's folder. Its
+  resolver (1.13.7 `getLinkpathDest`) takes an exact or relative path first,
+  then candidates under the source note's folder, then the rest, each group by
+  shortest path. Basalt now ports that algorithm (`src/lib/linkpath.ts`).
+- **"The parity backlog is cleared."** Obsidian has shipped a lot since July;
+  see the table below.
+
+Obsidian features since 1.9 and where Basalt stands:
+
+| Obsidian | Feature | Basalt |
+|---|---|---|
+| 1.11.0 | Links in properties rewritten on rename; markdown links in properties | Done (whole quoted values, as Obsidian counts them) |
+| 1.9 to 1.10 | Embedded bases: `![[x.base#View]]`, `base` code blocks, `this` | Missing |
+| 1.10 | Bases list layout | Missing (table and cards only) |
+| 1.14 (early access) | Bases kanban layout, collapsible groups, group order | Missing |
+| 1.9 to 1.10 | `file.backlinks`, `file.embeds`, `median`/`stddev` list methods | Missing |
+| 1.12.0 | Canvas files count as backlinks and graph links | Missing |
+| 1.11 | `obsidian://` URI actions with `paneType` | Missing (Basalt has `basalt://open`) |
+| 1.11 to 1.12 | Files & links: default file to open, attachment cleanup on delete | Missing |
+| 1.12 to 1.13 | Image drag-resize and lightbox | Partial (reads `\|width` only) |
+| 1.13.0 | Mermaid needs a one-time opt-in per vault | Missing |
+| 1.14 (early access) | Colour highlights (`==🔴text==`) | Missing |
+| 1.12 | Obsidian CLI | Partial (Basalt's own CLI, seven commands, works without the app) |
+
 ## Fixed since this audit (2026-07-07)
 
 The four **HIGH**-severity items — the data-safety/interop holes and the one
@@ -113,9 +146,9 @@ A follow-up pass closed ~17 more MEDIUM/LOW gaps from the list below:
   namespaces / `file.*` members / methods) and **live validation** (parse +
   unknown-function check, shown inline).
 
-**The parity backlog is cleared** — including the "nice-to-have" expression
-editor. Only the by-design exclusions remain out of scope: Sync/Publish, mobile,
-and the community-plugin/theme marketplaces.
+That cleared the July backlog. For what Obsidian has shipped since, see the
+October 2026 update above. Sync/Publish, mobile, and the community-plugin and
+theme marketplaces stay out of scope by design.
 
 ## Scored matrix
 
