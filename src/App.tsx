@@ -609,6 +609,9 @@ export default function App() {
   // Accumulated external changes (rel -> absolute path), flushed after a debounce.
   const changedBuf = useRef<Map<string, string>>(new Map());
   const watchTimer = useRef<number | undefined>(undefined);
+  // Buffers changes and applies them after a short quiet spell (set up with
+  // the watcher's listener below).
+  const queueChanges = useRef<(changes: ChangedNote[]) => void>(() => {});
   const rescanTimer = useRef<number | undefined>(undefined);
   // Resolves once the event listeners are active, so we never start the
   // watcher before we can hear it.
@@ -1905,8 +1908,7 @@ export default function App() {
       // that save: read it again once the save has settled.
       const reads = all.filter((r, i) => !(before[i].writing || isWriting(r.path) || seqOf(r.path) !== before[i].seq));
       if (reads.length < all.length) {
-        const again = all.filter((r) => !reads.includes(r)).map((r) => ({ rel: r.rel, path: r.path }));
-        window.setTimeout(() => void processChanges(again), 300);
+        queueChanges.current(all.filter((r) => !reads.includes(r)).map((r) => ({ rel: r.rel, path: r.path })));
       }
 
       // Drop echoes of our own writes: disk content equals what we last wrote
@@ -2090,8 +2092,8 @@ export default function App() {
     let unlistenRescan: (() => void) | undefined;
     (async () => {
       try {
-        const u1 = await listen<ChangedNote[]>("vault-changed", (event) => {
-          for (const c of event.payload) changedBuf.current.set(c.rel, c.path);
+        queueChanges.current = (incoming) => {
+          for (const c of incoming) changedBuf.current.set(c.rel, c.path);
           if (changedBuf.current.size === 0) return;
           window.clearTimeout(watchTimer.current);
           const flush = () => {
@@ -2106,7 +2108,8 @@ export default function App() {
             void processChanges(changes);
           };
           watchTimer.current = window.setTimeout(flush, 300);
-        });
+        };
+        const u1 = await listen<ChangedNote[]>("vault-changed", (event) => queueChanges.current(event.payload));
         if (cancelled) {
           u1();
           return;

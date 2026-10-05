@@ -581,3 +581,31 @@ test.describe("a keystroke as a rename's reply lands", () => {
     expect(disk).toContain("^later-blockQ\n");
   });
 });
+
+test("a note moved right after a save stays in the tree", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await openNote(page, "Ideas");
+  await page.route("**/api/invoke", async (route) => {
+    const body = route.request().postData() ?? "";
+    const res = await route.fetch().catch(() => null);
+    if (!res) return;
+    if (body.includes('"cmd":"write_note"')) await new Promise((r) => setTimeout(r, 700));
+    if (body.includes('"cmd":"rename_note"')) await new Promise((r) => setTimeout(r, 600));
+    await route.fulfill({ response: res }).catch(() => {});
+  });
+  await page.locator(".pane:not(.dock) .cm-line", { hasText: "A list of things" }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" T1");
+  await page.waitForTimeout(600);
+  await page.evaluate(() => {
+    const folder = [...document.querySelectorAll<HTMLElement>(".tree-row.folder")].find((r) => r.textContent?.includes("Projects"))!;
+    const dt = new DataTransfer();
+    dt.setData("application/x-basalt-note", document.querySelector<HTMLElement>(".tree-row.file.active")!.dataset.path!);
+    folder.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+  });
+  await expect.poll(() => vault.exists("Projects/Ideas.md"), { timeout: 10000 }).toBe(true);
+  await settle(page, 3000);
+  await expect(page.locator(".tree-row.file", { hasText: "Ideas" })).toHaveCount(1);
+  await expect(page.locator(".pane:not(.dock) .tab .tab-name", { hasText: "Ideas" })).toHaveCount(1);
+  expect(vault.read("Projects/Ideas.md")).toContain("try. T1\n");
+});
