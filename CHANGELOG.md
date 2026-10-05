@@ -31,25 +31,28 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pane, moving a folder or renaming a note no longer reverts what you typed.
 - A vault rescan, Reload, or a slow read in another pane no longer reverts text
   or raises a "Changed on disk" against your own save, nor does a save whose
-  reply arrives after the file watcher has seen it land. Stacked columns follow
+  reply arrives after the file watcher has seen it land, and a slow read can't
+  put back text older than your last save. Stacked columns follow
   external edits and edits made in other panes, even ones that put back text
   typed earlier or that land in a column you typed in before; a column whose
-  note failed to load tries again. A rename or folder move whose reply is slow
+  note failed to load, or never answered, tries again. A rename or folder move whose reply is slow
   no longer raises a false "Changed on disk" on the notes being moved.
 - Saves are compare-and-swap: if the file changed since Basalt last read it
   (another tab or device, Obsidian, iCloud), you get "Changed on disk" instead
   of a silent overwrite. Saves to one note, canvas or base run one at a time.
   A file that isn't UTF-8 is never overwritten, even when it changed to that
   while open. Notes too big for the search index (over 5 MB) get the same
-  check, and an edit made to one elsewhere while Basalt was offline shows up
-  instead of being overwritten.
+  check: while one is on screen Basalt keeps the text it last saw on disk and
+  reads it again after a reconnect, so an edit made elsewhere shows up instead
+  of being overwritten, and a save it can't check raises "Changed on disk".
 - Saving keeps a note's creation time and permissions, so Dataview's
   `file.ctime` stays put. On macOS it also keeps Finder tags, "Open with" and
   other extended attributes.
 - "Keep mine" on a note that was deleted elsewhere writes your text back
   instead of discarding it.
 - Typing while a note is being renamed no longer recreates the old file or
-  drops what you typed, and the caret stays where you were typing. Edits
+  drops what you typed, even a keystroke that lands while the editor is rebuilt
+  for the new name, and the caret stays where you were typing. Edits
   still carrying a renamed note's old path follow it only until the editors
   have redrawn, so a new note that later takes the old name, in any pane or
   stacked column, never writes into the renamed one. Text typed while a rename

@@ -32,8 +32,10 @@ export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody
   const [docs, setDocs] = useState<Record<string, string | null>>({});
 
   // Reads in flight, so a re-render (every keystroke in another column) doesn't
-  // ask again for a note that's still loading.
+  // ask again for a note that's still loading. One unanswered for 10 s is
+  // asked again.
   const loading = useRef(new Set<string>());
+  const [stalled, setStalled] = useState(0);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -45,6 +47,11 @@ export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody
     const missing = tabs.filter((t) => docs[t.path] === undefined && /\.md$/i.test(t.path) && !loading.current.has(t.path));
     if (missing.length === 0) return;
     for (const t of missing) loading.current.add(t.path);
+    window.setTimeout(() => {
+      let gaveUp = false;
+      for (const t of missing) gaveUp = loading.current.delete(t.path) || gaveUp;
+      if (gaveUp && mounted.current) setStalled((n) => n + 1);
+    }, 10000);
     void Promise.all(
       missing.map(async (t) => {
         try {
@@ -62,7 +69,7 @@ export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody
         return next;
       });
     });
-  }, [tabs, docs, readNote]);
+  }, [tabs, docs, readNote, stalled]);
 
   // A failed read may have been a network blip: read again every few seconds,
   // keeping the error up meanwhile (the app's own copy may be decoded lossily).
