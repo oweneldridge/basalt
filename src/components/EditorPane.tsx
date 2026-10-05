@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { createEditorState, externalReload, reconfigurePlugins, setEditorTheme, setSourceMode, setSpellcheck, setVimMode, setRtl } from "../editor/setup";
@@ -56,7 +56,10 @@ interface Props {
 
 // The state of editors as they were torn down, by pane (or stack) and path, for
 // the rebuild that follows a rename.
-const handoff = new Map<string, { path: string; text: string; selection: EditorSelection; scrollTop: number; focused: boolean }>();
+const handoff = new Map<
+  string,
+  { path: string; text: string; selection: EditorSelection; scrollTop: number; focused: boolean; reported: number[] }
+>();
 
 // The editor that last had keyboard focus. Kept when focus leaves the page or
 // its element is removed; cleared once focus moves somewhere else.
@@ -197,8 +200,10 @@ export function EditorPane({
   const selfRelRef = useRef(selfRel);
   selfRelRef.current = selfRel;
 
-  // Build the editor when the note (path) changes.
-  useEffect(() => {
+  // Build the editor when the note (path) changes. A layout effect: the old
+  // editor's element leaves the page at commit, and a keystroke arriving before
+  // the new one exists would land nowhere.
+  useLayoutEffect(() => {
     if (!host.current) return;
     // Rebuilt by a rename: start from the old editor's text, which has anything
     // typed after the repoint captured `doc`.
@@ -226,8 +231,10 @@ export function EditorPane({
     if (continuing) {
       v.dispatch({ selection: prev.selection });
       v.scrollDOM.scrollTop = prev.scrollTop;
-      // `doc` is then an earlier text of this same editor, not an outside edit.
-      if (prev.text !== doc) reported.current.push({ hash: textHash(doc), seq: reportSeq.current++ });
+      // `doc` is then an earlier text of this same editor, unless another
+      // editor on the note typed it; that one is applied below like any edit.
+      if (prev.text !== doc && prev.reported.includes(textHash(doc)))
+        reported.current.push({ hash: textHash(doc), seq: reportSeq.current++ });
     }
     // Never pull focus out of another editor someone is typing in. One built in
     // this same commit doesn't count: the last of those takes focus, as before.
@@ -245,6 +252,7 @@ export function EditorPane({
           selection: v.state.selection,
           scrollTop: v.scrollDOM.scrollTop,
           focused: focusedView === v,
+          reported: reported.current.map((r) => r.hash),
         });
       }
       if (focusedView === v) focusedView = null;

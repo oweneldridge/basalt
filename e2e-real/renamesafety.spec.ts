@@ -506,3 +506,78 @@ test.describe("focus around inline-title renames", () => {
     expect(vault.read("Ant Renamed.md")).not.toContain("TYPED");
   });
 });
+
+test.describe("a keystroke as a rename's reply lands", () => {
+  for (const delay of [0, 1, 3]) {
+    test(`is kept on screen and on disk (+${delay} ms)`, async ({ page, vault }) => {
+      await openApp(page, vault);
+      await openNote(page, "Ideas");
+      let typed: Promise<void> | null = null;
+      await page.route("**/api/invoke", async (route) => {
+        const body = route.request().postData() ?? "";
+        const res = await route.fetch().catch(() => null);
+        if (!res) return;
+        if (body.includes('"cmd":"rename_note"')) {
+          await new Promise((r) => setTimeout(r, 600));
+          const sent = route.fulfill({ response: res }).catch(() => {});
+          if (delay) await new Promise((r) => setTimeout(r, delay));
+          typed = page.keyboard.type("Q");
+          await sent;
+          return;
+        }
+        await route.fulfill({ response: res }).catch(() => {});
+      });
+      const editor = page.locator(".pane:not(.dock) .cm-content").first();
+      await page.locator(".pane:not(.dock) input.inline-title").first().fill("Ideas Renamed");
+      await editor.locator(".cm-line", { hasText: "Something for later" }).click();
+      await page.keyboard.press("End");
+      await expect.poll(() => vault.exists("Ideas Renamed.md")).toBe(true);
+      await expect.poll(() => typed !== null).toBe(true);
+      await typed;
+      await settle(page, 2000);
+      expect(vault.read("Ideas Renamed.md")).toContain("^later-blockQ\n");
+      await expect(page.locator(".pane:not(.dock) .cm-content").first()).toContainText("^later-blockQ");
+    });
+  }
+
+  test("typed in one of two panes on the note, it reaches the other", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Ideas");
+    await page.locator('button:has-text("⊟")').first().click();
+    const panes = page.locator(".pane:not(.dock)");
+    await expect(panes).toHaveCount(2);
+    await page.evaluate(() => {
+      const send = window.fetch.bind(window);
+      let done = false;
+      window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+        const body = typeof init?.body === "string" ? init.body : "";
+        if (!done && body.includes('"cmd":"read_note"') && body.includes("Ideas Renamed.md")) {
+          done = true;
+          document.execCommand("insertText", false, "Q");
+        }
+        return send(input, init);
+      };
+    });
+    await page.route("**/api/invoke", async (route) => {
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if ((route.request().postData() ?? "").includes('"cmd":"rename_note"')) await new Promise((r) => setTimeout(r, 1000));
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    const first = panes.nth(0);
+    await first.locator("input.inline-title").fill("Ideas Renamed");
+    await first.locator(".cm-line", { hasText: "Something for later" }).click();
+    await page.keyboard.press("End");
+    await expect.poll(() => vault.exists("Ideas Renamed.md")).toBe(true);
+    await settle(page, 1500);
+    const second = panes.nth(1);
+    await expect(second.locator(".cm-content")).toContainText("^later-blockQ");
+    await second.locator(".cm-line", { hasText: "A list of things" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" P2");
+    await settle(page, 1500);
+    const disk = vault.read("Ideas Renamed.md");
+    expect(disk).toContain("try. P2\n");
+    expect(disk).toContain("^later-blockQ\n");
+  });
+});
