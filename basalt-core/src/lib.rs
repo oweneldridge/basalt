@@ -886,8 +886,9 @@ pub fn rename_folder(root: &Path, from_rel: String, to_rel: String) -> Result<St
     // Refuse moving a folder into itself or its own descendant. Compare case-
     // insensitively too so a self-nesting rename on a case-insensitive FS gives
     // our clear error rather than the kernel's.
-    let lower = |p: &Path| p.to_string_lossy().to_lowercase();
-    if top == fromp || top.starts_with(&fromp) || lower(&top).starts_with(&lower(&fromp)) {
+    // By path components, so "Notes" can still become "Notes old".
+    let lower = |p: &Path| PathBuf::from(p.to_string_lossy().to_lowercase());
+    if top == fromp || top.starts_with(&fromp) || lower(&top).starts_with(lower(&fromp)) {
         return Err("cannot move a folder into itself".into());
     }
     let from_abs = root.join(&fromp);
@@ -2163,6 +2164,18 @@ mod tests {
         assert_eq!((e1.as_str(), e2.as_str()), (WRITE_CONFLICT, WRITE_CONFLICT));
         write_canvas(&root, canvas.to_string_lossy().into(), "{}".into(), Some("{\"nodes\":[]}".into())).unwrap();
         assert_eq!(fs::read_to_string(&canvas).unwrap(), "{}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_folder_can_be_renamed_to_a_name_starting_with_its_own() {
+        let root = scratch_vault("folder-prefix");
+        fs::create_dir_all(root.join("Notes/sub")).unwrap();
+        fs::write(root.join("Notes/sub/a.md"), "x").unwrap();
+        rename_folder(&root, "Notes".into(), "Notes old".into()).unwrap();
+        assert!(root.join("Notes old/sub/a.md").is_file());
+        assert!(rename_folder(&root, "Notes old".into(), "Notes old/inner".into()).is_err());
+        assert!(rename_folder(&root, "Notes old".into(), "notes OLD/inner".into()).is_err());
         fs::remove_dir_all(&root).unwrap();
     }
 
