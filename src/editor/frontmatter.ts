@@ -9,8 +9,8 @@
 // widget gets the EditorView in toDOM(view) and dispatches directly; inputs are
 // plain DOM (no CM transaction while typing), so the widget is stable until a
 // commit rebuilds it.
-import { EditorState as State, RangeSetBuilder, StateField } from "@codemirror/state";
-import type { EditorState, EditorSelection, Extension } from "@codemirror/state";
+import { EditorSelection, EditorState as State, RangeSetBuilder, StateField } from "@codemirror/state";
+import type { EditorState, Extension } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { frontmatterRange } from "./regions";
@@ -310,7 +310,27 @@ interface FmState {
   range: { from: number; to: number } | null;
 }
 
-const AFTER_PROPERTIES = Decoration.line({ class: "cm-after-properties" });
+// The gap under the box is its own block, ending the hidden frontmatter, so it
+// shows above any first line (a table, a callout) and CodeMirror measures it.
+// (A block widget's margins aren't measured, so none has any.)
+class GapWidget extends WidgetType {
+  eq(): boolean {
+    return true;
+  }
+  get estimatedHeight(): number {
+    return 18;
+  }
+  toDOM(): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "cm-properties-gap";
+    el.setAttribute("aria-hidden", "true");
+    return el;
+  }
+  ignoreEvent(): boolean {
+    return false;
+  }
+}
+const GAP = Decoration.widget({ widget: new GapWidget(), block: true, side: 1 });
 
 function compute(state: EditorState): FmState {
   const range = frontmatterRange(state);
@@ -324,13 +344,7 @@ function compute(state: EditorState): FmState {
     range.to,
     Decoration.replace({ widget: new PropertiesWidget(source), block: true }),
   );
-  // The gap under the box belongs to the first body line, not the widget: a
-  // click there puts the caret on that line, never in front of `---`.
-  // (CodeMirror measures a block widget without its margins, so it has none.)
-  if (range.to < state.doc.length) {
-    const next = state.doc.lineAt(range.to + 1);
-    builder.add(next.from, next.from, AFTER_PROPERTIES);
-  }
+  if (range.to < state.doc.length) builder.add(range.to, range.to, GAP);
   return { deco: builder.finish(), range };
 }
 
@@ -353,18 +367,27 @@ const fmField = StateField.define<FmState>({
   provide: (field) => EditorView.decorations.from(field, (v) => v.deco),
 });
 
-// A click that CodeMirror resolves to an edge of the rendered Properties block
-// (a pixel row along its border, or the gutter beside it, maps to the start or
-// end of the hidden `---` lines) goes to the first body line instead: typing
-// at either edge would break the frontmatter.
+// A click, double-click or drag that CodeMirror resolves into the rendered
+// Properties block (the gap under it, a pixel row along its border, or the
+// gutter beside it all map to the hidden `---` lines) starts on the first body
+// line instead: typing there would break the frontmatter. Each range is moved
+// on its own, so cursors added with Cmd-click keep the others.
 const edgeClick = State.transactionFilter.of((tr) => {
-  if (!tr.isUserEvent("select.pointer") || tr.docChanged) return tr;
+  if (!tr.isUserEvent("select.pointer") || tr.docChanged || !tr.selection) return tr;
   const range = frontmatterRange(tr.startState);
   if (!range || range.to >= tr.startState.doc.length) return tr;
   if (touches(range, tr.startState.selection)) return tr; // raw already showing
-  const sel = tr.newSelection.main;
-  if (!sel.empty || (sel.head !== range.from && sel.head !== range.to)) return tr;
-  return [tr, { selection: { anchor: range.to + 1 }, sequential: true }];
+  const body = range.to + 1;
+  const hidden = (pos: number) => pos >= range.from && pos <= range.to;
+  const sel = tr.newSelection;
+  if (!sel.ranges.some((r) => hidden(r.anchor) || hidden(r.head))) return tr;
+  const ranges = sel.ranges.map((r) => {
+    const anchor = hidden(r.anchor) ? body : r.anchor;
+    // A drag from the body up past the whole box selects it on purpose.
+    const head = hidden(r.head) && (hidden(r.anchor) || r.head !== range.from) ? body : r.head;
+    return EditorSelection.range(anchor, head);
+  });
+  return [tr, { selection: EditorSelection.create(ranges, sel.mainIndex), sequential: true }];
 });
 
 export const frontmatter: Extension = [fmField, edgeClick];

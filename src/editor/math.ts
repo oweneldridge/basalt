@@ -1,7 +1,7 @@
 // Live Preview for math: `$…$` (inline) and `$$…$$` (display, inline or a
 // multi-line block). Rendered with KaTeX (lazy-loaded). Caret outside → render;
 // inside → reveal the raw source, like mermaid/transclusion.
-import { RangeSetBuilder, StateField } from "@codemirror/state";
+import { EditorSelection, EditorState as State, RangeSetBuilder, StateField } from "@codemirror/state";
 import type { EditorState, Extension } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
@@ -91,4 +91,29 @@ const mathField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-export const math: Extension = mathField;
+// A click on a rendered block's padding, or a pixel row along it, resolves to
+// the very start or end of its source. Put the caret just inside the `$$`
+// instead, so the source opens for editing and a key never breaks a delimiter.
+const edgeClick = State.transactionFilter.of((tr) => {
+  if (!tr.isUserEvent("select.pointer") || tr.docChanged || !tr.selection) return tr;
+  const deco = tr.startState.field(mathField);
+  const doc = tr.startState.doc;
+  let moved = false;
+  const ranges = tr.newSelection.ranges.map((r) => {
+    if (!r.empty) return r;
+    let pos = r.head;
+    deco.between(r.head, r.head, (from, to, d) => {
+      if (!(d.spec.widget instanceof MathWidget) || !d.spec.widget.block) return;
+      const src = doc.sliceString(from, to);
+      if (r.head === from) pos = from + src.indexOf("$$") + 2;
+      else if (r.head === to) pos = from + src.lastIndexOf("$$");
+    });
+    if (pos === r.head) return r;
+    moved = true;
+    return EditorSelection.cursor(pos);
+  });
+  if (!moved) return tr;
+  return [tr, { selection: EditorSelection.create(ranges, tr.newSelection.mainIndex), sequential: true }];
+});
+
+export const math: Extension = [mathField, edgeClick];
