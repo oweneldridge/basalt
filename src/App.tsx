@@ -82,7 +82,7 @@ import { StackedTabs } from "./components/StackedTabs";
 import { SlidesView } from "./components/SlidesView";
 import { StatusBar } from "./components/StatusBar";
 import { InlineTitle } from "./components/InlineTitle";
-import { EditorPane, fixOpenEditors, type EditorApi } from "./components/EditorPane";
+import { EditorPane, fixOpenEditors, showText, type EditorApi } from "./components/EditorPane";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec, type BuiltinView } from "./lib/leafViews";
@@ -743,7 +743,12 @@ export default function App() {
     const cur = panesRef.current[id];
     if (cur && patch.doc !== undefined) {
       const active = patch.active !== undefined ? patch.active : cur.active;
-      if (active) liveDocs.current.set(active, patch.doc);
+      if (active) {
+        liveDocs.current.set(active, patch.doc);
+        // Editors already on the note take it now, not at the next render, so a
+        // keystroke in between isn't read against the older text.
+        showText(active, patch.doc);
+      }
       patch = { ...patch, docRev: (cur.docRev ?? 0) + 1 };
     }
     setPanes((ps) => (ps[id] ? { ...ps, [id]: { ...ps[id], ...patch } } : ps));
@@ -1977,10 +1982,11 @@ export default function App() {
           continue;
         }
         // Update content in every pane showing it (each EditorPane reconciles,
-        // preserving its caret).
+        // preserving its caret), and stacked columns at once.
         for (const p of Object.values(panesRef.current)) {
           if (p.active === r.path) patchPane(p.id, { doc: r.content });
         }
+        showText(r.path, r.content);
       }
     },
     [bumpStructure, addConflict, patchPane, setBigBase],
@@ -2045,7 +2051,10 @@ export default function App() {
       const ours = selfWrites.current.get(still.rel) === still.content || isBeingWritten(still.path, still.content);
       if (dirty && ours) continue;
       if (dirty) addConflict(p.active); // changed on disk under unsaved edits
-      else patchPane(p.id, { doc: still.content });
+      else {
+        patchPane(p.id, { doc: still.content });
+        showText(p.active, still.content);
+      }
     }
     // Unsaved edits in a note no pane shows as active (a stacked column, a
     // background tab) need the same check, or the next save overwrites the
@@ -2097,6 +2106,7 @@ export default function App() {
           return;
         }
         for (const p of Object.values(panesRef.current)) if (p.active === path) patchPane(p.id, { doc: fresh });
+        showText(path, fresh);
         bumpIndex(); // stacked columns take the baseline when they render
       }),
     );

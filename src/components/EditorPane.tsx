@@ -85,6 +85,27 @@ const openEditors = new Map<string, Set<EditorView>>();
  * it's kept out of undo history. Returns the editors' text afterwards, or null
  * when no editor shows the note.
  */
+// Each live editor's hook for text applied to it by showText.
+const onShown = new WeakMap<EditorView, (text: string) => void>();
+
+/**
+ * Put `text` into every open editor on `path` at once, as an outside change
+ * (not reported as typing, kept out of undo history). Updates decided from
+ * disk or another pane land here before any later keystroke can be read
+ * against the older text; the `doc` prop that follows is then a no-op.
+ */
+export function showText(path: string, text: string): void {
+  for (const v of openEditors.get(path) ?? []) {
+    const current = v.state.doc.toString();
+    if (current === text) continue;
+    v.dispatch({
+      changes: textChanges(current, text),
+      annotations: [externalReload.of(true), Transaction.addToHistory.of(false)],
+    });
+    onShown.get(v)?.(text);
+  }
+}
+
 export function fixOpenEditors(path: string, fn: (text: string) => string): string | null {
   const views = openEditors.get(path);
   if (!views || views.size === 0) return null;
@@ -163,6 +184,9 @@ export function EditorPane({
   const reported = useRef<{ hash: number; seq: number }[]>([]);
   const reportSeq = useRef(0);
   const echoFloor = useRef(0);
+  // The text showText last put in this editor: a `doc` prop equal to it has
+  // been applied already, and typing since must stay.
+  const shownText = useRef<string | null>(null);
   const lastDocRev = useRef(docRev);
   // The `doc` prop the editor has already accounted for: it's synced when the
   // editor is built, so the reconcile below acts only on later changes.
@@ -221,6 +245,10 @@ export function EditorPane({
     view.current = v;
     const registered = openEditors.get(path) ?? new Set<EditorView>();
     registered.add(v);
+    onShown.set(v, (text) => {
+      shownText.current = text;
+      echoFloor.current = reportSeq.current;
+    });
     openEditors.set(path, registered);
     const onFocus = () => (focusedView = v);
     const onBlur = (e: FocusEvent) => {
@@ -384,6 +412,8 @@ export function EditorPane({
     lastDocRev.current = docRev;
     if (!explicit && doc === docSeen.current) return;
     docSeen.current = doc;
+    if (doc === shownText.current) return;
+    shownText.current = null;
     if (!explicit) {
       const h = textHash(doc);
       const echo = [...reported.current].reverse().find((r) => r.hash === h);

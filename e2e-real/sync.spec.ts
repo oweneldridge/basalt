@@ -490,3 +490,37 @@ test("slow write and read replies never put back an older save", async ({ page, 
   await expect(page.locator(".conflict")).toHaveCount(0);
   expect(vault.read("Ideas.md")).toContain("try. W1 W2\n");
 });
+
+test.describe("a keystroke as an outside edit is read", () => {
+  test.use({ vaultFiles: { "W.md": "# W\n\nalpha\n\nomega\n" } });
+
+  test("doesn't overwrite the edit", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "W");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "omega" }).click();
+    await page.keyboard.press("End");
+    let armed = false;
+    let typed: Promise<void> | null = null;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (armed && body.includes('"cmd":"read_note"') && body.includes("/W.md")) {
+        armed = false;
+        const sent = route.fulfill({ response: res }).catch(() => {});
+        typed = page.keyboard.type("Q");
+        await sent;
+        return;
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    armed = true;
+    vault.write("W.md", "# W\n\nalpha PHONE\n\nomega\n");
+    await expect.poll(() => typed !== null, { timeout: 10000 }).toBe(true);
+    await typed;
+    await settle(page, 2500);
+    const disk = vault.read("W.md");
+    expect(disk.includes("PHONE") || (await page.locator(".conflict").count()) > 0).toBe(true);
+    if ((await page.locator(".conflict").count()) === 0) expect(disk).toBe("# W\n\nalpha PHONE\n\nomegaQ\n");
+  });
+});
