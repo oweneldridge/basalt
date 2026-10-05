@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 interface Tab {
@@ -31,10 +31,20 @@ export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody
   // null = the read failed; never hand that to an editable editor.
   const [docs, setDocs] = useState<Record<string, string | null>>({});
 
+  // Reads in flight, so a re-render (every keystroke in another column) doesn't
+  // ask again for a note that's still loading.
+  const loading = useRef(new Set<string>());
+  const mounted = useRef(true);
   useEffect(() => {
-    let cancelled = false;
-    const missing = tabs.filter((t) => docs[t.path] === undefined && /\.md$/i.test(t.path));
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    const missing = tabs.filter((t) => docs[t.path] === undefined && /\.md$/i.test(t.path) && !loading.current.has(t.path));
     if (missing.length === 0) return;
+    for (const t of missing) loading.current.add(t.path);
     void Promise.all(
       missing.map(async (t) => {
         try {
@@ -44,16 +54,14 @@ export function StackedTabs({ tabs, activePath, readNote, onFocusTab, renderBody
         }
       }),
     ).then((pairs) => {
-      if (cancelled) return;
+      for (const [p] of pairs) loading.current.delete(p);
+      if (!mounted.current) return;
       setDocs((prev) => {
         const next = { ...prev };
         for (const [p, c] of pairs) if (next[p] === undefined) next[p] = c;
         return next;
       });
     });
-    return () => {
-      cancelled = true;
-    };
   }, [tabs, docs, readNote]);
 
   // A failed read may have been a network blip: read again every few seconds,

@@ -188,3 +188,26 @@ test("a column whose first read fails loads once the network is back", async ({ 
   expect(failed).toBe(true);
   await expect(col.locator(".cm-content")).toBeVisible({ timeout: 10000 });
 });
+
+test("typing in one column doesn't re-request a column that is still loading", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await openNote(page, "Welcome");
+  await openNote(page, "Ideas");
+  let reads = 0;
+  await page.route("**/api/invoke", async (route) => {
+    const body = route.request().postData() ?? "";
+    const slow = body.includes('"cmd":"read_note"') && body.includes("Welcome.md");
+    if (slow) reads++;
+    const res = await route.fetch().catch(() => null);
+    if (!res) return;
+    if (slow) await new Promise((r) => setTimeout(r, 3000));
+    await route.fulfill({ response: res }).catch(() => {});
+  });
+  await page.locator(".tab-stack").first().click();
+  const ideas = page.locator(".stacked-col").filter({ has: page.locator(".stacked-col-head", { hasText: "Ideas" }) });
+  await ideas.locator(".cm-line", { hasText: "A list of things" }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" twenty characters!!", { delay: 50 });
+  await settle(page, 3500);
+  expect(reads).toBeLessThanOrEqual(1);
+});
