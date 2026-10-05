@@ -369,3 +369,19 @@ describe("property links and block scalars", () => {
     expect(idx.backlinkRels("/v/A.md")).toEqual(["Linked"]);
   });
 });
+
+describe("tags and raw HTML", () => {
+  it("doesn't read colours in HTML as tags", () => {
+    const note = [
+      "#real-tag in prose",
+      "",
+      '<svg viewBox="0 0 10 10">',
+      '<line stroke="#e8710a"/>',
+      '<text fill="#1a73e8">#notatag inside the block</text>',
+      "</svg>",
+      "",
+      'Inline <span style="color:#ff0000">red</span> and #second',
+    ].join("\n");
+    expect(extractTags(note)).toEqual(["real-tag", "second"]);
+  });
+});

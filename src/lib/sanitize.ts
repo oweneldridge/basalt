@@ -5,9 +5,15 @@ import DOMPurify, { type Config } from "dompurify";
 import { blockRemoteImages } from "./remoteImages";
 
 // Belt-and-braces on top of DOMPurify's safe defaults: never allow scripts,
-// event handlers, or javascript: URLs; keep target=_blank links safe.
+// event handlers, or javascript: URLs; keep target=_blank links safe. HTML and
+// plain SVG only (no MathML, no SVG filters); no foreignObject, which embeds
+// HTML in SVG, and no SVG animation, which can set attributes after the fact.
 const CONFIG: Config = {
-  FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form", "base"],
+  USE_PROFILES: { html: true, svg: true },
+  FORBID_TAGS: [
+    "script", "style", "iframe", "object", "embed", "form", "base",
+    "foreignObject", "animate", "animateMotion", "animateTransform", "set",
+  ],
   FORBID_ATTR: ["style"],
   ALLOW_DATA_ATTR: false,
   ADD_ATTR: ["target"],

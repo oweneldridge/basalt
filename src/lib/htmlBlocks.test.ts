@@ -42,3 +42,21 @@ describe("htmlBlockRanges", () => {
     }
   });
 });
+
+describe("inline SVG", () => {
+  const svg = [
+    "### The picture",
+    "",
+    '<svg viewBox="0 0 420 320" width="420" xmlns="http://www.w3.org/2000/svg" style="max-width:100%">',
+    '<line x1="40" y1="290" x2="395" y2="290" stroke="#e8710a" stroke-width="1"/>',
+    '<text x="55" y="48" font-size="12" fill="#1a73e8">orange: slope 5</text>',
+    "</svg>",
+    "",
+    "- after",
+  ].join("\n");
+
+  it("is one HTML block in both views", () => {
+    expect(htmlBlockRanges(svg)).toEqual([{ fromLine: 2, toLine: 5 }]);
+    expect(readingBlocks(svg)).toBe(1);
+  });
+});

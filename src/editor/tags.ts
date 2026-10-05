@@ -6,7 +6,7 @@ import type { Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { tagRegex } from "../lib/markdown";
-import { isInExcludedRegion, isInLinkContext, frontmatterRange, treeChanged } from "./regions";
+import { isInExcludedRegion, isInHtml, isInLinkContext, frontmatterRange, treeChanged } from "./regions";
 
 const TAG = Decoration.mark({ class: "cm-tag" });
 
@@ -24,6 +24,7 @@ function build(view: EditorView): DecorationSet {
       if (/^\d+$/.test(m[2])) continue; // pure-numeric isn't a tag (Obsidian rule)
       if (fm && tagStart < fm.to) continue; // YAML `tags:` lines aren't chips
       if (isInExcludedRegion(view.state, tagStart)) continue; // code / tables
+      if (isInHtml(view.state, tagStart)) continue; // `fill="#e8710a"` is a colour
       if (isInLinkContext(view.state, tagStart)) continue; // link text / destinations
       builder.add(tagStart, tagEnd, TAG);
     }

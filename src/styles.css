@@ -2868,6 +2868,12 @@ textarea.tp-modal-input {
   display: block;
   text-align: center;
 }
+/* Inline SVG drawings keep their aspect and fit a narrow screen. */
+.cm-html-block svg,
+.raw-html svg {
+  max-width: 100%;
+  height: auto;
+}
 
 /* Accessibility */
 .sr-only {

@@ -9,6 +9,7 @@
 // `./`/`../` relative forms are all supported.
 import type { VaultNote } from "./vault";
 import { linkpathDest } from "./linkpath";
+import { htmlBlockRanges } from "./htmlBlocks";
 import {
   internalMdHref,
   mdLinkRegexGlobal,
@@ -257,6 +258,8 @@ function splitOutsideQuotes(s: string): string[] {
 export function extractTags(content: string): string[] {
   const lines = content.split("\n");
   const prose = proseMask(lines);
+  // Raw HTML isn't Markdown: no tags inside its blocks or its tags' markup.
+  for (const b of htmlBlockRanges(content)) for (let i = b.fromLine; i <= b.toLine; i++) prose[i] = false;
   const seen = new Set<string>();
   const out: string[] = [];
   const add = (raw: string) => {
@@ -270,7 +273,9 @@ export function extractTags(content: string): string[] {
   for (const t of frontmatterTags(lines)) add(t);
   for (let i = 0; i < lines.length; i++) {
     if (!prose[i]) continue;
-    const line = lines[i].replace(INLINE_CODE_RE, " "); // `#x` in code isn't a tag
+    const line = lines[i]
+      .replace(INLINE_CODE_RE, " ") // `#x` in code isn't a tag
+      .replace(/<\/?[a-zA-Z][^<>]*>/g, " ");
     const re = tagRegex();
     let m: RegExpExecArray | null;
     while ((m = re.exec(line))) add(m[2]); // group 2 = bare name
