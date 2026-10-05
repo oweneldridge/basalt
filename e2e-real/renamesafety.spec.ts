@@ -756,3 +756,42 @@ test.describe("a keystroke as a note opens at a search hit", () => {
     expect(disk).toMatch(/\n(Q?Z)find-me here\n/);
   });
 });
+
+test.describe("a note opened at a search hit, then renamed", () => {
+  test.use({ vaultFiles: { "Target.md": "# Target\n\nfirst\n\nfind-me here\n\nlast\n" } });
+
+  test("keeps the caret where you type", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await page.keyboard.press("ControlOrMeta+Shift+f");
+    await page.locator(".palette-input").first().fill("find-me");
+    await expect(page.locator(".palette-item, [role=option]").first()).toBeVisible();
+    await page.keyboard.press("Enter");
+    const editor = page.locator(".pane:not(.dock) .cm-content").first();
+    await editor.locator(".cm-line", { hasText: /^last$/ }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("A");
+    let release: () => void = () => {};
+    let held = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (!held && body.includes('"cmd":"rename_note"')) {
+        held = true;
+        await new Promise<void>((r) => (release = r));
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    const title = page.locator(".pane:not(.dock) input.inline-title").first();
+    await title.fill("Target2");
+    await title.press("Enter");
+    await expect.poll(() => held).toBe(true);
+    await page.keyboard.type("B");
+    release();
+    await expect.poll(() => vault.exists("Target2.md"), { timeout: 10000 }).toBe(true);
+    await settle(page, 800);
+    await page.keyboard.type("C");
+    await settle(page, 1500);
+    expect(vault.read("Target2.md")).toBe("# Target\n\nfirst\n\nfind-me here\n\nlastABC\n");
+  });
+});

@@ -34,8 +34,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reply arrives after the file watcher has seen it land, and a slow read can't
   put back text older than your last save. Stacked columns follow
   external edits and edits made in other panes, even ones that put back text
-  typed earlier or that land in a column you typed in before; a column whose
-  note failed to load, or never answered, tries again. A rename or folder move whose reply is slow
+  typed earlier or that land in a column you typed in before, and opening the
+  same note elsewhere over a slow link no longer reverts the column; a column
+  whose note failed to load, or never answered, tries again. A rename or folder move whose reply is slow
   no longer raises a false "Changed on disk" on the notes being moved.
 - Saves are compare-and-swap: if the file changed since Basalt last read it
   (another tab or device, Obsidian, iCloud), you get "Changed on disk" instead
@@ -66,7 +67,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   if it moved; a new title keeps the note in the folder it was moved to, and a
   note dragged to a folder keeps a new title still being applied.
   Renaming a note shown in a stacked column keeps the text being typed there
-  and its caret. Escape in the inline title cancels the rename, and after
+  and its caret, and renaming a note opened from a search hit no longer sends
+  the caret back to that line. Escape in the inline title cancels the rename, and after
   renaming from the file tree, focus is on the renamed note.
 - A rename or folder move fixes links in notes being typed into inside their
   open editors, so typing in progress, even straight through the end of the

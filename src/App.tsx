@@ -3916,6 +3916,8 @@ export default function App() {
             active: isActive ? newPath : pane.active,
             doc: isActive ? (live ?? pane.doc) : pane.doc,
             docRev: isActive ? (pane.docRev ?? 0) + 1 : pane.docRev,
+            // The line it was opened at is done with; the rebuilt editor keeps the caret.
+            scrollToLine: isActive ? undefined : pane.scrollToLine,
             pinned: pane.pinned?.map((p) => (p === oldPath ? newPath : p)),
           };
         };
@@ -4409,6 +4411,7 @@ export default function App() {
           active: pane.active ? map(pane.active) : pane.active,
           doc: live ?? pane.doc,
           docRev: moved ? (pane.docRev ?? 0) + 1 : pane.docRev,
+          scrollToLine: moved ? undefined : pane.scrollToLine,
           pinned: pane.pinned?.map(map),
         };
       };
