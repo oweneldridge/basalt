@@ -38,3 +38,33 @@ test.describe("inline SVG in a note", () => {
     expect(vault.read("Drawing.md")).toBe(svg);
   });
 });
+
+test.describe("hidden files", () => {
+  test.use({ vaultFiles: { ".unisonbak.0.Ideas.md": "backup words\n", "Projects/.unisonbak.1.Alpha.md": "backup words\n" } });
+
+  test("stay out of the tree, search and switcher until shown", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await page.locator(".tree-row.folder", { hasText: "Projects" }).click();
+    await expect(page.locator(".tree-row", { hasText: "unisonbak" })).toHaveCount(0);
+    await page.keyboard.press("ControlOrMeta+o");
+    await page.locator(".palette-input").first().fill("unisonbak");
+    await expect(page.locator("[role=option]", { hasText: "Create note" })).toHaveCount(1);
+    await expect(page.locator("[role=option]", { hasText: ".unisonbak" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("ControlOrMeta+Shift+f");
+    await page.locator(".palette-input").first().fill("backup words");
+    await page.waitForTimeout(500);
+    await expect(page.locator("[role=option]", { hasText: "unisonbak" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByLabel("Show hidden files (names starting with a dot)").check();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".tree-row", { hasText: ".unisonbak.0.Ideas" })).toHaveCount(1, { timeout: 10000 });
+    await page.keyboard.press("ControlOrMeta+o");
+    await page.locator(".palette-input").first().fill("unisonbak");
+    await expect(page.locator("[role=option]", { hasText: ".unisonbak" }).first()).toBeVisible();
+    await page.keyboard.press("Escape");
+    expect(vault.exists(".unisonbak.0.Ideas.md")).toBe(true);
+    expect(vault.exists("Projects/.unisonbak.1.Alpha.md")).toBe(true);
+  });
+});

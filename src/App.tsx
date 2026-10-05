@@ -74,6 +74,7 @@ import { listPlugins, writePluginData, listCssSnippets, deleteFolder, renameFold
 import type { NoteRef } from "./editor/wikilink";
 import { clearImageCache, resolveImage } from "./lib/assets";
 import { remoteImagesNeedReload, setRemoteImages } from "./lib/remoteImages";
+import { isHiddenRel } from "./lib/hiddenFiles";
 import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { Ribbon } from "./components/Ribbon";
@@ -512,6 +513,14 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("basalt-spellcheck", String(spellcheck));
   }, [spellcheck]);
+  // Dot-prefixed files and folders stay out of the tree, search, the switcher
+  // and the index unless this is on (Obsidian hides them too).
+  const [showHidden, setShowHidden] = useState(() => localStorage.getItem("basalt-show-hidden") === "true");
+  const showHiddenRef = useRef(showHidden);
+  showHiddenRef.current = showHidden;
+  useEffect(() => {
+    localStorage.setItem("basalt-show-hidden", String(showHidden));
+  }, [showHidden]);
   // User-assigned command hotkeys (global preference; see lib/hotkeys.ts).
   const [hotkeys, setHotkeys] = useState<Bindings>(() => loadBindings());
   useEffect(() => saveBindings(hotkeys), [hotkeys]);
@@ -678,6 +687,10 @@ export default function App() {
       startSeq = saveSeq.current;
       startGen = structGen.current;
       [read, atts] = await Promise.all([readVault(), listAttachments()]);
+    }
+    if (!showHiddenRef.current) {
+      read = read.filter((n) => !isHiddenRel(n.rel));
+      atts = atts.filter((a) => !isHiddenRel(a.rel));
     }
     const list = read.map((n) => {
       const w = lastSave.current.get(n.path);
@@ -1944,8 +1957,10 @@ export default function App() {
 
   // Apply a batch of external (on-disk) changes, matched by vault-relative path.
   const processChanges = useCallback(
-    async (changes: ChangedNote[]) => {
+    async (incoming: ChangedNote[]) => {
       if (!vaultRef.current) return;
+      const changes = showHiddenRef.current ? incoming : incoming.filter((c) => !isHiddenRel(c.rel));
+      if (changes.length === 0) return;
       const byRel = new Map(notesRef.current.map((n) => [n.rel, n]));
       const prevByRel = new Map(notesRef.current.map((n) => [n.rel, knownText(n.path) ?? n.content]));
       const seqOf = (path: string) => lastSave.current.get(path)?.seq;
@@ -2171,6 +2186,14 @@ export default function App() {
     // Back after a gap: anything that couldn't be saved meanwhile goes now.
     if (pending.current.size > 0) void flushAllRef.current();
   }, [loadVault, addConflict, patchPane, rememberSelfWrite, setBigBase, bumpIndex]);
+
+  // Showing or hiding dot files changes what the vault lists: read it again.
+  const appliedShowHidden = useRef(showHidden);
+  useEffect(() => {
+    if (appliedShowHidden.current === showHidden) return;
+    appliedShowHidden.current = showHidden;
+    if (vaultRef.current) void handleRescan();
+  }, [showHidden, handleRescan]);
 
   // Listen for on-disk changes; debounce; then apply.
   useEffect(() => {
@@ -5289,6 +5312,8 @@ export default function App() {
           remoteImages={remoteImages}
           remoteImagesReload={remoteImagesNeedReload()}
           onRemoteImages={setRemoteImagesOn}
+          showHidden={showHidden}
+          onShowHidden={setShowHidden}
           vim={vim}
           onVim={setVim}
           rtl={rtl}

@@ -53,6 +53,8 @@ interface Props {
   /** Turned back on this session: they load after a reload. */
   remoteImagesReload?: boolean;
   onRemoteImages: (on: boolean) => void;
+  showHidden: boolean;
+  onShowHidden: (on: boolean) => void;
   vim: boolean;
   onVim: (on: boolean) => void;
   rtl: boolean;
@@ -107,6 +109,8 @@ export function SettingsModal({
   remoteImages,
   remoteImagesReload,
   onRemoteImages,
+  showHidden,
+  onShowHidden,
   vim,
   onVim,
   rtl,
@@ -207,6 +211,10 @@ export function SettingsModal({
               Load remote images{remoteImagesReload ? " (after a reload)" : ""}
             </span>
             <input type="checkbox" checked={remoteImages} onChange={(e) => onRemoteImages(e.target.checked)} />
+          </label>
+          <label className="settings-row">
+            <span className="settings-row-label">Show hidden files (names starting with a dot)</span>
+            <input type="checkbox" checked={showHidden} onChange={(e) => onShowHidden(e.target.checked)} />
           </label>
           <label className="settings-row">
             <span className="settings-row-label">Vim key bindings</span>
