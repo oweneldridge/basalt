@@ -524,3 +524,35 @@ test.describe("a keystroke as an outside edit is read", () => {
     if ((await page.locator(".conflict").count()) === 0) expect(disk).toBe("# W\n\nalpha PHONE\n\nomegaQ\n");
   });
 });
+
+test.describe("a big note renamed while typing in it", () => {
+  const filler = ("lorem ipsum dolor sit amet ".repeat(40) + "\n").repeat(5200);
+  test.use({ vaultFiles: { "Big.md": `me [[Big]]\n\nstart\n\n${filler}` } });
+
+  test("raises no false conflict", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Big");
+    let held = false;
+    let release: () => void = () => {};
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (!held && body.includes('"cmd":"read_note"') && body.includes("Big2.md")) {
+        held = true;
+        await new Promise<void>((r) => (release = r));
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    await page.locator(".pane:not(.dock) input.inline-title").first().fill("Big2");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "start" }).click();
+    await page.keyboard.press("End");
+    await expect.poll(() => held, { timeout: 10000 }).toBe(true);
+    await page.keyboard.type(" T");
+    await page.waitForTimeout(300);
+    release();
+    await settle(page, 3000);
+    await expect(page.locator(".conflict")).toHaveCount(0);
+    await expect.poll(() => vault.read("Big2.md").slice(0, 30), { timeout: 10000 }).toContain("me [[Big2]]\n\nstart T");
+  });
+});

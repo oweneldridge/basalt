@@ -687,6 +687,12 @@ export default function App() {
     const n = notesRef.current.find((x) => x.path === path);
     return !!n && n.content === "" && (n.size ?? 0) > 0;
   };
+  // The text Basalt last knew a note had on disk, if any.
+  const knownText = (path: string): string | undefined => {
+    const n = notesRef.current.find((x) => x.path === path);
+    if (!n) return undefined;
+    return n.content === "" && (n.size ?? 0) > 0 ? bigBase.current.get(path) : n.content;
+  };
   const setBigBase = useCallback((path: string, text: string) => {
     bigBase.current.set(path, text);
     bigGen.current.set(path, (bigGen.current.get(path) ?? 0) + 1);
@@ -1900,7 +1906,7 @@ export default function App() {
     async (changes: ChangedNote[]) => {
       if (!vaultRef.current) return;
       const byRel = new Map(notesRef.current.map((n) => [n.rel, n]));
-      const prevByRel = new Map(notesRef.current.map((n) => [n.rel, n.content]));
+      const prevByRel = new Map(notesRef.current.map((n) => [n.rel, knownText(n.path) ?? n.content]));
       const seqOf = (path: string) => lastSave.current.get(path)?.seq;
       const before = changes.map((c) => {
         const path = byRel.get(c.rel)?.path ?? c.path;
@@ -3872,7 +3878,7 @@ export default function App() {
         // Same bytes on disk as before the rename, so the old baseline still holds.
         const moved: VaultNote = { ...oldNote, path: newPath, rel: newRel, name: newBase };
         selfWrites.current.delete(oldNote.rel);
-        rememberSelfWrite(newRel, oldNote.content);
+        rememberSelfWrite(newRel, bigBase.current.get(newPath) ?? oldNote.content);
         index.current.removeNote(oldPath);
         index.current.setNote(moved);
         notesRef.current = notesRef.current.map((n) => (n.path === oldPath ? moved : n));
@@ -3960,8 +3966,8 @@ export default function App() {
         // Fix the note's own links on disk, unless it's being typed into; either
         // way reconcileRewrites then makes sure the newest text, typed or
         // saved, carries the fix.
-        const own = await queueWrite(newPath, async () => {
-          const known = notesRef.current.find((n) => n.path === newPath)?.content ?? oldNote.content;
+        await queueWrite(newPath, async () => {
+          const known = knownText(newPath);
           let disk = oldNote.content;
           try {
             disk = await readNote(newPath);
@@ -3978,11 +3984,9 @@ export default function App() {
               if (!isWriteConflict(e)) throw e; // changed meanwhile: reconciled below
             }
           }
-          return { disk, next, known };
+          // Editors take the outcome now, before a save queued behind this job.
+          if (next !== null) reconcileRewrites([{ path: newPath, base: disk, next, mapper: ownMap, known }]);
         });
-        if (own.next !== null) {
-          reconcileRewrites([{ path: newPath, base: own.disk, next: own.next, mapper: ownMap, known: own.known }]);
-        }
 
         // Rewrite affected sources. Candidates are found via the in-memory
         // snapshot (cheap), but each rewrite reads DISK content so a fresher
@@ -4000,7 +4004,7 @@ export default function App() {
           !literal && preIndex.resolve(raw, notePath) === oldPath && !viaAlias(raw)
             ? linkTargetForFormat(fmt, newRelNoExt, taken, noteRel)
             : null;
-        const done: RewriteDone[] = [];
+        const done: string[] = [];
         const failures: string[] = [];
         for (const note of preNotes) {
           if (note.path === oldPath) continue;
@@ -4020,24 +4024,23 @@ export default function App() {
           try {
             const mapper = sourceMap(note.path, note.rel);
             await queueWrite(note.path, async () => {
-              const known = notesRef.current.find((n) => n.path === note.path)?.content;
+              const known = knownText(note.path);
               const disk = await readNote(note.path);
               const next = rewriteLinks(disk, mapper);
               if (next === null) return;
               rememberSelfWrite(note.rel, next); // before the write: its echo isn't an outside edit
               await writeNote(note.path, next, disk);
               registerRewrite({ ...note, content: next });
-              done.push({ path: note.path, base: disk, next, mapper, known });
+              done.push(note.path);
+              // Editors take the outcome now, before a save queued behind this job.
+              reconcileRewrites([{ path: note.path, base: disk, next, mapper, known }]);
             });
           } catch (e) {
             failures.push(note.rel);
             console.error("[basalt] link rewrite failed", note.rel, e);
           }
         }
-        if (done.length > 0) {
-          bumpStructure();
-          reconcileRewrites(done);
-        }
+        if (done.length > 0) bumpStructure();
         // Repoint canvas file-node embeds of the renamed note (canvases aren't
         // in the note link-rewrite loop above; without this they'd dangle).
         const canvasFails = await rewriteCanvasRefs(
@@ -4433,7 +4436,6 @@ export default function App() {
       // One pass: rewrite affected notes (moved and unmoved), reading DISK so a
       // fresher external edit is never reverted. Cheap in-memory pre-filter.
       // Each rewrite is registered as soon as it's written (see registerRewrite).
-      const done: RewriteDone[] = [];
       const failures: string[] = [];
       for (const post of postNotes) {
         const mapper = makeMapper(post);
@@ -4450,21 +4452,20 @@ export default function App() {
         }
         try {
           await queueWrite(post.path, async () => {
-            const known = notesRef.current.find((n) => n.path === post.path)?.content;
+            const known = knownText(post.path);
             const disk = await readNote(post.path);
             const next = rewriteLinks(disk, mapper);
             if (next === null) return;
             rememberSelfWrite(post.rel, next); // before the write: its echo isn't an outside edit
             await writeNote(post.path, next, disk);
             registerRewrite({ ...post, content: next });
-            done.push({ path: post.path, base: disk, next, mapper, known });
+            reconcileRewrites([{ path: post.path, base: disk, next, mapper, known }]);
           });
         } catch (e) {
           failures.push(post.rel);
           console.error("[basalt] folder-move link rewrite failed", post.rel, e);
         }
       }
-      reconcileRewrites(done);
 
       // Repoint canvas file-node embeds of every moved note AND moved
       // attachment (canvas file-nodes can embed images/PDFs/nested canvases, not

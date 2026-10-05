@@ -691,3 +691,33 @@ test.describe("an outside edit just before a rename rewrites the note's links", 
     expect(disk.includes("PHONE") || (await page.locator(".conflict").count()) > 0).toBe(true);
   });
 });
+
+test.describe("typing during a rename's link pass, after an outside edit", () => {
+  const sources: Record<string, string> = {};
+  for (let i = 10; i < 30; i++) sources[`S${i}.md`] = `x [[N]]\n`;
+  test.use({ vaultFiles: { "N.md": "# N\n", "A1.md": "see [[N]]\n\nmid\n", ...sources } });
+
+  test("keeps the edit and raises a conflict for the typing", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "A1");
+    let a1Written = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      await new Promise((r) => setTimeout(r, 80));
+      if (body.includes('"cmd":"rename_note"')) vault.write("A1.md", "see [[N]]\n\nmid PHONE\n");
+      await route.fulfill({ response: res }).catch(() => {});
+      if (body.includes('"cmd":"write_note"') && body.includes("/A1.md")) a1Written = true;
+    });
+    await page.locator(".tree-row.file", { hasText: /^N$/ }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+    await page.locator(".prompt-input").fill("N2");
+    await page.locator(".prompt-input").press("Enter");
+    await expect.poll(() => a1Written, { timeout: 15000 }).toBe(true);
+    await page.locator(".pane:not(.dock) .cm-line").last().click();
+    await page.keyboard.type("Q");
+    await settle(page, 5000);
+    expect(vault.read("A1.md")).toContain("PHONE");
+  });
+});
