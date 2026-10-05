@@ -268,3 +268,19 @@ test("after renaming from the file tree, focus is on the renamed note's row", as
   await expect.poll(() => vault.exists("Ideas Two.md")).toBe(true);
   await expect(page.locator(".tree-row.file:focus")).toHaveText("Ideas Two");
 });
+
+test("a property edited after the note's tab is closed is saved", async ({ page, vault }) => {
+  const before = vault.read("Projects/Alpha.md");
+  await openApp(page, vault);
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).click();
+  await openNote(page, "Alpha");
+  await page.locator(".pane.dock .tab.view-tab", { hasText: "Properties" }).click();
+  await expect(page.locator(".prop-row", { hasText: "status" })).toHaveCount(1);
+  await page.locator(".pane:not(.dock) .tab", { hasText: "Alpha" }).locator(".tab-close").click();
+  await expect(page.locator(".pane:not(.dock) .cm-content")).toHaveCount(0);
+  const row = page.locator(".prop-row", { hasText: "status" });
+  await row.locator(".prop-value").fill("paused");
+  await row.locator(".prop-value").press("Enter");
+  await expect.poll(() => vault.read("Projects/Alpha.md")).toContain("status: paused");
+  expect(vault.read("Projects/Alpha.md")).toBe(before.replace("status: active", "status: paused"));
+});

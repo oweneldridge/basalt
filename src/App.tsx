@@ -4808,9 +4808,25 @@ export default function App() {
         const hostPane = lastNotePath ? Object.entries(panes).find(([, p]) => p.active === lastNotePath) : undefined;
         return (
           <Properties
-            doc={hostPane ? docFor(hostPane[1]) : noteDoc}
+            doc={
+              hostPane
+                ? docFor(hostPane[1])
+                : lastNotePath
+                  ? (pending.current.get(lastNotePath) ?? editorText(lastNotePath) ?? noteDoc)
+                  : noteDoc
+            }
             onChange={(edit) => {
-              if (!hostPane || !lastNotePath) return;
+              if (!lastNotePath) return;
+              if (!hostPane) {
+                // No pane has it active (its tab was closed, or it's a stacked
+                // column): edit the newest text Basalt has for it and save that.
+                const base = pending.current.get(lastNotePath) ?? editorText(lastNotePath) ?? knownText(lastNotePath);
+                if (base === undefined) return;
+                const nextDoc = edit(base);
+                showText(lastNotePath, nextDoc);
+                handleChange("", lastNotePath, nextDoc);
+                return;
+              }
               // Apply to the text the editor holds now, not this render's copy.
               const live = panesRef.current[hostPane[0]];
               const nextDoc = edit(live ? docFor(live) : docFor(hostPane[1]));

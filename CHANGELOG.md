@@ -51,6 +51,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   other extended attributes.
 - "Keep mine" on a note that was deleted elsewhere writes your text back
   instead of discarding it.
+- A save that fails while offline, with the server down or on an expired login
+  is tried again on a backoff, and at once when the connection or the app comes
+  back, so it no longer waits for your next keystroke.
+- A canvas edited while a rename fixes its links keeps the edit (the link fix
+  is reported as failed instead), and an open canvas or base keeps checking
+  for outside edits after many other notes are saved or moved.
+- Today's daily note, a duplicated note and a plugin's new note get their text
+  only while still empty, so anything typed into them first stays.
+- Editing a property in the Properties panel after closing the note's tab saves
+  the change instead of dropping it. Bookmarks toggled at the same moment from
+  two places are all kept.
 - Typing while a note is being renamed no longer recreates the old file or
   drops what you typed, even a keystroke that lands while the editor is rebuilt
   for the new name, and the caret stays where you were typing. Edits
