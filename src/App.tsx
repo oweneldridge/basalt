@@ -3642,13 +3642,14 @@ export default function App() {
     [notes, pluginVersion],
   );
 
-  // Word/char count for the status bar (from the saved content — updates within
-  // the autosave debounce of typing). Only for editable notes.
+  // Word/char count for the status bar (from the saved content, so it updates
+  // within the autosave debounce of typing). It follows the last note shown,
+  // like the Outline, so focusing a side panel doesn't zero it. Notes only.
   const docStats = useMemo(() => {
-    if (!active || activeIsViewer || !activeNote) return null;
-    const text = activeNote.content;
+    if (!lastNote || isViewerPath(lastNote.path)) return null;
+    const text = lastNote.content;
     return { words: (text.match(/\S+/g) ?? []).length, chars: text.length };
-  }, [active, activeIsViewer, activeNote]);
+  }, [lastNote]);
 
   // Backlinks of the active note can only change when OTHER notes change, so
   // this keys off structureVersion — a local autosave doesn't re-resolve the vault.
@@ -4257,7 +4258,8 @@ export default function App() {
 
   const handleLinkMention = useCallback(
     (m: { path: string; line: number }) => {
-      const target = notesRef.current.find((n) => n.path === activePathRef.current);
+      // The note the Backlinks panel shows, which a click there has unfocused.
+      const target = notesRef.current.find((n) => n.path === lastNotePathRef.current);
       if (target) void linkifyInNote(m.path, m.line, target);
     },
     [linkifyInNote],
@@ -4265,7 +4267,7 @@ export default function App() {
 
   const handleLinkAllMentions = useCallback(
     async (mentions: { path: string; line: number }[]) => {
-      const target = notesRef.current.find((n) => n.path === activePathRef.current);
+      const target = notesRef.current.find((n) => n.path === lastNotePathRef.current);
       if (!target) return;
       // Snapshot the list; line numbers stay valid (linkify never adds lines).
       for (const m of [...mentions]) await linkifyInNote(m.path, m.line, target);

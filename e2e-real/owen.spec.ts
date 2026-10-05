@@ -68,3 +68,25 @@ test.describe("hidden files", () => {
     expect(vault.exists("Projects/.unisonbak.1.Alpha.md")).toBe(true);
   });
 });
+
+test("the word count stays when a side panel is focused", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await openNote(page, "Ideas");
+  const words = page.locator(".status-bar-item", { hasText: "words" });
+  await expect(words).not.toHaveText("0 words");
+  const before = await words.textContent();
+  await page.locator(".pane.dock .tab.view-tab", { hasText: "Outline" }).click();
+  await expect(words).toHaveText(before ?? "");
+});
+
+test.describe("unlinked mentions", () => {
+  test.use({ vaultFiles: { "Target.md": "# Target\n", "Src.md": "see Target here\n" } });
+
+  test("Link in the Backlinks panel links the mention", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Target");
+    await page.locator(".pane.dock .tab.view-tab", { hasText: "Backlinks" }).click();
+    await page.locator(".ref-link-btn").first().click();
+    await expect.poll(() => vault.read("Src.md")).toBe("see [[Target]] here\n");
+  });
+});
