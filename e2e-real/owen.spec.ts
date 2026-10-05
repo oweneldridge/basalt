@@ -293,3 +293,56 @@ test.describe("an image map in a note", () => {
     expect(page.url()).toBe(start);
   });
 });
+
+test.describe("clicks on the edges of rendered blocks", () => {
+  test.use({
+    vaultFiles: {
+      "Edge.md": "---\ntitle: P\ntags: [a]\n---\nfirst body\n\nBELOW\n\nEND\n",
+      "Code.md": "---\ntitle: C\n---\n```latex\nx\n```\n\nEND\n",
+      "Merm.md": "top\n\nABOVE\n\n```mermaid\ngraph TD\nA-->B\n```\n\nBELOW\n\nEND\n",
+    },
+  });
+
+  test("never type into the hidden frontmatter", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Edge");
+    const content = (await page.locator(".pane:not(.dock) .cm-content").first().boundingBox())!;
+    for (const [dx, dy, ch] of [
+      [200, -0.5, "Z"],
+      [200, 0, "Y"],
+      [10, -4, "Q"],
+    ] as const) {
+      await page.locator(".pane:not(.dock) .cm-line", { hasText: "END" }).click();
+      const box = (await page.locator(".pane:not(.dock) .cm-properties").boundingBox())!;
+      await page.mouse.click(dx === 10 ? content.x + 10 : box.x + dx, box.y + box.height + dy);
+      await page.keyboard.type(ch);
+    }
+    await settle(page, 1500);
+    const disk = vault.read("Edge.md");
+    expect(disk.startsWith("---\ntitle: P\ntags: [a]\n---\n")).toBe(true);
+  });
+
+  test("never type after a diagram's closing fence", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Merm");
+    await expect(page.locator(".pane:not(.dock) .cm-mermaid svg")).toBeVisible({ timeout: 15000 });
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "END" }).click();
+    const m = (await page.locator(".pane:not(.dock) .cm-mermaid").boundingBox())!;
+    await page.mouse.click(m.x + 60, m.y + m.height - 0.5);
+    await page.keyboard.type("Z");
+    await settle(page, 1500);
+    expect(vault.read("Merm.md")).not.toContain("```Z");
+  });
+
+  test("a code block under the properties keeps its own padding below the gap", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Code");
+    const first = page.locator(".pane:not(.dock) .cm-after-properties");
+    await expect(first).toHaveCount(1);
+    const style = await first.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { border: cs.borderTopWidth, padding: cs.paddingTop };
+    });
+    expect(style).toEqual({ border: "18px", padding: "6px" });
+  });
+});

@@ -180,7 +180,9 @@ const themeSpec = {
     // Frontmatter "Properties" view
     // Block widgets never take vertical margins: CodeMirror measures a widget
     // without them, so every line below would sit out of step with the page.
-    ".cm-after-properties": { paddingTop: "18px" },
+    // A transparent border, not padding: a code block's or callout's own
+    // background and top padding stay below the gap.
+    ".cm-after-properties": { borderTop: "18px solid transparent", backgroundClip: "padding-box" },
     ".cm-properties": {
       border: "1px solid var(--border)",
       borderRadius: "8px",
@@ -310,7 +312,8 @@ const themeSpec = {
     ".cm-mermaid": {
       display: "block",
       textAlign: "center",
-      padding: "16px 0",
+      margin: "8px 0",
+      padding: "8px 0",
       color: "var(--text-muted)",
       cursor: "pointer",
     },

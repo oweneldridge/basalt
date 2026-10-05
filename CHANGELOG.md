@@ -34,7 +34,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it, and Reading view renders an HTML block written right under a paragraph.
 - The arrow keys move one line at a time past tables, math blocks, drawings
   and the Properties block, instead of jumping lines above them. A click just
-  below a table, an embed or the Properties block lands on the next line.
+  below a table, an embed or the Properties block lands on the next line, and
+  a click on the edge of the Properties block or beside it can no longer put
+  the caret in the hidden frontmatter.
 - Files and folders whose names start with a dot (sync backups such as
   `.unisonbak.*`, `.DS_Store`) are hidden from the file tree, search, the quick
   switcher and the index, as in Obsidian. "Show hidden files" in Settings shows

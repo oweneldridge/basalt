@@ -9,7 +9,7 @@
 // widget gets the EditorView in toDOM(view) and dispatches directly; inputs are
 // plain DOM (no CM transaction while typing), so the widget is stable until a
 // commit rebuilds it.
-import { RangeSetBuilder, StateField } from "@codemirror/state";
+import { EditorState as State, RangeSetBuilder, StateField } from "@codemirror/state";
 import type { EditorState, EditorSelection, Extension } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
@@ -353,4 +353,18 @@ const fmField = StateField.define<FmState>({
   provide: (field) => EditorView.decorations.from(field, (v) => v.deco),
 });
 
-export const frontmatter: Extension = [fmField];
+// A click that CodeMirror resolves to an edge of the rendered Properties block
+// (a pixel row along its border, or the gutter beside it, maps to the start or
+// end of the hidden `---` lines) goes to the first body line instead: typing
+// at either edge would break the frontmatter.
+const edgeClick = State.transactionFilter.of((tr) => {
+  if (!tr.isUserEvent("select.pointer") || tr.docChanged) return tr;
+  const range = frontmatterRange(tr.startState);
+  if (!range || range.to >= tr.startState.doc.length) return tr;
+  if (touches(range, tr.startState.selection)) return tr; // raw already showing
+  const sel = tr.newSelection.main;
+  if (!sel.empty || (sel.head !== range.from && sel.head !== range.to)) return tr;
+  return [tr, { selection: { anchor: range.to + 1 }, sequential: true }];
+});
+
+export const frontmatter: Extension = [fmField, edgeClick];
