@@ -106,12 +106,26 @@ export function showText(path: string, text: string): void {
   }
 }
 
+/** The text of an open editor on `path`, if one shows it (newest there is). */
+export function editorText(path: string): string | undefined {
+  for (const v of openEditors.get(path) ?? []) return v.state.doc.toString();
+  return undefined;
+}
+
 export function fixOpenEditors(path: string, fn: (text: string) => string): string | null {
   const views = openEditors.get(path);
   if (!views || views.size === 0) return null;
+  // Fixing one editor syncs the others on the note (showText). Each is fixed
+  // from the text it had before, and one already synced is left alone: a fix
+  // applied twice can point a link somewhere else.
+  const before = new Map([...views].map((v) => [v, v.state.doc.toString()]));
   let text: string | null = null;
   for (const v of views) {
     const current = v.state.doc.toString();
+    if (current !== before.get(v)) {
+      text = current;
+      continue;
+    }
     const changes = textChanges(current, fn(current));
     if (changes.length) v.dispatch({ changes, annotations: Transaction.addToHistory.of(false) });
     text = v.state.doc.toString();

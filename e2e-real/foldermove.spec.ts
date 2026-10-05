@@ -191,3 +191,37 @@ test("typing during a folder move with a slow reply raises no false conflict", a
   expect(vault.read("Work/Alpha.md")).toContain("typed-during-move");
   expect(vault.exists("Projects")).toBe(false);
 });
+
+test.describe("a folder move with the linking note in two panes", () => {
+  test.use({ vaultFiles: { "A/X.md": "# X\n", "Old/B/X.md": "# old X\n", "Linker.md": "# S\n\nsee [[A/X]]\n\nend\n" } });
+
+  test("fixes the link once while it's typed in", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Linker");
+    await page.locator('button:has-text("⊟")').first().click();
+    await expect(page.locator(".pane:not(.dock)")).toHaveCount(2);
+    let release: () => void = () => {};
+    let held = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (!held && body.includes('"cmd":"rename_folder"')) {
+        held = true;
+        await new Promise<void>((r) => (release = r));
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    await page.locator(".pane:not(.dock)").first().locator(".cm-line", { hasText: /^end$/ }).click();
+    await page.keyboard.press("End");
+    await renameFolder(page, "A", "B");
+    await expect.poll(() => held).toBe(true);
+    await page.locator(".pane:not(.dock)").first().locator(".cm-line", { hasText: /^end$/ }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("Q");
+    release();
+    await expect.poll(() => vault.exists("B/X.md"), { timeout: 10000 }).toBe(true);
+    await settle(page, 3000);
+    expect(vault.read("Linker.md")).toBe("# S\n\nsee [[B/X]]\n\nendQ\n");
+  });
+});
