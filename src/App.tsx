@@ -2062,6 +2062,13 @@ export default function App() {
       if (p.active) shown.add(p.active);
       if (p.stacked) for (const t of p.tabs) shown.add(t);
     }
+    // One the listing just stopped giving text for (it grew past the cap, or its
+    // text came from the watcher) starts from the text last seen; the read below
+    // then catches anything newer.
+    for (const path of shown) {
+      const seen = prevByPath.get(path);
+      if (seen && !bigBase.current.has(path) && unlisted(path)) setBigBase(path, seen);
+    }
     const big = [...shown].filter((path) => bigBase.current.has(path) && unlisted(path));
     await Promise.all(
       big.map(async (path) => {

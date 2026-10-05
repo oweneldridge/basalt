@@ -425,6 +425,25 @@ test.describe("big notes and a slow rescan", () => {
     await expect(page.locator(".tree-row.file", { hasText: /^Small$/ })).toHaveCount(0);
   });
 
+  test("a big note opened after an outside edit saves normally after a rescan", async ({ page, vault }) => {
+    await openApp(page, vault);
+    vault.write("Big.md", big.replace("head line", "head line PHONE"));
+    await settle(page, 4000);
+    await openNote(page, "Big");
+    const editor = page.locator(".pane:not(.dock) .cm-content").first();
+    await editor.locator(".cm-line", { hasText: "head line PHONE" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" A");
+    await expect.poll(() => vault.read("Big.md").slice(0, 40), { timeout: 10000 }).toContain("PHONE A");
+    mkdirSync(vault.path("NewFolder"));
+    await settle(page, 5000);
+    await editor.locator(".cm-line", { hasText: "head line PHONE" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" B");
+    await expect.poll(() => vault.read("Big.md").slice(0, 40), { timeout: 10000 }).toContain("PHONE A B");
+    await expect(page.locator(".conflict")).toHaveCount(0);
+  });
+
   test("a stacked column whose first read never answers loads in the end", async ({ page, vault }) => {
     await openApp(page, vault);
     await openNote(page, "Big");
