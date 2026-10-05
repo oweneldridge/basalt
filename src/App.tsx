@@ -82,7 +82,7 @@ import { StackedTabs } from "./components/StackedTabs";
 import { SlidesView } from "./components/SlidesView";
 import { StatusBar } from "./components/StatusBar";
 import { InlineTitle } from "./components/InlineTitle";
-import { EditorPane, fixOpenEditors, showText, type EditorApi } from "./components/EditorPane";
+import { EditorPane, editorText, fixOpenEditors, showText, type EditorApi } from "./components/EditorPane";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec, type BuiltinView } from "./lib/leafViews";
@@ -706,7 +706,14 @@ export default function App() {
   // Opening a note: an unlisted one's first read becomes its baseline.
   const readToOpen = useCallback(
     async (path: string) => {
-      const text = await readNote(path);
+      // A read that overlapped one of our own saves may predate it: read again.
+      let text = "";
+      for (let tries = 0; tries < 3; tries++) {
+        const seq = lastSave.current.get(path)?.seq;
+        const writing = isWriting(path);
+        text = await readNote(path);
+        if (!writing && !isWriting(path) && lastSave.current.get(path)?.seq === seq) break;
+      }
       if (!bigBase.current.has(path) && unlisted(path)) setBigBase(path, text);
       return text;
     },
@@ -767,6 +774,7 @@ export default function App() {
   // another pane's live text wins, since either may be newer than the read.
   const freshDoc = (path: string, disk: string): string =>
     pending.current.get(path) ??
+    editorText(path) ??
     (Object.values(panesRef.current).some((p) => p.active === path) ? liveDocs.current.get(path) : undefined) ??
     disk;
 
@@ -2064,8 +2072,19 @@ export default function App() {
     }
     // Unsaved edits in a note no pane shows as active (a stacked column, a
     // background tab) need the same check, or the next save overwrites the
-    // external change with the old baseline's blessing.
+    // external change with the old baseline's blessing. A stacked column with
+    // none takes the new text at once.
     const activeNow = new Set(Object.values(panesRef.current).map((p) => p.active));
+    for (const p of Object.values(panesRef.current)) {
+      if (!p.stacked) continue;
+      for (const path of p.tabs) {
+        if (activeNow.has(path) || pending.current.has(path)) continue;
+        const still = byPath.get(path);
+        const prev = prevByPath.get(path);
+        if (!still || (still.content === "" && (still.size ?? 0) > 0) || prev === undefined || still.content === prev) continue;
+        showText(path, still.content);
+      }
+    }
     for (const path of pending.current.keys()) {
       if (activeNow.has(path) || isViewerPath(path)) continue;
       const still = byPath.get(path);

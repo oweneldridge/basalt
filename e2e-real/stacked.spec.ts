@@ -211,3 +211,99 @@ test("typing in one column doesn't re-request a column that is still loading", a
   await settle(page, 3500);
   expect(reads).toBeLessThanOrEqual(1);
 });
+
+test.describe("stacked columns and slow reads", () => {
+  test.use({
+    vaultFiles: {
+      "Xnote.md": "# Xnote\n\nalpha\n\nomega\n",
+      "Ynote.md": "# Ynote\n",
+      "Other.md": "# Other\n\nbody\n",
+      "Aaa.md": "# Aaa\n\nalpha line\n\nend a\n",
+      "Bbb.md": "# Bbb\n",
+    },
+  });
+
+  test("opening a note slowly doesn't revert its column", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Other");
+    await page.getByRole("button", { name: "Split right" }).first().click();
+    const panes = page.locator(".pane:not(.dock)");
+    await expect(panes).toHaveCount(2);
+    await page.locator(".tree-row.file", { hasText: "Xnote" }).first().click();
+    await page.locator(".tree-row.file", { hasText: "Ynote" }).first().click();
+    const right = panes.filter({ has: page.locator(".tab", { hasText: "Ynote" }) });
+    const left = panes.filter({ hasNot: page.locator(".tab", { hasText: "Ynote" }) });
+    await right.getByRole("button", { name: /Stack tabs/ }).click();
+    const col = right.locator(".stacked-col").filter({ has: page.locator(".stacked-col-head", { hasText: "Xnote" }) });
+    await expect(col.locator(".cm-content")).toBeVisible();
+    let landed = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (!landed && body.includes('"cmd":"read_note"') && body.includes("/Xnote.md")) {
+        await new Promise((r) => setTimeout(r, 2500));
+        await route.fulfill({ response: res }).catch(() => {});
+        landed = true;
+        return;
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    await left.locator(".cm-content").first().click();
+    await page.keyboard.press("ControlOrMeta+o");
+    await page.locator(".palette-input").first().fill("Xnote");
+    await page.keyboard.press("Enter");
+    await col.locator(".cm-line", { hasText: "alpha" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" Q");
+    await expect.poll(() => vault.read("Xnote.md"), { timeout: 5000 }).toContain("alpha Q");
+    await expect.poll(() => landed, { timeout: 10000 }).toBe(true);
+    await settle(page, 800);
+    await col.locator(".cm-line", { hasText: "omega" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" R");
+    await settle(page, 1500);
+    expect(vault.read("Xnote.md")).toBe("# Xnote\n\nalpha Q\n\nomega R\n");
+  });
+
+  test("a rescan's outside edit to a column-only note survives a keystroke as it lands", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Aaa");
+    await openNote(page, "Bbb");
+    await page.locator(".tab-stack").first().click();
+    const col = page.locator(".stacked-col").filter({ has: page.locator(".stacked-col-head", { hasText: "Aaa" }) });
+    await col.locator(".cm-line", { hasText: "end a" }).click();
+    await page.keyboard.press("End");
+    await settle(page, 800);
+    const holds: Record<string, () => void> = {};
+    let typed: Promise<void> | null = null;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const cmd = /"cmd":"([a-z_]+)"/.exec(body)?.[1] ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if ((cmd === "read_vault" || cmd === "list_attachments") && !(cmd in holds)) {
+        await new Promise<void>((r) => (holds[cmd] = r));
+        if (cmd === "read_vault") {
+          const sent = route.fulfill({ response: res }).catch(() => {});
+          typed = page.keyboard.type("Q");
+          await sent;
+          return;
+        }
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    await vault.stop();
+    vault.write("Aaa.md", "# Aaa\n\nPHONE line\n\nend a\n");
+    await vault.start();
+    await expect.poll(() => "read_vault" in holds && "list_attachments" in holds, { timeout: 15000 }).toBe(true);
+    holds.list_attachments();
+    await page.waitForTimeout(100);
+    holds.read_vault();
+    await expect.poll(() => typed !== null).toBe(true);
+    await typed;
+    await settle(page, 2500);
+    const disk = vault.read("Aaa.md");
+    expect(disk.includes("PHONE") || (await page.locator(".conflict").count()) > 0).toBe(true);
+  });
+});
