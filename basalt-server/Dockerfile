@@ -33,8 +33,8 @@ FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 COPY --from=server /app/target/release/basalt-server /usr/local/bin/basalt-server
 COPY --from=web /app/dist /app/dist
-# Vault is bind-mounted at /vault (see compose). Runs as root so writes to the
-# host-owned bind mount always succeed; see DEPLOY.md to harden to non-root.
+# Vault is bind-mounted at /vault (see compose), which runs this as the vault's
+# owner. Run as root, new files and folders would belong to root.
 ENV BASALT_WEB_DIR=/app/dist \
     BASALT_VAULT=/vault \
     BASALT_PORT=8799 \

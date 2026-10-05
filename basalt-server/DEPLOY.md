@@ -81,9 +81,11 @@ sudo tailscale serve --https=10016 off
 ## Notes / troubleshooting
 
 - **Vault mount**: `/opt/arrstack/silverbullet/space` is bind-mounted read-write
-  at `/vault`. The container runs as root so writes to the host-owned dir always
-  succeed. To run non-root, add `user: "<uid>:<gid>"` to the compose service,
-  matching the owner of the space dir.
+  at `/vault`. The container runs as `BASALT_UID:BASALT_GID` (1000:1000 unless
+  set in `.env`), which must match the owner of the space dir. Run as root, it
+  hands new files and folders to root, and a sync tool running as the owner
+  (unison) can't read a root-owned 0600 note. Before a deploy,
+  `find <space> ! -user <owner>` should print nothing.
 - **Same vault, two writers**: fine during transition (same model as
   SilverBullet + unison today). Basalt's atomic writes + "Changed on disk"
   conflict handling + the SSE watcher keep it safe; unison syncs to iCloud.

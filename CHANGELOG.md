@@ -67,6 +67,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Saving keeps a note's creation time and permissions, so Dataview's
   `file.ctime` stays put. On macOS it also keeps Finder tags, "Open with" and
   other extended attributes.
+- The web server keeps a note's owner when it saves, and its Docker setup runs
+  as the vault's owner. Run as root, a save left a private note readable only
+  by root, so unison stopped syncing it.
 - "Keep mine" on a note that was deleted elsewhere writes your text back
   instead of discarding it.
 - A save that fails while offline, with the server down or on an expired login

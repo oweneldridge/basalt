@@ -7,6 +7,9 @@ services:
       context: ..
       dockerfile: basalt-server/Dockerfile
     container_name: basalt-web
+    # Run as the vault's owner, so every note it saves or creates stays theirs
+    # and a sync tool running as them (unison) can still read it.
+    user: "${BASALT_UID:-1000}:${BASALT_GID:-1000}"
     restart: unless-stopped
     volumes:
       # The vault: the same unison-synced space SilverBullet serves. Read-write.
