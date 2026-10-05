@@ -434,7 +434,9 @@ export function EditorPane({
   }, [doc, docRev]);
 
   // Scroll to (and place the caret on) a target line — search hits, backlinks.
-  useEffect(() => {
+  // A layout effect, like the build above: a key typed as the note opens goes
+  // to the target line, not the top.
+  useLayoutEffect(() => {
     const v = view.current;
     if (!v || !scrollToLine) return;
     const lineNo = Math.min(Math.max(1, scrollToLine), v.state.doc.lines);

@@ -721,3 +721,38 @@ test.describe("typing during a rename's link pass, after an outside edit", () =>
     expect(vault.read("A1.md")).toContain("PHONE");
   });
 });
+
+test.describe("a keystroke as a note opens at a search hit", () => {
+  test.use({ vaultFiles: { "Target.md": "# Target\n\nfirst\n\nfind-me here\n\nlast\n", "Other.md": "# Other\n\nbody\n" } });
+
+  test("goes to that line, not the top", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Other");
+    let typed: Promise<void> | null = null;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (!typed && body.includes('"cmd":"read_note"') && body.includes("/Target.md")) {
+        await new Promise((r) => setTimeout(r, 400));
+        const sent = route.fulfill({ response: res }).catch(() => {});
+        typed = page.keyboard.type("Q");
+        await sent;
+        return;
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    await page.locator(".pane:not(.dock) .cm-content").first().click();
+    await page.keyboard.press("ControlOrMeta+Shift+f");
+    await page.locator(".palette-input").first().fill("find-me");
+    await expect(page.locator(".palette-item, [role=option]").first()).toBeVisible();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => typed !== null, { timeout: 10000 }).toBe(true);
+    await typed;
+    await page.keyboard.type("Z");
+    await settle(page, 2000);
+    const disk = vault.read("Target.md");
+    expect(disk.startsWith("# Target\n")).toBe(true);
+    expect(disk).toMatch(/\n(Q?Z)find-me here\n/);
+  });
+});
