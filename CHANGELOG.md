@@ -24,6 +24,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ones that would write (`new`, `append`), still go to the system.
 - Bases list layout, as in Obsidian 1.10: bullets, numbers or no markers,
   properties on one line or indented under the first, and a custom separator.
+- Inline SVG drawings in notes render in Live Preview and Reading view,
+  sanitized (no scripts, event handlers, embedded HTML or SVG animation), and
+  colours such as `fill="#e8710a"` inside HTML are no longer read as tags.
+- Files and folders whose names start with a dot (sync backups such as
+  `.unisonbak.*`, `.DS_Store`) are hidden from the file tree, search, the quick
+  switcher and the index, as in Obsidian. "Show hidden files" in Settings shows
+  them again.
 
 ### Fixed
 
@@ -60,7 +67,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Today's daily note, a duplicated note and a plugin's new note get their text
   only while still empty, so anything typed into them first stays.
 - Editing a property in the Properties panel after closing the note's tab saves
-  the change instead of dropping it. Bookmarks toggled at the same moment from
+  the change instead of dropping it. The status bar's word count and the
+  Backlinks panel's Link buttons keep working after clicking a side panel.
+- A folder can be renamed to a name that starts with its own ("Notes" to
+  "Notes old"). A canvas edited while a rename writes its link fix keeps the
+  edit and the fix. Bookmarks toggled at the same moment from
   two places are all kept.
 - Typing while a note is being renamed no longer recreates the old file or
   drops what you typed, even a keystroke that lands while the editor is rebuilt

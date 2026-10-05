@@ -78,11 +78,12 @@ async fn main() {
     });
     let port: u16 = std::env::var("BASALT_PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(8799);
     let web_dir = PathBuf::from(std::env::var("BASALT_WEB_DIR").unwrap_or_else(|_| "dist".into()));
-    // BASALT_AUTH="user:pass" enables HTTP Basic auth. Unset = no auth (rely on
-    // the Tailscale-only network boundary — fine for a trusted tailnet). Present
-    // but malformed (no ':') is a misconfiguration — fail CLOSED (exit) rather
-    // than silently booting with auth disabled.
+    // BASALT_AUTH="user:pass" enables HTTP Basic auth. Unset or empty = none
+    // (behind an SSO proxy, or the tailnet boundary alone), and then only
+    // localhost-addressed requests are answered. Present but malformed (no
+    // ':') is a misconfiguration: fail closed (exit) rather than boot without it.
     let auth = match std::env::var("BASALT_AUTH") {
+        Ok(s) if s.is_empty() => None,
         Ok(s) => match s.split_once(':') {
             Some((u, p)) if !u.is_empty() && !p.is_empty() => Some((u.to_string(), p.to_string())),
             _ => {
