@@ -609,3 +609,28 @@ test("a note moved right after a save stays in the tree", async ({ page, vault }
   await expect(page.locator(".pane:not(.dock) .tab .tab-name", { hasText: "Ideas" })).toHaveCount(1);
   expect(vault.read("Projects/Ideas.md")).toContain("try. T1\n");
 });
+
+test("a keystroke as soon as a note opens stays in order", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await openNote(page, "Ideas");
+  await page.evaluate(() => {
+    const seen = new Set(document.querySelectorAll(".cm-editor"));
+    const watch = new MutationObserver(() => {
+      for (const ed of document.querySelectorAll(".cm-editor")) {
+        if (seen.has(ed)) continue;
+        seen.add(ed);
+        if (ed.querySelector(".cm-content") === document.activeElement) {
+          watch.disconnect();
+          document.execCommand("insertText", false, "Q");
+        }
+      }
+    });
+    watch.observe(document.body, { childList: true, subtree: true });
+  });
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).first().click();
+  await expect(page.locator(".pane:not(.dock) .cm-content").first()).toContainText("Q");
+  await page.keyboard.type("Z");
+  await settle(page, 1500);
+  expect(vault.read("Welcome.md").startsWith("QZ")).toBe(true);
+  await expect(page.locator(".pane:not(.dock) .cm-line").first()).toHaveText(/^QZ/);
+});

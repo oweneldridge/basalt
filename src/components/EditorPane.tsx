@@ -58,7 +58,7 @@ interface Props {
 // the rebuild that follows a rename.
 const handoff = new Map<
   string,
-  { path: string; text: string; selection: EditorSelection; scrollTop: number; focused: boolean; reported: number[] }
+  { path: string; text: string; selection: EditorSelection; focused: boolean; reported: number[] }
 >();
 
 // The editor that last had keyboard focus. Kept when focus leaves the page or
@@ -164,6 +164,9 @@ export function EditorPane({
   const reportSeq = useRef(0);
   const echoFloor = useRef(0);
   const lastDocRev = useRef(docRev);
+  // The `doc` prop the editor has already accounted for: it's synced when the
+  // editor is built, so the reconcile below acts only on later changes.
+  const docSeen = useRef(doc);
   const cbs = useRef({ getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange, onCursor, onContextMenu });
   cbs.current = { getNotes, getLinkFormat, getActiveRel, getHeadings, getBlockIds, onOpenWikilink, onOpenUrl, resolveImage, saveAttachment, replacePlaceholder, onChange, onCursor, onContextMenu };
   // A stable adapter that always calls through to the freshest closures — used
@@ -229,13 +232,17 @@ export function EditorPane({
     // had it (else typing in another pane would land here). A note being opened
     // takes focus as usual.
     if (continuing) {
-      v.dispatch({ selection: prev.selection });
-      v.scrollDOM.scrollTop = prev.scrollTop;
+      v.dispatch({ selection: prev.selection, effects: EditorView.scrollIntoView(prev.selection.main.head, { y: "center" }) });
       // `doc` is then an earlier text of this same editor, unless another
-      // editor on the note typed it; that one is applied below like any edit.
-      if (prev.text !== doc && prev.reported.includes(textHash(doc)))
-        reported.current.push({ hash: textHash(doc), seq: reportSeq.current++ });
+      // editor on the note typed it: that one is applied now, like any edit.
+      if (prev.text !== doc && !prev.reported.includes(textHash(doc))) {
+        v.dispatch({
+          changes: textChanges(prev.text, doc),
+          annotations: [externalReload.of(true), Transaction.addToHistory.of(false)],
+        });
+      }
     }
+    docSeen.current = doc;
     // Never pull focus out of another editor someone is typing in. One built in
     // this same commit doesn't count: the last of those takes focus, as before.
     mountedNow.add(v.dom);
@@ -250,7 +257,6 @@ export function EditorPane({
           path,
           text: v.state.doc.toString(),
           selection: v.state.selection,
-          scrollTop: v.scrollDOM.scrollTop,
           focused: focusedView === v,
           reported: reported.current.map((r) => r.hash),
         });
@@ -376,6 +382,8 @@ export function EditorPane({
     if (!v) return;
     const explicit = docRev !== lastDocRev.current;
     lastDocRev.current = docRev;
+    if (!explicit && doc === docSeen.current) return;
+    docSeen.current = doc;
     if (!explicit) {
       const h = textHash(doc);
       const echo = [...reported.current].reverse().find((r) => r.hash === h);
