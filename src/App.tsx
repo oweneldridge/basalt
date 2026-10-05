@@ -654,6 +654,19 @@ export default function App() {
   // Saves that landed while a vault read was in flight: the listing predates
   // them, so their notes keep the saved text instead of the stale listing.
   const saveSeq = useRef(0);
+  // A save that failed (offline, server down, a lapsed login) is tried again on
+  // a backoff, and at once when the connection or the app comes back.
+  const retryTimer = useRef<number | undefined>(undefined);
+  const retryDelay = useRef(2000);
+  const flushAllRef = useRef<() => Promise<void>>(async () => {});
+  const retryLater = useCallback(() => {
+    if (retryTimer.current !== undefined) return;
+    retryTimer.current = window.setTimeout(() => {
+      retryTimer.current = undefined;
+      retryDelay.current = Math.min(retryDelay.current * 2, 30000);
+      void flushAllRef.current();
+    }, retryDelay.current);
+  }, []);
   const lastSave = useRef<Map<string, { seq: number; content: string }>>(new Map());
   const loadVault = useCallback(async () => {
     let startSeq = saveSeq.current;
@@ -820,6 +833,7 @@ export default function App() {
         await writeNote(path, doc, expected);
         if (unknown || bigBase.current.has(path)) setBigBase(path, doc);
         setSaveError(null);
+        retryDelay.current = 2000;
         let meta = notesRef.current.find((n) => n.path === path);
         if (!meta) {
           // Keep mine just wrote back a note deleted elsewhere: list it again so
@@ -885,6 +899,7 @@ export default function App() {
           pending.current.set(path, doc);
         }
         setSaveError(String(e));
+        retryLater();
       } finally {
         setSaving(false);
       }
@@ -939,6 +954,7 @@ export default function App() {
           return;
         }
         setSaveError(null);
+        retryDelay.current = 2000;
         if (rel !== undefined) rememberSelfWrite(rel, doc); // AFTER a successful write
         if (conflictsRef.current.has(path)) {
           if (!pending.current.has(path)) pending.current.set(path, doc);
@@ -955,6 +971,7 @@ export default function App() {
           pending.current.set(path, doc);
         }
         setSaveError(String(e));
+        retryLater();
       } finally {
         setSaving(false);
       }
@@ -1068,6 +1085,7 @@ export default function App() {
     },
     [flushPath],
   );
+  flushAllRef.current = flushAll;
 
   // After a flush, anything still pending couldn't be saved (a conflict or a
   // failed write). Ask before an action that would drop it.
@@ -2146,6 +2164,8 @@ export default function App() {
         bumpIndex(); // stacked columns take the baseline when they render
       }),
     );
+    // Back after a gap: anything that couldn't be saved meanwhile goes now.
+    if (pending.current.size > 0) void flushAllRef.current();
   }, [loadVault, addConflict, patchPane, rememberSelfWrite, setBigBase, bumpIndex]);
 
   // Listen for on-disk changes; debounce; then apply.
@@ -2218,8 +2238,9 @@ export default function App() {
     // edits are pending — the browser's prompt lets the user cancel so autosave
     // can finish, preventing a silent loss the desktop close-guard would catch.
     const onVisibility = () => {
-      if (document.visibilityState === "hidden") void flushAll();
+      if (document.visibilityState === "hidden" || pending.current.size > 0) void flushAll();
     };
+    const onOnline = () => void flushAll();
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       if (pending.current.size > 0) {
         void flushAll();
@@ -2229,6 +2250,7 @@ export default function App() {
     };
     if (!isTauri) {
       document.addEventListener("visibilitychange", onVisibility);
+      window.addEventListener("online", onOnline);
       window.addEventListener("beforeunload", onBeforeUnload);
     }
 
@@ -2256,6 +2278,7 @@ export default function App() {
       window.removeEventListener("blur", onBlur);
       if (!isTauri) {
         document.removeEventListener("visibilitychange", onVisibility);
+        window.removeEventListener("online", onOnline);
         window.removeEventListener("beforeunload", onBeforeUnload);
       }
       unlisten?.();

@@ -642,3 +642,30 @@ test.describe("a note opened over a slow read", () => {
     expect(vault.read("Lnk.md")).toBe("# L\n\nsee [[Tnote2]]\n\nendQ\n");
   });
 });
+
+test.describe("saves that fail while the connection is down", () => {
+  test("go through when the browser is back online", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Ideas");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "A list of things" }).click();
+    await page.keyboard.press("End");
+    await page.context().setOffline(true);
+    await page.keyboard.type(" one");
+    await page.waitForTimeout(2000);
+    expect(vault.read("Ideas.md")).not.toContain("try. one");
+    await page.context().setOffline(false);
+    await expect.poll(() => vault.read("Ideas.md"), { timeout: 15000 }).toContain("try. one\n");
+  });
+
+  test("go through when the server is back", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Ideas");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "A list of things" }).click();
+    await page.keyboard.press("End");
+    await vault.stop();
+    await page.keyboard.type(" two");
+    await page.waitForTimeout(2000);
+    await vault.start();
+    await expect.poll(() => vault.read("Ideas.md"), { timeout: 25000 }).toContain("try. two\n");
+  });
+});
