@@ -1,3 +1,4 @@
+import { mkdirSync, rmSync } from "node:fs";
 import { test, expect, openApp, openNote, caretToEnd, settle } from "./fixture";
 
 const editor = (page: import("@playwright/test").Page) => page.locator(".pane:not(.dock) .cm-content").first();
@@ -339,4 +340,134 @@ test.describe("a note too big for the index", () => {
     const conflict = await page.locator(".conflict").count();
     expect(!disk.includes("PHONE") || conflict > 0).toBe(true);
   });
+});
+
+test.describe("big notes and a slow rescan", () => {
+  const filler = ("lorem ipsum dolor sit amet ".repeat(40) + "\n").repeat(4800);
+  const big = `# Big\n\nhead line\n\n${filler}`;
+  const big2 = `# Big2\n\nsecond line\n\n${filler}`;
+  test.use({ vaultFiles: { "Big.md": big, "Other.md": big2, "Gone.md": "# Gone\n", "Small.md": "# Small\n" } });
+
+  const slowBigReads = async (page: import("@playwright/test").Page, name: string) => {
+    let started = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (body.includes('"cmd":"read_note"') && body.includes(`/${name}.md`)) {
+        started = true;
+        await new Promise((r) => setTimeout(r, 4000));
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    return () => started;
+  };
+
+  test("a big note opened while the rescan reads another keeps its baseline", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Big");
+    await settle(page, 1000);
+    const started = await slowBigReads(page, "Big");
+    vault.write("pic.png", Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    await expect.poll(started, { timeout: 10000 }).toBe(true);
+    await openNote(page, "Other");
+    await settle(page, 5000);
+    await vault.stop();
+    vault.write("Other.md", big2.replace("second line", "second line PHONE"));
+    await vault.start();
+    await settle(page, 6000);
+    const editor = page.locator(".pane:not(.dock) .cm-content").first();
+    await editor.locator(".cm-line", { hasText: "second line" }).first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" B");
+    await settle(page, 3000);
+    const disk = vault.read("Other.md");
+    expect(disk.includes("PHONE") || (await page.locator(".conflict").count()) > 0).toBe(true);
+  });
+
+  test("a big note shown after its tab-mate is deleted keeps an outside edit", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Big");
+    await openNote(page, "Gone");
+    await settle(page, 1500);
+    await page.reload();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Gone");
+    rmSync(vault.path("Gone.md"));
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Big", { timeout: 10000 });
+    await settle(page, 1500);
+    await vault.stop();
+    vault.write("Big.md", big.replace("head line", "head line PHONE"));
+    await vault.start();
+    await settle(page, 6000);
+    const editor = page.locator(".pane:not(.dock) .cm-content").first();
+    await editor.locator(".cm-line", { hasText: "head line" }).first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" B");
+    await settle(page, 3000);
+    const disk = vault.read("Big.md");
+    expect(disk.includes("PHONE") || (await page.locator(".conflict").count()) > 0).toBe(true);
+  });
+
+  test("a rename made while the rescan reads a big note stays", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Big");
+    await settle(page, 1000);
+    const started = await slowBigReads(page, "Big");
+    mkdirSync(vault.path("NewFolder"));
+    await expect.poll(started, { timeout: 10000 }).toBe(true);
+    await page.locator(".tree-row.file", { hasText: "Small" }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+    await page.locator(".prompt-input").fill("Small Renamed");
+    await page.locator(".prompt-input").press("Enter");
+    await expect.poll(() => vault.exists("Small Renamed.md")).toBe(true);
+    await settle(page, 6000);
+    await expect(page.locator(".tree-row.file", { hasText: "Small Renamed" })).toHaveCount(1);
+    await expect(page.locator(".tree-row.file", { hasText: /^Small$/ })).toHaveCount(0);
+  });
+
+  test("a stacked column whose first read never answers loads in the end", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Big");
+    await openNote(page, "Small");
+    await settle(page, 1500);
+    await page.reload();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Small");
+    let hung = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      if (!hung && body.includes('"cmd":"read_note"') && body.includes("/Big.md")) {
+        hung = true;
+        return; // never answered
+      }
+      await route.continue().catch(() => {});
+    });
+    await page.locator(".tab-stack").first().click();
+    const col = page.locator(".stacked-col").filter({ has: page.locator(".stacked-col-head", { hasText: "Big" }) });
+    await expect(col.locator(".placeholder")).toHaveText("Loading…");
+    await expect(col.locator(".cm-content")).toBeVisible({ timeout: 20000 });
+    expect(hung).toBe(true);
+  });
+});
+
+test("slow write and read replies never put back an older save", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await openNote(page, "Ideas");
+  await page.route("**/api/invoke", async (route) => {
+    const body = route.request().postData() ?? "";
+    const res = await route.fetch().catch(() => null);
+    if (!res) return;
+    if (body.includes('"cmd":"write_note"')) await new Promise((r) => setTimeout(r, 800));
+    if (body.includes('"cmd":"read_note"')) await new Promise((r) => setTimeout(r, 3000));
+    await route.fulfill({ response: res }).catch(() => {});
+  });
+  const editor = page.locator(".pane:not(.dock) .cm-content").first();
+  await editor.locator(".cm-line", { hasText: "A list of things" }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" W1");
+  await page.waitForTimeout(1200);
+  await page.keyboard.type(" W2");
+  await settle(page, 6000);
+  await expect(editor).toContainText("try. W1 W2");
+  await expect(page.locator(".conflict")).toHaveCount(0);
+  expect(vault.read("Ideas.md")).toContain("try. W1 W2\n");
 });

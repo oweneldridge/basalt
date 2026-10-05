@@ -653,26 +653,9 @@ export default function App() {
       startGen = structGen.current;
       [read, atts] = await Promise.all([readVault(), listAttachments()]);
     }
-    // A note over the index cap is listed without its text. One Basalt has seen
-    // is read in full, so its saves compare against what's on disk now; if the
-    // read fails, the text last seen is still a safer baseline than none.
-    const seenBefore = new Map(notesRef.current.map((n) => [n.path, n.content]));
-    const full = await Promise.all(
-      read.map(async (n) => {
-        const seen = n.content === "" && (n.size ?? 0) > 0 ? seenBefore.get(n.path) : undefined;
-        if (!seen) return undefined;
-        try {
-          return await readNote(n.path);
-        } catch {
-          return seen;
-        }
-      }),
-    );
-    const list = read.map((n, i) => {
+    const list = read.map((n) => {
       const w = lastSave.current.get(n.path);
-      if (w && w.seq > startSeq) return { ...n, content: w.content };
-      const text = full[i];
-      return text !== undefined ? { ...n, content: text } : n;
+      return w && w.seq > startSeq ? { ...n, content: w.content } : n;
     });
     index.current.build(list);
     notesRef.current = list; // the next save's baseline, before React re-renders
@@ -682,22 +665,33 @@ export default function App() {
     return { notes: list, attachments: atts };
   }, [bumpStructure]);
 
-  // Opening a note listed without its text (over the index cap) records what
-  // was read, so its first save is compare-and-swap too.
-  const learnText = useCallback((path: string, text: string) => {
+  // Notes over the index cap are listed without their text. While one is shown,
+  // this holds the text last seen on disk, its save baseline; the listing never
+  // touches it. `bigGen` counts changes, so a slow re-read can tell it's stale.
+  const bigBase = useRef<Map<string, string>>(new Map());
+  const bigGen = useRef<Map<string, number>>(new Map());
+  const unlisted = (path: string) => {
     const n = notesRef.current.find((x) => x.path === path);
-    if (!n || n.content !== "" || (n.size ?? 0) === 0) return;
-    const known = { ...n, content: text };
-    notesRef.current = notesRef.current.map((x) => (x.path === path ? known : x));
-    setNotes((prev) => prev.map((x) => (x.path === path ? known : x)));
+    return !!n && n.content === "" && (n.size ?? 0) > 0;
+  };
+  const setBigBase = useCallback((path: string, text: string) => {
+    bigBase.current.set(path, text);
+    bigGen.current.set(path, (bigGen.current.get(path) ?? 0) + 1);
   }, []);
+  const moveBigBase = useCallback((from: string, to: string) => {
+    const text = bigBase.current.get(from);
+    if (text === undefined) return;
+    bigBase.current.delete(from);
+    setBigBase(to, text);
+  }, [setBigBase]);
+  // Opening a note: an unlisted one's first read becomes its baseline.
   const readToOpen = useCallback(
     async (path: string) => {
       const text = await readNote(path);
-      learnText(path, text);
+      if (!bigBase.current.has(path) && unlisted(path)) setBigBase(path, text);
       return text;
     },
-    [learnText],
+    [setBigBase],
   );
 
   const rememberSelfWrite = useCallback((rel: string, content: string) => {
@@ -756,6 +750,10 @@ export default function App() {
   useEffect(() => {
     const shown = new Set(Object.values(panes).map((p) => p.active));
     for (const k of [...liveDocs.current.keys()]) if (!shown.has(k)) liveDocs.current.delete(k);
+    // A big note's baseline lasts while it's on screen or has unsaved text;
+    // opened again later, it starts from a fresh read.
+    for (const p of Object.values(panes)) if (p.stacked) for (const t of p.tabs) shown.add(t);
+    for (const k of [...bigBase.current.keys()]) if (!shown.has(k) && !pending.current.has(k)) bigBase.current.delete(k);
   }, [panes]);
 
   const writeSave = useCallback(
@@ -769,10 +767,18 @@ export default function App() {
           if (!pending.current.has(path)) pending.current.set(path, doc);
           return;
         }
-        // The index's copy is the last content seen on disk; oversized notes are
-        // listed without content, so they skip the compare-and-swap.
+        // The index's copy is the last content seen on disk; a note listed
+        // without it (over the index cap) compares against its own baseline,
+        // and without one it can't tell an outside edit from none.
         const unknown = !known || (known.content === "" && (known.size ?? 0) > 0);
-        await writeNote(path, doc, force || unknown ? undefined : known.content);
+        const expected = force ? undefined : unknown ? bigBase.current.get(path) : known.content;
+        if (!force && expected === undefined) {
+          addConflict(path);
+          if (!pending.current.has(path)) pending.current.set(path, doc);
+          return;
+        }
+        await writeNote(path, doc, expected);
+        if (unknown || bigBase.current.has(path)) setBigBase(path, doc);
         setSaveError(null);
         let meta = notesRef.current.find((n) => n.path === path);
         if (!meta) {
@@ -843,7 +849,7 @@ export default function App() {
         setSaving(false);
       }
     },
-    [bumpIndex, bumpStructure, rememberSelfWrite, addConflict],
+    [bumpIndex, bumpStructure, rememberSelfWrite, addConflict, setBigBase],
   );
 
   // One save in flight per note. A save queued behind another writes whatever
@@ -1863,13 +1869,13 @@ export default function App() {
     setLayout(lay);
     setFocusedId(focus);
     for (const { id, neighbor } of toLoad) {
-      void readNote(neighbor)
+      void readToOpen(neighbor)
         .then((doc) => patchPane(id, { active: neighbor, doc: freshDoc(neighbor, doc), scrollToLine: undefined }))
         .catch(() => {
           /* neighbor gone too — the next prune pass handles it */
         });
     }
-  }, [notes, attachmentsList, patchPane]);
+  }, [notes, attachmentsList, patchPane, readToOpen]);
 
   // Apply a batch of external (on-disk) changes, matched by vault-relative path.
   const processChanges = useCallback(
@@ -1915,6 +1921,7 @@ export default function App() {
 
       for (const r of results) {
         if (r.ok) {
+          if (bigBase.current.has(r.path)) setBigBase(r.path, r.content);
           index.current.setNote({ path: r.path, rel: r.rel, name: nameFromRel(r.rel), content: r.content });
         } else {
           selfWrites.current.delete(r.rel); // gone from disk: suppression is stale
@@ -1964,7 +1971,7 @@ export default function App() {
         }
       }
     },
-    [bumpStructure, addConflict, patchPane],
+    [bumpStructure, addConflict, patchPane, setBigBase],
   );
 
   // Full-index rescan (folder rename/delete — the watcher can't enumerate the
@@ -2045,7 +2052,36 @@ export default function App() {
       if (selfWrites.current.get(still.rel) === still.content || isBeingWritten(path, still.content)) continue;
       addConflict(path);
     }
-  }, [loadVault, addConflict, patchPane, rememberSelfWrite]);
+    // Notes on screen that the listing gives without text (over the index cap):
+    // read them again and compare with their baseline. A read that overlapped a
+    // save, or that a newer update overtook, is dropped.
+    const shown = new Set<string>();
+    for (const p of Object.values(panesRef.current)) {
+      if (p.active) shown.add(p.active);
+      if (p.stacked) for (const t of p.tabs) shown.add(t);
+    }
+    const big = [...shown].filter((path) => bigBase.current.has(path) && unlisted(path));
+    await Promise.all(
+      big.map(async (path) => {
+        const gen = bigGen.current.get(path);
+        if (isWriting(path)) return;
+        let fresh: string;
+        try {
+          fresh = await readNote(path);
+        } catch {
+          return;
+        }
+        if (isWriting(path) || bigGen.current.get(path) !== gen || fresh === bigBase.current.get(path)) return;
+        setBigBase(path, fresh);
+        if (pending.current.has(path)) {
+          addConflict(path);
+          return;
+        }
+        for (const p of Object.values(panesRef.current)) if (p.active === path) patchPane(p.id, { doc: fresh });
+        bumpIndex(); // stacked columns take the baseline when they render
+      }),
+    );
+  }, [loadVault, addConflict, patchPane, rememberSelfWrite, setBigBase, bumpIndex]);
 
   // Listen for on-disk changes; debounce; then apply.
   useEffect(() => {
@@ -3717,10 +3753,11 @@ export default function App() {
   // Each rewrite is registered at once, in React state too so a re-render can't
   // undo it, and a save typed meanwhile compares against what's on disk.
   const registerRewrite = useCallback((updated: VaultNote) => {
+    if (bigBase.current.has(updated.path)) setBigBase(updated.path, updated.content);
     index.current.setNote(updated);
     notesRef.current = notesRef.current.map((n) => (n.path === updated.path ? updated : n));
     setNotes((prev) => prev.map((n) => (n.path === updated.path ? updated : n)));
-  }, []);
+  }, [setBigBase]);
 
   // After the pass, make sure each rewritten note ends up with the fix, judged
   // from its newest text: what's typed, else what was last saved. Untouched, it
@@ -3781,6 +3818,7 @@ export default function App() {
         if (newPath === oldPath) return;
         movedTo.current.set(oldPath, newPath);
         movedTo.current.delete(newPath);
+        moveBigBase(oldPath, newPath);
         const newRel = newPath.startsWith(root)
           ? newPath.slice(root.length).replace(/^[/\\]+/, "")
           : newPath;
@@ -4237,6 +4275,7 @@ export default function App() {
       for (const [oldP, nn] of movedByOld) oldToNewPath.set(oldP, nn.path);
       for (const a of movingAtts) oldToNewPath.set(a.path, `${root}/${swap(a.rel)}`);
       for (const [oldP, newP] of oldToNewPath) {
+        moveBigBase(oldP, newP);
         const p = pending.current.get(oldP);
         if (p !== undefined) {
           pending.current.delete(oldP);
@@ -4731,7 +4770,7 @@ export default function App() {
             readNote={readToOpen}
             liveDoc={(p) => {
               const known = notesRef.current.find((n) => n.path === p);
-              const seen = known && !(known.content === "" && (known.size ?? 0) > 0) ? known.content : undefined;
+              const seen = known && !(known.content === "" && (known.size ?? 0) > 0) ? known.content : bigBase.current.get(p);
               // Without unsaved typing, the note's last known text is newest: the
               // watcher, rescans and link fixes update it, not this column's copy.
               return pending.current.get(p) ?? seen ?? liveDocs.current.get(p);
