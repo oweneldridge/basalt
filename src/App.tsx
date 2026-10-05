@@ -745,8 +745,12 @@ export default function App() {
     selfWrites.current.delete(rel); // re-insert so eviction order is least-recent
     selfWrites.current.set(rel, content);
     if (selfWrites.current.size > SELF_WRITES_MAX) {
-      const oldest = selfWrites.current.keys().next().value;
-      if (oldest !== undefined) selfWrites.current.delete(oldest);
+      // A canvas or base keeps its entry: it's that file's save baseline.
+      for (const k of selfWrites.current.keys()) {
+        if (isViewerPath(k)) continue;
+        selfWrites.current.delete(k);
+        break;
+      }
     }
   }, []);
 
@@ -3795,34 +3799,6 @@ export default function App() {
   // oldRel → newRel) across `canvases` (post-move paths), then reconcile any
   // open canvas viewer so its editor isn't left showing stale refs. Reads DISK
   // (authoritative — callers flushAll first, so pending canvas edits are saved).
-  const rewriteCanvasRefs = useCallback(
-    async (canvases: { path: string; rel: string }[], relMap: Map<string, string>): Promise<string[]> => {
-      const failed: string[] = [];
-      if (relMap.size === 0) return failed;
-      for (const c of canvases) {
-        // Never overwrite a canvas with UNSAVED edits (a failed flush leaves it
-        // pending): reading disk would miss them and the write would clobber.
-        // Its refs stay dangling until the user saves — no data loss.
-        if (pending.current.has(c.path) || conflictsRef.current.has(c.path)) continue;
-        try {
-          const json = await readNote(c.path);
-          const next = rewriteCanvasFileRefs(json, relMap);
-          if (next === null) continue;
-          await writeCanvas(c.path, next, json);
-          rememberSelfWrite(c.rel, next);
-          for (const p of Object.values(panesRef.current)) {
-            if (p.active === c.path) patchPane(p.id, { doc: next });
-          }
-        } catch (e) {
-          failed.push(c.rel);
-          console.error("[basalt] canvas ref rewrite failed", c.rel, e);
-        }
-      }
-      return failed;
-    },
-    [rememberSelfWrite, patchPane],
-  );
-
   // A link pass's write joins the note's save queue: a save typed meanwhile
   // waits for it, then compares against the rewrite rather than the old text.
   const queueWrite = useCallback(<T,>(path: string, job: () => Promise<T>): Promise<T> => {
@@ -3837,6 +3813,44 @@ export default function App() {
     });
     return run;
   }, []);
+
+  const rewriteCanvasRefs = useCallback(
+    async (canvases: { path: string; rel: string }[], relMap: Map<string, string>): Promise<string[]> => {
+      const failed: string[] = [];
+      if (relMap.size === 0) return failed;
+      for (const c of canvases) {
+        try {
+          // In the canvas's save queue, so a save made meanwhile waits for this.
+          // A canvas with unsaved edits, before or during the read, is left as
+          // it is and reported: rewriting it would drop the edits.
+          await queueWrite(c.path, async () => {
+            if (pending.current.has(c.path) || conflictsRef.current.has(c.path)) {
+              failed.push(c.rel);
+              return;
+            }
+            const json = await readNote(c.path);
+            const next = rewriteCanvasFileRefs(json, relMap);
+            if (next === null) return;
+            if (pending.current.has(c.path)) {
+              failed.push(c.rel);
+              return;
+            }
+            await writeCanvas(c.path, next, json);
+            rememberSelfWrite(c.rel, next);
+            for (const p of Object.values(panesRef.current)) {
+              if (p.active === c.path) patchPane(p.id, { doc: next });
+            }
+          });
+        } catch (e) {
+          failed.push(c.rel);
+          console.error("[basalt] canvas ref rewrite failed", c.rel, e);
+        }
+      }
+      return failed;
+    },
+    [rememberSelfWrite, patchPane, queueWrite],
+  );
+
 
   // A link pass (note rename or folder move) writes rewritten links to disk.
   // Each rewrite is registered at once, in React state too so a re-render can't
