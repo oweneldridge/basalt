@@ -634,3 +634,60 @@ test("a keystroke as soon as a note opens stays in order", async ({ page, vault 
   expect(vault.read("Welcome.md").startsWith("QZ")).toBe(true);
   await expect(page.locator(".pane:not(.dock) .cm-line").first()).toHaveText(/^QZ/);
 });
+
+test.describe("an outside edit just before a rename rewrites the note's links", () => {
+  test.use({
+    vaultFiles: {
+      "Target.md": "# Target\n",
+      "Src.md": "see [[Target]]\n\nmid\n",
+      "Self.md": "me [[Self]]\n\nmid\n",
+      "Projects/Beta.md": "# Beta\n",
+      "Projects/Gamma.md": "see [[Projects/Beta]]\n\nmid\n",
+    },
+  });
+  const renameNote = async (page: import("@playwright/test").Page, name: string, to: string, beforeEnter: () => void) => {
+    await page.locator(".tree-row.file", { hasText: name }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+    await page.locator(".prompt-input").fill(to);
+    beforeEnter();
+    await page.waitForTimeout(50);
+    await page.locator(".prompt-input").press("Enter");
+  };
+
+  test("in a note linking to it", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Src");
+    await renameNote(page, "Target", "Target2", () => vault.write("Src.md", "see [[Target]]\n\nmid PHONE\n"));
+    await expect.poll(() => vault.exists("Target2.md")).toBe(true);
+    await settle(page, 3000);
+    const disk = vault.read("Src.md");
+    expect(disk.includes("PHONE") || (await page.locator(".conflict").count()) > 0).toBe(true);
+    if (disk.includes("PHONE")) expect(disk).toContain("[[Target2]]");
+  });
+
+  test("in the renamed note itself", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Self");
+    await renameNote(page, "Self", "Self2", () => vault.write("Self.md", "me [[Self]]\n\nmid PHONE\n"));
+    await expect.poll(() => vault.exists("Self2.md")).toBe(true);
+    await settle(page, 3000);
+    const disk = vault.read("Self2.md");
+    expect(disk.includes("PHONE") || (await page.locator(".conflict").count()) > 0).toBe(true);
+  });
+
+  test("in a note a folder move carries", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await page.locator(".tree-row.folder", { hasText: "Projects" }).click();
+    await openNote(page, "Gamma");
+    await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename folder…" }).click();
+    await page.locator(".prompt-input").fill("Work");
+    vault.write("Projects/Gamma.md", "see [[Projects/Beta]]\n\nmid PHONE\n");
+    await page.waitForTimeout(50);
+    await page.locator(".prompt-input").press("Enter");
+    await expect.poll(() => vault.exists("Work/Gamma.md")).toBe(true);
+    await settle(page, 3000);
+    const disk = vault.read("Work/Gamma.md");
+    expect(disk.includes("PHONE") || (await page.locator(".conflict").count()) > 0).toBe(true);
+  });
+});

@@ -214,6 +214,16 @@ function makeLeftDock(id: string): Pane {
   return { id, tabs, active: tabs[0], doc: "", dock: "left" };
 }
 
+/** A note a rename or folder move rewrote on disk: the text it read (`base`),
+ * what it wrote (`next`), and the text Basalt knew before reading (`known`). */
+interface RewriteDone {
+  path: string;
+  base: string;
+  next: string;
+  mapper: LinkMapper;
+  known?: string;
+}
+
 type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | "templates" | "history" | "workspaces" | null;
 
 interface AppCommand {
@@ -3773,17 +3783,23 @@ export default function App() {
   // from its newest text: what's typed, else what was last saved. Untouched, it
   // gets the rewrite; typed into (and maybe saved meanwhile, over the rewrite),
   // the same link fix is applied to that text. Whatever disk lacks is saved, so
-  // neither the typing nor the fix is lost.
+  // neither the typing nor the fix is lost. If the note changed elsewhere before
+  // the pass read it (`base` isn't the `known` text Basalt had), an editor still
+  // on the known text gets the rewritten disk text; one with typing gets a
+  // conflict instead of a save over the outside edit.
   const reconcileRewrites = useCallback(
-    (done: { path: string; base: string; next: string; mapper: LinkMapper }[]) => {
+    (done: RewriteDone[]) => {
       for (const d of done) {
         const saved = notesRef.current.find((n) => n.path === d.path)?.content;
         if (saved === undefined) continue; // deleted meanwhile: nothing to fix
-        const fix = (t: string) => (t === d.base || t === d.next ? d.next : (rewriteLinks(t, d.mapper) ?? t));
+        const outside = d.known !== undefined && d.known !== d.base;
+        const fix = (t: string) =>
+          t === d.base || t === d.next || (outside && t === d.known) ? d.next : (rewriteLinks(t, d.mapper) ?? t);
         // Editors on the note take the fix as an edit of their own text, so
         // typing in progress merges with it; their change handler saves it.
         const shown = fixOpenEditors(d.path, fix);
         const doc = shown ?? fix(pending.current.get(d.path) ?? liveDocs.current.get(d.path) ?? saved);
+        if (outside && doc !== d.next) addConflict(d.path);
         if (doc !== saved && pending.current.get(d.path) !== doc) {
           pending.current.set(d.path, doc);
           void flushPath(d.path);
@@ -3793,7 +3809,7 @@ export default function App() {
         for (const p of Object.values(panesRef.current)) if (p.active === d.path) patchPane(p.id, { doc });
       }
     },
-    [flushPath, patchPane],
+    [flushPath, patchPane, addConflict],
   );
 
   const renameNoteNow = useCallback(
@@ -3935,6 +3951,7 @@ export default function App() {
         // way reconcileRewrites then makes sure the newest text, typed or
         // saved, carries the fix.
         const own = await queueWrite(newPath, async () => {
+          const known = notesRef.current.find((n) => n.path === newPath)?.content ?? oldNote.content;
           let disk = oldNote.content;
           try {
             disk = await readNote(newPath);
@@ -3951,10 +3968,10 @@ export default function App() {
               if (!isWriteConflict(e)) throw e; // changed meanwhile: reconciled below
             }
           }
-          return { disk, next };
+          return { disk, next, known };
         });
         if (own.next !== null) {
-          reconcileRewrites([{ path: newPath, base: own.disk, next: own.next, mapper: ownMap }]);
+          reconcileRewrites([{ path: newPath, base: own.disk, next: own.next, mapper: ownMap, known: own.known }]);
         }
 
         // Rewrite affected sources. Candidates are found via the in-memory
@@ -3973,7 +3990,7 @@ export default function App() {
           !literal && preIndex.resolve(raw, notePath) === oldPath && !viaAlias(raw)
             ? linkTargetForFormat(fmt, newRelNoExt, taken, noteRel)
             : null;
-        const done: { path: string; base: string; next: string; mapper: LinkMapper }[] = [];
+        const done: RewriteDone[] = [];
         const failures: string[] = [];
         for (const note of preNotes) {
           if (note.path === oldPath) continue;
@@ -3993,13 +4010,14 @@ export default function App() {
           try {
             const mapper = sourceMap(note.path, note.rel);
             await queueWrite(note.path, async () => {
+              const known = notesRef.current.find((n) => n.path === note.path)?.content;
               const disk = await readNote(note.path);
               const next = rewriteLinks(disk, mapper);
               if (next === null) return;
               rememberSelfWrite(note.rel, next); // before the write: its echo isn't an outside edit
               await writeNote(note.path, next, disk);
               registerRewrite({ ...note, content: next });
-              done.push({ path: note.path, base: disk, next, mapper });
+              done.push({ path: note.path, base: disk, next, mapper, known });
             });
           } catch (e) {
             failures.push(note.rel);
@@ -4405,7 +4423,7 @@ export default function App() {
       // One pass: rewrite affected notes (moved and unmoved), reading DISK so a
       // fresher external edit is never reverted. Cheap in-memory pre-filter.
       // Each rewrite is registered as soon as it's written (see registerRewrite).
-      const done: { path: string; base: string; next: string; mapper: LinkMapper }[] = [];
+      const done: RewriteDone[] = [];
       const failures: string[] = [];
       for (const post of postNotes) {
         const mapper = makeMapper(post);
@@ -4422,13 +4440,14 @@ export default function App() {
         }
         try {
           await queueWrite(post.path, async () => {
+            const known = notesRef.current.find((n) => n.path === post.path)?.content;
             const disk = await readNote(post.path);
             const next = rewriteLinks(disk, mapper);
             if (next === null) return;
             rememberSelfWrite(post.rel, next); // before the write: its echo isn't an outside edit
             await writeNote(post.path, next, disk);
             registerRewrite({ ...post, content: next });
-            done.push({ path: post.path, base: disk, next, mapper });
+            done.push({ path: post.path, base: disk, next, mapper, known });
           });
         } catch (e) {
           failures.push(post.rel);

@@ -71,7 +71,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A rename or folder move fixes links in notes being typed into inside their
   open editors, so typing in progress, even straight through the end of the
   pass, merges with the fix instead of undoing it or moving a character. Such
-  notes are no longer skipped with "link updates failed".
+  notes are no longer skipped with "link updates failed". An edit made elsewhere
+  just before the pass reads a note is kept, with the fix, or raises "Changed
+  on disk" if you were typing in it.
 - Text changed on disk lands in an open editor as separate small edits, so
   the caret stays where it was, even when lines above and below it changed.
 - After "Keep mine" writes back a note deleted elsewhere, later edits save
