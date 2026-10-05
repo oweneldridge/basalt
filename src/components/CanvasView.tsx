@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { clickedLink } from "../lib/anchors";
 import {
   parseCanvas,
   serializeCanvas,
@@ -65,6 +66,15 @@ function newId(): string {
 const SIDES: Side[] = ["top", "right", "bottom", "left"];
 
 /** JSON Canvas viewer/editor. Read-only unless `onChange` is provided. */
+// A link in a card's rendered text opens like any other link, never in place
+// of the app.
+function openCardLink(e: React.MouseEvent, onOpenUrl: (url: string) => void): void {
+  const link = clickedLink(e.target);
+  if (!link) return;
+  e.preventDefault();
+  if (link.href) onOpenUrl(link.href);
+}
+
 export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange }: Props) {
   const editable = !!onChange;
   const parsed = useMemo(() => parseCanvas(doc) ?? { nodes: [], edges: [] }, [doc]);
@@ -820,7 +830,7 @@ function CanvasNodeView({
     if (IMAGE_EXT.test(node.file)) {
       return (
         <div className="canvas-node canvas-file-image" style={style} {...dragProps} {...a11y}>
-          <div className="canvas-node-content" ref={ref} />
+          <div className="canvas-node-content" ref={ref} onClick={(e) => openCardLink(e, onOpenUrl)} />
           {handles}
         </div>
       );
@@ -887,7 +897,7 @@ function CanvasNodeView({
       {...a11y}
       onDoubleClick={(e) => (e.stopPropagation(), onBeginEdit())}
     >
-      <div className="canvas-node-content reading-view" ref={ref} />
+      <div className="canvas-node-content reading-view" ref={ref} onClick={(e) => openCardLink(e, onOpenUrl)} />
       {handles}
     </div>
   );

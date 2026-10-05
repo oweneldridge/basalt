@@ -4,6 +4,7 @@
 // nearest `[data-self-rel]` ancestor for relative-link resolution.
 import { renderMarkdown } from "./render";
 import { internalMdHref } from "./markdown";
+import { clickedLink } from "./anchors";
 import { getTranscludeHost } from "./transclude";
 import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "./remoteImages";
 
@@ -24,6 +25,10 @@ function ensurePopup(): HTMLElement {
   popup.style.display = "none";
   popup.addEventListener("mouseenter", () => window.clearTimeout(hideTimer));
   popup.addEventListener("mouseleave", scheduleHide);
+  // Links in the preview's rendered HTML never navigate the app's own tab.
+  popup.addEventListener("click", (e) => {
+    if (clickedLink(e.target)) e.preventDefault();
+  });
   document.body.append(popup);
   return popup;
 }

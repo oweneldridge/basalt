@@ -140,3 +140,30 @@ test.describe("a canvas edited during a rename's canvas write", () => {
     expect(board.nodes.find((n) => n.id === "f1")?.file).toBe("Ideas Renamed.md");
   });
 });
+
+test.describe("links inside rendered HTML", () => {
+  test.use({
+    vaultFiles: {
+      "Links.md": '# Links\n\n<svg viewBox="0 0 200 40"><a xlink:href="https://evil.example/phish"><text x="5" y="25">XLINK</text></a></svg>\n\nend\n',
+      "Cards.canvas": JSON.stringify({
+        nodes: [{ id: "t1", type: "text", text: '<div><a href="https://evil.example/card">CARDLINK</a></div>', x: 0, y: 0, width: 260, height: 80 }],
+        edges: [],
+      }),
+    },
+  });
+
+  test("never navigate the app's tab", async ({ page, vault }) => {
+    await openApp(page, vault);
+    const start = page.url();
+    await openNote(page, "Links");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await page.locator(".reading-view text", { hasText: "XLINK" }).click();
+    await page.waitForTimeout(500);
+    expect(page.url()).toBe(start);
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await page.locator(".tree-row.attachment", { hasText: "Cards.canvas" }).click();
+    await page.locator(".canvas-node-content a", { hasText: "CARDLINK" }).click();
+    await page.waitForTimeout(500);
+    expect(page.url()).toBe(start);
+  });
+});

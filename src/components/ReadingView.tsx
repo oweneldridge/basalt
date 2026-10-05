@@ -5,6 +5,7 @@ import { renderQuerySource } from "../lib/queryHost";
 import { codeBlockProcessor } from "../lib/plugins";
 import { renderEmbedSource } from "../lib/transclude";
 import { internalMdHref } from "../lib/markdown";
+import { clickedLink } from "../lib/anchors";
 import { blockedImage, inertFragment, isRemoteUrl, remoteImagesAllowed } from "../lib/remoteImages";
 
 interface Props {
@@ -191,12 +192,14 @@ export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveIm
       else onOpenUrl(href);
       return;
     }
-    // A link inside raw HTML: open it like any external link instead of
-    // navigating the app window away.
-    const anchor = target.closest<HTMLAnchorElement>("a[href]");
-    if (anchor) {
+    // A link inside raw HTML or an SVG drawing: open it like any other link
+    // (a `.md` path as a note) instead of navigating the app window away.
+    const raw = clickedLink(target);
+    if (raw) {
       e.preventDefault();
-      onOpenUrl(anchor.getAttribute("href") ?? "");
+      const internal = internalMdHref(raw.href);
+      if (internal) onOpenInternal(internal.path + internal.fragment);
+      else if (raw.href) onOpenUrl(raw.href);
     }
   };
   const onKeyDown = (e: React.KeyboardEvent) => {
