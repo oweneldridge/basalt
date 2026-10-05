@@ -187,6 +187,8 @@ const themeSpec = {
     // stays inside the padding box with the background.
     ".cm-after-properties.cm-callout": { borderLeft: "none", paddingLeft: "15px", boxShadow: "inset 3px 0 var(--cg)" },
     ".cm-after-properties.cm-blockquote": { borderLeft: "none", paddingLeft: "15px", boxShadow: "inset 3px 0 var(--border)" },
+    // The gap shrinks the inner corners by its height; give it back.
+    ".cm-after-properties.cm-code-first": { borderRadius: "6px 6px 0 0 / 24px 24px 0 0" },
     ".cm-properties": {
       border: "1px solid var(--border)",
       borderRadius: "8px",

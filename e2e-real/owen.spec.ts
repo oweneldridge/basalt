@@ -305,6 +305,7 @@ test.describe("clicks on the edges of rendered blocks", () => {
       "FmHead.md": "---\ntitle: H\n---\n# Heading one\n\nEND\n",
       "FmList.md": "---\ntitle: L\n---\n- item one\n\nEND\n",
       "Formula.md": "---\ntitle: M\n---\n$$\nx^2\n$$\n\nEND\n",
+      "Last.md": "ABOVE\n\n$$x^2+1$$",
     },
   });
 
@@ -459,6 +460,22 @@ test.describe("clicks on the edges of rendered blocks", () => {
       return { border: cs.borderTopWidth, padding: cs.paddingTop };
     });
     expect(style).toEqual({ border: "18px", padding: "6px" });
+    // The top corners stay as round as any code block's, inside the gap.
+    expect(await first.evaluate((el) => getComputedStyle(el).borderTopLeftRadius)).toBe("6px 24px");
+  });
+
+  test("a click below a note's last math block continues the note after it", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Last");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "ABOVE" }).click();
+    const m = page.locator(".pane:not(.dock) .cm-math-block");
+    await expect(m.locator(".katex")).toBeVisible();
+    const box = (await m.boundingBox())!;
+    await page.mouse.click(box.x + 60, box.y + box.height + 60);
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("Z");
+    await settle(page, 1500);
+    expect(vault.read("Last.md")).toBe("ABOVE\n\n$$x^2+1$$\nZ");
   });
 
   test("a callout under the properties starts its bar below the gap", async ({ page, vault }) => {

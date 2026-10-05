@@ -106,7 +106,8 @@ const edgeClick = State.transactionFilter.of((tr) => {
       if (!(d.spec.widget instanceof MathWidget) || !d.spec.widget.block) return;
       const src = doc.sliceString(from, to);
       if (r.head === from) pos = from + src.indexOf("$$") + 2;
-      else if (r.head === to) pos = from + src.lastIndexOf("$$");
+      // A click below the note's last block continues the note after it.
+      else if (r.head === to && to < doc.length) pos = from + src.lastIndexOf("$$");
     });
     if (pos === r.head) return r;
     moved = true;
