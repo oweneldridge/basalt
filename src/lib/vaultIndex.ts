@@ -255,11 +255,18 @@ function splitOutsideQuotes(s: string): string[] {
 
 /** Distinct tags in a note (frontmatter `tags:` + body `#tag`), deduped
  * case-insensitively, preserving first-seen display casing. */
+// An inline HTML tag as CommonMark reads one (so `x<y and #z>` stays text).
+const HTML_TAG =
+  /<[a-zA-Z][a-zA-Z0-9-]*(?:\s+[a-zA-Z_:][a-zA-Z0-9_.:-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>|<\/[a-zA-Z][a-zA-Z0-9-]*\s*>/g;
+
 export function extractTags(content: string): string[] {
   const lines = content.split("\n");
   const prose = proseMask(lines);
-  // Raw HTML isn't Markdown: no tags inside its blocks or its tags' markup.
-  for (const b of htmlBlockRanges(content)) for (let i = b.fromLine; i <= b.toLine; i++) prose[i] = false;
+  // An SVG drawing's markup and labels aren't prose (its colours aren't tags).
+  for (const b of htmlBlockRanges(content)) {
+    if (!/^\s*<svg[\s>]/i.test(lines[b.fromLine])) continue;
+    for (let i = b.fromLine; i <= b.toLine; i++) prose[i] = false;
+  }
   const seen = new Set<string>();
   const out: string[] = [];
   const add = (raw: string) => {
@@ -275,7 +282,7 @@ export function extractTags(content: string): string[] {
     if (!prose[i]) continue;
     const line = lines[i]
       .replace(INLINE_CODE_RE, " ") // `#x` in code isn't a tag
-      .replace(/<\/?[a-zA-Z][^<>]*>/g, " ");
+      .replace(HTML_TAG, " "); // nor is a colour in an HTML attribute
     const re = tagRegex();
     let m: RegExpExecArray | null;
     while ((m = re.exec(line))) add(m[2]); // group 2 = bare name

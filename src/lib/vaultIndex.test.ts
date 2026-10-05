@@ -384,4 +384,10 @@ describe("tags and raw HTML", () => {
     ].join("\n");
     expect(extractTags(note)).toEqual(["real-tag", "second"]);
   });
+  it("still reads tags after inline HTML on a line", () => {
+    expect(extractTags('<span style="color:red">Important</span> #todo')).toEqual(["todo"]);
+    expect(extractTags('<font color="red">Due</font> #deadline')).toEqual(["deadline"]);
+    expect(extractTags("<p>Para</p> #ptag")).toEqual(["ptag"]);
+    expect(extractTags("x<y and #between z>w")).toEqual(["between"]);
+  });
 });
