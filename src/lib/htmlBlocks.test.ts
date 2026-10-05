@@ -55,6 +55,12 @@ describe("inline SVG", () => {
     "- after",
   ].join("\n");
 
+  it("is a block in both views right under a paragraph too", () => {
+    const tight = 'Some text.\n<svg viewBox="0 0 10 10">\n<line stroke="#e8710a"/>\n</svg>\n\nafter';
+    expect(htmlBlockRanges(tight)).toEqual([{ fromLine: 1, toLine: 3 }]);
+    expect(readingBlocks(tight)).toBe(1);
+  });
+
   it("is one HTML block in both views", () => {
     expect(htmlBlockRanges(svg)).toEqual([{ fromLine: 2, toLine: 5 }]);
     expect(readingBlocks(svg)).toBe(1);

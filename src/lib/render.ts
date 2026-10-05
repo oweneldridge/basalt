@@ -507,6 +507,8 @@ export function renderMarkdown(src: string, lineMap?: number[]): string {
       if (para.length && l.trim().startsWith("$$") && !(l.trim().length > 4 && l.trim().endsWith("$$")))
         break;
       if (l.includes("|") && i + 1 < lines.length && TABLE_DELIM.test(lines[i + 1])) break;
+      // An HTML block (a drawing, a div) ends the paragraph, as in Live Preview.
+      if (para.length && HTML_BLOCK.test(l.trim()) && l.trim().includes(">")) break;
       para.push(l);
       i++;
     }
