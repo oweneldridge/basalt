@@ -1832,7 +1832,7 @@ button.primary:hover {
 }
 
 /* ------- Transclusion / embeds ------- */
-.cm-embed { padding: 4px 0; }
+.cm-embed { margin: 4px 0; }
 .embed {
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);

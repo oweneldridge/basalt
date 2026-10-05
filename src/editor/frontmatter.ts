@@ -95,13 +95,7 @@ class PropertiesWidget extends WidgetType {
     };
     footer.append(addBtn, rawBtn);
     wrap.append(footer);
-    // The block's spacing is padding on an outer box: CodeMirror measures a
-    // block widget without its margins, and a margin would shift every line
-    // below it out of step with what's drawn.
-    const outer = document.createElement("div");
-    outer.className = "cm-properties-block";
-    outer.append(wrap);
-    return outer;
+    return wrap;
   }
 
   private renderRow(view: EditorView, p: FmProp, body: string[]): HTMLElement {
@@ -316,6 +310,8 @@ interface FmState {
   range: { from: number; to: number } | null;
 }
 
+const AFTER_PROPERTIES = Decoration.line({ class: "cm-after-properties" });
+
 function compute(state: EditorState): FmState {
   const range = frontmatterRange(state);
   if (!range) return { deco: Decoration.none, range: null };
@@ -328,6 +324,13 @@ function compute(state: EditorState): FmState {
     range.to,
     Decoration.replace({ widget: new PropertiesWidget(source), block: true }),
   );
+  // The gap under the box belongs to the first body line, not the widget: a
+  // click there puts the caret on that line, never in front of `---`.
+  // (CodeMirror measures a block widget without its margins, so it has none.)
+  if (range.to < state.doc.length) {
+    const next = state.doc.lineAt(range.to + 1);
+    builder.add(next.from, next.from, AFTER_PROPERTIES);
+  }
   return { deco: builder.finish(), range };
 }
 

@@ -202,6 +202,10 @@ test.describe("arrow keys past block widgets", () => {
       seen.push(await lineNo());
     }
     expect(seen).toEqual([16, 15, 14, 13]);
+    // Past the blank line, one step skips the drawing's own source line.
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ArrowUp");
+    expect(await lineNo()).toBe(10);
   });
 });
 
@@ -227,6 +231,46 @@ test.describe("clicking a rendered drawing", () => {
     const disk = vault.read("D.md");
     expect(disk).toContain("\n<svg viewBox");
     expect(disk).toContain("</svg>Z\n");
+  });
+});
+
+test.describe("clicks in the space around blocks", () => {
+  test.use({
+    vaultFiles: {
+      "P.md": "---\ntitle: P\nstatus: draft\ntags: [alpha]\n---\nfirst-body\n\nsecond\n",
+      "T.md": "# T\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\nafter table\n",
+      "E.md": "# E\n\n![[Inner]]\n\nafter embed\n",
+      "Inner.md": "inner text\n",
+    },
+  });
+
+  test("never type in front of the properties", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "P");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "second" }).click();
+    const box = (await page.locator(".pane:not(.dock) .cm-properties").boundingBox())!;
+    await page.mouse.click(box.x + 100, box.y + box.height + 9);
+    await page.keyboard.type("Hello");
+    await settle(page, 1500);
+    const disk = vault.read("P.md");
+    expect(disk.startsWith("---\ntitle: P\nstatus: draft\ntags: [alpha]\n---\n")).toBe(true);
+    expect(disk).toMatch(/\n---\n[^\n]*Hello/);
+  });
+
+  test("below a table or an embed go after it", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "T");
+    const table = (await page.locator(".pane:not(.dock) .cm-md-table").boundingBox())!;
+    await page.mouse.click(table.x + 20, table.y + table.height + 5);
+    await page.keyboard.type("K");
+    await settle(page, 1200);
+    expect(vault.read("T.md")).toContain("| a | b |\n| - | - |\n| 1 | 2 |\nK");
+    await openNote(page, "E");
+    const embed = (await page.locator(".pane:not(.dock) .cm-embed").first().boundingBox())!;
+    await page.mouse.click(embed.x + 20, embed.y + embed.height + 2);
+    await page.keyboard.type("J");
+    await settle(page, 1200);
+    expect(vault.read("E.md")).toContain("![[Inner]]\nJ");
   });
 });
 

@@ -169,7 +169,7 @@ const themeSpec = {
     ".cm-searchMatch": { background: "rgba(224, 175, 104, 0.25)" },
     ".cm-searchMatch-selected": { background: "rgba(224, 175, 104, 0.5)" },
     // Rendered tables — align with the text gutter (50px ≈ .cm-line 48 + 2 pad)
-    ".cm-md-table-wrap": { overflowX: "auto", padding: "10px 0", marginLeft: "50px", maxWidth: "820px" },
+    ".cm-md-table-wrap": { overflowX: "auto", marginLeft: "50px", maxWidth: "820px" },
     ".cm-md-table": { borderCollapse: "collapse", fontSize: "0.95em" },
     ".cm-md-table th, .cm-md-table td": {
       border: "1px solid var(--border)",
@@ -178,8 +178,9 @@ const themeSpec = {
     },
     ".cm-md-table th": { background: "var(--bg-elev)", fontWeight: "700" },
     // Frontmatter "Properties" view
-    // Widgets never take vertical margins (see the Properties widget).
-    ".cm-properties-block": { padding: "4px 0 18px" },
+    // Block widgets never take vertical margins: CodeMirror measures a widget
+    // without them, so every line below would sit out of step with the page.
+    ".cm-after-properties": { paddingTop: "18px" },
     ".cm-properties": {
       border: "1px solid var(--border)",
       borderRadius: "8px",
