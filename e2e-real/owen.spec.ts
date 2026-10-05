@@ -167,3 +167,40 @@ test.describe("links inside rendered HTML", () => {
     expect(page.url()).toBe(start);
   });
 });
+
+test.describe("arrow keys past block widgets", () => {
+  const body = [
+    "# Steps",
+    "",
+    "intro",
+    "",
+    "| a | b |",
+    "| - | - |",
+    "| 1 | 2 |",
+    "",
+    "$$x^2 + y^2$$",
+    "",
+    '<svg viewBox="0 0 100 60" width="100"><line x1="0" y1="0" x2="100" y2="60" stroke="currentColor"/></svg>',
+    "",
+    "p one",
+    "",
+    "p two",
+    "",
+    "p three",
+  ].join("\n");
+  test.use({ vaultFiles: { "Steps.md": body } });
+
+  test("ArrowUp moves one line at a time", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Steps");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "p three" }).click();
+    const lineNo = async () => Number(/Ln (\d+)/.exec((await page.locator(".status-bar").textContent()) ?? "")?.[1]);
+    expect(await lineNo()).toBe(17);
+    const seen: number[] = [];
+    for (let k = 0; k < 4; k++) {
+      await page.keyboard.press("ArrowUp");
+      seen.push(await lineNo());
+    }
+    expect(seen).toEqual([16, 15, 14, 13]);
+  });
+});

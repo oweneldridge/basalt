@@ -95,7 +95,13 @@ class PropertiesWidget extends WidgetType {
     };
     footer.append(addBtn, rawBtn);
     wrap.append(footer);
-    return wrap;
+    // The block's spacing is padding on an outer box: CodeMirror measures a
+    // block widget without its margins, and a margin would shift every line
+    // below it out of step with what's drawn.
+    const outer = document.createElement("div");
+    outer.className = "cm-properties-block";
+    outer.append(wrap);
+    return outer;
   }
 
   private renderRow(view: EditorView, p: FmProp, body: string[]): HTMLElement {
