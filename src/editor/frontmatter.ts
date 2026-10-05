@@ -310,27 +310,7 @@ interface FmState {
   range: { from: number; to: number } | null;
 }
 
-// The gap under the box is its own block, ending the hidden frontmatter, so it
-// shows above any first line (a table, a callout) and CodeMirror measures it.
-// (A block widget's margins aren't measured, so none has any.)
-class GapWidget extends WidgetType {
-  eq(): boolean {
-    return true;
-  }
-  get estimatedHeight(): number {
-    return 18;
-  }
-  toDOM(): HTMLElement {
-    const el = document.createElement("div");
-    el.className = "cm-properties-gap";
-    el.setAttribute("aria-hidden", "true");
-    return el;
-  }
-  ignoreEvent(): boolean {
-    return false;
-  }
-}
-const GAP = Decoration.widget({ widget: new GapWidget(), block: true, side: 1 });
+const AFTER_PROPERTIES = Decoration.line({ class: "cm-after-properties" });
 
 function compute(state: EditorState): FmState {
   const range = frontmatterRange(state);
@@ -344,7 +324,13 @@ function compute(state: EditorState): FmState {
     range.to,
     Decoration.replace({ widget: new PropertiesWidget(source), block: true }),
   );
-  if (range.to < state.doc.length) builder.add(range.to, range.to, GAP);
+  // The gap under the box belongs to the first body line, not the widget: a
+  // click there puts the caret on that line, never in front of `---`.
+  // (CodeMirror measures a block widget without its margins, so it has none.)
+  if (range.to < state.doc.length) {
+    const next = state.doc.lineAt(range.to + 1);
+    builder.add(next.from, next.from, AFTER_PROPERTIES);
+  }
   return { deco: builder.finish(), range };
 }
 
@@ -368,10 +354,10 @@ const fmField = StateField.define<FmState>({
 });
 
 // A click, double-click or drag that CodeMirror resolves into the rendered
-// Properties block (the gap under it, a pixel row along its border, or the
-// gutter beside it all map to the hidden `---` lines) starts on the first body
-// line instead: typing there would break the frontmatter. Each range is moved
-// on its own, so cursors added with Cmd-click keep the others.
+// Properties block (a pixel row along its border, or the gutter beside it,
+// maps to the hidden `---` lines) starts on the first body line instead:
+// typing there would break the frontmatter. Each range is moved on its own,
+// so cursors added with Cmd-click keep the others.
 const edgeClick = State.transactionFilter.of((tr) => {
   if (!tr.isUserEvent("select.pointer") || tr.docChanged || !tr.selection) return tr;
   const range = frontmatterRange(tr.startState);
@@ -381,12 +367,12 @@ const edgeClick = State.transactionFilter.of((tr) => {
   const hidden = (pos: number) => pos >= range.from && pos <= range.to;
   const sel = tr.newSelection;
   if (!sel.ranges.some((r) => hidden(r.anchor) || hidden(r.head))) return tr;
-  const ranges = sel.ranges.map((r) => {
-    const anchor = hidden(r.anchor) ? body : r.anchor;
-    // A drag from the body up past the whole box selects it on purpose.
-    const head = hidden(r.head) && (hidden(r.anchor) || r.head !== range.from) ? body : r.head;
-    return EditorSelection.range(anchor, head);
-  });
+  // A drag between the body and the very top of the note selects the whole
+  // block on purpose, to copy or replace it.
+  const moves = (pos: number, other: number) => hidden(pos) && (hidden(other) || pos !== range.from);
+  const ranges = sel.ranges.map((r) =>
+    EditorSelection.range(moves(r.anchor, r.head) ? body : r.anchor, moves(r.head, r.anchor) ? body : r.head),
+  );
   return [tr, { selection: EditorSelection.create(ranges, sel.mainIndex), sequential: true }];
 });
 

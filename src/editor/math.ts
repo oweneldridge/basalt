@@ -1,7 +1,7 @@
 // Live Preview for math: `$…$` (inline) and `$$…$$` (display, inline or a
 // multi-line block). Rendered with KaTeX (lazy-loaded). Caret outside → render;
 // inside → reveal the raw source, like mermaid/transclusion.
-import { EditorSelection, EditorState as State, RangeSetBuilder, StateField } from "@codemirror/state";
+import { EditorSelection, EditorState as State, Prec, RangeSetBuilder, StateField } from "@codemirror/state";
 import type { EditorState, Extension } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
@@ -116,4 +116,5 @@ const edgeClick = State.transactionFilter.of((tr) => {
   return [tr, { selection: EditorSelection.create(ranges, tr.newSelection.mainIndex), sequential: true }];
 });
 
-export const math: Extension = [mathField, edgeClick];
+// Runs after the Properties filter, which can move a click to a block's start.
+export const math: Extension = [mathField, Prec.high(edgeClick)];

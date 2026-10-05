@@ -180,7 +180,13 @@ const themeSpec = {
     // Frontmatter "Properties" view
     // Block widgets never take vertical margins: CodeMirror measures a widget
     // without them, so every line below would sit out of step with the page.
-    ".cm-properties-gap": { height: "18px" },
+    // A transparent border, not padding: a code block's or callout's own
+    // background and top padding stay below the gap.
+    ".cm-after-properties": { borderTop: "18px solid transparent", backgroundClip: "padding-box" },
+    // A coloured left border would slant up into the gap; an inset shadow
+    // stays inside the padding box with the background.
+    ".cm-after-properties.cm-callout": { borderLeft: "none", paddingLeft: "15px", boxShadow: "inset 3px 0 var(--cg)" },
+    ".cm-after-properties.cm-blockquote": { borderLeft: "none", paddingLeft: "15px", boxShadow: "inset 3px 0 var(--border)" },
     ".cm-properties": {
       border: "1px solid var(--border)",
       borderRadius: "8px",

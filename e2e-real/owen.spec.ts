@@ -301,8 +301,10 @@ test.describe("clicks on the edges of rendered blocks", () => {
       "Code.md": "---\ntitle: C\n---\n```latex\nx\n```\n\nEND\n",
       "Merm.md": "top\n\nABOVE\n\n```mermaid\ngraph TD\nA-->B\n```\n\nBELOW\n\nEND\n",
       "Math.md": "top\n\nABOVE\n\n$$\nx^2\n$$\n\nBELOW\n\nEND\n",
-      "FmTable.md": "---\ntitle: T\n---\n| a | b |\n| - | - |\n| 1 | 2 |\n\nEND\n",
       "FmCallout.md": "---\ntitle: N\n---\n> [!note] Hi\n> body\n\nEND\n",
+      "FmHead.md": "---\ntitle: H\n---\n# Heading one\n\nEND\n",
+      "FmList.md": "---\ntitle: L\n---\n- item one\n\nEND\n",
+      "Formula.md": "---\ntitle: M\n---\n$$\nx^2\n$$\n\nEND\n",
     },
   });
 
@@ -404,25 +406,71 @@ test.describe("clicks on the edges of rendered blocks", () => {
     expect(disk).toMatch(/\n[^\n$]*\$\$\n\nBELOW\n/);
   });
 
-  test("the gap under the properties shows above any first line", async ({ page, vault }) => {
+  test("a click in the gap under the properties keeps the first line's markup", async ({ page, vault }) => {
     await openApp(page, vault);
-    const gapAbove = async (sel: string, hasText?: string) => {
+    for (const note of ["FmHead", "FmList"]) {
+      await openNote(page, note);
       await page.locator(".pane:not(.dock) .cm-line", { hasText: "END" }).click();
-      const props = (await page.locator(".pane:not(.dock) .cm-properties").boundingBox())!;
-      const el = page.locator(`.pane:not(.dock) ${sel}`, hasText ? { hasText } : {}).first();
-      const box = (await el.boundingBox())!;
-      return { gap: box.y - (props.y + props.height), border: await el.evaluate((e) => getComputedStyle(e).borderTopWidth) };
-    };
-    await openNote(page, "FmTable");
-    expect((await gapAbove(".cm-md-table-wrap")).gap).toBeGreaterThanOrEqual(17);
-    await openNote(page, "FmCallout");
-    // The callout's own bar and background start together, below the gap.
-    const callout = await gapAbove(".cm-line.cm-callout", "Hi");
-    expect(callout.gap).toBeGreaterThanOrEqual(17);
-    expect(callout.border).toBe("0px");
+      const box = (await page.locator(".pane:not(.dock) .cm-properties").boundingBox())!;
+      await page.mouse.click(box.x + 200, box.y + box.height + 9);
+      await page.keyboard.type("Z");
+    }
+    await settle(page, 1500);
+    expect(vault.read("FmHead.md")).toContain("---\n# Heading");
+    expect(vault.read("FmList.md")).toContain("---\n- item");
+  });
+
+  test("math right under the properties stays math", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Formula");
+    for (const [dy, ch] of [
+      [0, "Z"],
+      [-0.5, "Y"],
+    ] as const) {
+      await page.locator(".pane:not(.dock) .cm-line", { hasText: "END" }).click();
+      const box = (await page.locator(".pane:not(.dock) .cm-properties").boundingBox())!;
+      await page.mouse.click(box.x + 120, box.y + box.height + dy);
+      await page.keyboard.type(ch);
+    }
+    await settle(page, 1500);
+    expect(vault.read("Formula.md")).toMatch(/^---\ntitle: M\n---\n\$\$/);
+  });
+
+  test("a drag from the top of the note selects the properties too", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Edge");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "END" }).click();
+    const box = (await page.locator(".pane:not(.dock) .cm-properties").boundingBox())!;
+    const end = (await page.locator(".pane:not(.dock) .cm-line", { hasText: "END" }).boundingBox())!;
+    await page.mouse.move(box.x + 120, box.y - 3);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 120, end.y + 5, { steps: 8 });
+    await page.mouse.up();
+    expect(await page.evaluate(() => document.getSelection()?.toString() ?? "")).toContain("title: P");
+  });
+
+  test("a code block under the properties keeps its own padding below the gap", async ({ page, vault }) => {
+    await openApp(page, vault);
     await openNote(page, "Code");
-    const code = await gapAbove(".cm-line", "latex");
-    expect(code.gap).toBeGreaterThanOrEqual(17);
-    expect(await page.locator(".pane:not(.dock) .cm-line", { hasText: "latex" }).evaluate((e) => getComputedStyle(e).paddingTop)).toBe("6px");
+    const first = page.locator(".pane:not(.dock) .cm-after-properties");
+    await expect(first).toHaveCount(1);
+    const style = await first.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { border: cs.borderTopWidth, padding: cs.paddingTop };
+    });
+    expect(style).toEqual({ border: "18px", padding: "6px" });
+  });
+
+  test("a callout under the properties starts its bar below the gap", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "FmCallout");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "END" }).click();
+    const line = page.locator(".pane:not(.dock) .cm-line.cm-after-properties");
+    await expect(line).toHaveClass(/cm-callout/);
+    const style = await line.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { gap: cs.borderTopWidth, bar: cs.borderLeftStyle, shadow: cs.boxShadow.includes("inset") };
+    });
+    expect(style).toEqual({ gap: "18px", bar: "none", shadow: true });
   });
 });
