@@ -706,13 +706,15 @@ export default function App() {
   // Opening a note: an unlisted one's first read becomes its baseline.
   const readToOpen = useCallback(
     async (path: string) => {
-      // A read that overlapped one of our own saves may predate it: read again.
+      // A read that overlapped one of our own saves, or a change the watcher or
+      // a link fix applied meanwhile, may predate it: read again.
       let text = "";
       for (let tries = 0; tries < 3; tries++) {
         const seq = lastSave.current.get(path)?.seq;
         const writing = isWriting(path);
+        const known = knownText(path);
         text = await readNote(path);
-        if (!writing && !isWriting(path) && lastSave.current.get(path)?.seq === seq) break;
+        if (!writing && !isWriting(path) && lastSave.current.get(path)?.seq === seq && knownText(path) === known) break;
       }
       if (!bigBase.current.has(path) && unlisted(path)) setBigBase(path, text);
       return text;

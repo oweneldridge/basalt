@@ -556,3 +556,61 @@ test.describe("a big note renamed while typing in it", () => {
     await expect.poll(() => vault.read("Big2.md").slice(0, 30), { timeout: 10000 }).toContain("me [[Big2]]\n\nstart T");
   });
 });
+
+test.describe("a note opened over a slow read", () => {
+  test.use({ vaultFiles: { "Lnote.md": "# L\n\nalpha\n\nend\n", "Lnk.md": "# L\n\nsee [[Tnote]]\n\nend\n", "Tnote.md": "# T\n", "Zother.md": "# Z\n" } });
+
+  const slowFirstRead = async (page: import("@playwright/test").Page, name: string, ms: number) => {
+    const state = { served: false, landed: false };
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (!state.served && body.includes('"cmd":"read_note"') && body.includes(`/${name}.md`)) {
+        state.served = true;
+        await new Promise((r) => setTimeout(r, ms));
+        await route.fulfill({ response: res }).catch(() => {});
+        state.landed = true;
+        return;
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    return state;
+  };
+
+  test("keeps an outside edit made during the read", async ({ page, vault }) => {
+    await openApp(page, vault);
+    const read = await slowFirstRead(page, "Lnote", 2000);
+    await page.locator(".tree-row.file", { hasText: "Lnote" }).first().click();
+    await expect.poll(() => read.served).toBe(true);
+    vault.write("Lnote.md", "# L\n\nPHONE alpha\n\nend\n");
+    await expect.poll(() => read.landed, { timeout: 10000 }).toBe(true);
+    await settle(page, 1500);
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^end$/ }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("Q");
+    await settle(page, 1500);
+    const disk = vault.read("Lnote.md");
+    expect(disk.includes("PHONE") || (await page.locator(".conflict").count()) > 0).toBe(true);
+  });
+
+  test("keeps a rename's link fix made during the read", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Zother");
+    const read = await slowFirstRead(page, "Lnk", 2500);
+    await page.locator(".tree-row.file", { hasText: "Lnk" }).first().click();
+    await expect.poll(() => read.served).toBe(true);
+    await page.locator(".tree-row.file", { hasText: "Tnote" }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+    await page.locator(".prompt-input").fill("Tnote2");
+    await page.locator(".prompt-input").press("Enter");
+    await expect.poll(() => vault.read("Lnk.md"), { timeout: 10000 }).toContain("[[Tnote2]]");
+    await expect.poll(() => read.landed, { timeout: 10000 }).toBe(true);
+    await settle(page, 1500);
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^end$/ }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("Q");
+    await settle(page, 1500);
+    expect(vault.read("Lnk.md")).toBe("# L\n\nsee [[Tnote2]]\n\nendQ\n");
+  });
+});
