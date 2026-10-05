@@ -90,3 +90,53 @@ test.describe("unlinked mentions", () => {
     await expect.poll(() => vault.read("Src.md")).toBe("see [[Target]] here\n");
   });
 });
+
+test.describe("a canvas edited during a rename's canvas write", () => {
+  test.use({
+    vaultFiles: {
+      "Board.canvas": JSON.stringify({
+        nodes: [
+          { id: "f1", type: "file", file: "Ideas.md", x: 0, y: 0, width: 240, height: 120 },
+          { id: "a1", type: "text", text: "a1", x: 300, y: 0, width: 200, height: 60 },
+        ],
+        edges: [],
+      }),
+    },
+  });
+
+  test("keeps the card and the fixed reference", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Ideas");
+    await page.getByRole("button", { name: "Split right" }).first().click();
+    await expect(page.locator(".pane:not(.dock)")).toHaveCount(2);
+    await page.locator(".tree-row.attachment", { hasText: "Board.canvas" }).click();
+    const addCard = page.locator('button[title="Add a card"]');
+    await expect(addCard).toBeVisible();
+    let release: () => void = () => {};
+    let held = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (!held && body.includes('"cmd":"write_canvas"')) {
+        held = true;
+        await new Promise<void>((r) => (release = r));
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    const ideasPane = page.locator(".pane:not(.dock)").filter({ has: page.locator(".tab.active", { hasText: "Ideas" }) });
+    const title = ideasPane.locator("input.inline-title").first();
+    await title.fill("Ideas Renamed");
+    await title.press("Enter");
+    await expect.poll(() => held, { timeout: 10000 }).toBe(true);
+    await addCard.click();
+    await page.waitForTimeout(100);
+    release();
+    await settle(page, 2000);
+    await addCard.click();
+    await settle(page, 2000);
+    const board = JSON.parse(vault.read("Board.canvas")) as { nodes: { id: string; file?: string }[] };
+    expect(board.nodes.length).toBe(4);
+    expect(board.nodes.find((n) => n.id === "f1")?.file).toBe("Ideas Renamed.md");
+  });
+});

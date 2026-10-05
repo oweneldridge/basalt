@@ -3872,8 +3872,13 @@ export default function App() {
             }
             await writeCanvas(c.path, next, json);
             rememberSelfWrite(c.rel, next);
+            // Edited during the write: the save queued behind this carries the
+            // edit, so give it the same fix and show that, not the fix alone.
+            const edited = pending.current.get(c.path);
+            const doc = edited === undefined ? next : (rewriteCanvasFileRefs(edited, relMap) ?? edited);
+            if (edited !== undefined) pending.current.set(c.path, doc);
             for (const p of Object.values(panesRef.current)) {
-              if (p.active === c.path) patchPane(p.id, { doc: next });
+              if (p.active === c.path) patchPane(p.id, { doc });
             }
           });
         } catch (e) {
