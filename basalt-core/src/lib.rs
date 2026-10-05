@@ -244,6 +244,7 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
         // The rename replaces the file, so carry over what Obsidian and Dataview
         // read from it: permissions and the creation time (file.ctime/cday).
         if let Some(m) = &original {
+            keep_owner(&f, m);
             let _ = f.set_permissions(m.permissions());
             keep_created(&f, m);
             keep_xattrs(path, &temp);
@@ -257,6 +258,18 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
     }
     result
 }
+
+/// A server running as root (the Docker image) must not hand the note to root:
+/// a sync tool running as the vault's owner, like unison, could no longer read
+/// a 0600 note. Anyone else can't change owners, and doesn't need to.
+#[cfg(unix)]
+fn keep_owner(f: &fs::File, m: &fs::Metadata) {
+    use std::os::unix::fs::MetadataExt;
+    let _ = std::os::unix::fs::fchown(f, Some(m.uid()), Some(m.gid()));
+}
+
+#[cfg(not(unix))]
+fn keep_owner(_f: &fs::File, _m: &fs::Metadata) {}
 
 #[cfg(target_os = "macos")]
 fn keep_created(f: &fs::File, m: &fs::Metadata) {
@@ -2081,6 +2094,28 @@ mod tests {
             let _ = fs::remove_file(&alias);
         }
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_keeps_owner() {
+        use std::os::unix::fs::MetadataExt;
+        let root = scratch_vault("owner");
+        let note = root.join("O.md");
+        fs::write(&note, "v1\n").unwrap();
+        // As root (the Docker server), the note belongs to someone else first.
+        let as_root = fs::metadata(&note).unwrap().uid() == 0;
+        if as_root {
+            std::os::unix::fs::chown(&note, Some(1000), Some(1000)).unwrap();
+        }
+        let before = fs::metadata(&note).unwrap();
+        write_note(&root, note.to_string_lossy().into(), "v2\n".into(), None).unwrap();
+        let after = fs::metadata(&note).unwrap();
+        assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()));
+        if as_root {
+            assert_eq!(after.uid(), 1000);
+        }
+        fs::remove_dir_all(&root).unwrap();
     }
 
     fn scratch_vault(tag: &str) -> PathBuf {
