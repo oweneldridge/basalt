@@ -98,6 +98,11 @@ async function tracked(path: string, content: string, write: Promise<void>): Pro
   }
 }
 
+/** Whether Basalt is writing to `path` right now. */
+export function isWriting(path: string): boolean {
+  return inFlight.has(path);
+}
+
 /** Whether `content` is what Basalt is writing to `path` right now. */
 export function isBeingWritten(path: string, content: string): boolean {
   return inFlight.get(path)?.includes(content) ?? false;

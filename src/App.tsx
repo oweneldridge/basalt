@@ -18,6 +18,7 @@ import {
   startWatching,
   writeNote,
   isBeingWritten,
+  isWriting,
   writeCanvas,
   writeBase,
   isWriteConflict,
@@ -1876,8 +1877,13 @@ export default function App() {
       if (!vaultRef.current) return;
       const byRel = new Map(notesRef.current.map((n) => [n.rel, n]));
       const prevByRel = new Map(notesRef.current.map((n) => [n.rel, n.content]));
+      const seqOf = (path: string) => lastSave.current.get(path)?.seq;
+      const before = changes.map((c) => {
+        const path = byRel.get(c.rel)?.path ?? c.path;
+        return { seq: seqOf(path), writing: isWriting(path) };
+      });
 
-      const reads = await Promise.all(
+      const all = await Promise.all(
         changes.map(async (c) => {
           const existing = byRel.get(c.rel);
           const absPath = existing?.path ?? c.path;
@@ -1888,6 +1894,14 @@ export default function App() {
           }
         }),
       );
+
+      // A read that overlapped one of our own saves may hold text older than
+      // that save: read it again once the save has settled.
+      const reads = all.filter((r, i) => !(before[i].writing || isWriting(r.path) || seqOf(r.path) !== before[i].seq));
+      if (reads.length < all.length) {
+        const again = all.filter((r) => !reads.includes(r)).map((r) => ({ rel: r.rel, path: r.path }));
+        window.setTimeout(() => void processChanges(again), 300);
+      }
 
       // Drop echoes of our own writes: disk content equals what we last wrote
       // (or are writing now: a slow reply can trail the watcher).
