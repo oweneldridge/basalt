@@ -82,7 +82,7 @@ import { StackedTabs } from "./components/StackedTabs";
 import { SlidesView } from "./components/SlidesView";
 import { StatusBar } from "./components/StatusBar";
 import { InlineTitle } from "./components/InlineTitle";
-import { EditorPane, editorText, fixOpenEditors, showText, type EditorApi } from "./components/EditorPane";
+import { EditorPane, editorCount, editorText, fixOpenEditors, showText, type EditorApi } from "./components/EditorPane";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec, type BuiltinView } from "./lib/leafViews";
@@ -1014,6 +1014,9 @@ export default function App() {
       for (const p of Object.values(panesRef.current)) {
         if (p.id !== paneId && p.active === path) patchPane(p.id, { doc });
       }
+      // Stacked columns on the note too, at once: one left on older text would
+      // have a link fix applied to that text and saved over this typing.
+      if (editorCount(path) > 1) showText(path, doc);
       const existing = saveTimers.current.get(path);
       if (existing !== undefined) window.clearTimeout(existing);
       saveTimers.current.set(

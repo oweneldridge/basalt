@@ -106,6 +106,11 @@ export function showText(path: string, text: string): void {
   }
 }
 
+/** How many open editors show `path`. */
+export function editorCount(path: string): number {
+  return openEditors.get(path)?.size ?? 0;
+}
+
 /** The text of an open editor on `path`, if one shows it (newest there is). */
 export function editorText(path: string): string | undefined {
   for (const v of openEditors.get(path) ?? []) return v.state.doc.toString();

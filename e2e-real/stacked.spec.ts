@@ -307,3 +307,65 @@ test.describe("stacked columns and slow reads", () => {
     expect(disk.includes("PHONE") || (await page.locator(".conflict").count()) > 0).toBe(true);
   });
 });
+
+test.describe("a note that's a column in two stacked panes", () => {
+  test.use({
+    vaultFiles: {
+      "Aaa.md": "[[Tgt]]\n",
+      "Linker.md": "# S\n\nsee [[Tgt]]\n\nend\n",
+      "Tgt.md": "# Tgt\n",
+      "One.md": "# One\n",
+      "Two.md": "# Two\n",
+    },
+  });
+
+  for (const which of [0, 1]) {
+  test(`keeps typing in either column through a rename's link fix (column ${which + 1})`, async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Linker");
+    await page.getByRole("button", { name: "Split right" }).first().click();
+    const panes = page.locator(".pane:not(.dock)");
+    await expect(panes).toHaveCount(2);
+    await page.locator(".tree-row.file", { hasText: "Two" }).first().click();
+    const withTwo = panes.filter({ has: page.locator(".tab", { hasText: "Two" }) });
+    const other = panes.filter({ hasNot: page.locator(".tab", { hasText: "Two" }) });
+    await expect(withTwo).toHaveCount(1);
+    await other.locator(".cm-content").first().click();
+    await page.keyboard.press("ControlOrMeta+o");
+    await page.locator(".palette-input").first().fill("One");
+    await page.keyboard.press("Enter");
+    const withOne = panes.filter({ has: page.locator(".tab", { hasText: "One" }) });
+    await expect(withOne).toHaveCount(1);
+    await expect(withOne.locator(".tab", { hasText: "Two" })).toHaveCount(0);
+    await withOne.getByRole("button", { name: /Stack tabs/ }).click();
+    await withTwo.getByRole("button", { name: /Stack tabs/ }).click();
+    await expect(page.locator(".stacked-col-head", { hasText: "Linker" })).toHaveCount(2);
+    const col = page.locator(".stacked-col").filter({ has: page.locator(".stacked-col-head", { hasText: "Linker" }) }).nth(which);
+    await expect(col.locator(".cm-content")).toBeVisible();
+    let held = false;
+    let release: () => void = () => {};
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (!held && body.includes('"cmd":"write_note"') && body.includes("/Aaa.md")) {
+        held = true;
+        await new Promise<void>((r) => (release = r));
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    await page.locator(".tree-row.file", { hasText: "Tgt" }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+    await page.locator(".prompt-input").fill("Tgt2");
+    await page.locator(".prompt-input").press("Enter");
+    await expect.poll(() => held, { timeout: 10000 }).toBe(true);
+    await col.locator(".cm-line", { hasText: /^end$/ }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("xyz");
+    release();
+    await expect.poll(() => vault.read("Linker.md"), { timeout: 10000 }).toContain("[[Tgt2]]");
+    await settle(page, 2000);
+    expect(vault.read("Linker.md")).toBe("# S\n\nsee [[Tgt2]]\n\nendxyz\n");
+  });
+  }
+});
