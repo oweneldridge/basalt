@@ -669,3 +669,44 @@ test.describe("saves that fail while the connection is down", () => {
     await expect.poll(() => vault.read("Ideas.md"), { timeout: 25000 }).toContain("try. two\n");
   });
 });
+
+test.describe("today's daily note from a template", () => {
+  test.use({
+    vaultFiles: {
+      ".obsidian/daily-notes.json": JSON.stringify({ template: "Templates/Daily" }),
+      "Templates/Daily.md": "## Log\n",
+    },
+  });
+
+  test("doesn't overwrite text typed into it while the template loads", async ({ page, vault }) => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    await openApp(page, vault);
+    let release: () => void = () => {};
+    let held = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (!held && body.includes('"cmd":"read_note"') && body.includes("Daily.md")) {
+        held = true;
+        await new Promise<void>((r) => (release = r));
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    await page.keyboard.press("ControlOrMeta+p");
+    await page.locator(".palette-input").first().fill("Open today's daily note");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => held, { timeout: 10000 }).toBe(true);
+    await expect(page.locator(".tree-row.file", { hasText: today })).toHaveCount(1, { timeout: 10000 });
+    await page.locator(".tree-row.file", { hasText: today }).first().click();
+    await page.locator(".pane:not(.dock) .cm-content").first().click();
+    await page.keyboard.type("my first thought");
+    await expect.poll(() => vault.read(`${today}.md`)).toBe("my first thought");
+    release();
+    await settle(page, 2500);
+    expect(vault.read(`${today}.md`)).toBe("my first thought");
+    await expect(page.locator(".tree-row.file", { hasText: today })).toHaveCount(1);
+  });
+});

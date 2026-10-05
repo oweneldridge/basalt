@@ -1523,7 +1523,7 @@ export default function App() {
         const content = await readNote(path);
         const dir = note.rel.replace(/[^/\\]+$/, "");
         const copyPath = await createNote(`${dir}${note.name} copy`);
-        await writeNote(copyPath, content);
+        await writeNote(copyPath, content, "");
         const rel = copyPath.startsWith(root) ? copyPath.slice(root.length).replace(/^[/\\]+/, "") : copyPath;
         const copy: VaultNote = { path: copyPath, rel, name: nameFromRel(rel), content };
         index.current.setNote(copy);
@@ -2794,14 +2794,25 @@ export default function App() {
           // Read fresh from disk — the index blanks oversized notes' content.
           const tplContent = await readNote(tpl.path).catch(() => "");
           content = fillTemplate(tplContent, now, name.split("/").pop() ?? name);
-          if (content) await writeNote(path, content);
+          // Only into the still-empty note: if it was written meanwhile (another
+          // device, or typing in it), that text stays.
+          if (content) {
+            try {
+              await writeNote(path, content, "");
+            } catch (e) {
+              if (!isWriteConflict(e)) throw e;
+              content = await readNote(path);
+            }
+          }
         }
       }
       const note: VaultNote = { path, rel, name: nameFromRel(rel), content };
       index.current.setNote(note);
       rememberSelfWrite(rel, content);
       setNotes((prev) =>
-        [...prev, note].sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
+        prev.some((n) => n.path === path)
+          ? prev.map((n) => (n.path === path ? note : n))
+          : [...prev, note].sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
       );
       bumpStructure();
       await openNoteByPath(path);
@@ -3313,7 +3324,7 @@ export default function App() {
         const vrel = abs.startsWith(vaultRef.current ?? "")
           ? abs.slice((vaultRef.current ?? "").length).replace(/^[/\\]+/, "")
           : abs;
-        await writeNote(abs, content);
+        await writeNote(abs, content, "");
         rememberSelfWrite(vrel, content); // AFTER the content write succeeds
         const note: VaultNote = { path: abs, rel: vrel, name: nameFromRel(vrel), content };
         index.current.setNote(note);
