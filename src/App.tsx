@@ -709,12 +709,18 @@ export default function App() {
       // A read that overlapped one of our own saves, or a change the watcher or
       // a link fix applied meanwhile, may predate it: read again.
       let text = "";
-      for (let tries = 0; tries < 3; tries++) {
+      for (let tries = 0; ; tries++) {
         const seq = lastSave.current.get(path)?.seq;
         const writing = isWriting(path);
         const known = knownText(path);
         text = await readNote(path);
         if (!writing && !isWriting(path) && lastSave.current.get(path)?.seq === seq && knownText(path) === known) break;
+        if (tries === 2) {
+          // Still changing: the newest text Basalt knows beats a read it overtook.
+          const newer = knownText(path);
+          if (newer !== undefined && newer !== known) text = newer;
+          break;
+        }
       }
       if (!bigBase.current.has(path) && unlisted(path)) setBigBase(path, text);
       return text;

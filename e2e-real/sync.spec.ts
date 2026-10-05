@@ -594,6 +594,34 @@ test.describe("a note opened over a slow read", () => {
     expect(disk.includes("PHONE") || (await page.locator(".conflict").count()) > 0).toBe(true);
   });
 
+  test("keeps the newest outside edit when it changes during every read", async ({ page, vault }) => {
+    await openApp(page, vault);
+    let slow = 0;
+    let inflight = 0;
+    await page.route("**/api/invoke", async (route) => {
+      const body = route.request().postData() ?? "";
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (body.includes('"cmd":"read_note"') && body.includes("/Lnote.md") && inflight === 0 && slow < 3) {
+        const n = ++slow;
+        inflight++;
+        setTimeout(() => vault.write("Lnote.md", `# L\n\nphone: ${n}\n\nend\n`), 300);
+        await new Promise((r) => setTimeout(r, 2500));
+        inflight--;
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    await page.locator(".tree-row.file", { hasText: "Lnote" }).first().click();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Lnote", { timeout: 15000 });
+    await settle(page, 1500);
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^end$/ }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("Q");
+    await settle(page, 1500);
+    const disk = vault.read("Lnote.md");
+    expect(disk.includes("phone: 3") || (await page.locator(".conflict").count()) > 0).toBe(true);
+  });
+
   test("keeps a rename's link fix made during the read", async ({ page, vault }) => {
     await openApp(page, vault);
     await openNote(page, "Zother");
