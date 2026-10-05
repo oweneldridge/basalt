@@ -41,8 +41,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   of a silent overwrite. Saves to one note, canvas or base run one at a time.
   A file that isn't UTF-8 is never overwritten, even when it changed to that
   while open. Notes too big for the search index (over 5 MB) get the same
-  check, so an edit made elsewhere while Basalt was offline raises "Changed on
-  disk" instead of being overwritten.
+  check, and an edit made to one elsewhere while Basalt was offline shows up
+  instead of being overwritten.
 - Saving keeps a note's creation time and permissions, so Dataview's
   `file.ctime` stays put. On macOS it also keeps Finder tags, "Open with" and
   other extended attributes.

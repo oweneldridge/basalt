@@ -302,4 +302,41 @@ test.describe("a note too big for the index", () => {
       expect(disk.includes("PHONE") || conflict > 0).toBe(true);
     });
   }
+
+  const reopenAfterOutage = async (page: import("@playwright/test").Page, vault: import("./fixture").Vault) => {
+    await openApp(page, vault);
+    await openNote(page, "Big");
+    await openNote(page, "Welcome");
+    await settle(page, 1000);
+    await vault.stop();
+    vault.write("Big.md", big.replace("head line", "head line PHONE"));
+    await vault.start();
+    await settle(page, 6000);
+    await openNote(page, "Big");
+    const editor = page.locator(".pane:not(.dock) .cm-content").first();
+    await expect(editor).toContainText("head line PHONE");
+    return editor;
+  };
+
+  test("reopened after an outage, it saves on top of what changed meanwhile", async ({ page, vault }) => {
+    const editor = await reopenAfterOutage(page, vault);
+    await editor.locator(".cm-line", { hasText: "head line PHONE" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" B");
+    await expect.poll(() => vault.read("Big.md").slice(0, 40), { timeout: 10000 }).toContain("head line PHONE B");
+    await expect(page.locator(".conflict")).toHaveCount(0);
+  });
+
+  test("reopened after an outage, an outside undo is shown and kept", async ({ page, vault }) => {
+    const editor = await reopenAfterOutage(page, vault);
+    vault.write("Big.md", big);
+    await expect.poll(() => editor.textContent(), { timeout: 10000 }).not.toContain("PHONE");
+    await editor.locator(".cm-line", { hasText: "head line" }).first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" B");
+    await settle(page, 3000);
+    const disk = vault.read("Big.md");
+    const conflict = await page.locator(".conflict").count();
+    expect(!disk.includes("PHONE") || conflict > 0).toBe(true);
+  });
 });

@@ -650,14 +650,26 @@ export default function App() {
       startGen = structGen.current;
       [read, atts] = await Promise.all([readVault(), listAttachments()]);
     }
+    // A note over the index cap is listed without its text. One Basalt has seen
+    // is read in full, so its saves compare against what's on disk now; if the
+    // read fails, the text last seen is still a safer baseline than none.
     const seenBefore = new Map(notesRef.current.map((n) => [n.path, n.content]));
-    const list = read.map((n) => {
+    const full = await Promise.all(
+      read.map(async (n) => {
+        const seen = n.content === "" && (n.size ?? 0) > 0 ? seenBefore.get(n.path) : undefined;
+        if (!seen) return undefined;
+        try {
+          return await readNote(n.path);
+        } catch {
+          return seen;
+        }
+      }),
+    );
+    const list = read.map((n, i) => {
       const w = lastSave.current.get(n.path);
       if (w && w.seq > startSeq) return { ...n, content: w.content };
-      // A note over the index cap is listed without its text. Keep the text last
-      // seen on disk: it's the baseline that makes its next save compare-and-swap.
-      const seen = n.content === "" && (n.size ?? 0) > 0 ? seenBefore.get(n.path) : undefined;
-      return seen ? { ...n, content: seen } : n;
+      const text = full[i];
+      return text !== undefined ? { ...n, content: text } : n;
     });
     index.current.build(list);
     notesRef.current = list; // the next save's baseline, before React re-renders
