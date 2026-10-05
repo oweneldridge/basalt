@@ -3647,9 +3647,10 @@ export default function App() {
   // like the Outline, so focusing a side panel doesn't zero it. Notes only.
   const docStats = useMemo(() => {
     if (!lastNote || isViewerPath(lastNote.path)) return null;
+    if (!Object.values(panes).some((p) => p.tabs.includes(lastNote.path))) return null; // closed
     const text = lastNote.content;
     return { words: (text.match(/\S+/g) ?? []).length, chars: text.length };
-  }, [lastNote]);
+  }, [lastNote, panes]);
 
   // Backlinks of the active note can only change when OTHER notes change, so
   // this keys off structureVersion — a local autosave doesn't re-resolve the vault.

@@ -54,9 +54,15 @@ const htmlBlockClick = EditorView.domEventHandlers({
   mousedown: (event, view) => {
     const el = (event.target as HTMLElement | null)?.closest(".cm-html-block") as HTMLElement | null;
     if (!el) return false;
+    // Caret after the block, not in front of its opening tag: typing there
+    // would break the tag (and with it the whole block).
     const pos = view.posAtDOM(el);
-    const line = view.state.doc.lineAt(Math.min(pos + 1, view.state.doc.length));
-    view.dispatch({ selection: { anchor: line.from } });
+    let end = view.state.doc.lineAt(Math.min(pos + 1, view.state.doc.length)).to;
+    view.state.field(htmlBlockField).between(pos, pos + 1, (_from, to) => {
+      end = to;
+    });
+    view.dispatch({ selection: { anchor: end } });
+    view.focus();
     event.preventDefault();
     return true;
   },

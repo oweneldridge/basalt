@@ -204,3 +204,28 @@ test.describe("arrow keys past block widgets", () => {
     expect(seen).toEqual([16, 15, 14, 13]);
   });
 });
+
+test("the word count clears when the note is closed", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await openNote(page, "Ideas");
+  const words = page.locator(".status-bar-item", { hasText: "words" });
+  await expect(words).not.toHaveText("0 words");
+  await page.locator(".pane:not(.dock) .tab", { hasText: "Ideas" }).locator(".tab-close").click();
+  await expect(words).toHaveText("0 words");
+});
+
+test.describe("clicking a rendered drawing", () => {
+  const note = '# D\n\n<svg viewBox="0 0 10 10"><line x1="0" y1="0" x2="10" y2="10" stroke="currentColor"/></svg>\n\nafter\n';
+  test.use({ vaultFiles: { "D.md": note } });
+
+  test("puts the caret after it, so typing doesn't break it", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "D");
+    await page.locator(".pane:not(.dock) .cm-html-block svg").click();
+    await page.keyboard.type("Z");
+    await settle(page, 1200);
+    const disk = vault.read("D.md");
+    expect(disk).toContain("\n<svg viewBox");
+    expect(disk).toContain("</svg>Z\n");
+  });
+});

@@ -27,6 +27,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Inline SVG drawings in notes render in Live Preview and Reading view,
   sanitized (no scripts, event handlers, embedded HTML or SVG animation), and
   colours such as `fill="#e8710a"` inside HTML are no longer read as tags.
+  Links inside a note's HTML or a drawing, in Reading view, canvas cards and
+  hover previews, open like other links instead of replacing the app.
+  Clicking a rendered drawing puts the caret after it, so typing can't break
+  it, and Reading view renders an HTML block written right under a paragraph.
+- The arrow keys move one line at a time past tables, math blocks, drawings,
+  embeds and the Properties block, instead of jumping lines above them.
 - Files and folders whose names start with a dot (sync backups such as
   `.unisonbak.*`, `.DS_Store`) are hidden from the file tree, search, the quick
   switcher and the index, as in Obsidian. "Show hidden files" in Settings shows
