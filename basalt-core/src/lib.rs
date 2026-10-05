@@ -1445,6 +1445,9 @@ pub fn toggle_file_bookmark(root: &Path, path: String) -> Result<bool, String> {
         .ok_or("path escapes vault")?
         .replace('\\', "/");
     let bpath = root.join(".obsidian/bookmarks.json");
+    // Read, change and write as one step: toggles from two clients at once
+    // would otherwise each drop the other's bookmark.
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // An ABSENT or empty file starts fresh; a file that exists but doesn't parse
     // to a JSON object is REFUSED (never silently clobber the user's data).
     let existing: serde_json::Value = match fs::read_to_string(&bpath) {
@@ -2160,6 +2163,26 @@ mod tests {
         assert_eq!((e1.as_str(), e2.as_str()), (WRITE_CONFLICT, WRITE_CONFLICT));
         write_canvas(&root, canvas.to_string_lossy().into(), "{}".into(), Some("{\"nodes\":[]}".into())).unwrap();
         assert_eq!(fs::read_to_string(&canvas).unwrap(), "{}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn bookmark_toggles_at_once_keep_every_bookmark() {
+        let root = scratch_vault("bookmarks-race");
+        for i in 0..30 {
+            fs::write(root.join(format!("n{i}.md")), "x").unwrap();
+        }
+        let handles: Vec<_> = (0..30)
+            .map(|i| {
+                let root = root.clone();
+                std::thread::spawn(move || toggle_file_bookmark(&root, root.join(format!("n{i}.md")).to_string_lossy().into()))
+            })
+            .collect();
+        for h in handles {
+            assert!(h.join().unwrap().unwrap());
+        }
+        let saved: serde_json::Value = serde_json::from_str(&fs::read_to_string(root.join(".obsidian/bookmarks.json")).unwrap()).unwrap();
+        assert_eq!(saved["items"].as_array().unwrap().len(), 30);
         fs::remove_dir_all(&root).unwrap();
     }
 
