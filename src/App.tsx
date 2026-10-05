@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { invoke, getCurrentWindow, listen, openAttachment, openUrl, revealItemInDir, confirm, isTauri } from "./lib/platform";
 import {
@@ -592,9 +592,11 @@ export default function App() {
   // committed yet. Until then an editor (a pane's or a stacked column's) can
   // still report the old path; afterwards every editor knows the new one, so
   // the map is cleared after each commit and a note that later takes the old
-  // path is never redirected.
+  // path is never redirected. It's cleared in a passive effect, which React runs
+  // after the editors' own: until an editor is rebuilt for the new path, a
+  // keystroke can still reach the old one.
   const renameWindow = useRef<Map<string, string>>(new Map());
-  useLayoutEffect(() => {
+  useEffect(() => {
     renameWindow.current.clear();
   }, [panes]);
   // Most-recently-opened rels (per vault) — orders the blank-query switcher.

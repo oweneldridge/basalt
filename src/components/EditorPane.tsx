@@ -200,8 +200,14 @@ export function EditorPane({
   // Build the editor when the note (path) changes.
   useEffect(() => {
     if (!host.current) return;
+    // Rebuilt by a rename: start from the old editor's text, which has anything
+    // typed after the repoint captured `doc`.
+    const prevKey = paneId && continuesFrom ? `${paneId}|${continuesFrom}` : null;
+    const prev = prevKey ? handoff.get(prevKey) : undefined;
+    if (prevKey) handoff.delete(prevKey);
+    const continuing = prev !== undefined;
     const v = new EditorView({
-      state: createEditorState(doc, adapter.current, sourceModeRef.current, darkRef.current, selfRelRef.current, spellcheckRef.current, vimRef.current, rtlRef.current),
+      state: createEditorState(continuing ? prev.text : doc, adapter.current, sourceModeRef.current, darkRef.current, selfRelRef.current, spellcheckRef.current, vimRef.current, rtlRef.current),
       parent: host.current,
     });
     view.current = v;
@@ -217,13 +223,11 @@ export function EditorPane({
     // Rebuilt by a rename: keep the place, and take focus only if the old editor
     // had it (else typing in another pane would land here). A note being opened
     // takes focus as usual.
-    const prevKey = paneId && continuesFrom ? `${paneId}|${continuesFrom}` : null;
-    const prev = prevKey ? handoff.get(prevKey) : undefined;
-    if (prevKey) handoff.delete(prevKey);
-    const continuing = prev !== undefined;
-    if (continuing && prev.text === doc) {
+    if (continuing) {
       v.dispatch({ selection: prev.selection });
       v.scrollDOM.scrollTop = prev.scrollTop;
+      // `doc` is then an earlier text of this same editor, not an outside edit.
+      if (prev.text !== doc) reported.current.push({ hash: textHash(doc), seq: reportSeq.current++ });
     }
     // Never pull focus out of another editor someone is typing in. One built in
     // this same commit doesn't count: the last of those takes focus, as before.

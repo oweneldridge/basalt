@@ -265,6 +265,7 @@ test.describe("focus after a rename", () => {
     await expect(panes).toHaveCount(2);
     const left = panes.filter({ has: page.locator(".tab.active .tab-name", { hasText: /^Target$/ }) });
     const right = panes.filter({ has: page.locator(".tab.active .tab-name", { hasText: /^Src$/ }) });
+    await expect(right).toHaveCount(1);
     await left.locator("input.inline-title").fill("Target Renamed");
     await right.locator(".cm-line", { hasText: "src line" }).click();
     await page.keyboard.press("End");
