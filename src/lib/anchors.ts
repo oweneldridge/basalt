@@ -3,10 +3,11 @@
 
 const XLINK = "http://www.w3.org/1999/xlink";
 
-/** The link a click landed in, HTML `<a href>` or SVG `<a xlink:href>`, with
- * its target ("" when it has none). Null when the click wasn't on a link. */
+/** The link a click landed in, HTML `<a href>`, an image map's `<area>` or SVG
+ * `<a xlink:href>`, with its target ("" when it has none). Null when the click
+ * wasn't on a link. */
 export function clickedLink(target: EventTarget | null): { href: string } | null {
-  const el = target instanceof Element ? target.closest("a") : null;
+  const el = target instanceof Element ? target.closest("a, area") : null;
   if (!el) return null;
   return { href: el.getAttribute("href") ?? el.getAttributeNS(XLINK, "href") ?? "" };
 }

@@ -229,3 +229,23 @@ test.describe("clicking a rendered drawing", () => {
     expect(disk).toContain("</svg>Z\n");
   });
 });
+
+test.describe("an image map in a note", () => {
+  test.use({
+    vaultFiles: {
+      "Map.md":
+        '# Map\n\n<div><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="200" height="100" usemap="#m"><map name="m"><area shape="rect" coords="0,0,200,100" href="https://evil.example/area"></map></div>\n',
+    },
+  });
+
+  test("never navigates the app's tab", async ({ page, vault }) => {
+    await openApp(page, vault);
+    const start = page.url();
+    await openNote(page, "Map");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    const img = (await page.locator(".reading-view img[usemap]").boundingBox())!;
+    await page.mouse.click(img.x + 50, img.y + 50);
+    await page.waitForTimeout(500);
+    expect(page.url()).toBe(start);
+  });
+});
