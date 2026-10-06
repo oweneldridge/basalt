@@ -64,6 +64,13 @@ class PropertiesWidget extends WidgetType {
     const wrap = document.createElement("div");
     wrap.className = "cm-properties";
     wrap.contentEditable = "false";
+    // CodeMirror ignores clicks in the box, so a click on blank space (padding,
+    // a key, the footer's gaps) would let the browser drop the caret in front
+    // of `---`, where the next key breaks the frontmatter. Only the controls
+    // take a click.
+    wrap.addEventListener("mousedown", (e) => {
+      if (!(e.target instanceof Element && e.target.closest("input, textarea, select, button, a"))) e.preventDefault();
+    });
     const parsed = parseFm(this.source);
     const props = parsed?.props ?? [];
 

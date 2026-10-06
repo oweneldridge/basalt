@@ -45,6 +45,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A click on blank space inside the Properties box, followed quickly by a key,
+  can no longer type in front of the frontmatter's opening `---`.
 - Tables in Live Preview render math, highlights, strikethrough and tags in
   their cells, as Obsidian does, instead of showing the raw text.
 - Lines below a formula no longer drift out of step with where clicks land

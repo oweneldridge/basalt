@@ -567,3 +567,22 @@ test("a focused side panel isn't reported as a saved note", async ({ page, vault
   await expect(page).toHaveTitle("Files · Basalt");
   await expect(page.locator(".status", { hasText: "Saved" })).toHaveCount(0);
 });
+
+test.describe("clicks on blank space inside the Properties box", () => {
+  test.use({ vaultFiles: { "Box.md": "---\ntitle: Box\nstatus: draft\n---\nbody line\n\nEND\n" } });
+
+  test("never type in front of the frontmatter", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Box");
+    for (const fx of [0.55, 0.75, 0.95]) {
+      for (const dy of [1, 2, 3, 4]) {
+        await page.locator(".pane:not(.dock) .cm-line", { hasText: "END" }).click();
+        const box = (await page.locator(".pane:not(.dock) .cm-properties").boundingBox())!;
+        await page.mouse.click(box.x + box.width * fx, box.y + box.height - dy);
+        await page.keyboard.type("Z");
+      }
+    }
+    await settle(page, 1500);
+    expect(vault.read("Box.md").startsWith("---\ntitle: Box\nstatus: draft\n---\n")).toBe(true);
+  });
+});
