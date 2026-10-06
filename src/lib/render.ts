@@ -210,8 +210,30 @@ interface LI {
   indent: number;
   ordered: boolean;
   task: "" | "x" | " " | null; // null = not a task
-  html: string;
+  text: string[]; // the item's first line, then any lines continuing it
   line?: number; // 0-based source line of a task item (for reading-view toggling)
+}
+
+// Obsidian's "Strict line breaks" (app.json `strictLineBreaks`, off by
+// default). Off, every newline inside a paragraph is a line break; on, only a
+// line ending in two spaces or a backslash breaks.
+let strictLineBreaks = false;
+export function setStrictLineBreaks(on: boolean): void {
+  strictLineBreaks = on;
+}
+
+const HARD_BREAK = /(?: {2,}|\\)$/;
+
+/** The lines of one paragraph or list item, with their line breaks. Inline
+ * syntax never spans lines, so each line renders on its own. */
+function renderLines(lines: string[]): string {
+  return lines
+    .map((l, k) => {
+      if (k === lines.length - 1) return renderInline(l.replace(HARD_BREAK, ""));
+      const hard = HARD_BREAK.test(l);
+      return renderInline(hard ? l.replace(HARD_BREAK, "") : l) + (hard || !strictLineBreaks ? "<br>" : "");
+    })
+    .join("\n");
 }
 
 function renderList(items: LI[]): string {
@@ -233,10 +255,11 @@ function renderList(items: LI[]): string {
       close(it.indent + 1);
       if (openItem) out += "</li>";
     }
+    const html = renderLines(it.text);
     const body =
       it.task !== null
-        ? `<input type="checkbox" class="md-task-check" data-task-line="${it.line ?? ""}"${it.task !== " " ? " checked" : ""} /> ${it.html}`
-        : it.html;
+        ? `<input type="checkbox" class="md-task-check" data-task-line="${it.line ?? ""}"${it.task !== " " ? " checked" : ""} /> ${html}`
+        : html;
     out += it.task !== null ? `<li class="md-task">${body}` : `<li>${body}`;
     openItem = true;
   }
@@ -462,6 +485,13 @@ export function renderMarkdown(src: string, lineMap?: number[]): string {
             i++;
             continue;
           }
+          // A line right under an item continues it, unless it starts a block.
+          const l = lines[i];
+          if (items.length && lines[i - 1].trim() !== "" && !(FENCE.test(l) || ATX.test(l) || HR.test(l) || QUOTE.test(l))) {
+            items[items.length - 1].text.push(l.trim());
+            i++;
+            continue;
+          }
           break;
         }
         const indent = (b ?? o)![1].length;
@@ -471,7 +501,7 @@ export function renderMarkdown(src: string, lineMap?: number[]): string {
           indent,
           ordered: !!o,
           task: task ? ((task[1] === " " ? " " : "x") as " " | "x") : null,
-          html: renderInline(task ? task[2] : content),
+          text: [task ? task[2] : content],
           line: task ? srcLine(i) : undefined,
         });
         i++;
@@ -512,7 +542,7 @@ export function renderMarkdown(src: string, lineMap?: number[]): string {
       para.push(l);
       i++;
     }
-    if (para.length) parts.push(`<p>${renderInline(para.join("\n"))}</p>`);
+    if (para.length) parts.push(`<p>${renderLines(para)}</p>`);
   }
   const footnotes = emitFootnotes();
   fnState = null;

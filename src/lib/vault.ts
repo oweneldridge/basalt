@@ -186,6 +186,7 @@ export function writeAttachment(
 export interface ObsidianConfig {
   newLinkFormat?: string | null;
   useMarkdownLinks?: boolean | null;
+  strictLineBreaks?: boolean | null;
   attachmentFolderPath?: string | null;
   dailyNotesFolder?: string | null;
   dailyNotesFormat?: string | null;

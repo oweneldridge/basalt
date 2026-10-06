@@ -1268,6 +1268,8 @@ pub struct ObsidianConfig {
     /// "shortest" | "relative" | "absolute"
     new_link_format: Option<String>,
     use_markdown_links: Option<bool>,
+    /// Reading view: only a line ending in two spaces or a backslash breaks.
+    strict_line_breaks: Option<bool>,
     attachment_folder_path: Option<String>,
     daily_notes_folder: Option<String>,
     daily_notes_format: Option<String>,
@@ -1285,6 +1287,7 @@ pub fn read_obsidian_config(root: &Path) -> Result<ObsidianConfig, String> {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
             cfg.new_link_format = v.get("newLinkFormat").and_then(|x| x.as_str()).map(String::from);
             cfg.use_markdown_links = v.get("useMarkdownLinks").and_then(|x| x.as_bool());
+            cfg.strict_line_breaks = v.get("strictLineBreaks").and_then(|x| x.as_bool());
             cfg.attachment_folder_path =
                 v.get("attachmentFolderPath").and_then(|x| x.as_str()).map(String::from);
         }
@@ -2115,6 +2118,17 @@ mod tests {
         if as_root {
             assert_eq!(after.uid(), 1000);
         }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn obsidian_config_reads_strict_line_breaks() {
+        let root = scratch_vault("cfg");
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        let strict = |root: &Path| serde_json::to_value(read_obsidian_config(root).unwrap()).unwrap()["strictLineBreaks"].clone();
+        assert_eq!(strict(&root), serde_json::Value::Null);
+        fs::write(root.join(".obsidian/app.json"), r#"{"strictLineBreaks": true}"#).unwrap();
+        assert_eq!(strict(&root), serde_json::Value::Bool(true));
         fs::remove_dir_all(&root).unwrap();
     }
 

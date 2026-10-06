@@ -105,7 +105,7 @@ import { VersionHistory } from "./components/VersionHistory";
 const BaseView = lazy(() =>
   import("./components/BaseView").then((m) => ({ default: m.BaseView })),
 );
-import { renderMarkdown, toggleTaskLine } from "./lib/render";
+import { renderMarkdown, setStrictLineBreaks, toggleTaskLine } from "./lib/render";
 import { renderMermaid } from "./lib/mermaid";
 import { buildHtmlDocument } from "./lib/export";
 import {
@@ -1665,6 +1665,7 @@ export default function App() {
       const savedWs = localStorage.getItem(workspaceKey(root));
       recents.current = loadRecents(root);
       obsConfigRef.current = await readObsidianConfig().catch(() => null);
+      setStrictLineBreaks(obsConfigRef.current?.strictLineBreaks ?? false);
       setBookmarks(await readObsidianBookmarks().catch(() => []));
       const savedTab = localStorage.getItem(rightTabKey(root));
       setRightTab(

@@ -45,6 +45,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Reading view keeps each line break inside a paragraph or list item, as
+  Obsidian does unless "Strict line breaks" is on, and follows that setting
+  from the vault. A line right under a list item stays in the item instead of
+  starting a new paragraph.
 - Hiding a sidebar, toggling Reading view, editing a property, splitting a
   pane, moving a folder or renaming a note no longer reverts what you typed.
 - A vault rescan, Reload, or a slow read in another pane no longer reverts text

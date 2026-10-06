@@ -491,3 +491,33 @@ test.describe("clicks on the edges of rendered blocks", () => {
     expect(style).toEqual({ gap: "18px", bar: "none", shadow: true });
   });
 });
+
+test.describe("line breaks in Reading view", () => {
+  test.use({ vaultFiles: { "Lines.md": "# Lines\n\ny = x^2\nx = 4\ny = 16 = height\n" } });
+
+  test("each line keeps its break, as in Obsidian by default", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Lines");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    const para = page.locator(".reading-view p", { hasText: "x = 4" });
+    await expect(para.locator("br")).toHaveCount(2);
+  });
+});
+
+test.describe("line breaks with Strict line breaks on", () => {
+  test.use({
+    vaultFiles: {
+      "Lines.md": "# Lines\n\ny = x^2\nx = 4\n",
+      ".obsidian/app.json": '{"strictLineBreaks": true}',
+    },
+  });
+
+  test("lines join into one, as in Obsidian", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Lines");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    const para = page.locator(".reading-view p", { hasText: "x = 4" });
+    await expect(para).toBeVisible();
+    await expect(para.locator("br")).toHaveCount(0);
+  });
+});

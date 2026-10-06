@@ -1,8 +1,8 @@
 import { toggleTaskLine } from "./render";
 // Markdown→HTML rendering for Reading mode / export. Output is inserted via
 // innerHTML, so escaping is security-critical and gets first-class coverage.
-import { describe, expect, it } from "vitest";
-import { renderMarkdown, renderInline, escapeHtml } from "./render";
+import { afterEach, describe, expect, it } from "vitest";
+import { renderMarkdown, renderInline, escapeHtml, setStrictLineBreaks } from "./render";
 
 describe("escaping (XSS safety)", () => {
   it("escapes HTML in prose, code, and attributes", () => {
@@ -72,7 +72,7 @@ describe("blocks", () => {
     expect(renderMarkdown("# A\n## B")).toBe("<h1>A</h1>\n<h2>B</h2>");
   });
   it("paragraphs join soft-wrapped lines", () => {
-    expect(renderMarkdown("one\ntwo\n\nthree")).toBe("<p>one\ntwo</p>\n<p>three</p>");
+    expect(renderMarkdown("one\ntwo\n\nthree")).toBe("<p>one<br>\ntwo</p>\n<p>three</p>");
   });
   it("horizontal rule", () => {
     expect(renderMarkdown("---")).toBe("<hr />");
@@ -124,6 +124,37 @@ describe("blocks", () => {
     expect(html).toContain("<th>tags</th><td>a, b</td>");
     expect(html).toContain("<p>Body.</p>");
     expect(html).not.toContain("title: Hi");
+  });
+});
+
+describe("line breaks (Obsidian's Strict line breaks setting)", () => {
+  afterEach(() => setStrictLineBreaks(false));
+
+  it("keeps every line break when the setting is off, as Obsidian does by default", () => {
+    expect(renderMarkdown("y = x^2\nx = 4\ny = 16")).toBe("<p>y = x^2<br>\nx = 4<br>\ny = 16</p>");
+    expect(renderMarkdown("two spaces  \nnext")).toBe("<p>two spaces<br>\nnext</p>");
+  });
+
+  it("breaks only after two spaces or a backslash when the setting is on", () => {
+    setStrictLineBreaks(true);
+    expect(renderMarkdown("one\ntwo")).toBe("<p>one\ntwo</p>");
+    expect(renderMarkdown("one  \ntwo")).toBe("<p>one<br>\ntwo</p>");
+    expect(renderMarkdown("one\\\ntwo")).toBe("<p>one<br>\ntwo</p>");
+  });
+
+  it("keeps a line under a list item in that item", () => {
+    expect(renderMarkdown("- item one\n  more of one\n- item two")).toBe(
+      "<ul><li>item one<br>\nmore of one</li><li>item two</li></ul>",
+    );
+    expect(renderMarkdown("1. first\nlazy line")).toBe("<ol><li>first<br>\nlazy line</li></ol>");
+    setStrictLineBreaks(true);
+    expect(renderMarkdown("- item one\n  more of one")).toBe("<ul><li>item one\nmore of one</li></ul>");
+  });
+
+  it("still ends a list at a heading, a quote or a fence", () => {
+    expect(renderMarkdown("- a\n# H")).toBe("<ul><li>a</li></ul>\n<h1>H</h1>");
+    expect(renderMarkdown("- a\n> q")).toContain("<blockquote>");
+    expect(renderMarkdown("- a\n```\ncode\n```")).toContain("<pre");
   });
 });
 
