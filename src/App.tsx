@@ -576,7 +576,12 @@ export default function App() {
       : null;
   const changedOnDisk = !!(active && conflicts.has(active.path));
   // Name the page after the open note, for screen readers and browser tabs.
-  const titleNote = active ? (notes.find((n) => n.path === active.path)?.name ?? active.path.split(/[\\/]/).pop()) : null;
+  const activeView = active && isViewPath(active.path) ? parseViewPath(active.path) : null;
+  const titleNote = !active
+    ? null
+    : isViewPath(active.path)
+      ? activeView && viewLabel(activeView)
+      : (notes.find((n) => n.path === active.path)?.name ?? active.path.split(/[\\/]/).pop());
   useEffect(() => {
     document.title = titleNote ? `${titleNote} · Basalt` : "Basalt";
   }, [titleNote]);
@@ -5207,7 +5212,7 @@ export default function App() {
                 ? "Saving…"
                 : activeIsBase
                   ? "Read-only"
-                  : active
+                  : active && !isViewPath(active.path)
                     ? "Saved"
                     : ""}
           </span>

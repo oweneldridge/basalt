@@ -45,6 +45,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Tables in Live Preview render math, highlights, strikethrough and tags in
+  their cells, as Obsidian does, instead of showing the raw text.
+- Lines below a formula no longer drift out of step with where clicks land
+  once the formula renders, so a click on a math block opens it instead of
+  typing into the line below.
+- The status bar no longer says "Saved" while a side panel such as Files is
+  focused, and the browser tab names that panel instead of `view:filetree`.
 - Reading view keeps each line break inside a paragraph or list item, as
   Obsidian does unless "Strict line breaks" is on, and follows that setting
   from the vault. A line right under a list item stays in the item instead of

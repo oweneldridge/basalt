@@ -521,3 +521,49 @@ test.describe("line breaks with Strict line breaks on", () => {
     await expect(para.locator("br")).toHaveCount(0);
   });
 });
+
+test.describe("a table's cells in Live Preview", () => {
+  test.use({
+    vaultFiles: {
+      "Cells.md": "# Cells\n\n| a | b |\n| - | - |\n| $x^2$ | ==hi== |\n| ~~old~~ | #tag and #2026 |\n\nEND\n",
+      "Tall.md": "# Tall\n\n$$x^2+1$$\n\n$$\n\\frac{a}{b} + \\sum_{i=1}^{n} x_i\n$$\n\n| q | r |\n| - | - |\n| $\\frac{1}{2}$ | $\\int_0^1 x\\,dx$ |\n\nBELOW\n\nEND\n",
+    },
+  });
+
+  test("render math, highlights, strikethrough and tags", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Cells");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "END" }).click();
+    const t = page.locator(".pane:not(.dock) .cm-md-table");
+    await expect(t.locator(".katex")).toHaveCount(1);
+    await expect(t).not.toContainText("$x^2$");
+    await expect(t.locator("mark")).toHaveText("hi");
+    await expect(t.locator("s")).toHaveText("old");
+    await expect(t.locator(".cm-tag")).toHaveText(["#tag"]);
+  });
+
+  test("lines below math stay where a click lands once it renders", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Tall");
+    // Nothing else may make CodeMirror measure again: the formulas alone must.
+    await expect(page.locator(".pane:not(.dock) .cm-math-block .katex")).toHaveCount(2);
+    await expect(page.locator(".pane:not(.dock) .cm-md-table .katex")).toHaveCount(2);
+    await page.waitForTimeout(500);
+    const offsets = await page.evaluate(() => {
+      const el = document.querySelector(".pane:not(.dock) .cm-content") as HTMLElement & { cmTile?: { root: { view: any } } };
+      const view = el.cmTile!.root.view;
+      return [...el.querySelectorAll(".cm-line")].map((l) => {
+        const blk = view.lineBlockAt(view.posAtDOM(l, 0));
+        return Math.round(l.getBoundingClientRect().top - (blk.top + view.documentTop));
+      });
+    });
+    expect(offsets.every((o: number) => Math.abs(o) <= 1)).toBe(true);
+  });
+});
+
+test("a focused side panel isn't reported as a saved note", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await page.getByRole("button", { name: "▸ Projects" }).click();
+  await expect(page).toHaveTitle("Files · Basalt");
+  await expect(page.locator(".status", { hasText: "Saved" })).toHaveCount(0);
+});
