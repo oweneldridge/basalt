@@ -586,3 +586,20 @@ test.describe("clicks on blank space inside the Properties box", () => {
     expect(vault.read("Box.md").startsWith("---\ntitle: Box\nstatus: draft\n---\n")).toBe(true);
   });
 });
+
+test.describe("task checkboxes in Live Preview", () => {
+  test.use({ vaultFiles: { "Tasks.md": "# Tasks\n\n- [ ] one\n- [x] two\n\nEND\n" } });
+
+  test("a click toggles the task", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Tasks");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "END" }).click();
+    const boxes = page.locator(".pane:not(.dock) .cm-task-checkbox");
+    await expect(boxes).toHaveCount(2);
+    await boxes.nth(0).click();
+    await expect(boxes).toHaveCount(2);
+    await boxes.nth(1).click();
+    await settle(page, 1500);
+    expect(vault.read("Tasks.md")).toBe("# Tasks\n\n- [x] one\n- [ ] two\n\nEND\n");
+  });
+});

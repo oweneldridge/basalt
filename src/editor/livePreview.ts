@@ -106,9 +106,11 @@ class CheckboxWidget extends WidgetType {
     box.type = "checkbox";
     box.checked = this.checked;
     box.className = "cm-task-checkbox";
-    // Toggle on a real click (not mousedown — that would fire when starting a
-    // drag-select). Resolve the marker's LIVE position from the DOM so we never
-    // write to a stale offset.
+    // The mousedown is kept from CodeMirror (see ignoreEvent) and from the
+    // browser: moving the caret onto the line would reveal its raw `- [ ]` and
+    // remove this box before the click arrived. Toggle on the click itself,
+    // resolving the marker's LIVE position so a stale offset is never written.
+    box.addEventListener("mousedown", (e) => e.preventDefault());
     box.addEventListener("click", (e) => {
       if (e.detail > 1) return;
       e.preventDefault();
@@ -123,8 +125,8 @@ class CheckboxWidget extends WidgetType {
     });
     return box;
   }
-  ignoreEvent(): boolean {
-    return false;
+  ignoreEvent(e: Event): boolean {
+    return e.type === "mousedown";
   }
 }
 

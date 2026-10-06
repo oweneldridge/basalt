@@ -45,6 +45,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Clicking a task's checkbox in Live Preview toggles it again. The click used
+  to reveal the line's raw `- [ ]` and remove the box before it could toggle.
 - A click on blank space inside the Properties box, followed quickly by a key,
   can no longer type in front of the frontmatter's opening `---`.
 - Tables in Live Preview render math, highlights, strikethrough and tags in
