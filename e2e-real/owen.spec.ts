@@ -701,3 +701,51 @@ test.describe("clicks on lines with hidden markup", () => {
   });
 });
 
+test.describe("typing lists", () => {
+  test.use({ vaultFiles: { "List.md": "Notes\n", "Kids.md": "- a\n- b\n\t- child\n- c\n", "Ord.md": "1. a\n2. b\n3. c\n" } });
+
+  const caretAtEnd = async (page: import("@playwright/test").Page, text: string) => {
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: text }).first().click();
+    await page.keyboard.press("End");
+  };
+
+  test("Enter on an empty item leaves the list, as in Obsidian", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "List");
+    await caretAtEnd(page, "Notes");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("- a");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("b");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("c");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("after list");
+    await settle(page, 1500);
+    expect(vault.read("List.md")).toBe("Notes\n- a\n\t- b\n- c\nafter list\n");
+  });
+
+  test("Tab and Shift-Tab move an item's children with it", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Kids");
+    await caretAtEnd(page, "b");
+    await page.keyboard.press("Tab");
+    await settle(page, 1200);
+    expect(vault.read("Kids.md")).toBe("- a\n\t- b\n\t\t- child\n- c\n");
+    await page.keyboard.press("Shift+Tab");
+    await settle(page, 1200);
+    expect(vault.read("Kids.md")).toBe("- a\n- b\n\t- child\n- c\n");
+  });
+
+  test("Tab on a numbered item starts its own list at 1", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Ord");
+    await caretAtEnd(page, "b");
+    await page.keyboard.press("Tab");
+    await settle(page, 1200);
+    expect(vault.read("Ord.md")).toBe("1. a\n\t1. b\n2. c\n");
+  });
+});

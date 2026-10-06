@@ -1,6 +1,6 @@
 // Assembles the CodeMirror 6 extension stack. New editor-wide features are
 // wired in here.
-import { Annotation, Compartment, EditorSelection, EditorState } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, Prec } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import {
   EditorView,
@@ -24,12 +24,13 @@ import {
   closeBracketsKeymap,
 } from "@codemirror/autocomplete";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { deleteMarkupBackward, insertNewlineContinueMarkupCommand, markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { GFM } from "@lezer/markdown";
 import { vim } from "@replit/codemirror-vim";
 
 import { markdownKeys } from "./markdownKeys";
+import { indentListItem, outdentListItem } from "./listIndent";
 
 // Context-aware Tab (Obsidian-like): accept an open completion; indent list
 // items and multi-line selections; otherwise insert a literal tab at the caret
@@ -42,9 +43,11 @@ const smartTab = (view: EditorView): boolean => {
   const sel = state.selection.main;
   const line = state.doc.lineAt(sel.from);
   const multiline = !sel.empty && state.doc.lineAt(sel.to).number !== line.number;
-  if (multiline || LIST_LINE.test(line.text)) return indentMore(view);
+  if (multiline) return indentMore(view);
+  if (LIST_LINE.test(line.text)) return indentListItem(view) || indentMore(view);
   return insertTab(view);
 };
+const smartShiftTab = (view: EditorView): boolean => outdentListItem(view) || indentLess(view);
 
 // Typing an emphasis marker over a NON-EMPTY selection wraps it. (Adding these
 // chars to closeBrackets instead would also auto-pair them at an empty caret,
@@ -287,7 +290,15 @@ export function createEditorState(
     spellcheckCompartment.of(
       EditorView.contentAttributes.of({ spellcheck: spellcheck ? "true" : "false" }),
     ),
-    markdown({ base: markdownLanguage, codeLanguages: languages, extensions: GFM }),
+    markdown({ base: markdownLanguage, codeLanguages: languages, extensions: GFM, addKeymap: false }),
+    // Enter on an empty item leaves the list in one press, without first
+    // turning a tight list loose (Obsidian); Backspace eats list markup.
+    Prec.high(
+      keymap.of([
+        { key: "Enter", run: insertNewlineContinueMarkupCommand({ nonTightLists: false }) },
+        { key: "Backspace", run: deleteMarkupBackward },
+      ]),
+    ),
     basaltHighlight,
     themeCompartment.of(basaltThemeFor(dark)),
     // Heading folding — outside the render compartment, so it works in both
@@ -308,13 +319,12 @@ export function createEditorState(
     wikilinkModClickFollow(cb.onOpenWikilink),
     followLinkAtCursor(cb.onOpenWikilink, cb.onOpenUrl),
     // Real key precedence (higher first): completionKeymap (Prec.highest, injected
-    // by autocompletion() in wikilink.ts) > markdownKeymap (Prec.high, injected by
-    // markdown() — Enter continues lists/quotes/tasks, Backspace eats markup) >
-    // this flat keymap.
+    // by autocompletion() in wikilink.ts) > the Enter/Backspace keymap above
+    // (Prec.high) > this flat keymap.
     keymap.of([
       ...closeBracketsKeymap,
       ...markdownKeys, // Mod-B/I/K formatting
-      { key: "Tab", run: smartTab, shift: indentLess },
+      { key: "Tab", run: smartTab, shift: smartShiftTab },
       ...defaultKeymap,
       ...historyKeymap,
       ...searchKeymap, // includes Mod-D select-next-occurrence (multi-cursor)

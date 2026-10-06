@@ -45,6 +45,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Lists type as in Obsidian: Enter on an empty item leaves the list (or moves
+  up a level) in one press, without first making the list loose or leaving a
+  line of spaces; Tab and Shift-Tab move an item with the items under it; a
+  numbered item indented under another starts its own list at 1, and both
+  levels renumber.
 - In Live Preview a click never selects or types into markup it hides: a click
   left of a heading, quote, callout, list item or task starts typing after its
   markup, a click past a line's end lands after closing `**`, `==` or `~~`,
