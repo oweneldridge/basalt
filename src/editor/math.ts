@@ -6,6 +6,7 @@ import type { EditorState, Extension } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { isInExcludedRegion } from "./regions";
+import { fillMath, hasMathLoaded, mathGeneration } from "./mathRender";
 
 interface MathSpan {
   from: number;
@@ -50,18 +51,17 @@ class MathWidget extends WidgetType {
     readonly tex: string,
     readonly display: boolean,
     readonly block: boolean,
+    readonly generation: number,
   ) {
     super();
   }
   eq(o: MathWidget): boolean {
-    return o.tex === this.tex && o.display === this.display && o.block === this.block;
+    return o.tex === this.tex && o.display === this.display && o.block === this.block && o.generation === this.generation;
   }
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const el = document.createElement(this.block ? "div" : "span");
     el.className = "cm-math" + (this.block ? " cm-math-block" : "");
-    void import("../lib/math").then((m) => {
-      el.innerHTML = m.renderMath(this.tex, this.display);
-    });
+    fillMath(el, this.tex, this.display, view);
     return el;
   }
   ignoreEvent(): boolean {
@@ -79,7 +79,7 @@ function compute(state: EditorState): DecorationSet {
     builder.add(
       s.from,
       s.to,
-      Decoration.replace({ widget: new MathWidget(s.tex, s.display, s.block), block: s.block }),
+      Decoration.replace({ widget: new MathWidget(s.tex, s.display, s.block, mathGeneration()), block: s.block }),
     );
   }
   return builder.finish();
@@ -87,7 +87,7 @@ function compute(state: EditorState): DecorationSet {
 
 const mathField = StateField.define<DecorationSet>({
   create: (state) => compute(state),
-  update: (deco, tr) => (tr.docChanged || tr.selection ? compute(tr.state) : deco),
+  update: (deco, tr) => (tr.docChanged || tr.selection || hasMathLoaded(tr.effects) ? compute(tr.state) : deco),
   provide: (f) => EditorView.decorations.from(f),
 });
 

@@ -11,6 +11,7 @@ import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { renderInline } from "./inlineRender";
+import { hasMathLoaded, mathGeneration } from "./mathRender";
 import { editTableSource, tablePrefix, insertRow, deleteRow, insertColumn, deleteColumn } from "../lib/tableEdit";
 import type { ParsedTable } from "../lib/tableEdit";
 
@@ -35,11 +36,14 @@ export function cellOffsetInLine(line: string, col: number): number {
 }
 
 class TableWidget extends WidgetType {
-  constructor(readonly source: string) {
+  constructor(
+    readonly source: string,
+    readonly mathGeneration: number,
+  ) {
     super();
   }
   eq(other: TableWidget): boolean {
-    return other.source === this.source;
+    return other.source === this.source && other.mathGeneration === this.mathGeneration;
   }
   toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement("div");
@@ -103,7 +107,7 @@ class TableWidget extends WidgetType {
       const th = document.createElement("th");
       const content = document.createElement("span");
       content.className = "cm-table-cell";
-      content.append(renderInline(cell));
+      content.append(renderInline(cell, view));
       content.addEventListener("mousedown", editCell(0, c));
       th.append(content);
       // Per-column controls (delete this column, insert one to its right).
@@ -127,7 +131,7 @@ class TableWidget extends WidgetType {
         const td = document.createElement("td");
         const content = document.createElement("span");
         content.className = "cm-table-cell";
-        content.append(renderInline(cells[c] ?? ""));
+        content.append(renderInline(cells[c] ?? "", view));
         content.addEventListener("mousedown", editCell(lineIdx, c));
         td.append(content);
         if (c === cols - 1) {
@@ -188,7 +192,7 @@ function computeTables(state: EditorState): TableState {
       ranges.push({ from, to });
       if (touches(from, to)) return false; // editing: show raw
       const source = doc.sliceString(from, to);
-      builder.add(from, to, Decoration.replace({ widget: new TableWidget(source), block: true }));
+      builder.add(from, to, Decoration.replace({ widget: new TableWidget(source, mathGeneration()), block: true }));
       return false;
     },
   });
@@ -205,7 +209,7 @@ function touchedKey(ranges: { from: number; to: number }[], sel: EditorSelection
 const tableField = StateField.define<TableState>({
   create: (state) => computeTables(state),
   update: (value, tr) => {
-    if (tr.docChanged || syntaxTree(tr.state) !== syntaxTree(tr.startState)) {
+    if (tr.docChanged || syntaxTree(tr.state) !== syntaxTree(tr.startState) || hasMathLoaded(tr.effects)) {
       return computeTables(tr.state);
     }
     // On a pure selection change, only rebuild if a table's touched-state flipped
