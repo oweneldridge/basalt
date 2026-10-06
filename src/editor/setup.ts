@@ -78,6 +78,7 @@ import { basaltThemeFor, basaltHighlight } from "./theme";
 import { livePreview } from "./livePreview";
 import { tables } from "./tables";
 import { frontmatter } from "./frontmatter";
+import { clickGuard } from "./clickGuard";
 import { codeBlocks } from "./codeBlocks";
 import { callouts } from "./callouts";
 import { calloutFold } from "./calloutFold";
@@ -187,6 +188,7 @@ export function reconfigurePlugins(view: EditorView): void {
 
 function renderExtensions(cb: EditorCallbacks): Extension[] {
   return [
+    clickGuard,
     frontmatter,
     tables,
     mermaid,

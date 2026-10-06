@@ -603,3 +603,101 @@ test.describe("task checkboxes in Live Preview", () => {
     expect(vault.read("Tasks.md")).toBe("# Tasks\n\n- [x] one\n- [ ] two\n\nEND\n");
   });
 });
+
+test.describe("clicks on lines with hidden markup", () => {
+  const note = [
+    "# Heading text",
+    "",
+    "> quote text",
+    "",
+    "> [!note] Callout title",
+    "> body",
+    "",
+    "- [x] done item",
+    "",
+    "- plain item",
+    "",
+    "text ends **bold**",
+    "",
+    "> text ends ==hi==",
+    "",
+    "- text ends ~~gone~~",
+    "",
+    "some **bold** text",
+    "",
+    "END",
+    "",
+  ].join("\n");
+  test.use({ vaultFiles: { "Edges.md": note } });
+
+  const line = (page: import("@playwright/test").Page, text: string | RegExp) =>
+    page.locator(".pane:not(.dock) .cm-line", { hasText: text }).first();
+  const reset = (page: import("@playwright/test").Page) => line(page, /^END$/).click();
+  const charAt = (page: import("@playwright/test").Page, lineText: string, word: string) =>
+    page.evaluate(
+      ([lt, w]) => {
+        const el = [...document.querySelectorAll(".pane:not(.dock) .cm-line")].find((l) => l.textContent?.includes(lt));
+        const walker = document.createTreeWalker(el!, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          const i = n.textContent!.indexOf(w);
+          if (i < 0) continue;
+          const r = document.createRange();
+          r.setStart(n, i);
+          r.setEnd(n, i + 1);
+          const b = r.getBoundingClientRect();
+          return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+        }
+        return null;
+      },
+      [lineText, word] as const,
+    );
+
+  test("a click left of a line starts typing after its markup", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Edges");
+    for (const text of ["Heading text", "quote text", "Callout title", "done item", "plain item"]) {
+      await reset(page);
+      const box = (await line(page, text).boundingBox())!;
+      await page.mouse.click(box.x + 2, box.y + box.height / 2);
+      await page.keyboard.type("Z");
+    }
+    await settle(page, 1500);
+    const disk = vault.read("Edges.md");
+    for (const want of ["# ZHeading text", "> Zquote text", "> [!note] ZCallout title", "- [x] Zdone item", "- Zplain item"])
+      expect(disk).toContain(want);
+  });
+
+  test("a click past the end of a line types after its closing markup", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Edges");
+    for (const text of ["text ends bold", "text ends hi", "text ends gone"]) {
+      await reset(page);
+      const box = (await line(page, text).boundingBox())!;
+      await page.mouse.click(box.x + box.width - 12, box.y + box.height / 2);
+      await page.keyboard.type("Z");
+    }
+    await settle(page, 1500);
+    const disk = vault.read("Edges.md");
+    for (const want of ["text ends **bold**Z", "> text ends ==hi==Z", "- text ends ~~gone~~Z"]) expect(disk).toContain(want);
+  });
+
+  test("a double-click selects the word, never its markup", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Edges");
+    for (const [lineText, word] of [
+      ["some", "bold"],
+      ["Heading", "Heading"],
+      ["quote text", "quote"],
+      ["text ends hi", "hi"],
+    ] as const) {
+      await reset(page);
+      const at = (await charAt(page, lineText, word))!;
+      await page.mouse.dblclick(at.x, at.y);
+      await page.keyboard.type("X");
+    }
+    await settle(page, 1500);
+    const disk = vault.read("Edges.md");
+    for (const want of ["some **X** text", "# X text", "> X text", "> text ends ==X=="]) expect(disk).toContain(want);
+  });
+});
+

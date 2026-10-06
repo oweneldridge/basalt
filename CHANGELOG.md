@@ -45,6 +45,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- In Live Preview a click never selects or types into markup it hides: a click
+  left of a heading, quote, callout, list item or task starts typing after its
+  markup, a click past a line's end lands after closing `**`, `==` or `~~`,
+  and a double-click selects the word rather than the `**` or `# ` the first
+  click revealed.
 - Clicking a task's checkbox in Live Preview toggles it again. The click used
   to reveal the line's raw `- [ ]` and remove the box before it could toggle.
 - A click on blank space inside the Properties box, followed quickly by a key,
