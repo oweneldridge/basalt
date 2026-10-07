@@ -833,3 +833,27 @@ test.describe("a moved note's relative image link", () => {
     expect(vault.read("Projects/Note.md")).toContain("](");
   });
 });
+
+test.describe("closing tabs", () => {
+  test("a side panel's tab closes without an error", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Ideas");
+    const right = page.locator(".pane.dock").filter({ has: page.getByRole("tab", { name: "Outline" }) });
+    await right.getByRole("tab", { name: "Backlinks" }).click();
+    await right.getByRole("tab", { name: "Backlinks" }).locator("button").click();
+    await expect(right.getByRole("tab", { name: "Backlinks" })).toHaveCount(0);
+    await expect(right.getByRole("tab", { selected: true })).toHaveCount(1);
+    await expect(page.locator(".status-error")).toHaveCount(0);
+  });
+
+  test("Cmd-W never closes the editor area or the side panels", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Ideas");
+    for (let k = 0; k < 4; k++) await page.keyboard.press("Meta+w");
+    await expect(page.locator(".pane:not(.dock)")).toHaveCount(1);
+    await expect(page.getByRole("tab", { name: "Files" })).toHaveCount(1);
+    await page.reload();
+    await expect(page.locator(".pane:not(.dock)")).toHaveCount(1);
+    await expect(page.getByRole("tab", { name: "Files" })).toHaveCount(1);
+  });
+});

@@ -1385,7 +1385,12 @@ export default function App() {
       const idx = pane.tabs.indexOf(path);
       const tabs = pane.tabs.filter((p) => p !== path);
       if (tabs.length === 0) {
-        removePaneFromWorkspace(id);
+        // The last editor pane stays, empty (Obsidian keeps an empty tab), so
+        // closing notes never takes the editor area away or moves Cmd-W on to
+        // the side panels.
+        const lastEditor = !pane.dock && !Object.values(panesRef.current).some((p) => p.id !== id && !p.dock);
+        if (lastEditor) patchPane(id, { tabs: [], active: null, doc: "", scrollToLine: undefined });
+        else removePaneFromWorkspace(id);
         return;
       }
       if (!isActive) {
@@ -1395,6 +1400,10 @@ export default function App() {
       const neighbor = tabs[idx] ?? tabs[idx - 1] ?? null;
       let doc = "";
       let active: string | null = neighbor;
+      if (neighbor && isViewPath(neighbor)) {
+        patchPane(id, { tabs, active, doc, scrollToLine: undefined }); // a panel, not a note to read
+        return;
+      }
       if (neighbor) {
         try {
           doc = freshDoc(neighbor, pending.current.get(neighbor) ?? (await readToOpen(neighbor)));
@@ -1613,13 +1622,17 @@ export default function App() {
       }
       const rebuilt: Record<string, Pane> = {};
       let maxN = 0;
+      let emptyEditor: string | null = null;
       for (const id of ids) {
         const saved = ws.panes[id];
         const m = /(\d+)$/.exec(id);
         if (m) maxN = Math.max(maxN, Number(m[1]));
         // View tabs (sentinels) are always valid; note tabs must exist on disk.
         const tabs = (saved?.tabs ?? []).filter((p) => isViewPath(p) || exists.has(p));
-        if (tabs.length === 0) continue; // pane will be pruned from the layout
+        if (tabs.length === 0) {
+          if (!saved?.dock) emptyEditor ??= id;
+          continue; // pane will be pruned from the layout
+        }
         const active = saved?.active && tabs.includes(saved.active) ? saved.active : tabs[0];
         let doc = "";
         let shown: string | null = active;
@@ -1633,6 +1646,10 @@ export default function App() {
         const pinned = (saved?.pinned ?? []).filter((p) => tabs.includes(p));
         rebuilt[id] = { id, tabs, active: shown, doc, pinned: pinned.length ? pinned : undefined, linked: saved?.linked, stacked: saved?.stacked, dock: saved?.dock };
       }
+      // An empty editor pane stays when it's the only one (closing every note
+      // keeps the editor area, as in Obsidian).
+      if (emptyEditor && !Object.values(rebuilt).some((p) => !p.dock))
+        rebuilt[emptyEditor] = { id: emptyEditor, tabs: [], active: null, doc: "" };
       // Drop layout leaves with no surviving pane.
       let lay: LayoutNode | null = ws.layout;
       for (const id of ids) if (!rebuilt[id] && lay) lay = removeLeaf(lay, id);

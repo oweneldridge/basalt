@@ -45,6 +45,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Closing a side panel's tab no longer fails with "path escapes vault", and
+  closing every note leaves an empty editor area, as Obsidian does, instead of
+  removing it, so Cmd-W never goes on to close the side panels.
 - Images resolve the way Obsidian resolves a link path: `./` and `../` paths
   work, and a path like `assets/pic.png` still finds its image after the note
   moves, by the end of its path, preferring the note's own folder.
