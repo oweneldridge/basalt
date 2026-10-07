@@ -297,9 +297,13 @@ function noteMatchesGroup(note: VaultNote, q: Query, noteText: string, lines: st
   return true;
 }
 
-export function searchVault(notes: VaultNote[], query: string, opts: SearchOpts = {}): SearchHit[] {
+/** The best `SEARCH_MAX_HITS` results, with how many results there were in
+ * all and in how many notes. */
+export type SearchResults = SearchHit[] & { total: number; notes: number };
+
+export function searchVault(notes: VaultNote[], query: string, opts: SearchOpts = {}): SearchResults {
   const groups = parseSearchGroups(query).filter(groupHasAny);
-  if (groups.length === 0) return [];
+  if (groups.length === 0) return Object.assign([], { total: 0, notes: 0 });
   const anyContent = groups.some(groupHasContent);
 
   const scored: { hit: SearchHit; score: number }[] = [];
@@ -373,5 +377,6 @@ export function searchVault(notes: VaultNote[], query: string, opts: SearchOpts 
     }
   }
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, MAX_HITS).map((s) => s.hit);
+  const best = scored.slice(0, MAX_HITS).map((s) => s.hit);
+  return Object.assign(best, { total: scored.length, notes: new Set(scored.map((s) => s.hit.path)).size });
 }

@@ -76,7 +76,7 @@ describe("searchVault operators", () => {
   });
 
   it("empty / whitespace query returns nothing", () => {
-    expect(searchVault(NOTES, "   ")).toEqual([]);
+    expect(searchVault(NOTES, "   ")).toHaveLength(0);
   });
 });
 
@@ -158,5 +158,15 @@ describe("more of Obsidian's operators", () => {
   it("(a OR b) groups inside a search", () => {
     expect(paths("budget (bob OR nobody)")).toEqual(["Tasks.md"]);
     expect(paths("(alice OR thing) budget")).toEqual(["Other.md", "Tasks.md"]);
+  });
+});
+
+describe("search totals", () => {
+  it("count every result and note, past the ones listed", () => {
+    const notes = Array.from({ length: 400 }, (_, i) => note(`n${i}.md`, "a word here"));
+    const hits = searchVault(notes, "word");
+    expect(hits).toHaveLength(300);
+    expect(hits.total).toBe(400);
+    expect(hits.notes).toBe(400);
   });
 });
