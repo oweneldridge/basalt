@@ -153,7 +153,9 @@ export function rewriteLinks(content: string, mapTarget: LinkMapper): string | n
       changed = true;
     }
   }
-  return changed ? lines.join("\n") : null;
+  // A link written back as it was isn't a change: the note stays untouched.
+  const out = lines.join("\n");
+  return changed && out !== content ? out : null;
 }
 
 /**

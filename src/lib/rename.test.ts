@@ -10,6 +10,10 @@ const renameMap = (oldName: string, newName: string) => (raw: string) =>
   targetPathPart(raw).replace(/\.md$/i, "").toLowerCase() === oldName.toLowerCase() ? newName : null;
 
 describe("rewriteLinks", () => {
+  it("returns null when every link it maps comes out the same", () => {
+    const same = (raw: string) => targetPathPart(raw).replace(/\.md$/i, "");
+    expect(rewriteLinks("[[Ideas|mine]] [[Ideas#Later]] ![[Ideas]] [i](Ideas.md)\n", same)).toBeNull();
+  });
   it("rewrites a plain wikilink", () => {
     expect(rewriteLinks("see [[Old]] here", renameMap("Old", "New"))).toBe("see [[New]] here");
   });
