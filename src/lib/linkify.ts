@@ -47,12 +47,19 @@ export function maskForMentions(line: string): string {
  * blanked too: frontmatter, fenced and indented code, `%%comments%%`, `$$`
  * math and HTML comments. What's left is where a mention can be linked. */
 export function mentionLines(content: string, indented = true): string[] {
-  const spans: [number, number][] = content.includes("%%") ? commentRanges(content) : [];
-  // Finding indented code takes a parse; `indented: false` skips it when no
-  // line that matters is indented.
-  if (indented) spans.push(...indentedCodeRanges(content));
   const lines = content.split("\n");
   const prose = proseMask(lines);
+  return blank(content, hiddenSpans(content, indented, lines, prose))
+    .split("\n")
+    .map((l, i) => (prose[i] ? maskForMentions(l) : " ".repeat(l.length)));
+}
+
+/** Where a note's text isn't prose though its lines are: `%%comments%%`, `$$`
+ * math, HTML comments and (unless `indented` is false, which skips a parse)
+ * indented code. Frontmatter and fenced code are `proseMask`'s. */
+export function hiddenSpans(content: string, indented = true, lines = content.split("\n"), prose = proseMask(lines)): [number, number][] {
+  const spans: [number, number][] = content.includes("%%") ? commentRanges(content) : [];
+  if (indented) spans.push(...indentedCodeRanges(content));
   if (content.includes("$$") || content.includes("<!--")) {
     // Paired outside code and comments, so a `$$` in them can't shift the pairs.
     const outside = blank(content, spans)
@@ -61,9 +68,7 @@ export function mentionLines(content: string, indented = true): string[] {
       .join("\n");
     for (const m of outside.matchAll(/\$\$[\s\S]*?\$\$|<!--[\s\S]*?-->/g)) spans.push([m.index!, m.index! + m[0].length]);
   }
-  return blank(content, spans)
-    .split("\n")
-    .map((l, i) => (prose[i] ? maskForMentions(l) : " ".repeat(l.length)));
+  return spans;
 }
 
 /** `text` with each span blanked to spaces, its newlines kept. */

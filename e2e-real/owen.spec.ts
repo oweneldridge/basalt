@@ -1998,7 +1998,7 @@ test.describe("renumbering a list next to other lists", () => {
     await page.keyboard.press("Tab");
   };
 
-  test("numbers as Obsidian does next to other lists", async ({ page, vault }) => {
+  test("numbers lists as they render next to other lists", async ({ page, vault }) => {
     await openApp(page, vault);
     await openNote(page, "AfterBullets");
     await tabRoundTrip(page, "y");
@@ -2012,13 +2012,13 @@ test.describe("renumbering a list next to other lists", () => {
     await tabRoundTrip(page, "b");
     await page.keyboard.press("Shift+Tab");
     await settle(page, 1200);
-    // Obsidian counts on across a blank line, whatever the delimiter.
-    expect(vault.read("Delims.md")).toBe("1. a\n2. b\n\n3) x\n4) y\n");
+    // A `)` list is a list of its own, as it renders, so it keeps its numbers.
+    expect(vault.read("Delims.md")).toBe("1. a\n2. b\n\n1) x\n2) y\n");
 
     await openNote(page, "Zeros");
     await tabRoundTrip(page, "b");
     await settle(page, 1200);
-    expect(vault.read("Zeros.md")).toBe("01. a\n\t1. b\n2. c\n");
+    expect(vault.read("Zeros.md")).toBe("01. a\n\t01. b\n02. c\n");
   });
 });
 
