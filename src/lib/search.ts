@@ -158,14 +158,25 @@ function splitOnOr(query: string): string[] {
   return parts.map((p) => p.trim()).filter(Boolean);
 }
 
+// A /regex/, a standalone "phrase" or a [[link]] holds brackets the clause
+// extractors would take apart, so each is set aside until tokenizing.
+const KEEP_RE = /(?<=^|\s)(?:\/(?:\\.|[^/\\\n])+\/[gimsuy]*|"[^"]*"|\[\[[^\]\n]*\]\])(?=\s|$)/g;
+const KEPT_RE = /^\u0001(\d+)\u0001$/;
+
 function buildQuery(groupStr: string): Query {
-  const { lineGroups, rest: afterLines } = extractLineGroups(groupStr);
+  const kept: string[] = [];
+  const masked = groupStr.replace(KEEP_RE, (m) => `\u0001${kept.push(m) - 1}\u0001`);
+  const { lineGroups, rest: afterLines } = extractLineGroups(masked);
   const q: Query = {
     terms: [], negations: [], paths: [], files: [], tags: [], notPaths: [], notFiles: [], notTags: [], regex: null, lineGroups,
     taskGroups: [], sectionGroups: [], props: [], caseTerms: [], anyOf: [],
   };
   const rest = extractScoped(afterLines, q);
-  for (const tok of tokenize(rest)) {
+  const tokens = tokenize(rest).flatMap((t) => {
+    const k = KEPT_RE.exec(t);
+    return k ? tokenize(kept[Number(k[1])]) : [t];
+  });
+  for (const tok of tokens) {
     if (!tok) continue;
     const rx = /^\/(.+)\/([gimsuy]*)$/.exec(tok);
     if (rx && !q.regex && !looksCatastrophic(rx[1])) {
@@ -307,6 +318,7 @@ export function searchVault(notes: VaultNote[], query: string, opts: SearchOpts 
   const anyContent = groups.some(groupHasContent);
 
   const scored: { hit: SearchHit; score: number }[] = [];
+  let unlisted = 0; // matching lines past a note's cap: counted, not listed
   for (const note of notes) {
     const lines = normLines(note);
     const rawLines = note.content.split("\n");
@@ -328,7 +340,7 @@ export function searchVault(notes: VaultNote[], query: string, opts: SearchOpts 
     // Line hits: a line matching ANY matched group's regex or positive terms.
     const seenLine = new Set<number>();
     let inNote = 0;
-    for (let i = 0; i < lines.length && inNote < MAX_HITS_PER_NOTE; i++) {
+    for (let i = 0; i < lines.length; i++) {
       let idx = -1;
       for (const g of matched) {
         if (g.regex) {
@@ -369,6 +381,10 @@ export function searchVault(notes: VaultNote[], query: string, opts: SearchOpts 
       }
       if (idx === -1 || seenLine.has(i)) continue;
       seenLine.add(i);
+      if (inNote >= MAX_HITS_PER_NOTE) {
+        unlisted++;
+        continue;
+      }
       scored.push({
         hit: { path: note.path, name: note.name, line: i + 1, lineText: rawLines[i].trim() },
         score: 100 - idx * 0.1 - i * 0.001,
@@ -378,5 +394,5 @@ export function searchVault(notes: VaultNote[], query: string, opts: SearchOpts 
   }
   scored.sort((a, b) => b.score - a.score);
   const best = scored.slice(0, MAX_HITS).map((s) => s.hit);
-  return Object.assign(best, { total: scored.length, notes: new Set(scored.map((s) => s.hit.path)).size });
+  return Object.assign(best, { total: scored.length + unlisted, notes: new Set(scored.map((s) => s.hit.path)).size });
 }

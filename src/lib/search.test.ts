@@ -169,4 +169,26 @@ describe("search totals", () => {
     expect(hits.total).toBe(400);
     expect(hits.notes).toBe(400);
   });
+  it("count a note's lines past the ones it lists", () => {
+    const hits = searchVault([note("Many.md", Array.from({ length: 50 }, (_, i) => `word ${i}`).join("\n"))], "word");
+    expect(hits).toHaveLength(20);
+    expect(hits.total).toBe(50);
+  });
+});
+
+describe("regexes, phrases and links with brackets", () => {
+  const notes = [
+    note("A.md", "ticket 12345 here\ncall (Alice) later\n- [x] box ticked\nsee [[Note]] too\nfoo first"),
+    note("B.md", "nothing to see"),
+  ];
+  const found = (q: string) => [...new Set(searchVault(notes, q).map((h) => h.path))];
+  it("stay whole", () => {
+    for (const q of ["/[0-9]{3}/", "/(foo|bar)/", "/call \\(alice\\)/i", '"call (Alice)"', '"[x] box"', "[[Note]]"]) {
+      expect(found(q), q).toEqual(["/v/A.md"]);
+    }
+  });
+  it("while operators beside them still work", () => {
+    expect(found('"call (Alice)" [status]')).toEqual([]);
+    expect(found('/[0-9]{3}/ (foo OR zzz)')).toEqual(["/v/A.md"]);
+  });
 });
