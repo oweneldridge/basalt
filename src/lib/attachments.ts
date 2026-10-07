@@ -16,8 +16,25 @@ export function resolveAttachment(
   const p = literal ? rawTarget.trim() : targetPathPart(rawTarget);
   if (!p) return null;
   const file = norm(p.replace(/\\/g, "/").split("/").pop() ?? "");
-  const cands = attachments.filter((a) => norm(a.name) === file);
-  return linkpathDest(p, sourceRel, cands, (a) => a.rel);
+  return linkpathDest(p, sourceRel, named(attachments, file), (a) => a.rel);
+}
+
+// Each list's attachments by file name, made once per list (lists are never
+// changed in place), so resolving many links doesn't scan the list each time.
+const byName = new WeakMap<Attachment[], Map<string, Attachment[]>>();
+function named(attachments: Attachment[], file: string): Attachment[] {
+  let names = byName.get(attachments);
+  if (!names) {
+    names = new Map();
+    for (const a of attachments) {
+      const key = norm(a.name);
+      const same = names.get(key);
+      if (same) same.push(a);
+      else names.set(key, [a]);
+    }
+    byName.set(attachments, names);
+  }
+  return names.get(file) ?? [];
 }
 
 /** True if the link target looks like a file with a non-md extension. */
