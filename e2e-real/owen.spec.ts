@@ -1400,3 +1400,22 @@ test.describe("footnotes in Live Preview", () => {
     await expect(page.locator(".pane:not(.dock) .cm-line", { hasText: "The source." })).toHaveText("[^1]: The source.");
   });
 });
+
+test.describe("a line right under a table", () => {
+  test.use({ vaultFiles: { "Tbl.md": "first\n| a | b |\n| - | - |\n| 1 | 2 |\nSource: a sentence\nnext\nEND\n" } });
+
+  test("is its own line, as in Obsidian, and the arrow keys reach it", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Tbl");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    await expect(page.locator(".pane:not(.dock) .cm-line", { hasText: "Source: a sentence" })).toHaveCount(1);
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^first$/ }).click();
+    const ln = async () => Number(/Ln (\d+)/.exec((await page.locator(".status-bar-item", { hasText: "Ln " }).textContent()) ?? "")?.[1]);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    expect(await ln()).toBeLessThan(7);
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await expect(page.locator(".pane:not(.dock) .reading-view p", { hasText: "Source: a sentence" })).toHaveCount(1);
+    await expect(page.locator(".pane:not(.dock) .reading-view td", { hasText: "Source" })).toHaveCount(0);
+  });
+});

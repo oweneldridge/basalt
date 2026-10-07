@@ -20,6 +20,7 @@ const TAG_AT = new RegExp(`^#(${TAG_NAME})`, "u");
 import { parseFm } from "./frontmatter";
 import { calloutIcon } from "./callouticons";
 import { ObsidianTasks } from "./mdTasks";
+import { ObsidianTables } from "./mdTables";
 
 export function escapeHtml(s: string): string {
   return s
@@ -220,7 +221,7 @@ const ObsidianSyntax: MarkdownConfig = {
   ],
 };
 
-const mdParser = baseParser.configure([GFM, ObsidianTasks, ObsidianSyntax]);
+const mdParser = baseParser.configure([GFM, ObsidianTasks, ObsidianTables, ObsidianSyntax]);
 
 // ---------------------------------------------------------------------------
 // Render state for one document.
