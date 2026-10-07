@@ -389,6 +389,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   once.
 - The web app loads a vault sooner: the server compresses at a faster gzip
   level for a few percent more bytes.
+- A vault re-read that overlaps a rename keeps the links the rename fixed, so
+  renaming the same file again no longer leaves links to a name that's gone.
+- With a section folded, an edit that would change its hidden text without a
+  selection reaching past it (Shift+End then Backspace or typing, Cut, moving
+  a line, Cmd-B) opens the section instead and changes nothing.
+- Typing in a canvas card is kept when a rename or move of the canvas, waiting
+  behind another, runs.
+- Searches with `[…]` or `(…)` in a regex, a quoted phrase or a `[[link]]` work
+  again, and the totals count every matching line and note.
+- Pasted code keeps its line breaks (as IntelliJ-family editors copy it), and
+  spaces at a link's edges stay outside it.
+- Link all leaves math, comments, indented code and HTML alone.
+- Backspace never cuts a list or quote marker in part, and Tab leaves a list
+  that follows an HTML, table or `$$` line alone.
+- A rename's report of notes it couldn't fix stays on screen instead of giving
+  way to the next save's "Saved".
 
 ### Security
 
