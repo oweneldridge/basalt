@@ -45,6 +45,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- In Live Preview a callout with no title shows its type as the title
+  ("> [!warning]" reads "Warning"), and only callouts marked foldable (`-` or
+  `+`) get a fold arrow, as in Obsidian.
 - In `[[` link completion, Enter picks the note whose name starts with what
   was typed; "Create new note" no longer outranks it.
 - Cmd-E (Ctrl-E elsewhere) switches between editing and Reading view, as in

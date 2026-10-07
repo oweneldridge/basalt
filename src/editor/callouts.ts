@@ -11,19 +11,30 @@ import { syntaxTree } from "@codemirror/language";
 import { treeChanged } from "./regions";
 import { calloutIcon } from "../lib/callouticons";
 
-/** The callout type's icon, rendered where the `[!type]` token was. */
+/** The callout type's icon, rendered where the `[!type]` token was, with the
+ * type as the title when the header has none ("> [!warning]" shows "Warning",
+ * as in Obsidian). */
 class IconWidget extends WidgetType {
-  constructor(readonly type: string) {
+  constructor(
+    readonly type: string,
+    readonly defaultTitle: string,
+  ) {
     super();
   }
   eq(o: IconWidget): boolean {
-    return o.type === this.type;
+    return o.type === this.type && o.defaultTitle === this.defaultTitle;
   }
   toDOM(): HTMLElement {
     const s = document.createElement("span");
     s.className = "cm-callout-icon";
     s.textContent = calloutIcon(this.type);
-    return s;
+    if (!this.defaultTitle) return s;
+    const wrap = document.createElement("span");
+    const title = document.createElement("span");
+    title.className = "cm-callout-default-title";
+    title.textContent = this.defaultTitle;
+    wrap.append(s, title);
+    return wrap;
   }
 }
 
@@ -70,7 +81,9 @@ function build(view: EditorView): DecorationSet {
           if (m) {
             const cFrom = line.from + m.index;
             // Replace the `[!type]` token with the type's icon (Obsidian shows one).
-            builder.add(cFrom, cFrom + m[0].length, Decoration.replace({ widget: new IconWidget(m[1]) }));
+            const untitled = line.text.slice(m.index + m[0].length).trim() === "";
+            const title = untitled ? m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase() : "";
+            builder.add(cFrom, cFrom + m[0].length, Decoration.replace({ widget: new IconWidget(m[1], title) }));
           }
         }
       }

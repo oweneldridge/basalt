@@ -103,6 +103,8 @@ function build(state: EditorState): DecorationSet {
       if (!m) return false;
       if (isInExcludedRegion(state, startLine.from)) return false;
       const marker = m[3];
+      // Only a callout marked foldable (`-` closed, `+` open) folds, as in Obsidian.
+      if (marker !== "-" && marker !== "+") return false;
       const titlePos = startLine.from;
       // A chevron widget at the very start of the title line.
       ranges.push(

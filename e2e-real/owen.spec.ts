@@ -952,3 +952,18 @@ test.describe("link autocomplete", () => {
     expect(vault.read("Draft.md")).toContain("[[Brand New Idea]]");
   });
 });
+
+test.describe("callouts in Live Preview", () => {
+  test.use({ vaultFiles: { "Callouts.md": "> [!warning]\n> body one\n\n> [!tip] Custom title\n> body two\n\n> [!note]- Folded\n> hidden\n\nEND\n" } });
+
+  test("show a default title and fold only when marked foldable", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Callouts");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const titles = page.locator(".pane:not(.dock) .cm-callout-title");
+    await expect(titles.nth(0)).toContainText("Warning");
+    await expect(titles.nth(1)).toContainText("Custom title");
+    await expect(titles.nth(1)).not.toContainText("Tip");
+    await expect(page.locator(".pane:not(.dock) .cm-callout-fold")).toHaveCount(1);
+  });
+});
