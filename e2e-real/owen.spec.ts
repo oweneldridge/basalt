@@ -106,6 +106,21 @@ test.describe("unlinked mentions", () => {
   });
 });
 
+test.describe("Link all", () => {
+  const body = 'Ideas in prose\nmath $Ideas^2$ here\n%% Ideas\nstill Ideas %%\n\n    Ideas in code\n\n<span title="Ideas">x</span>\n<!-- Ideas -->\n';
+  test.use({ vaultFiles: { "Odd.md": body } });
+
+  test("links only mentions in the text, not in math, comments, code or HTML", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Ideas");
+    await page.locator(".pane.dock .tab.view-tab", { hasText: "Backlinks" }).click();
+    const unlinked = page.locator(".panel-section").nth(1);
+    await expect(unlinked.locator(".ref-group", { hasText: "Odd" }).locator(".ref-child")).toHaveCount(1);
+    await unlinked.locator(".link-all-btn").click();
+    await expect.poll(() => vault.read("Odd.md")).toBe(body.replace("Ideas in prose", "[[Ideas]] in prose"));
+  });
+});
+
 test.describe("backlink counts", () => {
   test.use({ vaultFiles: { "Mentions.md": "Ideas, then ideas again, and #ideas\n" } });
 

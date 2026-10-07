@@ -931,7 +931,13 @@ export function mayHaveIndentedComment(md: string): boolean {
 /** Indented code blocks (four spaces or a tab, outside a list), whose text is
  * literal. Only parsed for when an indented line holds a `%%`. */
 function indentedCode(md: string): [number, number][] {
-  if (!mayHaveIndentedComment(md)) return [];
+  return mayHaveIndentedComment(md) ? indentedCodeRanges(md) : [];
+}
+
+/** Where the indented code blocks are (four spaces or a tab, outside a list),
+ * as [from, to) offsets. The note is parsed only if a line is indented. */
+export function indentedCodeRanges(md: string): [number, number][] {
+  if (!/^(?: {4}|\t)/m.test(md)) return [];
   const out: [number, number][] = [];
   mdParser.parse(md).iterate({
     enter: (n) => {

@@ -47,7 +47,7 @@ import { setQueryHost } from "./lib/queryHost";
 import { setTranscludeHost, splitSubpath, subpathToLine, extractHeadings, extractBlockIds } from "./lib/transclude";
 import { recordSnapshot, listSnapshots, clearSnapshots, renameSnapshots, type Snapshot } from "./lib/snapshots";
 import { installHoverPreview } from "./lib/hoverPreview";
-import { linkifyMention } from "./lib/linkify";
+import { linkifyMention, mentionLines } from "./lib/linkify";
 import { reorderTabs, insertTab } from "./lib/tabs";
 import { loadBindings, saveBindings, matchChord, type Bindings } from "./lib/hotkeys";
 import { parseObsidianImport, type ObsidianImportResult } from "./lib/obsidianImport";
@@ -4502,7 +4502,8 @@ export default function App() {
         fmt === "shortest" && bareWorks
           ? target.name
           : linkTargetForFormat(fmt, target.rel.replace(/\.md$/i, ""), !bareWorks, srcRel);
-      const next = linkifyMention(lines[idx], [target.name, ...index.current.aliasesOf(target.path)], linkText);
+      const masked = mentionLines(disk)[idx];
+      const next = linkifyMention(lines[idx], [target.name, ...index.current.aliasesOf(target.path)], linkText, masked);
       if (next === null) return false;
       lines[idx] = next;
       const content = lines.join("\n");

@@ -256,6 +256,24 @@ describe("2.9b review regressions", () => {
     const notes = [note("Ideas.md"), note("S.md", "Ideas and more ideas, Ideas")];
     expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes)).toHaveLength(3);
   });
+  it("leaves out mentions in math, comments, indented code and HTML", () => {
+    const body = [
+      "Ideas in prose", // 1: listed
+      "math $Ideas^2$ here", // 2
+      "%% Ideas", // 3: comment over lines
+      "still Ideas %%", // 4
+      "",
+      "    Ideas in code", // 6
+      "",
+      '<span title="Ideas">x</span>', // 8
+      "<!-- Ideas -->", // 9
+      "$$",
+      "Ideas = 1", // 11
+      "$$",
+    ].join("\n");
+    const notes = [note("Ideas.md"), note("S.md", body)];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([1]);
+  });
   it("lists only mentions the Link action can link, not tags or URLs", () => {
     const notes = [note("Ideas.md"), note("S.md", "#ideas\nhttps://x.com/ideas\nsee ideas")];
     expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([3]);
