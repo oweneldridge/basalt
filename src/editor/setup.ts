@@ -25,7 +25,7 @@ import {
   closeBracketsKeymap,
 } from "@codemirror/autocomplete";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { deleteMarkupBackward, insertNewlineContinueMarkupCommand, markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { insertNewlineContinueMarkupCommand, markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { GFM } from "@lezer/markdown";
 import { ObsidianTasks } from "../lib/mdTasks";
@@ -107,6 +107,7 @@ import { pluginBlocks } from "./pluginBlocks";
 import { transcludeBlocks } from "./transcludeBlocks";
 import { pasteLink } from "./pasteLink";
 import { pasteHtml } from "./pasteHtml";
+import { deleteMarkupOnly } from "./markupBackspace";
 import { pluginEditorExtensions } from "../lib/plugins";
 import type { LinkFormat } from "../lib/rename";
 
@@ -322,7 +323,7 @@ export function createEditorState(
     Prec.high(
       keymap.of([
         { key: "Enter", run: insertNewlineContinueMarkupCommand({ nonTightLists: false }) },
-        { key: "Backspace", run: deleteMarkupBackward },
+        { key: "Backspace", run: deleteMarkupOnly },
       ]),
     ),
     basaltHighlight,

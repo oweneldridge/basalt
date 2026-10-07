@@ -1867,3 +1867,19 @@ test.describe("a heading link inside an embed", () => {
     await expect(page.locator(".pane:not(.dock) .reading-view h2", { hasText: "Far part" })).toBeInViewport();
   });
 });
+
+test.describe("Backspace on a quote line written without a space", () => {
+  test.use({ vaultFiles: { "Bs.md": "> [!note] T\n>body\n\nEND\n" } });
+
+  test("deletes one character, never the marker with it", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Bs");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "body" }).click();
+    await page.keyboard.press("Home");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Backspace");
+    await settle(page, 1200);
+    expect(vault.read("Bs.md")).toBe("> [!note] T\n>ody\n\nEND\n");
+  });
+});
