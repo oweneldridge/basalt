@@ -75,8 +75,13 @@ class MathWidget extends WidgetType {
 function compute(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const sel = state.selection;
-  for (const s of findMath(state.doc.toString())) {
-    if (s.from >= s.to) continue;
+  // A `$$` block takes its whole line, so it can start before an inline
+  // formula earlier on that line: keep them in order and never overlapping
+  // (out of order, the builder throws and the keystroke is lost).
+  let end = -1;
+  for (const s of findMath(state.doc.toString()).sort((a, b) => a.from - b.from || a.to - b.to)) {
+    if (s.from >= s.to || s.from < end) continue;
+    end = s.to;
     if (isInExcludedRegion(state, s.from)) continue; // math inside code stays raw
     if (sel.ranges.some((r) => r.from <= s.to && r.to >= s.from)) continue; // editing → raw
     builder.add(
