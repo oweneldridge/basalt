@@ -139,6 +139,38 @@ describe("deleting next to a folded section", () => {
     expect(after.doc.toString()).toBe("# A\nhidden one\nhidden two\n\n# B\nafter");
     expect(foldedRanges(after).size).toBe(1);
   });
+  it("opens it when a selection only seems to cover the heading", () => {
+    const { state, range } = folded();
+    const sel = state.update({ selection: { anchor: 2, head: range.to } }).state;
+    for (const [userEvent, insert] of [["delete.backward", ""], ["delete.cut", ""], ["input.type", "New"], ["input.paste", "x"]]) {
+      const after = sel.update({ changes: { from: 2, to: range.to, insert }, userEvent }).state;
+      expect(after.doc.toString(), userEvent).toBe(doc);
+      expect(foldedRanges(after).size).toBe(0);
+      expect(after.selection.main.empty && after.selection.main.head).toBe(2);
+    }
+  });
+  it("opens it rather than move or reformat what it hides", () => {
+    const { state, range } = folded();
+    for (const userEvent of ["move.line", "input", "move.drop"]) {
+      const after = state.update({ changes: { from: range.from - 1, to: range.to, insert: "x" }, userEvent }).state;
+      expect(after.doc.toString(), userEvent).toBe(doc);
+    }
+  });
+  it("lets a selection into the text after it, or the whole note, delete it", () => {
+    const { state, range } = folded();
+    const past = state.update({ selection: { anchor: 0, head: range.to + 1 } }).state;
+    expect(past.update({ changes: { from: 0, to: range.to + 1 }, userEvent: "delete.backward" }).state.doc.toString()).toBe("# B\nafter");
+    const tail = "# A\nhidden";
+    const base = EditorState.create({ doc: tail, extensions: [markdown({ base: markdownLanguage, extensions: GFM }), headingFold] });
+    ensureSyntaxTree(base, tail.length, 5000);
+    const end = base.update({ effects: foldEffect.of(headingSectionAt(base, 0)!), selection: { anchor: 0, head: tail.length } }).state;
+    expect(end.update({ changes: { from: 0, to: tail.length }, userEvent: "delete.backward" }).state.doc.toString()).toBe("");
+  });
+  it("lets undo bring back what it hid", () => {
+    const { state, range } = folded();
+    const after = state.update({ changes: { from: range.from, to: range.to }, userEvent: "undo" }).state;
+    expect(after.doc.toString()).toBe("# A\n# B\nafter");
+  });
   it("still deletes the heading's own text", () => {
     const { state, range } = folded();
     const after = del(state, range.from - 1, range.from);

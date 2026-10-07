@@ -17,7 +17,7 @@ import {
   foldKeymap,
 } from "@codemirror/language";
 import { gutter, GutterMarker } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { EditorSelection, EditorState, Transaction } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 
@@ -128,22 +128,28 @@ const headingFoldGutter = gutter({
   },
 });
 
-/** Backspace or Delete that would change a folded section's hidden text (or
- * join a line onto it) opens the section instead, so nothing changes unseen.
- * Text the user selected is theirs to delete, and Shift-Tab only takes
- * indentation. */
-const openBeforeDeleting = EditorState.transactionFilter.of((tr) => {
-  if (!tr.docChanged || !tr.isUserEvent("delete") || tr.isUserEvent("delete.dedent")) return tr;
-  const selected = tr.startState.selection.ranges.filter((r) => !r.empty);
+/** An edit of the user's that would change a folded section's hidden text
+ * (or join a line onto it) opens the section instead and changes nothing, so
+ * nothing changes unseen. A selection reaching visible text past the section,
+ * or the whole note, is the user's to change, hidden text and all. Tab and
+ * Shift-Tab only change indentation, and undo and redo put back what was. */
+const guardFolds = EditorState.transactionFilter.of((tr) => {
+  const event = tr.annotation(Transaction.userEvent);
+  if (!tr.docChanged || !event || /^(undo|redo|input\.indent|delete\.dedent)/.test(event)) return tr;
+  const all = tr.startState.doc.length;
   const open: { from: number; to: number }[] = [];
-  foldedRanges(tr.startState).between(0, tr.startState.doc.length, (from, to) => {
-    tr.changes.iterChangedRanges((fromA, toA) => {
-      if (selected.some((r) => r.from <= fromA && toA <= r.to)) return;
-      if ((fromA < to && toA > from) || fromA === to) open.push({ from, to });
+  foldedRanges(tr.startState).between(0, all, (from, to) => {
+    const covered = tr.startState.selection.ranges.some((r) => r.from <= from && (r.to > to || (r.from === 0 && r.to === all)));
+    if (covered) return;
+    tr.changes.iterChanges((fromA, toA) => {
+      if ((fromA < to && toA > from) || (fromA === to && toA > to)) open.push({ from, to });
     });
   });
   if (!open.length) return tr;
-  return { effects: open.map((r) => unfoldEffect.of(r)) };
+  // A selection over the opened text shrinks to its start, so the next key
+  // doesn't replace what just came into view.
+  const sel = tr.startState.selection.main;
+  return { effects: open.map((r) => unfoldEffect.of(r)), selection: sel.empty ? undefined : EditorSelection.cursor(sel.from) };
 });
 
 /** Text typed or pasted at a folded section's hidden end (where the caret
@@ -160,6 +166,6 @@ const openWhenTypedAtEnd = EditorState.transactionFilter.of((tr) => {
   return open.length ? [tr, { effects: open.map((r) => unfoldEffect.of(r)) }] : tr;
 });
 
-export const headingFold: Extension = [codeFolding(), headingFoldGutter, openBeforeDeleting, openWhenTypedAtEnd];
+export const headingFold: Extension = [codeFolding(), headingFoldGutter, guardFolds, openWhenTypedAtEnd];
 
 export { foldKeymap };

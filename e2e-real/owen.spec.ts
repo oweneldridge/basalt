@@ -1696,6 +1696,36 @@ test.describe("a folded heading", () => {
     await expect.poll(() => vault.read("Fold.md")).toBe("# A\nhidden one\nhidden twoZ\n# B\nafter\n");
   });
 
+  test("opens instead of letting a selection that seems to end at the heading change it", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Fold");
+    const pane = page.locator(".pane:not(.dock)");
+    const fold = async () => {
+      await pane.locator(".cm-line", { hasText: "after" }).click();
+      await pane.locator(".cm-fold-marker").first().click({ force: true });
+      await expect(pane.locator(".cm-line", { hasText: "hidden one" })).toHaveCount(0);
+    };
+    const gestures: [string, () => Promise<void>][] = [
+      ["Shift+End, Backspace", async () => { await page.keyboard.press("Shift+End"); await page.keyboard.press("Backspace"); }],
+      ["Shift+End, typing", async () => { await page.keyboard.press("Shift+End"); await page.keyboard.type("New"); }],
+      ["Shift+Home from the end, typing", async () => { await page.keyboard.press("End"); await page.keyboard.press("Shift+Home"); await page.keyboard.type("Fresh"); }],
+    ];
+    for (const [name, act] of gestures) {
+      await fold();
+      await page.keyboard.press("ControlOrMeta+Home");
+      await page.keyboard.press("ArrowRight");
+      await page.keyboard.press("ArrowRight");
+      await expect(pane.locator(".cm-line", { hasText: "hidden one" })).toHaveCount(0);
+      await act();
+      await expect(pane.locator(".cm-line", { hasText: "hidden two" }), name).toHaveCount(1);
+      await settle(page, 900);
+      // Keys after the first go into the heading; what it hid stays.
+      expect(vault.read("Fold.md"), name).toMatch(/^#[^\n]*\nhidden one\nhidden two\n# B\nafter\n$/);
+      vault.write("Fold.md", "# A\nhidden one\nhidden two\n# B\nafter\n");
+      await expect(pane.locator(".cm-line").first()).toHaveText(/^(# )?A$/);
+    }
+  });
+
   test("lets a selection the user made be deleted, hidden text and all", async ({ page, vault }) => {
     await openApp(page, vault);
     await openNote(page, "Fold");
