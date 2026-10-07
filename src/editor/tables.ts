@@ -132,7 +132,9 @@ class TableWidget extends WidgetType {
     bodyLineIdx.forEach((lineIdx, bodyRow) => {
       const cells = splitCells(lines[lineIdx]);
       const tr = document.createElement("tr");
-      for (let c = 0; c < cols; c++) {
+      // Cells past the header's last show too, as in Obsidian.
+      const width = Math.max(cols, cells.length);
+      for (let c = 0; c < width; c++) {
         const td = document.createElement("td");
         if (aligns[c]) td.style.textAlign = aligns[c];
         const content = document.createElement("span");
@@ -140,7 +142,7 @@ class TableWidget extends WidgetType {
         content.append(renderInline(cells[c] ?? "", view));
         content.addEventListener("mousedown", editCell(lineIdx, c));
         td.append(content);
-        if (c === cols - 1) {
+        if (c === width - 1) {
           const bar = document.createElement("span");
           bar.className = "cm-table-rowbar";
           bar.append(

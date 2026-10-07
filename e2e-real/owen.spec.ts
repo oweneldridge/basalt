@@ -1583,3 +1583,16 @@ test.describe("an HTML comment with text after it", () => {
     await expect(view).toContainText("para");
   });
 });
+
+test.describe("a table row wider than its header", () => {
+  test.use({ vaultFiles: { "Wide.md": "| a | b |\n| - | - |\n| 1 | 2 | extra words |\n\nEND\n" } });
+
+  test("shows the extra cell in both views", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Wide");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    await expect(page.locator(".pane:not(.dock) .cm-md-table-wrap td", { hasText: "extra words" })).toHaveCount(1);
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await expect(page.locator(".pane:not(.dock) .reading-view td", { hasText: "extra words" })).toHaveCount(1);
+  });
+});

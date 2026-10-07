@@ -868,8 +868,9 @@ class Blocks {
     const rows: string[] = [];
     for (let c = n.firstChild; c; c = c.nextSibling) {
       if (c.name !== "TableRow") continue;
+      // A row with more cells than the header keeps them, as Obsidian shows.
       const cs = cells(c);
-      rows.push(`<tr>${Array.from({ length: cols }, (_, i) => cell("td", cs[i] ?? "", i)).join("")}</tr>`);
+      rows.push(`<tr>${Array.from({ length: Math.max(cols, cs.length) }, (_, i) => cell("td", cs[i] ?? "", i)).join("")}</tr>`);
     }
     return `<table class="md-table"><thead><tr>${head.map((h, i) => cell("th", h, i)).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
   }

@@ -502,3 +502,10 @@ describe("HTML comments", () => {
     expect(renderMarkdown("<!-- c --> visible tail\n\npara")).toContain("visible tail");
   });
 });
+
+describe("table rows wider than the header", () => {
+  it("keep their extra cells, as Obsidian shows them", () => {
+    const html = renderMarkdown("| a | b |\n| - | - |\n| 1 | 2 | 3 |\n");
+    expect(html).toContain("<td>1</td><td>2</td><td>3</td>");
+  });
+});
