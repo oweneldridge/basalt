@@ -1627,3 +1627,26 @@ test.describe("a PDF embed with a page", () => {
     expect(await rv.first().getAttribute("src")).toMatch(/#page=3$/);
   });
 });
+
+test.describe("a folded heading", () => {
+  test.use({ vaultFiles: { "Fold.md": "# A\nhidden one\nhidden two\n# B\nafter\n" } });
+
+  test("opens instead of letting Backspace or Delete change what it hides", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Fold");
+    const pane = page.locator(".pane:not(.dock)");
+    await pane.locator(".cm-line", { hasText: "after" }).click();
+    await pane.locator(".cm-fold-marker").first().click({ force: true });
+    await expect(pane.locator(".cm-line", { hasText: "hidden one" })).toHaveCount(0);
+    // Typing still goes to the editor after the gutter click.
+    await page.keyboard.type("!");
+    await settle(page, 900);
+    expect(vault.read("Fold.md")).toContain("after!");
+    await pane.locator(".cm-line", { hasText: /^# B$|^B$/ }).click();
+    await page.keyboard.press("Home");
+    await page.keyboard.press("Backspace");
+    await expect(pane.locator(".cm-line", { hasText: "hidden two" })).toHaveCount(1);
+    await settle(page, 900);
+    expect(vault.read("Fold.md")).toBe("# A\nhidden one\nhidden two\n# B\nafter!\n");
+  });
+});

@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { ensureSyntaxTree } from "@codemirror/language";
-import { headingSectionAt, listItemSectionAt } from "./headingFold";
+import { ensureSyntaxTree, foldEffect, foldedRanges } from "@codemirror/language";
+import { headingFold, headingSectionAt, listItemSectionAt } from "./headingFold";
 
 function stateFor(doc: string): EditorState {
   const state = EditorState.create({
@@ -78,5 +78,36 @@ describe("listItemSectionAt", () => {
   });
   it("handles ordered lists and nested depth", () => {
     expect(listFold("1. a\n   1. deep\n      - deeper\n2. b", 1)).toEqual([1, 3]);
+  });
+});
+
+describe("deleting next to a folded section", () => {
+  const doc = "# A\nhidden one\nhidden two\n# B\nafter";
+  const folded = () => {
+    const base = EditorState.create({ doc, extensions: [markdown({ base: markdownLanguage, extensions: GFM }), headingFold] });
+    ensureSyntaxTree(base, doc.length, 5000);
+    const range = headingSectionAt(base, 0)!;
+    return { state: base.update({ effects: foldEffect.of(range) }).state, range };
+  };
+  const del = (state: EditorState, from: number, to: number) =>
+    state.update({ changes: { from, to }, userEvent: "delete.backward" }).state;
+
+  it("opens it instead of joining the next line onto it", () => {
+    const { state, range } = folded();
+    const after = del(state, range.to, range.to + 1);
+    expect(after.doc.toString()).toBe(doc);
+    expect(foldedRanges(after).size).toBe(0);
+  });
+  it("opens it instead of pulling its text up into the heading", () => {
+    const { state, range } = folded();
+    const after = del(state, range.from, range.from + 1);
+    expect(after.doc.toString()).toBe(doc);
+    expect(foldedRanges(after).size).toBe(0);
+  });
+  it("still deletes the heading's own text", () => {
+    const { state, range } = folded();
+    const after = del(state, range.from - 1, range.from);
+    expect(after.doc.toString()).toBe("# \nhidden one\nhidden two\n# B\nafter");
+    expect(foldedRanges(after).size).toBe(1);
   });
 });

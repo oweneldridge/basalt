@@ -17,7 +17,8 @@ import {
   foldKeymap,
 } from "@codemirror/language";
 import { gutter, GutterMarker } from "@codemirror/view";
-import type { EditorState, Extension } from "@codemirror/state";
+import { EditorState } from "@codemirror/state";
+import type { Extension } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 
 const ATX = /^ATXHeading([1-6])$/;
@@ -112,6 +113,11 @@ const headingFoldGutter = gutter({
   lineMarkerChange: () => true,
   initialSpacer: () => OPEN,
   domEventHandlers: {
+    // The editor keeps its focus, so typing goes on where it was.
+    mousedown(_view, _line, event) {
+      event.preventDefault();
+      return false;
+    },
     click(view, line) {
       const range = foldableAt(view.state, line.from);
       if (!range) return false;
@@ -122,6 +128,20 @@ const headingFoldGutter = gutter({
   },
 });
 
-export const headingFold: Extension = [codeFolding(), headingFoldGutter];
+/** Backspace or Delete that would change a folded section's hidden text (or
+ * join a line onto it) opens the section instead, so nothing changes unseen. */
+const openBeforeDeleting = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || !tr.isUserEvent("delete")) return tr;
+  const open: { from: number; to: number }[] = [];
+  foldedRanges(tr.startState).between(0, tr.startState.doc.length, (from, to) => {
+    tr.changes.iterChangedRanges((fromA, toA) => {
+      if ((fromA < to && toA > from) || fromA === to) open.push({ from, to });
+    });
+  });
+  if (!open.length) return tr;
+  return { effects: open.map((r) => unfoldEffect.of(r)) };
+});
+
+export const headingFold: Extension = [codeFolding(), headingFoldGutter, openBeforeDeleting];
 
 export { foldKeymap };
