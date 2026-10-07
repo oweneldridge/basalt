@@ -80,12 +80,16 @@ function frontmatterEnd(doc: Text): number {
 
 /** Whether an edit can move where HTML blocks are: it adds or removes a tag
  * bracket, a fence, `$$` or a line break, edits a line holding one (a tag's
- * name, or a fence, can change), a block (or the line after one) or the
- * frontmatter. Any other edit only shifts the blocks, so a long note isn't
- * scanned again on every keystroke. */
+ * name, or a fence, can change), a block or the lines either side of it (a
+ * blank line ends one), the first line or the frontmatter. Any other edit only
+ * shifts the blocks, so a long note isn't scanned again on every keystroke. */
 function moves(tr: Transaction, blocks: Block[]): boolean {
   const start = tr.startState.doc;
-  const fm = frontmatterEnd(start);
+  const fm = Math.max(frontmatterEnd(start), start.line(1).to);
+  const near = blocks.map((b) => ({
+    from: start.lineAt(Math.max(0, b.from - 1)).from,
+    to: start.lineAt(Math.min(start.length, b.to + 1)).to,
+  }));
   let yes = false;
   tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
     if (yes) return;
@@ -94,7 +98,7 @@ function moves(tr: Transaction, blocks: Block[]): boolean {
       /[<>`~$]/.test(start.lineAt(fromA).text) ||
       /[<>`~$]/.test(start.lineAt(toA).text) ||
       fromA <= fm ||
-      blocks.some((b) => fromA <= b.to + 1 && toA >= b.from);
+      near.some((b) => fromA <= b.to && toA >= b.from);
   });
   return yes;
 }

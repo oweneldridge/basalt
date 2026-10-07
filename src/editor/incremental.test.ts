@@ -64,3 +64,26 @@ describe("math on one line with a $$ block", () => {
     expect(next.field(mathField).deco.size).toBe(1);
   });
 });
+
+describe("HTML blocks after edits next to them", () => {
+  const html = (doc: string, from: number, insert: string) => {
+    const state = EditorState.create({ doc, extensions: [markdown({ base: markdownLanguage, extensions: GFM }), htmlBlockField] });
+    const next = state.update({ changes: { from, insert } }).state;
+    return [next.field(htmlBlockField).blocks.map((b) => [b.from, b.to]), scanHtml(next)];
+  };
+  it("follow a letter typed partway into the blank line that ends a block", () => {
+    const doc = "<div>\nabc\n   \nmore text";
+    const [field, scan] = html(doc, doc.indexOf("   ") + 2, "z");
+    expect(field).toEqual(scan);
+  });
+  it("follow text typed into the blank line before a block", () => {
+    const doc = "text\n   \n<span>\nfoo";
+    const [field, scan] = html(doc, doc.indexOf("   ") + 2, "x");
+    expect(field).toEqual(scan);
+  });
+  it("follow a third dash that starts a frontmatter", () => {
+    const doc = "--\n<div>\nx\n---\nafter";
+    const [field, scan] = html(doc, 2, "-");
+    expect(field).toEqual(scan);
+  });
+});
