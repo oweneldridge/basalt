@@ -13,6 +13,8 @@ import { syntaxTree } from "@codemirror/language";
 import { mdImageTarget, parseMarkdownLink, internalLinkTarget } from "../lib/markdown";
 import { frontmatterRange, treeChanged } from "./regions";
 import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "../lib/remoteImages";
+import { linkResolves } from "../lib/transclude";
+import { notePathFacet } from "./query";
 
 export interface LivePreviewOptions {
   /** Open an external URL (a clicked Markdown link). */
@@ -152,15 +154,16 @@ class LinkWidget extends WidgetType {
   constructor(
     readonly text: string,
     readonly href: string,
+    readonly unresolved = false,
   ) {
     super();
   }
   eq(other: LinkWidget): boolean {
-    return other.text === this.text && other.href === this.href;
+    return other.text === this.text && other.href === this.href && other.unresolved === this.unresolved;
   }
   toDOM(): HTMLElement {
     const a = document.createElement("a");
-    a.className = "cm-md-link";
+    a.className = this.unresolved ? "cm-md-link is-unresolved" : "cm-md-link";
     a.dataset.href = this.href;
     a.textContent = this.text || this.href;
     a.title = this.href;
@@ -287,10 +290,12 @@ function buildDecorations(
           if (touches(node.from, node.to)) return false;
           const parsed = parseMarkdownLink(doc.sliceString(node.from, node.to));
           if (!parsed) return false; // reference-style / unusual: leave raw
+          const internal = internalLinkTarget(parsed.href);
+          const unresolved = internal !== null && !linkResolves(internal, state.facet(notePathFacet));
           builder.add(
             node.from,
             node.to,
-            Decoration.replace({ widget: new LinkWidget(parsed.text, parsed.href) }),
+            Decoration.replace({ widget: new LinkWidget(parsed.text, parsed.href, unresolved) }),
           );
           return false; // don't also process the LinkMark children
         }

@@ -3324,6 +3324,9 @@ export default function App() {
       onOpen: (rawTarget) => openViewerFileRef.current(rawTarget),
       resolveImage: (target, rel) =>
         vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null),
+      exists: (rawTarget, sourceRel) =>
+        index.current.resolveFromRel(rawTarget, sourceRel || null) !== null ||
+        resolveAttachment(attachmentsRef.current, rawTarget, sourceRel || null) !== null,
     });
     return () => setTranscludeHost(null);
   }, []);

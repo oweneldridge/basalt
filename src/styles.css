@@ -600,6 +600,14 @@ button.primary:hover {
   color: var(--text);
 }
 .md-wikilink { color: var(--accent); }
+/* Less faded than Obsidian's 0.7, so the text keeps 4.5:1 contrast; the
+   dotted underline marks it without relying on colour. */
+.md-wikilink.is-unresolved,
+.md-link.is-unresolved {
+  opacity: var(--link-unresolved-opacity, 0.85);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
 .md-tag {
   color: var(--accent);
   background: var(--accent-soft);

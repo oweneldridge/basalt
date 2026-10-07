@@ -3,7 +3,7 @@ import { renderMarkdown } from "../lib/render";
 import { renderMermaid } from "../lib/mermaid";
 import { renderQuerySource } from "../lib/queryHost";
 import { codeBlockProcessor } from "../lib/plugins";
-import { renderEmbedSource } from "../lib/transclude";
+import { linkResolves, renderEmbedSource } from "../lib/transclude";
 import { internalLinkTarget } from "../lib/markdown";
 import { clickedLink } from "../lib/anchors";
 import { blockedImage, inertFragment, isRemoteUrl, remoteImagesAllowed } from "../lib/remoteImages";
@@ -81,10 +81,13 @@ export function ReadingView({
     el.scrollTop = keep;
     shownRel.current = selfRel;
     // Note links are anchors without an href (the click handler routes them),
-    // so make them reachable and announced as links.
+    // so make them reachable and announced as links. A link to a file that
+    // isn't in the vault shows faded, as in Obsidian.
     el.querySelectorAll<HTMLElement>("a.md-wikilink, a.md-link").forEach((a) => {
       a.tabIndex = 0;
       a.setAttribute("role", "link");
+      const target = a.classList.contains("md-wikilink") ? a.dataset.target : internalLinkTarget(a.dataset.href ?? "");
+      if (target && !linkResolves(target, selfRel)) a.classList.add("is-unresolved");
     });
 
     let cancelled = false;

@@ -8,7 +8,7 @@
 // Both the Live Preview widget and the Reading view use the same renderer.
 
 import { renderMarkdown } from "./render";
-import { proseMask } from "./markdown";
+import { proseMask, targetPathPart } from "./markdown";
 import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "./remoteImages";
 
 /** Split a raw wikilink target into the note part and the subpath (after #). */
@@ -217,6 +217,9 @@ export interface TranscludeHost {
   onOpen: (rawTarget: string) => void;
   /** Resolve an image target relative to `rel` to a displayable URL. */
   resolveImage: (target: string, rel: string) => Promise<string | null>;
+  /** Whether a link from `sourceRel` names a file in the vault, a note or an
+   * attachment. */
+  exists?: (rawTarget: string, sourceRel: string) => boolean;
 }
 
 let host: TranscludeHost | null = null;
@@ -225,6 +228,13 @@ export function setTranscludeHost(h: TranscludeHost | null): void {
 }
 export function getTranscludeHost(): TranscludeHost | null {
   return host;
+}
+
+/** False when a link's file isn't in the vault (it shows faded, as in
+ * Obsidian). A `#Heading` link is to its own note. */
+export function linkResolves(rawTarget: string, sourceRel: string): boolean {
+  if (!host?.exists || targetPathPart(rawTarget) === "") return true;
+  return host.exists(rawTarget, sourceRel);
 }
 
 /** Render an embed using the installed host; a placeholder if none is set. */

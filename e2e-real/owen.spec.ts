@@ -1095,3 +1095,30 @@ test.describe("a selection in Reading view", () => {
     expect(await page.evaluate(() => String(window.getSelection()))).toContain("A sentence to copy from.");
   });
 });
+
+test.describe("links to files that don't exist", () => {
+  test.use({
+    vaultFiles: {
+      "Links.md":
+        "# Links\n\n[[Exists]] and [[Missing]]\n\n[e](Exists.md) and [m](Gone%20Too)\n\n[[#Links]] and [[doc.pdf]] and [web](https://example.com)\n\nEND\n",
+      "Exists.md": "here\n",
+      "doc.pdf": "%PDF-1.4\n",
+    },
+  });
+
+  test("show faded in Live Preview and Reading view", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Links");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const pane = page.locator(".pane:not(.dock)");
+    await expect(pane.locator(".cm-wikilink.is-unresolved")).toHaveText(["Missing"]);
+    await expect(pane.locator(".cm-md-link.is-unresolved")).toHaveText(["m"]);
+    await expect(pane.locator(".cm-wikilink:not(.is-unresolved)")).toHaveCount(3);
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await expect(pane.locator(".reading-view .is-unresolved")).toHaveText(["Missing", "m"]);
+    await pane.locator(".reading-view .md-wikilink", { hasText: "Missing" }).click();
+    await expect(pane.locator(".tab.active .tab-name").first()).toHaveText("Missing");
+    await page.locator(".tree-row.file", { hasText: "Links" }).first().click();
+    await expect(pane.locator(".reading-view .is-unresolved")).toHaveText(["m"]);
+  });
+});

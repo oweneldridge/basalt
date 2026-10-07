@@ -48,6 +48,17 @@ const themeSpec = {
     // Markdown links
     ".cm-md-link": { color: "var(--accent)", textDecoration: "none", cursor: "pointer" },
     ".cm-md-link:hover": { textDecoration: "underline" },
+    // Links to files not in the vault (see .is-unresolved in styles.css).
+    ".cm-wikilink.is-unresolved": {
+      opacity: "var(--link-unresolved-opacity, 0.85)",
+      textDecoration: "underline dotted",
+      textUnderlineOffset: "3px",
+    },
+    ".cm-md-link.is-unresolved": {
+      opacity: "var(--link-unresolved-opacity, 0.85)",
+      textDecoration: "underline dotted",
+      textUnderlineOffset: "3px",
+    },
     // Inline code (in rendered widgets like table cells)
     ".cm-inline-code": {
       fontFamily: "var(--font-mono)",

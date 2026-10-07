@@ -24,6 +24,8 @@ import type { Completion, CompletionContext, CompletionResult } from "@codemirro
 import { internalLinkTarget, mdLinkRegexGlobal, normalizeName, parseMarkdownLink, wikilinkRegex } from "../lib/markdown";
 import { linkTargetForFormat, type LinkFormat } from "../lib/rename";
 import { isInExcludedRegion, treeChanged } from "./regions";
+import { notePathFacet } from "./query";
+import { linkResolves } from "../lib/transclude";
 
 /** What completion needs to know about a note. */
 export interface NoteRef {
@@ -56,15 +58,16 @@ class WikilinkWidget extends WidgetType {
   constructor(
     readonly target: string,
     readonly display: string,
+    readonly unresolved = false,
   ) {
     super();
   }
   eq(other: WikilinkWidget): boolean {
-    return other.target === this.target && other.display === this.display;
+    return other.target === this.target && other.display === this.display && other.unresolved === this.unresolved;
   }
   toDOM(): HTMLElement {
     const span = document.createElement("span");
-    span.className = "cm-wikilink";
+    span.className = this.unresolved ? "cm-wikilink is-unresolved" : "cm-wikilink";
     span.textContent = this.display;
     span.dataset.target = this.target;
     span.setAttribute("role", "link");
@@ -81,6 +84,7 @@ function buildDecorations(view: EditorView): DecorationSet {
   const sel = view.state.selection;
   const touches = (from: number, to: number): boolean =>
     sel.ranges.some((r) => r.from <= to && r.to >= from);
+  const self = view.state.facet(notePathFacet);
 
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
@@ -100,7 +104,8 @@ function buildDecorations(view: EditorView): DecorationSet {
       if (touches(start, end)) {
         builder.add(start, end, Decoration.mark({ class: "cm-wikilink-source" }));
       } else {
-        builder.add(start, end, Decoration.replace({ widget: new WikilinkWidget(target, display) }));
+        const widget = new WikilinkWidget(target, display, !linkResolves(target, self));
+        builder.add(start, end, Decoration.replace({ widget }));
       }
     }
   }
