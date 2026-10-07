@@ -187,6 +187,16 @@ describe("regexes, phrases and links with brackets", () => {
       expect(found(q), q).toEqual(["/v/A.md"]);
     }
   });
+  it("stay whole inside line:, task: and section: groups", () => {
+    const more = [
+      note("C.md", "see [[Note]] and more\n- [ ] call Bob about the plan\n- [ ] task [[Note]] link\n## alpha\nbeta there and beta"),
+      note("D.md", "nothing"),
+    ];
+    const hit = (q: string) => [...new Set(searchVault(more, q).map((h) => h.path))];
+    for (const q of ["line:(see [[Note]] and)", 'task:(call "Bob about" the)', 'section:(alpha "beta there" beta)', "task:(task [[Note]] link)"]) {
+      expect(hit(q), q).toEqual(["/v/C.md"]);
+    }
+  });
   it("while operators beside them still work", () => {
     expect(found('"call (Alice)" [status]')).toEqual([]);
     expect(found('/[0-9]{3}/ (foo OR zzz)')).toEqual(["/v/A.md"]);

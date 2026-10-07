@@ -75,11 +75,11 @@ const LINE_RE = /line:\(([^)]*)\)|line:(\S+)/gi;
 /** Pull `line:(…)` clauses out of a group string into same-line term groups,
  * returning the remaining query text (they can't survive plain tokenizing —
  * the parens hold spaces). */
-function extractLineGroups(s: string): { lineGroups: string[][]; rest: string } {
+function extractLineGroups(s: string, unkeep: (t: string) => string = (t) => t): { lineGroups: string[][]; rest: string } {
   const lineGroups: string[][] = [];
   const rest = s.replace(LINE_RE, (_m, paren?: string, single?: string) => {
     const body = paren !== undefined ? paren : (single ?? "");
-    const terms = body.split(/\s+/).map(norm).filter(Boolean);
+    const terms = body.split(/\s+/).map(unkeep).map(norm).filter(Boolean);
     if (terms.length) lineGroups.push(terms);
     return " ";
   });
@@ -94,9 +94,9 @@ const HEADING = /^#{1,6}\s/;
 const unquote = (s: string) => s.trim().replace(/^"(.*)"$/, "$1");
 
 /** Pull `task:`, `section:`, `[prop]` and `(a OR b)` clauses out of a group. */
-function extractScoped(s: string, q: Query): string {
+function extractScoped(s: string, q: Query, unkeep: (t: string) => string = (t) => t): string {
   let rest = s.replace(SCOPED_RE, (_m, op: string, paren?: string, quoted?: string, single?: string) => {
-    const terms = paren !== undefined ? tokenize(paren).map(norm) : [norm(quoted ?? single ?? "")];
+    const terms = paren !== undefined ? tokenize(paren).map(unkeep).map(norm) : [norm(unkeep(quoted ?? single ?? ""))];
     const kept = terms.filter(Boolean);
     if (!kept.length) return " ";
     const kind = op.toLowerCase();
@@ -110,7 +110,7 @@ function extractScoped(s: string, q: Query): string {
   });
   // `(a OR b)`: alternatives; a group without OR is just its terms.
   rest = rest.replace(/\(([^()]*)\)/g, (_m, body: string) => {
-    const alts = splitOnOr(body).map((a) => norm(unquote(a))).filter(Boolean);
+    const alts = splitOnOr(body).map((a) => norm(unquote(unkeep(a.trim())))).filter(Boolean);
     if (alts.length > 1) {
       q.anyOf.push(alts);
       return " ";
@@ -166,12 +166,17 @@ const KEPT_RE = /^\u0001(\d+)\u0001$/;
 function buildQuery(groupStr: string): Query {
   const kept: string[] = [];
   const masked = groupStr.replace(KEEP_RE, (m) => `\u0001${kept.push(m) - 1}\u0001`);
-  const { lineGroups, rest: afterLines } = extractLineGroups(masked);
+  // A set-aside phrase inside a clause's group comes back as one term.
+  const unkeep = (t: string) => {
+    const k = KEPT_RE.exec(t);
+    return k ? (tokenize(kept[Number(k[1])])[0] ?? t) : t;
+  };
+  const { lineGroups, rest: afterLines } = extractLineGroups(masked, unkeep);
   const q: Query = {
     terms: [], negations: [], paths: [], files: [], tags: [], notPaths: [], notFiles: [], notTags: [], regex: null, lineGroups,
     taskGroups: [], sectionGroups: [], props: [], caseTerms: [], anyOf: [],
   };
-  const rest = extractScoped(afterLines, q);
+  const rest = extractScoped(afterLines, q, unkeep);
   const tokens = tokenize(rest).flatMap((t) => {
     const k = KEPT_RE.exec(t);
     return k ? tokenize(kept[Number(k[1])]) : [t];
@@ -340,7 +345,21 @@ export function searchVault(notes: VaultNote[], query: string, opts: SearchOpts 
     // Line hits: a line matching ANY matched group's regex or positive terms.
     const seenLine = new Set<number>();
     let inNote = 0;
+    // Past the lines a note lists, plain terms and regexes are only counted,
+    // quickly, the way the loop below finds them.
+    const plain = matched.every((g) => !g.lineGroups.length && !g.taskGroups.length && !g.sectionGroups.length && !g.anyOf.length && !g.caseTerms.length);
+    const hits = (i: number) =>
+      matched.some((g) => {
+        if (!g.regex) return g.terms.some((t) => lines[i].includes(t));
+        if (rawLines[i].length > MAX_REGEX_LINE) return false;
+        g.regex.lastIndex = 0;
+        return g.regex.test(rawLines[i]);
+      });
     for (let i = 0; i < lines.length; i++) {
+      if (inNote >= MAX_HITS_PER_NOTE && plain) {
+        for (; i < lines.length; i++) if (hits(i)) unlisted++;
+        break;
+      }
       let idx = -1;
       for (const g of matched) {
         if (g.regex) {
