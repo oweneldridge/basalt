@@ -805,3 +805,31 @@ test.describe("a note with missing images", () => {
     expect(vault.read("Missing.md")).toBe(note);
   });
 });
+
+test.describe("a moved note's relative image link", () => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+    "base64",
+  );
+  test.use({ vaultFiles: { "Topic/Note.md": "# Note\n\n![pic](assets/pic.png)\n\nend\n", "Topic/assets/pic.png": png } });
+
+  test("still shows the image, as in Obsidian", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await page.getByRole("button", { name: "▸ Topic" }).click();
+    await openNote(page, "Note");
+    await expect(page.locator(".pane:not(.dock) img.cm-md-image[src^='data:']")).toHaveCount(1);
+    await page.evaluate(() => {
+      const folder = [...document.querySelectorAll<HTMLElement>(".tree-row.folder")].find((r) => r.textContent?.includes("Projects"))!;
+      const dt = new DataTransfer();
+      dt.setData("application/x-basalt-note", document.querySelector<HTMLElement>(".tree-row.file.active")!.dataset.path!);
+      folder.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+    });
+    await expect.poll(() => vault.exists("Projects/Note.md"), { timeout: 10000 }).toBe(true);
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "end" }).click();
+    await expect(page.locator(".pane:not(.dock) img.cm-md-image[src^='data:']")).toHaveCount(1, { timeout: 10000 });
+    await page.waitForTimeout(6500); // past a missing image's retry
+    await settle(page, 1500);
+    expect(vault.read("Projects/Note.md")).not.toContain("🖼");
+    expect(vault.read("Projects/Note.md")).toContain("](");
+  });
+});

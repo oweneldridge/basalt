@@ -45,6 +45,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Images resolve the way Obsidian resolves a link path: `./` and `../` paths
+  work, and a path like `assets/pic.png` still finds its image after the note
+  moves, by the end of its path, preferring the note's own folder.
 - Lines below a diagram, an image, an embedded note or a query result stay
   where clicks and the arrow keys land once that content loads, and a click
   just outside such a block lands on the line beside it.

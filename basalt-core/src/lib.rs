@@ -1637,11 +1637,13 @@ fn base64_encode(data: &[u8]) -> String {
 }
 
 /// Recursively find the first file named `name` (case-insensitive) under `dir`.
-fn find_file(dir: &Path, name: &str, depth: usize) -> Option<PathBuf> {
+/// Every file under `dir` whose vault-relative path (lowercased, `/`-joined)
+/// ends with `suffix` at a path boundary, as (rel, path) pairs.
+fn files_ending_with(root: &Path, dir: &Path, suffix: &str, depth: usize, out: &mut Vec<(String, PathBuf)>) {
     if depth > 16 {
-        return None;
+        return;
     }
-    let entries = fs::read_dir(dir).ok()?;
+    let Ok(entries) = fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let Ok(ft) = entry.file_type() else { continue };
         if ft.is_symlink() {
@@ -1650,48 +1652,80 @@ fn find_file(dir: &Path, name: &str, depth: usize) -> Option<PathBuf> {
         let path = entry.path();
         if ft.is_dir() {
             if !is_ignored_dir(&entry.file_name().to_string_lossy()) {
-                if let Some(found) = find_file(&path, name, depth + 1) {
-                    return Some(found);
-                }
+                files_ending_with(root, &path, suffix, depth + 1, out);
             }
-        } else if entry.file_name().to_string_lossy().eq_ignore_ascii_case(name) {
-            return Some(path);
+            continue;
+        }
+        let Ok(rel) = path.strip_prefix(root) else { continue };
+        let rel = rel.to_string_lossy().replace('\\', "/").to_lowercase();
+        if rel == suffix || rel.ends_with(&format!("/{suffix}")) {
+            out.push((rel, path));
         }
     }
-    None
 }
 
-/// Resolve an image reference (relative to the note's folder, then the vault
-/// root, then a bare-name search) and return it as a base64 `data:` URL.
+/// Resolve an image reference the way Obsidian resolves a link path: `./` and
+/// `../` from the note's folder, then the note's folder, then the vault root
+/// (a leading `/` means only that), then any file whose path ends with the
+/// target, preferring the note's own folder and then the shortest path. Returns
+/// it as a base64 `data:` URL.
 pub fn read_image(root: &Path, target: String, source_rel: String) -> Result<String, String> {
-    let t = target.trim();
+    let t = target.trim().replace('\\', "/");
     if t.is_empty() {
         return Err("empty image target".into());
     }
-    let tp = Path::new(t);
-    if tp.is_absolute()
-        || tp
-            .components()
-            .any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
-    {
+    if Path::new(&t).components().any(|c| matches!(c, Component::Prefix(_))) {
         return Err("invalid image target".into());
     }
-
+    let folder = Path::new(&source_rel).parent().map(Path::to_path_buf).unwrap_or_default();
     let mut found: Option<PathBuf> = None;
-    if let Some(folder) = Path::new(&source_rel).parent() {
-        let c = root.join(folder).join(t);
+    if let Some(abs) = t.strip_prefix('/') {
+        let c = root.join(abs);
         if c.is_file() {
             found = Some(c);
         }
-    }
-    if found.is_none() {
-        let c = root.join(t);
+    } else if t.starts_with("./") || t.starts_with("../") {
+        // Walk the components from the note's folder; climbing above the vault fails.
+        let mut at: Vec<String> = folder.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+        let mut ok = true;
+        for c in Path::new(&t).components() {
+            match c {
+                Component::CurDir => {}
+                Component::ParentDir => ok &= at.pop().is_some(),
+                Component::Normal(n) => at.push(n.to_string_lossy().into_owned()),
+                _ => ok = false,
+            }
+        }
+        if ok {
+            let c = root.join(at.join("/"));
+            if c.is_file() {
+                found = Some(c);
+            }
+        }
+    } else {
+        if Path::new(&t).components().any(|c| matches!(c, Component::ParentDir)) {
+            return Err("invalid image target".into());
+        }
+        let c = root.join(&folder).join(&t);
         if c.is_file() {
             found = Some(c);
         }
-    }
-    if found.is_none() && !t.contains('/') && !t.contains('\\') {
-        found = find_file(&root, t, 0);
+        if found.is_none() {
+            let c = root.join(&t);
+            if c.is_file() {
+                found = Some(c);
+            }
+        }
+        if found.is_none() {
+            let mut hits = Vec::new();
+            files_ending_with(root, root, &t.to_lowercase(), 0, &mut hits);
+            let near = folder.to_string_lossy().replace('\\', "/").to_lowercase();
+            let in_folder = |rel: &str| near.is_empty() || rel.starts_with(&format!("{near}/"));
+            hits.sort_by(|a, b| {
+                (!in_folder(&a.0), a.0.len(), &a.0).cmp(&(!in_folder(&b.0), b.0.len(), &b.0))
+            });
+            found = hits.into_iter().next().map(|(_, p)| p);
+        }
     }
 
     let path = found.ok_or_else(|| format!("image not found: {t}"))?;
@@ -2129,6 +2163,37 @@ mod tests {
         assert_eq!(strict(&root), serde_json::Value::Null);
         fs::write(root.join(".obsidian/app.json"), r#"{"strictLineBreaks": true}"#).unwrap();
         assert_eq!(strict(&root), serde_json::Value::Bool(true));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn read_image_resolves_link_paths_as_obsidian_does() {
+        let root = scratch_vault("img");
+        let png = |rel: &str| {
+            let p = root.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, b"\x89PNG").unwrap();
+        };
+        png("A/Topic/assets/pic.png");
+        png("A/up.png");
+        png("Far/x/assets/two.png");
+        png("A/Topic/deeper/assets/two.png");
+        let ok = |t: &str, from: &str| read_image(&root, t.into(), from.into()).is_ok();
+        // A note moved out of Topic/ still finds `assets/pic.png` by the end of its path.
+        assert!(ok("assets/pic.png", "A/Moved.md"));
+        assert!(ok("assets/pic.png", "A/Topic/Note.md"));
+        assert!(ok("../up.png", "A/Topic/Note.md"));
+        assert!(ok("./assets/pic.png", "A/Topic/Note.md"));
+        assert!(ok("/A/up.png", "Elsewhere/N.md"));
+        assert!(!ok("/up.png", "A/N.md")); // a leading / means the vault root only
+        assert!(!ok("../../../etc/passwd", "A/N.md"));
+        assert!(!ok("../../up.png", "A/N.md")); // climbs above the vault
+        // The note's own folder wins over a shorter path elsewhere.
+        fs::write(root.join("Far/x/assets/two.png"), b"\x89PNGfar").unwrap();
+        let near = read_image(&root, "/A/Topic/deeper/assets/two.png".into(), "".into()).unwrap();
+        assert_eq!(read_image(&root, "assets/two.png".into(), "A/Topic/N.md".into()).unwrap(), near);
+        let far = read_image(&root, "/Far/x/assets/two.png".into(), "".into()).unwrap();
+        assert_eq!(read_image(&root, "assets/two.png".into(), "B/N.md".into()).unwrap(), far);
         fs::remove_dir_all(&root).unwrap();
     }
 
