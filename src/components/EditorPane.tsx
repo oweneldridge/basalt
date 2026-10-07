@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { createEditorState, externalReload, reconfigurePlugins, setEditorTheme, setSourceMode, setSpellcheck, setVimMode, setRtl } from "../editor/setup";
+import { createEditorState, externalReload, reconfigurePlugins, reportCursor, setEditorTheme, setSourceMode, setSpellcheck, setVimMode, setRtl } from "../editor/setup";
 import type { EditorCallbacks } from "../editor/setup";
 import type { NoteRef } from "../editor/wikilink";
 import type { LinkFormat } from "../lib/rename";
@@ -30,7 +30,7 @@ interface Props {
   saveAttachment: (file: File) => Promise<string | null>;
   replacePlaceholder: (placeholder: string, replacement: string) => void;
   onChange: (doc: string) => void;
-  onCursor?: (line: number, col: number, selChars: number) => void;
+  onCursor?: (line: number, col: number, selChars: number, selText: (() => string) | null) => void;
   onContextMenu?: (x: number, y: number) => void;
   /** 1-based line to scroll to / place the caret on (from search or backlinks). */
   scrollToLine?: number;
@@ -233,7 +233,7 @@ export function EditorPane({
       if (reported.current.length > 64) reported.current.shift();
       cbs.current.onChange(d);
     },
-    onCursor: (l, c, s) => cbs.current.onCursor?.(l, c, s),
+    onCursor: (l, c, s, t) => cbs.current.onCursor?.(l, c, s, t),
     onContextMenu: (x, y) => cbs.current.onContextMenu?.(x, y),
   });
   const sourceModeRef = useRef(sourceMode);
@@ -454,6 +454,11 @@ export function EditorPane({
       annotations: [externalReload.of(true), Transaction.addToHistory.of(false)],
     });
   }, [doc, docRev]);
+
+  // A pane that becomes the focused one reports where its caret already is.
+  useEffect(() => {
+    if (view.current) reportCursor(view.current.state, onCursor);
+  }, [onCursor, path]);
 
   // Scroll to (and place the caret on) a target line — search hits, backlinks.
   // A layout effect, like the build above: a key typed as the note opens goes

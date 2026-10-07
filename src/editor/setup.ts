@@ -136,7 +136,9 @@ export interface EditorCallbacks {
   /** Fired (on every edit) with the full document text. */
   onChange: (doc: string) => void;
   /** Fired when the caret moves: 1-based line, 1-based column, selection length. */
-  onCursor?: (line: number, col: number, selChars: number) => void;
+  /** The caret's line and column, the selection's length, and a way to read
+   * the selected text (null with nothing selected). */
+  onCursor?: (line: number, col: number, selChars: number, selText: (() => string) | null) => void;
   /** Right-click in the editor — open the custom context menu at (x, y). */
   onContextMenu?: (x: number, y: number) => void;
 }
@@ -156,6 +158,14 @@ const spellcheckCompartment = new Compartment();
 const vimCompartment = new Compartment();
 // Right-to-left text direction (Obsidian's RTL editor setting), toggled live.
 const rtlCompartment = new Compartment();
+
+/** Tell the status bar where the caret is and what's selected. */
+export function reportCursor(state: EditorState, onCursor: EditorCallbacks["onCursor"]): void {
+  if (!onCursor) return;
+  const sel = state.selection.main;
+  const line = state.doc.lineAt(sel.head);
+  onCursor(line.number, sel.head - line.from + 1, sel.to - sel.from, sel.empty ? null : () => state.sliceDoc(sel.from, sel.to));
+}
 
 /** Toggle Vim keybindings on a live editor. */
 export function setVimMode(view: EditorView, on: boolean): void {
@@ -338,12 +348,8 @@ export function createEditorState(
       if (update.docChanged && !update.transactions.some((t) => t.annotation(externalReload))) {
         cb.onChange(update.state.doc.toString());
       }
-      // Report the caret line/column (1-based) + selection length to the status bar.
-      if (update.docChanged || update.selectionSet) {
-        const sel = update.state.selection.main;
-        const line = update.state.doc.lineAt(sel.head);
-        cb.onCursor?.(line.number, sel.head - line.from + 1, Math.abs(sel.to - sel.from));
-      }
+      // Report the caret line/column (1-based) + selection to the status bar.
+      if (update.docChanged || update.selectionSet) reportCursor(update.state, cb.onCursor);
     }),
     // Right-click → our own context menu (Cut/Copy/Paste/Bold/Italic).
     EditorView.domEventHandlers({

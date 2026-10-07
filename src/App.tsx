@@ -133,6 +133,7 @@ import {
 } from "./lib/theme";
 import { linkTargetForFormat, rewriteLinks, folderMoveMapper, type LinkMapper } from "./lib/rename";
 import { rewriteCanvasFileRefs } from "./lib/canvas";
+import { countWords, countableText } from "./lib/wordCount";
 import { looksLikeAttachment, resolveAttachment } from "./lib/attachments";
 import { fillTemplate, formatMoment, UnsupportedTokenError } from "./lib/daily";
 import type { LinkFormat } from "./lib/rename";
@@ -159,6 +160,8 @@ function jsLog(msg: string): void {
   invoke("debug_log", { msg }).catch(() => {});
 }
 const SAVE_DEBOUNCE_MS = 500;
+// Notes longer than this are word-counted after typing pauses.
+const BIG_COUNT = 200_000;
 // Bound on the self-write suppression map (rel -> last written content).
 const SELF_WRITES_MAX = 128;
 
@@ -429,9 +432,23 @@ export default function App() {
   const noticeSeq = useRef(0);
   const [graphOpen, setGraphOpen] = useState(false);
   const [slidesOpen, setSlidesOpen] = useState(false);
-  // Caret position for the status bar (from the focused editor).
-  const [cursor, setCursor] = useState<{ line: number; col: number; sel: number } | null>(null);
-  const handleCursor = useCallback((line: number, col: number, sel: number) => setCursor({ line, col, sel }), []);
+  // Caret position for the status bar (from the focused editor), and the
+  // selection's counts, which show in place of the note's, as in Obsidian.
+  const [cursor, setCursor] = useState<{ line: number; col: number } | null>(null);
+  const [selStats, setSelStats] = useState<{ words: number; chars: number } | null>(null);
+  const selTimer = useRef<number | undefined>(undefined);
+  const handleCursor = useCallback((line: number, col: number, _sel: number, selText: (() => string) | null) => {
+    setCursor({ line, col });
+    window.clearTimeout(selTimer.current);
+    if (!selText) {
+      setSelStats(null);
+      return;
+    }
+    selTimer.current = window.setTimeout(() => {
+      const text = selText();
+      setSelStats({ words: countWords(text), chars: text.length });
+    }, 150);
+  }, []);
   const [graphMode, setGraphMode] = useState<"global" | "local">("global");
   const [sourceMode, setSourceMode] = useState(false);
   // Reading view: a rendered, read-only HTML view (vs the editable CM6 panes).
@@ -3739,14 +3756,29 @@ export default function App() {
   );
 
   // Word/char count for the status bar (from the saved content, so it updates
-  // within the autosave debounce of typing). It follows the last note shown,
-  // like the Outline, so focusing a side panel doesn't zero it. Notes only.
-  const docStats = useMemo(() => {
+  // within the autosave debounce of typing), without the frontmatter, as
+  // Obsidian counts. It follows the last note shown, like the Outline, so
+  // focusing a side panel doesn't zero it. Notes only.
+  // A very large note is counted once typing pauses, not on every save.
+  const docText = useMemo(() => {
     if (!lastNote || isViewerPath(lastNote.path)) return null;
     if (!Object.values(panes).some((p) => p.tabs.includes(lastNote.path))) return null; // closed
-    const text = lastNote.content;
-    return { words: (text.match(/\S+/g) ?? []).length, chars: text.length };
+    return { path: lastNote.path, text: countableText(lastNote.content) };
   }, [lastNote, panes]);
+  const [bigCount, setBigCount] = useState<{ path: string; words: number } | null>(null);
+  const smallWords = useMemo(
+    () => (docText && docText.text.length < BIG_COUNT ? countWords(docText.text) : null),
+    [docText],
+  );
+  useEffect(() => {
+    if (!docText || docText.text.length < BIG_COUNT) return;
+    const t = window.setTimeout(() => setBigCount({ path: docText.path, words: countWords(docText.text) }), 1000);
+    return () => window.clearTimeout(t);
+  }, [docText]);
+  const docWords = smallWords ?? (bigCount && bigCount.path === docText?.path ? bigCount.words : null);
+  const docStats = docText && docWords !== null ? { words: docWords, chars: docText.text.length } : null;
+  // The caret shows while a note's editor is the focused pane.
+  const editing = !!focusedPane?.active && isMarkdownPath(focusedPane.active) && !readingMode;
 
   // Backlinks of the active note can only change when OTHER notes change, so
   // this keys off structureVersion — a local autosave doesn't re-resolve the vault.
@@ -5337,7 +5369,11 @@ export default function App() {
         )}
       </main>
       </div>
-      <StatusBar cursor={cursor} words={docStats?.words ?? 0} chars={docStats?.chars ?? 0} pluginVersion={pluginVersion} />
+      <StatusBar
+        cursor={editing ? cursor : null}
+        counts={docStats && (editing && selStats ? selStats : docStats)}
+        pluginVersion={pluginVersion}
+      />
       {modal === "switcher" && (
         <Palette<VaultNote>
           placeholder="Open or create a note…"

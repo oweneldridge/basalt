@@ -224,13 +224,14 @@ test.describe("arrow keys past block widgets", () => {
   });
 });
 
-test("the word count clears when the note is closed", async ({ page, vault }) => {
+test("the word count goes when the note is closed, as in Obsidian", async ({ page, vault }) => {
   await openApp(page, vault);
   await openNote(page, "Ideas");
   const words = page.locator(".status-bar-item", { hasText: "words" });
   await expect(words).not.toHaveText("0 words");
   await page.locator(".pane:not(.dock) .tab", { hasText: "Ideas" }).locator(".tab-close").click();
-  await expect(words).toHaveText("0 words");
+  await expect(words).toHaveCount(0);
+  await expect(page.locator(".status-bar")).not.toContainText("Ln ");
 });
 
 test.describe("clicking a rendered drawing", () => {
@@ -1220,5 +1221,58 @@ test.describe("empty folders", () => {
     await page.locator(".ctx-item", { hasText: "Delete folder" }).click();
     await expect.poll(() => vault.exists("Empty/Fresh")).toBe(false);
     await expect(page.locator(".tree-row.folder", { hasText: "Fresh" })).toHaveCount(0);
+  });
+});
+
+test.describe("the status bar", () => {
+  test.use({
+    vaultFiles: {
+      "Count.md": "---\ntitle: Count\ntags: [a, b]\n---\nOne two three.\n",
+      "Board.canvas": JSON.stringify({ nodes: [], edges: [] }),
+      "Big.md": "word ".repeat(60000) + "\n",
+    },
+  });
+
+  test("counts a very large note once it settles", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Big");
+    await expect(page.locator(".status-bar")).toContainText("60,000 words");
+    await expect(page.locator(".status-bar")).toContainText("300,001 characters");
+  });
+
+  test("counts as Obsidian does: no frontmatter, the selection, notes only", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Count");
+    const bar = page.locator(".status-bar");
+    await expect(bar).toContainText("3 words");
+    await expect(bar).toContainText("15 characters");
+    const line = page.locator(".pane:not(.dock) .cm-line", { hasText: "One two three." });
+    await line.click();
+    await expect(bar).toContainText("Ln 5");
+    const two = await line.evaluate((el) => {
+      const text = [...el.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.includes("two"))!;
+      const range = document.createRange();
+      const at = text.textContent!.indexOf("two");
+      range.setStart(text, at);
+      range.setEnd(text, at + 3);
+      const r = range.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    });
+    await page.mouse.dblclick(two.x, two.y);
+    await expect(bar).toContainText("1 word ");
+    await expect(bar).toContainText("3 characters");
+    await page.keyboard.press("Shift+End");
+    await expect(bar).toContainText("2 words");
+    await expect(bar).toContainText("10 characters");
+    await page.keyboard.press("ArrowRight");
+    await expect(bar).toContainText("3 words");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await expect(bar).not.toContainText("Ln ");
+    await expect(bar).toContainText("3 words");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await page.locator(".tree-row.attachment", { hasText: "Board.canvas" }).click();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toContainText("Board");
+    await expect(bar).not.toContainText("words");
+    await expect(bar).not.toContainText("Ln ");
   });
 });
