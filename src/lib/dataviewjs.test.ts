@@ -146,6 +146,19 @@ describe("dataviewjs (lite)", () => {
     expect(textOf(el)).toContain("2026-07-31 23:59 2026-07-01 2026-07-12 12-31 06-30 true false true true false");
   });
 
+  it("reads moment's units as moment does", async () => {
+    const el = await run(
+      'const m = () => moment("2026-07-15T10:20:30.400");\n' +
+        'dv.paragraph([m().add(1, "ms").format("ss.SSS"), m().add(1, "Q").format("MM-DD"), m().startOf("W").format("MM-DD"), m().endOf("Q").format("MM-DD HH:mm"), m().startOf("s").valueOf() % 1000, m().add(1, "Days").format("DD"), m().diff("2026-01-15", "M"), m().diff("2026-07-14T10:20:30.400", "d"), m().isBetween("2026-07-15", "2026-07-15", "day", "[]"), m().isBetween("2026-07-01", "2026-07-31", null, null), moment([2026, 6, 4]).format("YYYY-MM-DD"), m().isAfter("2026-07-15T10:00:00Z")].join(" "));',
+    );
+    expect(textOf(el)).toContain("30.401 10-15 07-13 09-30 23:59 0 16 6 1 true true 2026-07-04 true");
+  });
+
+  it("lets a block declare its own app, moment or dv", async () => {
+    const el = await run('const app = "mine"; let moment = 2; dv.paragraph(app + moment);');
+    expect(textOf(el)).toContain("mine2");
+  });
+
   it("reads notes from memory, not once per note for every block", async () => {
     await run(`dv.paragraph(String(dv.pages().length))`);
     await run(`dv.paragraph(String(dv.pages().length))`);

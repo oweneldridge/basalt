@@ -24,9 +24,13 @@ const pad2 = (n) => String(Math.abs(n)).padStart(2, "0");
 
 function parseISOish(s) {
   const str = String(s).trim();
-  const m = /^(-?\d{4,})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?/.exec(str);
+  const m = /^(-?\d{4,})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d+))?)?\s*(Z|([+-])(\d{2}):?(\d{2})?)?)?/i.exec(str);
   if (m) {
-    return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0), +((m[7] || "0") + "00").slice(0, 3));
+    const parts = [+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0), +((m[7] || "0") + "00").slice(0, 3)];
+    if (!m[8]) return new Date(...parts);
+    // A time with `Z` or an offset is that instant, shown in local time.
+    const offset = m[9] ? (m[9] === "-" ? -1 : 1) * (+m[10] * 60 + +(m[11] || 0)) : 0;
+    return new Date(Date.UTC(...parts) - offset * 60000);
   }
   const t = Date.parse(str);
   return Number.isNaN(t) ? null : new Date(t);
@@ -280,12 +284,53 @@ const luxon = { DateTime, Duration: { fromObject: (o) => parseDuration(JSON.stri
 // ---- legacy moment shim (kept for older blocks) --------------------------
 const M_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 function momentTime(o) {
+  if (o === undefined) return Date.now();
+  if (o === null) return NaN;
   if (typeof o === "number") return o;
-  if (o && typeof o === "object" && typeof o.valueOf() === "number") return o.valueOf();
+  if (o && typeof o === "object") {
+    if (typeof o.valueOf === "function" && typeof o.valueOf() === "number") return o.valueOf();
+    return momentParts(o);
+  }
   const d = parseISOish(o);
   return d ? d.getTime() : new Date(o).getTime();
 }
-const M_TOKENS = /\[[^\]]*\]|YYYY|YY|MMMM|MMM|MM|M|Do|DD|D|dddd|ddd|dd|HH|H|hh|h|mm|m|ss|s|A|a/g;
+// moment's array and object input, `[y, M, d, h, m, s, ms]` or `{ year, month,
+// day, ... }`: the date parts left off before the first one given are today's,
+// the rest are zero. An empty one is now.
+function momentParts(o) {
+  let parts;
+  if (Array.isArray(o)) parts = o;
+  else {
+    const f = {};
+    for (const [k, v] of Object.entries(o)) f[momentUnit(k) ?? k] = v;
+    parts = [f.year, f.month, f.day ?? f.date, f.hour, f.minute, f.second, f.millisecond];
+  }
+  if (parts.every((p) => p == null)) return Date.now();
+  const now = new Date();
+  const today = [now.getFullYear(), now.getMonth(), now.getDate()];
+  const a = [...parts];
+  let i = 0;
+  for (; i < 3 && a[i] == null; i++) a[i] = today[i];
+  for (; i < 7; i++) a[i] = a[i] == null ? (i === 2 ? 1 : 0) : Number(a[i]);
+  const t = new Date(a[0], a[1], a[2], a[3], a[4], a[5], a[6]);
+  if (a[0] >= 0 && a[0] < 100) t.setFullYear(a[0]);
+  return t.getTime();
+}
+// moment's unit names: a shorthand as written (`M` month, `m` minute, `D`
+// date, `W` ISO week), else the name or its plural in any case.
+const M_SHORT = { y: "year", Q: "quarter", M: "month", w: "week", W: "isoWeek", d: "day", D: "date", h: "hour", m: "minute", s: "second", ms: "millisecond" };
+const M_UNITS = ["year", "quarter", "month", "week", "isoWeek", "day", "date", "hour", "minute", "second", "millisecond"];
+function momentUnit(unit) {
+  if (typeof unit !== "string") return undefined;
+  if (M_SHORT[unit]) return M_SHORT[unit];
+  const u = unit.toLowerCase();
+  return M_SHORT[u] ?? M_UNITS.find((name) => name.toLowerCase() === u || name.toLowerCase() + "s" === u);
+}
+// Local midnight of a day, years 0-99 included.
+const M_400_YEARS = 146097 * 86400000;
+const localDay = (y, m, d) => (y >= 0 && y < 100 ? new Date(y + 400, m, d).getTime() - M_400_YEARS : new Date(y, m, d).getTime());
+const M_MS = { hour: 3600000, minute: 60000, second: 1000 };
+const M_TOKENS = /\[[^\]]*\]|YYYY|YY|MMMM|MMM|MM|M|Do|DD|D|dddd|ddd|dd|HH|H|hh|h|mm|m|ss|s|SSS|SS|S|A|a/g;
 function momentFormat(d, fmt) {
   if (Number.isNaN(d.getTime())) return "Invalid date";
   const pad = (n) => String(n).padStart(2, "0");
@@ -312,6 +357,9 @@ function momentFormat(d, fmt) {
     m: String(d.getMinutes()),
     ss: pad(d.getSeconds()),
     s: String(d.getSeconds()),
+    SSS: String(d.getMilliseconds()).padStart(3, "0"),
+    SS: pad(Math.floor(d.getMilliseconds() / 10)),
+    S: String(Math.floor(d.getMilliseconds() / 100)),
     A: d.getHours() < 12 ? "AM" : "PM",
     a: d.getHours() < 12 ? "am" : "pm",
   };
@@ -319,36 +367,81 @@ function momentFormat(d, fmt) {
 }
 function makeMoment(input) {
   const d =
-    input == null
+    input === undefined
       ? new Date()
-      : input instanceof Date
-        ? new Date(input.getTime())
-        : typeof input === "number" || (input && typeof input.valueOf === "function" && typeof input.valueOf() === "number")
-          ? new Date(Number(input.valueOf()))
-          : parseISOish(input) || new Date(input);
+      : input === null
+        ? new Date(NaN)
+        : input instanceof Date
+          ? new Date(input.getTime())
+          : typeof input === "number" || (input && typeof input.valueOf === "function" && typeof input.valueOf() === "number")
+            ? new Date(Number(input.valueOf()))
+            : typeof input === "object"
+              ? new Date(momentParts(input))
+              : parseISOish(input) || new Date(input);
+  // A duration in moment's units; a bare number is milliseconds.
   const shift = (n, unit, sign) => {
-    const k = sign * (Number(n) || 0);
-    const u = String(unit || "days").replace(/s$/, "");
-    if (u === "day" || u === "d") d.setDate(d.getDate() + k);
-    else if (u === "week" || u === "w") d.setDate(d.getDate() + 7 * k);
-    else if (u === "month" || u === "M") d.setMonth(d.getMonth() + k);
-    else if (u === "year" || u === "y") d.setFullYear(d.getFullYear() + k);
-    else if (u === "hour" || u === "h") d.setHours(d.getHours() + k);
-    else if (u === "minute" || u === "m") d.setMinutes(d.getMinutes() + k);
-  };
-  // The start or end of the year, month, week (Sunday first, as moment's
-  // default locale), ISO week, day, hour or minute holding the date.
-  const edge = (unit, end) => {
-    const u = String(unit || "").replace(/s$/, "");
-    if (u === "year" || u === "y") d.setMonth(end ? 11 : 0, 1);
-    if (u === "year" || u === "y" || u === "month" || u === "M") d.setDate(end ? new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate() : 1);
-    if (u === "week" || u === "w" || u === "isoWeek") {
-      const first = u === "isoWeek" ? (d.getDay() + 6) % 7 : d.getDay();
-      d.setDate(d.getDate() - first + (end ? 6 : 0));
+    // A number where the unit goes swaps the two, as moment's old order did.
+    if (unit != null && !Number.isNaN(+unit)) [n, unit] = [unit, n];
+    if (n && typeof n === "object") {
+      for (const [k, v] of Object.entries(n)) shift(v, k, sign);
+      return;
     }
-    if (["year", "y", "month", "M", "week", "w", "isoWeek", "day", "d", "date"].includes(u)) d.setHours(end ? 23 : 0, end ? 59 : 0, end ? 59 : 0, end ? 999 : 0);
-    else if (u === "hour" || u === "h") d.setMinutes(end ? 59 : 0, end ? 59 : 0, end ? 999 : 0);
-    else if (u === "minute" || u === "m") d.setSeconds(end ? 59 : 0, end ? 999 : 0);
+    const u = unit ? momentUnit(unit) : "millisecond";
+    const k = sign * (Number(n) || 0);
+    // Days and months round half away from zero, as moment rounds them.
+    const round = (x) => (x < 0 ? -Math.round(-x) : Math.round(x));
+    if (u === "year" || u === "quarter" || u === "month") {
+      const months = round(k * (u === "year" ? 12 : u === "quarter" ? 3 : 1));
+      const day = d.getDate();
+      d.setDate(1);
+      d.setMonth(d.getMonth() + months);
+      d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
+    } else if (u === "week" || u === "isoWeek" || u === "day") d.setDate(d.getDate() + round(k * (u === "day" ? 1 : 7)));
+    else if (u === "hour" || u === "minute" || u === "second") d.setTime(d.getTime() + k * M_MS[u]);
+    else if (u === "millisecond") d.setTime(d.getTime() + k);
+  };
+  // Where the year, quarter, month, week (Sunday first, as moment's default
+  // locale), ISO week, day, hour, minute or second holding the date starts,
+  // and where the next one does.
+  const span = (u) => {
+    const y = d.getFullYear();
+    const mo = d.getMonth();
+    const day = d.getDate();
+    if (u === "year") return [localDay(y, 0, 1), localDay(y + 1, 0, 1)];
+    if (u === "quarter") return [localDay(y, mo - (mo % 3), 1), localDay(y, mo - (mo % 3) + 3, 1)];
+    if (u === "month") return [localDay(y, mo, 1), localDay(y, mo + 1, 1)];
+    if (u === "week" || u === "isoWeek") {
+      const first = day - (u === "isoWeek" ? (d.getDay() + 6) % 7 : d.getDay());
+      return [localDay(y, mo, first), localDay(y, mo, first + 7)];
+    }
+    if (u === "day" || u === "date") return [localDay(y, mo, day), localDay(y, mo, day + 1)];
+    const size = M_MS[u];
+    const t = d.getTime();
+    const local = u === "hour" ? t - d.getTimezoneOffset() * 60000 : t;
+    const start = t - (((local % size) + size) % size);
+    return [start, start + size];
+  };
+  const edge = (unit, end) => {
+    const u = momentUnit(unit);
+    if (!u || u === "millisecond" || Number.isNaN(d.getTime())) return;
+    const [start, next] = span(u);
+    d.setTime(end ? next - 1 : start);
+  };
+  // Is `o` before, after or in the same unit as this date, as moment counts.
+  const compare = (o, unit) => {
+    const t = momentTime(o);
+    const u = momentUnit(unit);
+    if (!u || u === "millisecond") return { before: d.getTime() < t, after: d.getTime() > t, same: d.getTime() === t };
+    const [start, next] = span(u);
+    return { before: next - 1 < t, after: t < start, same: start <= t && t <= next - 1 };
+  };
+  const monthDiff = (a, b) => {
+    if (a.getDate() < b.getDate()) return -monthDiff(b, a);
+    const whole = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+    const plus = (k) => makeMoment(a).add(k, "months").valueOf();
+    const anchor = plus(whole);
+    const adjust = b - anchor < 0 ? (b - anchor) / (anchor - plus(whole - 1)) : (b - anchor) / (plus(whole + 1) - anchor);
+    return -(whole + adjust) || 0;
   };
   const m = {
     _isMoment: true,
@@ -357,24 +450,36 @@ function makeMoment(input) {
     toDate: () => new Date(d.getTime()),
     toISOString: () => d.toISOString(),
     clone: () => makeMoment(d),
-    isBefore: (o) => d.getTime() < momentTime(o),
-    isAfter: (o) => d.getTime() > momentTime(o),
-    isSame: (o, unit) => (unit === "day" ? momentFormat(d, "YYYY-MM-DD") === makeMoment(o).format("YYYY-MM-DD") : d.getTime() === momentTime(o)),
-    isSameOrBefore: (o) => d.getTime() <= momentTime(o),
-    isSameOrAfter: (o) => d.getTime() >= momentTime(o),
-    diff: (o, unit) => {
-      const ms = d.getTime() - momentTime(o);
-      return unit === "days" || unit === "day" ? Math.trunc(ms / 86400000) : ms;
+    isBefore: (o, unit) => compare(o, unit).before,
+    isAfter: (o, unit) => compare(o, unit).after,
+    isSame: (o, unit) => compare(o, unit).same,
+    isSameOrBefore: (o, unit) => compare(o, unit).same || compare(o, unit).before,
+    isSameOrAfter: (o, unit) => compare(o, unit).same || compare(o, unit).after,
+    diff: (o, unit, asFloat) => {
+      const other = makeMoment(o);
+      const that = new Date(other.valueOf());
+      if (Number.isNaN(d.getTime()) || Number.isNaN(that.getTime())) return NaN;
+      const u = momentUnit(unit) ?? "millisecond";
+      const zone = (d.getTimezoneOffset() - that.getTimezoneOffset()) * 60000;
+      const out =
+        u === "year" || u === "quarter" || u === "month"
+          ? monthDiff(d, that) / (u === "year" ? 12 : u === "quarter" ? 3 : 1)
+          : u === "week"
+            ? (d - that - zone) / 6048e5
+            : u === "day"
+              ? (d - that - zone) / 864e5
+              : (d - that) / (M_MS[u] ?? 1);
+      return asFloat ? out : out < 0 ? Math.ceil(out) || 0 : Math.floor(out);
     },
     add: (n, unit) => (shift(n, unit, 1), m),
     subtract: (n, unit) => (shift(n, unit, -1), m),
     startOf: (unit) => (edge(unit, false), m),
     endOf: (unit) => (edge(unit, true), m),
-    isBetween: (a, b, _unit, inclusive = "()") => {
-      const t = d.getTime();
-      const lo = momentTime(a);
-      const hi = momentTime(b);
-      return (inclusive[0] === "[" ? t >= lo : t > lo) && (inclusive[1] === "]" ? t <= hi : t < hi);
+    isBetween: (a, b, unit, inclusive) => {
+      const inc = inclusive || "()";
+      const lo = compare(a, unit);
+      const hi = compare(b, unit);
+      return (inc[0] === "(" ? lo.after : !lo.before) && (inc[1] === ")" ? hi.before : !hi.after);
     },
     format: (fmt) => momentFormat(d, fmt),
     toString: () => d.toString(),
@@ -777,8 +882,9 @@ module.exports = class DataviewJs extends Plugin {
           const dv = buildDv(idx, el, ctx.notePath);
           try {
             // The block's JS runs with `dv`, `moment` and `app` in scope, as in
-            // Dataview inside Obsidian.
-            const fn = new AsyncFunction("dv", "moment", "app", `"use strict";\n${source}`);
+            // Dataview inside Obsidian, in a block of its own so it can declare
+            // those names itself.
+            const fn = new AsyncFunction("dv", "moment", "app", `"use strict";\n{\n${source}\n}`);
             const result = fn(dv, moment, this.app);
             if (result && typeof result.catch === "function") {
               result.catch((e) => this.error(el, e));
