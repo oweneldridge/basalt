@@ -386,6 +386,8 @@ export default function App() {
   const [attachmentsList, setAttachmentsList] = useState<Attachment[]>([]);
   // Every folder on disk, so the tree shows empty ones too.
   const [folders, setFolders] = useState<string[]>([]);
+  const foldersRef = useRef(folders);
+  foldersRef.current = folders;
   const [madeFolder, setMadeFolder] = useState<string | null>(null);
   // Split-pane workspace: a layout tree of panes (by id), the panes map, and
   // which pane has focus (drives the right panel / toolbar / open targets).
@@ -3566,6 +3568,11 @@ export default function App() {
         return !note || (note.content === "" && (note.size ?? 0) > 0) ? null : note.content;
       },
       getMarkdownFiles: () => notesRef.current.map((n) => ({ path: n.rel, name: n.name, ctime: n.ctime, mtime: n.mtime })),
+      getFiles: () => [
+        ...notesRef.current.map((n) => ({ path: n.rel, ctime: n.ctime, mtime: n.mtime, size: n.size })),
+        ...attachmentsRef.current.map((a) => ({ path: a.rel, ctime: a.ctime, mtime: a.mtime, size: a.size })),
+      ],
+      getFolders: () => foldersRef.current,
       readNote: (rel) => {
         const note = notesRef.current.find((n) => n.rel === rel);
         // Any vault file by its vault path (a plugin's config, a script); the

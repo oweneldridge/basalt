@@ -82,6 +82,8 @@ function fakeHost(): HostDeps {
     cachedRead: (rel: string) => byPath.get(rel)?.content ?? null,
     getMarkdownFiles: () =>
       NOTES.map((n) => ({ path: n.path, name: n.path.split("/").pop()!.replace(/\.md$/, ""), ctime: n.ctime, mtime: n.mtime })),
+    getFiles: () => [...NOTES.map((n) => ({ path: n.path, ctime: n.ctime, mtime: n.mtime, size: n.content.length })), { path: "Other/pic.png", size: 3 }],
+    getFolders: () => ["SmithRx", "SmithRx/Daily Notes", "Other"],
     readNote: async (rel: string) => {
       reads++;
       return byPath.get(rel)?.content ?? "";
@@ -126,6 +128,22 @@ describe("dataviewjs (lite)", () => {
     );
     // Paragraphs render the links, so their names show.
     expect(textOf(el)).toContain("2026-07-05 | Misc,pic.png,Not Yet | Odds");
+  });
+
+  it("gives blocks Obsidian's app, with every file and folder", async () => {
+    const el = await run(
+      "const all = app.vault.getAllLoadedFiles();\n" +
+        'dv.paragraph([all.length, app.vault.getFiles().map((f) => f.extension).join(","), all.find((f) => f.path === "Other").children.map((c) => c.name).join(",")].join(" | "));',
+    );
+    expect(textOf(el)).toContain("9 | md,md,md,md,png | Misc.md,pic.png");
+  });
+
+  it("has moment's endOf, startOf and isBetween", async () => {
+    const el = await run(
+      'const m = moment("2026-07-15T10:20:00");\n' +
+        'dv.paragraph([m.clone().endOf("month").format("YYYY-MM-DD HH:mm"), m.clone().startOf("month").format("YYYY-MM-DD"), m.clone().startOf("week").format("YYYY-MM-DD"), m.clone().endOf("year").format("MM-DD"), m.clone().subtract(1, "months").endOf("month").format("MM-DD"), m.isBetween("2026-07-01", "2026-07-31"), m.isBetween("2026-07-15T10:20:00", "2026-07-31"), m.isBetween("2026-07-15T10:20:00", "2026-07-31", null, "[]"), m.isBefore("2026-08-01"), m.isAfter("2026-08-01")].join(" "));',
+    );
+    expect(textOf(el)).toContain("2026-07-31 23:59 2026-07-01 2026-07-12 12-31 06-30 true false true true false");
   });
 
   it("reads notes from memory, not once per note for every block", async () => {

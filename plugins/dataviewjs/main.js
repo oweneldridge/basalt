@@ -280,7 +280,8 @@ const luxon = { DateTime, Duration: { fromObject: (o) => parseDuration(JSON.stri
 // ---- legacy moment shim (kept for older blocks) --------------------------
 const M_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 function momentTime(o) {
-  if (o && typeof o.valueOf === "function") return o.valueOf();
+  if (typeof o === "number") return o;
+  if (o && typeof o === "object" && typeof o.valueOf() === "number") return o.valueOf();
   const d = parseISOish(o);
   return d ? d.getTime() : new Date(o).getTime();
 }
@@ -335,6 +336,20 @@ function makeMoment(input) {
     else if (u === "hour" || u === "h") d.setHours(d.getHours() + k);
     else if (u === "minute" || u === "m") d.setMinutes(d.getMinutes() + k);
   };
+  // The start or end of the year, month, week (Sunday first, as moment's
+  // default locale), ISO week, day, hour or minute holding the date.
+  const edge = (unit, end) => {
+    const u = String(unit || "").replace(/s$/, "");
+    if (u === "year" || u === "y") d.setMonth(end ? 11 : 0, 1);
+    if (u === "year" || u === "y" || u === "month" || u === "M") d.setDate(end ? new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate() : 1);
+    if (u === "week" || u === "w" || u === "isoWeek") {
+      const first = u === "isoWeek" ? (d.getDay() + 6) % 7 : d.getDay();
+      d.setDate(d.getDate() - first + (end ? 6 : 0));
+    }
+    if (["year", "y", "month", "M", "week", "w", "isoWeek", "day", "d", "date"].includes(u)) d.setHours(end ? 23 : 0, end ? 59 : 0, end ? 59 : 0, end ? 999 : 0);
+    else if (u === "hour" || u === "h") d.setMinutes(end ? 59 : 0, end ? 59 : 0, end ? 999 : 0);
+    else if (u === "minute" || u === "m") d.setSeconds(end ? 59 : 0, end ? 999 : 0);
+  };
   const m = {
     _isMoment: true,
     isValid: () => !Number.isNaN(d.getTime()),
@@ -353,9 +368,13 @@ function makeMoment(input) {
     },
     add: (n, unit) => (shift(n, unit, 1), m),
     subtract: (n, unit) => (shift(n, unit, -1), m),
-    startOf: (unit) => {
-      if (unit === "day") d.setHours(0, 0, 0, 0);
-      return m;
+    startOf: (unit) => (edge(unit, false), m),
+    endOf: (unit) => (edge(unit, true), m),
+    isBetween: (a, b, _unit, inclusive = "()") => {
+      const t = d.getTime();
+      const lo = momentTime(a);
+      const hi = momentTime(b);
+      return (inclusive[0] === "[" ? t >= lo : t > lo) && (inclusive[1] === "]" ? t <= hi : t < hi);
     },
     format: (fmt) => momentFormat(d, fmt),
     toString: () => d.toString(),
@@ -757,9 +776,10 @@ module.exports = class DataviewJs extends Plugin {
           el.replaceChildren();
           const dv = buildDv(idx, el, ctx.notePath);
           try {
-            // The block's JS runs with `dv` and `moment` in scope (like Dataview).
-            const fn = new AsyncFunction("dv", "moment", `"use strict";\n${source}`);
-            const result = fn(dv, moment);
+            // The block's JS runs with `dv`, `moment` and `app` in scope, as in
+            // Dataview inside Obsidian.
+            const fn = new AsyncFunction("dv", "moment", "app", `"use strict";\n${source}`);
+            const result = fn(dv, moment, this.app);
             if (result && typeof result.catch === "function") {
               result.catch((e) => this.error(el, e));
             }

@@ -67,6 +67,10 @@ export interface HostDeps {
   /** Vault notes. `ctime`/`mtime` are epoch-ms (for Dataview-style file dates);
    * older callers may omit them. */
   getMarkdownFiles: () => { path: string; name: string; ctime?: number; mtime?: number }[];
+  /** Every file in the vault, notes and attachments (vault-relative paths). */
+  getFiles?: () => { path: string; ctime?: number; mtime?: number; size?: number }[];
+  /** Every folder in the vault (vault-relative paths). */
+  getFolders?: () => string[];
   readNote: (path: string) => Promise<string>;
   createNote: (path: string, content: string) => Promise<void>;
   /** With `expected`, the write is refused unless the note still reads so. */
@@ -280,10 +284,49 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     }
   }
 
+  // Files and folders shaped like Obsidian's TFile and TFolder.
+  const fileOf = (f: { path: string; ctime?: number; mtime?: number; size?: number }) => {
+    const name = f.path.split("/").pop() ?? f.path;
+    const dot = name.lastIndexOf(".");
+    return {
+      path: f.path,
+      name,
+      basename: dot > 0 ? name.slice(0, dot) : name,
+      extension: dot > 0 ? name.slice(dot + 1) : "",
+      stat: { ctime: f.ctime ?? 0, mtime: f.mtime ?? 0, size: f.size ?? 0 },
+    };
+  };
+  const allFiles = () => (host.getFiles?.() ?? host.getMarkdownFiles().map((f) => ({ ...f, path: f.path }))).map(fileOf);
+  type Folder = { path: string; name: string; children: unknown[]; parent: Folder | null };
+  const allLoaded = () => {
+    const root: Folder = { path: "/", name: "", children: [], parent: null };
+    const folders = new Map<string, Folder>([["", root]]);
+    for (const rel of [...(host.getFolders?.() ?? [])].sort()) {
+      folders.set(rel, { path: rel, name: rel.split("/").pop() ?? rel, children: [], parent: null });
+    }
+    const parentOf = (path: string) => folders.get(path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "") ?? root;
+    for (const [rel, folder] of folders) {
+      if (!rel) continue;
+      folder.parent = parentOf(rel);
+      folder.parent.children.push(folder);
+    }
+    const files = allFiles().map((f) => {
+      const parent = parentOf(f.path);
+      const file = { ...f, parent };
+      parent.children.push(file);
+      return file;
+    });
+    return [...folders.values(), ...files];
+  };
+
   const app = {
     vault: {
       getName: () => host.vaultName(),
       getMarkdownFiles: () => host.getMarkdownFiles(),
+      /** Every file, notes and attachments, as Obsidian's TFile. */
+      getFiles: () => allFiles(),
+      /** Every file and folder, the vault's root first, as Obsidian gives them. */
+      getAllLoadedFiles: () => allLoaded(),
       read: (file: { path: string } | string) =>
         host.readNote(typeof file === "string" ? file : file.path),
       /** Obsidian's cachedRead: the app's copy when it has one, else a read. */
