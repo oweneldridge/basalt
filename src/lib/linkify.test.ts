@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { linkifyMention } from "./linkify";
+import { linkifyMention, mentionLines } from "./linkify";
 
 describe("linkifyMention", () => {
   it("wraps the first bare occurrence, preserving surrounding text + casing", () => {
@@ -40,5 +40,34 @@ describe("linkifyMention, Obsidian's link form", () => {
     expect(linkifyMention("see https://wiki.example/Meeting for it", "Meeting")).toBeNull();
     expect(linkifyMention("tagged #Meeting only", "Meeting")).toBeNull();
     expect(linkifyMention("https://x.example/Meeting and Meeting", "Meeting")).toBe("https://x.example/Meeting and [[Meeting]]");
+  });
+});
+
+describe("Link all leaves links, URLs and autolinks alone", () => {
+  it("skips a linked image, a URL holding an @, and an autolink", () => {
+    expect(linkifyMention("[![s](Zqimg.png)](Zqimg.png)", "Zqimg")).toBeNull();
+    expect(linkifyMention("ssh://git@github.com/owen/Zqrepo.git", "Zqrepo")).toBeNull();
+    expect(linkifyMention("List of <key:Zqval> pairs", "Zqval")).toBeNull();
+    expect(linkifyMention("See <urn:isbn:Zqval> and <tel:Zqval>", "Zqval")).toBeNull();
+    expect(linkifyMention("mail <me@Zqhost.com> now", "Zqhost")).toBeNull();
+  });
+  it("still skips callout types, footnotes, references and emails", () => {
+    expect(linkifyMention("> [!Zqnote] title", "Zqnote")).toBeNull();
+    expect(linkifyMention("text[^Zqfn] more", "Zqfn")).toBeNull();
+    expect(linkifyMention("[Zqref]: https://example.com", "Zqref")).toBeNull();
+    expect(linkifyMention("[Zqref]: <https://example.com>", "Zqref")).toBeNull();
+    expect(linkifyMention("write to owen@Zqmail.com", "Zqmail")).toBeNull();
+    expect(linkifyMention("a <b>Zqword</b> c", "Zqword")).toBe("a <b>[[Zqword]]</b> c");
+  });
+});
+
+describe("mentionLines pairs $$ outside code and comments", () => {
+  it("a $$ in indented code or a comment doesn't shift the math pairs", () => {
+    const indented = "Intro\n\n    code $$ here\n\nZqword here $$x$$ and Zqword\n";
+    expect(mentionLines(indented)[4]).toContain("Zqword here");
+    expect(mentionLines(indented)[4].trimEnd().endsWith("Zqword")).toBe(true);
+    const comment = "%% a $$ in a comment %%\nZqword here $$x$$ and Zqword\n";
+    expect(mentionLines(comment)[1]).toContain("Zqword here");
+    expect(mentionLines(comment)[1].trimEnd().endsWith("Zqword")).toBe(true);
   });
 });

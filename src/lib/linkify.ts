@@ -18,22 +18,28 @@ const INLINE_MATH_RE = /\$(?=[^\s$])(?:[^$\n]*?[^\s$])?\$(?!\d)/g;
 // for one.
 const HTML_TAG_RE =
   /<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^'\n]*'|"[^"\n]*"))?)*\s*\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>/g;
-// A callout's type, a footnote reference, a link reference definition and an
-// email address: none of them is prose a link can go into.
-const OTHER_RE = /\[![^\]\n]*\]|\[\^[^\]\n]+\]|^ {0,3}\[[^\]\n]+\]:\s*\S.*$|[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+// An autolink, `<scheme:...>` or `<user@host>`.
+const AUTOLINK_RE = /<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>|<[\w.+-]+@[\w-]+(?:\.[\w-]+)+>/g;
+// A link reference definition.
+const REF_DEF_RE = /^ {0,3}\[[^\]\n]+\]:\s*\S.*$/g;
+// A callout's type, a footnote reference and an email address. Run after the
+// links and URLs are masked, so a linked image's `[![` isn't read as a callout.
+const OTHER_RE = /\[![^\]\n]*\]|\[\^[^\]\n]+\]|[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 
 /** `line` with what can't hold a linkable mention (inline code and math, HTML
- * tags, links, URLs, tags, callout types, footnotes, references, emails)
- * blanked to spaces, same length, so offsets still match the line. */
+ * tags, autolinks, links, URLs, tags, callout types, footnotes, references,
+ * emails) blanked to spaces, same length, so offsets still match the line. */
 export function maskForMentions(line: string): string {
   return line
+    .replace(REF_DEF_RE, (m) => " ".repeat(m.length))
     .replace(INLINE_CODE_RE, (m) => " ".repeat(m.length))
     .replace(INLINE_MATH_RE, (m) => " ".repeat(m.length))
+    .replace(AUTOLINK_RE, (m) => " ".repeat(m.length))
     .replace(HTML_TAG_RE, (m) => " ".repeat(m.length))
-    .replace(OTHER_RE, (m) => " ".repeat(m.length))
     .replace(wikilinkRegex(), (m) => " ".repeat(m.length))
     .replace(mdLinkRegexGlobal(), (m) => " ".repeat(m.length))
     .replace(URL_RE, (m) => " ".repeat(m.length))
+    .replace(OTHER_RE, (m) => " ".repeat(m.length))
     .replace(tagRegex(), (m) => " ".repeat(m.length));
 }
 
@@ -42,25 +48,30 @@ export function maskForMentions(line: string): string {
  * math and HTML comments. What's left is where a mention can be linked. */
 export function mentionLines(content: string, indented = true): string[] {
   const spans: [number, number][] = content.includes("%%") ? commentRanges(content) : [];
+  // Finding indented code takes a parse; `indented: false` skips it when no
+  // line that matters is indented.
+  if (indented) spans.push(...indentedCodeRanges(content));
   const lines = content.split("\n");
   const prose = proseMask(lines);
   if (content.includes("$$") || content.includes("<!--")) {
-    // Paired outside code, so a `$$` in code can't shift the pairs.
-    const outside = lines
+    // Paired outside code and comments, so a `$$` in them can't shift the pairs.
+    const outside = blank(content, spans)
+      .split("\n")
       .map((l, i) => (prose[i] ? l.replace(INLINE_CODE_RE, (m) => " ".repeat(m.length)) : " ".repeat(l.length)))
       .join("\n");
     for (const m of outside.matchAll(/\$\$[\s\S]*?\$\$|<!--[\s\S]*?-->/g)) spans.push([m.index!, m.index! + m[0].length]);
   }
-  // Finding indented code takes a parse; `indented: false` skips it when no
-  // line that matters is indented.
-  if (indented) spans.push(...indentedCodeRanges(content));
-  let text = content;
-  if (spans.length) {
-    const chars = content.split("");
-    for (const [from, to] of spans) for (let i = from; i < to; i++) if (chars[i] !== "\n") chars[i] = " ";
-    text = chars.join("");
-  }
-  return text.split("\n").map((l, i) => (prose[i] ? maskForMentions(l) : " ".repeat(l.length)));
+  return blank(content, spans)
+    .split("\n")
+    .map((l, i) => (prose[i] ? maskForMentions(l) : " ".repeat(l.length)));
+}
+
+/** `text` with each span blanked to spaces, its newlines kept. */
+function blank(text: string, spans: [number, number][]): string {
+  if (!spans.length) return text;
+  const chars = text.split("");
+  for (const [from, to] of spans) for (let i = from; i < to; i++) if (chars[i] !== "\n") chars[i] = " ";
+  return chars.join("");
 }
 
 /** A note's names (longest first) as whole words, ignoring case. */
