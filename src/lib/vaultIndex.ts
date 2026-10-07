@@ -285,7 +285,7 @@ export function extractTags(content: string): string[] {
       .replace(HTML_TAG, " "); // nor is a colour in an HTML attribute
     const re = tagRegex();
     let m: RegExpExecArray | null;
-    while ((m = re.exec(line))) add(m[2]); // group 2 = bare name
+    while ((m = re.exec(line))) if (!/^\d+$/.test(m[2])) add(m[2]); // group 2 = bare name; `#42` isn't a tag
   }
   return out;
 }

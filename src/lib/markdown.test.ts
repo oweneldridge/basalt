@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { internalLinkTarget } from "./markdown";
+import { internalLinkTarget, tagRegex } from "./markdown";
 
 describe("internalLinkTarget", () => {
   it("reads any href that isn't a URL as a vault link, decoded", () => {
@@ -21,5 +21,20 @@ describe("internalLinkTarget", () => {
 
   it("keeps a malformed escape as written", () => {
     expect(internalLinkTarget("100%25%")).toBe("100%25%");
+  });
+});
+
+describe("tags", () => {
+  const tags = (s: string) => [...s.matchAll(tagRegex())].map((m) => m[2]);
+  it("take letters of any script, digits, emoji, - _ and /", () => {
+    expect(tags("#café #日本 #plain #a-b_c/d #🎉party")).toEqual(["café", "日本", "plain", "a-b_c/d", "🎉party"]);
+    expect(tags("line one\n#second-line")).toEqual(["second-line"]);
+  });
+  it("start the text or follow a space or a formatting mark, as in Obsidian", () => {
+    expect(tags("a#b \\#escaped (#paren) http://x.com/#frag")).toEqual([]);
+    expect(tags("**#bold** ==#lit==")).toEqual(["bold", "lit"]);
+  });
+  it("end at punctuation", () => {
+    expect(tags("see #tag, then #other. and #q?")).toEqual(["tag", "other", "q"]);
   });
 });

@@ -14,7 +14,9 @@
 import { parser as baseParser, GFM } from "@lezer/markdown";
 import type { BlockContext, DelimiterType, InlineContext, Line, MarkdownConfig } from "@lezer/markdown";
 import type { SyntaxNode } from "@lezer/common";
-import { mdImageTarget, proseMask, wikilinkLabel } from "./markdown";
+import { mdImageTarget, proseMask, TAG_BEFORE, TAG_NAME, wikilinkLabel } from "./markdown";
+
+const TAG_AT = new RegExp(`^#(${TAG_NAME})`, "u");
 import { parseFm } from "./frontmatter";
 import { calloutIcon } from "./callouticons";
 import { ObsidianTasks } from "./mdTasks";
@@ -202,16 +204,16 @@ const ObsidianSyntax: MarkdownConfig = {
       },
     },
     {
-      // `#tag`, `#nested/tag`: letters (any script), digits, `_`, `-`, `/`, with
-      // at least one non-digit (`#42` isn't a tag). Not inside a word.
+      // `#tag`, `#nested/tag`, as Obsidian reads them (TAG_NAME, TAG_BEFORE);
+      // `#42` isn't a tag.
       name: "Tag",
       before: "Emphasis",
       parse(cx, next, pos) {
         if (next !== 35) return -1;
         const prev = cx.slice(pos - 1, pos);
-        if (prev && /[\p{L}\p{N}_/#&\]]/u.test(prev)) return -1;
-        const m = /^#([\p{L}\p{N}_\-/]+)/u.exec(cx.slice(pos, cx.end));
-        if (!m || /^[\d/]+$/.test(m[1])) return -1;
+        if (prev && !TAG_BEFORE.test(prev)) return -1;
+        const m = TAG_AT.exec(cx.slice(pos, cx.end));
+        if (!m || /^\d+$/.test(m[1])) return -1;
         return cx.addElement(cx.elt("Tag", pos, pos + m[0].length));
       },
     },

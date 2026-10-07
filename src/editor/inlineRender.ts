@@ -3,7 +3,7 @@
 // real DOM nodes (never innerHTML) and reuses the app's link classes, so clicks
 // inside a table are handled by the same delegated handlers as everywhere else.
 import type { EditorView } from "@codemirror/view";
-import { parseMarkdownLink, targetNoteName } from "../lib/markdown";
+import { parseMarkdownLink, TAG_BEFORE, TAG_NAME, targetNoteName } from "../lib/markdown";
 import { fillMath } from "./mathRender";
 
 // One alternation: inline code | wikilink | md-link/image | math | highlight |
@@ -24,7 +24,7 @@ const INLINE_RE = new RegExp(
     /(~~[^~\n]+?~~)/, // 6: strikethrough
     /(\*\*[^*\n]+?\*\*|(?<![A-Za-z0-9])__[^_\n]+?__(?![A-Za-z0-9]))/, // 7: bold
     /(\*[^*\n]+?\*|(?<![A-Za-z0-9])_[^_\n]+?_(?![A-Za-z0-9]))/, // 8: italic
-    /((?<![\w/#&])#[A-Za-z0-9_][\w-]*(?:\/[A-Za-z0-9_][\w-]*)*)/, // 9: tag
+    new RegExp(`((?<=^|${TAG_BEFORE.source})#${TAG_NAME})`), // 9: tag
   ]
     .map((r) => r.source)
     .join("|"),

@@ -1321,3 +1321,17 @@ test.describe("comments in Live Preview", () => {
     await expect(pane.locator(".cm-comment", { hasText: "%%not%%" })).toHaveCount(0);
   });
 });
+
+test.describe("tags", () => {
+  test.use({ vaultFiles: { "Tg.md": "#café #日本 \\#notatag (#paren) #42 **#bold** #a/b-c\n\nEND\n" } });
+
+  test("are read as Obsidian reads them, in both views", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Tg");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const want = ["#café", "#日本", "#bold", "#a/b-c"];
+    await expect(page.locator(".pane:not(.dock) .cm-tag")).toHaveText(want);
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await expect(page.locator(".pane:not(.dock) .reading-view .md-tag")).toHaveText(want);
+  });
+});

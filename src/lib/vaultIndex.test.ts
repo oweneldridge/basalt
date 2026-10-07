@@ -197,6 +197,9 @@ describe("extractTags", () => {
   it("returns nothing for a note with no tags", () => {
     expect(extractTags("just prose, no tags here")).toEqual([]);
   });
+  it("finds tags in any script, and not numbers or escaped ones", () => {
+    expect(extractTags("#café and #日本, issue #42, \\#escaped").sort()).toEqual(["café", "日本"]);
+  });
 });
 
 describe("VaultIndex.allTags", () => {

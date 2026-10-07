@@ -153,12 +153,20 @@ export function highlightRegex(): RegExp {
   return /==([^=\n]+)==/g;
 }
 
-/** Tags `#tag` / `#nested/tag`. A zero-width lookbehind keeps `#` from matching
- * after a word char, `/`, or another `#` (so a heading `# `, mid-word `a#b`, a
- * URL `/#frag`, and `#a#b`'s second tag all behave). Group 1 = `#tag`, group 2 =
- * bare name. */
+/** A tag's name as Obsidian reads it: letters of any script, digits, emoji,
+ * `-`, `_` and `/`; anything but spaces and punctuation. */
+export const TAG_NAME = "[^\\u2000-\\u206F\\u2E00-\\u2E7F'!\"#$%&()*+,.:;<=>?@^`{|}~\\[\\]\\\\\\s]+";
+
+/** What may come right before a tag's `#`: nothing, a space, or the opening
+ * of bold, italics, highlight or strikethrough (`**#tag**` is a tag to
+ * Obsidian's index). So `a#b`, `\#escaped`, `(#x)` and a URL's `/#frag` aren't. */
+export const TAG_BEFORE = /[\s*_~=]/;
+
+/** Tags `#tag` / `#nested/tag`, as Obsidian finds them (see TAG_BEFORE).
+ * Group 1 = `#tag`, group 2 = bare name; a name of digits only (`#42`) is for
+ * the caller to skip. */
 export function tagRegex(): RegExp {
-  return /(?<![\w/#])(#([A-Za-z0-9_][\w-]*(?:\/[A-Za-z0-9_][\w-]*)*))/g;
+  return new RegExp(`(?<=^|${TAG_BEFORE.source})(#(${TAG_NAME}))`, "gu");
 }
 
 /**
