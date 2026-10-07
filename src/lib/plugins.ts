@@ -324,7 +324,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       getName: () => host.vaultName(),
       getMarkdownFiles: () => host.getMarkdownFiles(),
       /** Every file, notes and attachments, as Obsidian's TFile. */
-      getFiles: () => allFiles(),
+      getFiles: () => allLoaded().filter((f) => !("children" in f)),
       /** Every file and folder, the vault's root first, as Obsidian gives them. */
       getAllLoadedFiles: () => allLoaded(),
       read: (file: { path: string } | string) =>

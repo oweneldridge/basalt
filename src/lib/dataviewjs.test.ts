@@ -133,9 +133,9 @@ describe("dataviewjs (lite)", () => {
   it("gives blocks Obsidian's app, with every file and folder", async () => {
     const el = await run(
       "const all = app.vault.getAllLoadedFiles();\n" +
-        'dv.paragraph([all.length, app.vault.getFiles().map((f) => f.extension).join(","), all.find((f) => f.path === "Other").children.map((c) => c.name).join(",")].join(" | "));',
+        'dv.paragraph([all.length, app.vault.getFiles().map((f) => f.extension).join(","), all.find((f) => f.path === "Other").children.map((c) => c.name).join(","), app.vault.getFiles().every((f) => f.parent.children.includes(f))].join(" | "));',
     );
-    expect(textOf(el)).toContain("9 | md,md,md,md,png | Misc.md,pic.png");
+    expect(textOf(el)).toContain("9 | md,md,md,md,png | Misc.md,pic.png | true");
   });
 
   it("has moment's endOf, startOf and isBetween", async () => {
