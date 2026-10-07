@@ -501,6 +501,15 @@ describe("HTML comments", () => {
     expect(renderMarkdown("<!-- only -->\n\npara")).toBe("<p>para</p>");
     expect(renderMarkdown("<!-- c --> visible tail\n\npara")).toContain("visible tail");
   });
+  it("over several lines show only what follows, and an unclosed one hides the rest", () => {
+    const multi = renderMarkdown("<!--\nprivate draft notes\n--> tail text\n\npara");
+    expect(multi).toContain("tail text");
+    expect(multi).not.toContain("private draft");
+    expect(renderMarkdown("<!-- open\n# Head\n**b**\n")).not.toMatch(/Head|\*\*b/);
+    const two = renderMarkdown("<!-- a --> visible <!-- b -->\n");
+    expect(two).toContain("visible");
+    expect(two).not.toContain(" a ");
+  });
 });
 
 describe("table rows wider than the header", () => {

@@ -687,9 +687,14 @@ class Blocks {
       }
       case "HTMLBlock":
         return this.html(n);
-      case "CommentBlock":
-        // Text after the comment on its last line shows, as HTML shows it.
-        return /-->[ \t]*$/.test(this.src(n)) ? "" : this.html(n);
+      case "CommentBlock": {
+        // Only what follows the comment's end shows, as raw HTML (as a browser
+        // shows it); an unclosed comment hides the rest of the note.
+        const src = this.src(n);
+        const end = src.indexOf("-->");
+        const tail = end < 0 ? "" : src.slice(end + 3).trim();
+        return tail ? `<div class="raw-html" data-basalt-html="${escapeHtml(tail)}"></div>` : "";
+      }
       case "LinkReference":
       case "QuoteMark":
       case "ListMark":
