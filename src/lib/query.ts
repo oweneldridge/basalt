@@ -341,7 +341,7 @@ export function parseQuery(src: string): Query {
   try {
     const { head, clauses } = splitClauses(src);
     const headUp = head.toUpperCase();
-    if (headUp.startsWith("TABLE")) {
+    if (/^TABLE\b/.test(headUp)) {
       q.kind = "TABLE";
       let rest = head.slice(5).trim();
       if (/^WITHOUT\s+ID\b/i.test(rest)) {
@@ -349,9 +349,9 @@ export function parseQuery(src: string): Query {
         rest = rest.replace(/^WITHOUT\s+ID\b/i, "").trim();
       }
       q.columns = rest ? splitTopComma(rest).map(parseColumn) : [];
-    } else if (headUp.startsWith("TASK")) {
+    } else if (/^TASK\b/.test(headUp)) {
       q.kind = "TASK";
-    } else if (headUp.startsWith("LIST")) {
+    } else if (/^LIST\b/.test(headUp)) {
       q.kind = "LIST";
       const rest = head.slice(4).trim();
       if (rest && !/^WITHOUT\s+ID$/i.test(rest)) q.listExpr = rest;
