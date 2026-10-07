@@ -45,6 +45,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Reading view now parses with the same CommonMark and GFM parser as Live
+  Preview, extended with Obsidian's syntax, instead of a line-by-line scanner.
+  Among what that fixes in real notes:
+  - reference-style images and links (Google Docs exports) show their images
+    instead of walls of base64;
+  - lists keep wrapped lines, their start number, and code blocks inside items;
+  - bold and italic may wrap onto the next line; `2 * 3 * 4` stays as typed;
+  - footnotes after a quote or callout keep their numbers and text;
+  - backslash escapes, entities, HTML comments, setext headings, indented code
+    and double-backtick code all read as in Obsidian;
+  - bare URLs are links; `#42` isn't a tag and `#café` is one;
+  - `[[#Heading]]` shows "Heading" and `[[Note#Heading]]` "Note > Heading";
+  - images take their `|300` size, and linked images work;
+  - table columns follow their alignment, and short rows fill out;
+  - inline HTML such as `<b>` or `<span>` shows as markup, without attributes
+    beyond a few harmless ones;
+  - a note nested a thousand quotes deep no longer blanks the app.
 - Tasks with any status, such as `- [/]`, `- [-]` or `- [>]`, and tasks in
   numbered lists show as checkboxes in Live Preview and Reading view, as in
   Obsidian; clicking one marks it open or done.

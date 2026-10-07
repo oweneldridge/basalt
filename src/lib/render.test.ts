@@ -16,7 +16,7 @@ describe("escaping (XSS safety)", () => {
   it("never emits a raw script tag from user input", () => {
     const html = renderMarkdown("# <img src=x onerror=alert(1)>\n\ntext");
     expect(html).not.toMatch(/<img src=x/);
-    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).not.toContain("onerror"); // inline HTML keeps only harmless attributes
   });
   it("escapes double-quotes in attribute values (no breakout)", () => {
     // The injected `"` becomes &quot;, so it stays INSIDE the attribute value
@@ -47,7 +47,7 @@ describe("inline", () => {
     expect(renderInline("[[Foo|bar]]")).toContain('data-target="Foo">bar</a>');
     // Raw target kept (folder + heading) so resolution matches the editor;
     // display falls back to the bare note name.
-    expect(renderInline("[[notes/Foo#H]]")).toContain('data-target="notes/Foo#H">Foo</a>');
+    expect(renderInline("[[notes/Foo#H]]")).toContain('data-target="notes/Foo#H">Foo &gt; H</a>');
     expect(renderInline("[text](https://a.com)")).toBe(
       '<a class="md-link" data-href="https://a.com">text</a>',
     );
@@ -95,7 +95,7 @@ describe("blocks", () => {
   it("bullet list with task checkboxes", () => {
     const html = renderMarkdown("- a\n- [ ] todo\n- [x] done");
     expect(html).toContain("<ul><li>a</li>");
-    expect(html).toContain('<li class="md-task"><input type="checkbox" class="md-task-check" data-task-line="1" /> todo</li>');
+    expect(html).toContain('<li class="md-task" data-task=" "><input type="checkbox" class="md-task-check" data-task-line="1" /> todo</li>');
     expect(html).toContain('data-task-line="2" checked /> done');
   });
   it("nested lists", () => {
@@ -298,10 +298,11 @@ describe("raw HTML", () => {
     expect(out).not.toContain("raw-html"); // stays a paragraph
     expect(out).toContain("<sup>");
   });
-  it("escapes arbitrary inline HTML that isn't on the safe list", () => {
-    const out = renderMarkdown("hi <span onclick=alert(1)>x</span>");
-    expect(out).not.toContain("<span onclick");
-    expect(out).toContain("&lt;span");
+  it("keeps inline HTML on the safe list without its attributes, escapes the rest", () => {
+    const out = renderMarkdown("hi <span onclick=alert(1)>x</span> and <iframe src=x>");
+    expect(out).not.toContain("onclick");
+    expect(out).toContain("<span>x</span>"); // shown as markup, as in Obsidian
+    expect(out).toContain("&lt;iframe"); // not on the list: text
   });
   it("treats a <font>-led line as a raw-HTML block (Obsidian daily-note header)", () => {
     // A common Obsidian daily-note template: <font color=…><center>…<cite>…</cite></center></font>
@@ -387,5 +388,94 @@ describe("markdown image paths", () => {
     expect(renderInline("![s](<Media/shot one.png>)")).toContain('data-basalt-img="Media/shot one.png"');
     expect(renderInline("![s](100%.png)")).toContain('data-basalt-img="100%.png"');
     expect(renderInline("![s](https://x.test/a%20b.png)")).toContain('data-basalt-img="https://x.test/a%20b.png"');
+  });
+});
+
+describe("CommonMark and Obsidian fidelity (Reading view hunt)", () => {
+  it("resolves reference images and links, hiding their definitions", () => {
+    const html = renderMarkdown("![][image1] and [text][r] and [r]\n\n[image1]: <data:image/png;base64,AAA>\n[r]: https://x.com");
+    expect(html).toContain('data-basalt-img="data:image/png;base64,AAA"');
+    expect(html).toContain('<a class="md-link" data-href="https://x.com">text</a>');
+    expect(html).toContain('<a class="md-link" data-href="https://x.com">r</a>');
+    expect(html).not.toContain("base64,AAA&gt;");
+    expect(renderMarkdown("[no def] stays")).toContain("[no def] stays");
+  });
+
+  it("keeps lists whole: wrapped items, start numbers, code inside items, type changes", () => {
+    const html = renderMarkdown("3. **Stray core** wrapped\n   onto two lines\n4. next\n   ```\n   code\n   ```\n- bullet");
+    expect(html).toContain('<ol start="3">');
+    expect(html).toContain("<strong>Stray core</strong> wrapped<br>\nonto two lines");
+    expect(html).toContain('<pre class="md-code"><code>code</code></pre>');
+    expect(html.match(/<ol/g)).toHaveLength(1);
+    expect(html).toContain("<ul><li>bullet</li></ul>");
+  });
+
+  it("lets emphasis wrap onto the next line", () => {
+    expect(renderMarkdown("**bold that wraps\nonto the next line** end")).toContain("<strong>bold that wraps<br>\nonto the next line</strong>");
+  });
+
+  it("keeps footnotes after a blockquote or a callout", () => {
+    const html = renderMarkdown("one[^a]\n\n> quote\n\n> [!note]\n> in callout[^c]\n\ntwo[^b]\n\n[^a]: A\n[^b]: B\n[^c]: C");
+    expect(html.match(/class="footnote-ref"/g)).toHaveLength(3);
+    for (const t of ["A", "B", "C"]) expect(html).toMatch(new RegExp(`<li id="fn-[abc]">${t} <a`));
+  });
+
+  it("labels same-note heading links", () => {
+    expect(renderInline("[[#Local]]")).toContain(">Local</a>");
+  });
+
+  it("survives absurdly deep blockquotes", () => {
+    expect(() => renderMarkdown(">".repeat(2000) + " deep")).not.toThrow();
+  });
+
+  it("follows CommonMark emphasis rules", () => {
+    expect(renderMarkdown("2 * 3 * 4")).toContain("2 * 3 * 4");
+    expect(renderMarkdown("***both***")).toMatch(/<em><strong>both<\/strong><\/em>|<strong><em>both<\/em><\/strong>/);
+  });
+
+  it("keeps a heading's own closing #", () => {
+    expect(renderMarkdown("## Learning C#")).toContain("<h2>Learning C#</h2>");
+  });
+
+  it("handles backslash escapes", () => {
+    const html = renderMarkdown("\\*not em\\* and \\$5 and \\#not-a-tag");
+    expect(html).toContain("*not em* and $5 and #not-a-tag");
+    expect(html).not.toContain("md-tag");
+    expect(html).not.toContain("<em>");
+  });
+
+  it("hides HTML comments and links bare URLs", () => {
+    const html = renderMarkdown("see <!-- hidden --> https://example.com/a. and www.example.org");
+    expect(html).not.toContain("hidden");
+    expect(html).toContain('data-href="https://example.com/a"');
+    expect(html).toContain('data-href="https://www.example.org"');
+  });
+
+  it("reads tags as Obsidian does", () => {
+    expect(renderMarkdown("issue #42 here")).not.toContain("md-tag");
+    expect(renderMarkdown("a #café tag")).toContain('<span class="md-tag">#café</span>');
+    expect(renderMarkdown("&#169; and &copy;")).not.toContain("md-tag");
+    expect(renderMarkdown("&#169; and &copy;")).toContain("&#169; and &copy;");
+  });
+
+  it("renders linked images and sized images", () => {
+    expect(renderMarkdown("[![a](i.png)](https://u.com)")).toMatch(/<a class="md-link" data-href="https:\/\/u.com"><img [^>]*data-basalt-img="i.png"/);
+    expect(renderMarkdown("![[pic.png|300]]")).toContain('width="300"');
+    expect(renderMarkdown("![[pic.png|300x100]]")).toContain('width="300" height="100"');
+    expect(renderMarkdown("![shot|150](x.png)")).toMatch(/alt="shot" width="150"/);
+  });
+
+  it("reads setext headings, lazy quote lines, and code spans with backticks", () => {
+    expect(renderMarkdown("Title\n===")).toContain("<h1>Title</h1>");
+    expect(renderMarkdown("> quoted\nlazy line")).toMatch(/<blockquote><p>quoted<br>\nlazy line<\/p><\/blockquote>/);
+    expect(renderMarkdown("``a ` b``")).toContain('<code class="md-code-inline">a ` b</code>');
+    expect(renderMarkdown("    indented code")).toContain('<pre class="md-code"><code>indented code</code></pre>');
+  });
+
+  it("aligns table columns and pads short rows", () => {
+    const html = renderMarkdown("| a | b | c |\n|:-|:-:|-:|\n| 1 |");
+    expect(html).toContain('<th style="text-align:center">b</th>');
+    expect(html).toContain('<td style="text-align:right"></td>');
+    expect(html.match(/<td/g)).toHaveLength(3);
   });
 });
