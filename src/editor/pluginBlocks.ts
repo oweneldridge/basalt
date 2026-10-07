@@ -9,6 +9,7 @@ import type { DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { codeBlockProcessor, hasCodeBlockProcessor } from "../lib/plugins";
 import { notePathFacet } from "./query";
+import { blockEdges } from "./blockEdges";
 
 class PluginBlockWidget extends WidgetType {
   constructor(
@@ -84,4 +85,4 @@ const pluginBlockClick = EditorView.domEventHandlers({
   },
 });
 
-export const pluginBlocks: Extension = [pluginBlockField, pluginBlockClick];
+export const pluginBlocks: Extension = [pluginBlockField, pluginBlockClick, blockEdges(pluginBlockField)];

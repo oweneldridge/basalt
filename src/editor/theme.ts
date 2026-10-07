@@ -318,8 +318,9 @@ const themeSpec = {
     ".cm-mermaid": {
       display: "block",
       textAlign: "center",
-      margin: "8px 0",
-      padding: "8px 0",
+      // Padding, not margin: CodeMirror measures a block widget without its
+      // margins, so lines below would sit out of step with clicks.
+      padding: "16px 0",
       color: "var(--text-muted)",
       cursor: "pointer",
     },

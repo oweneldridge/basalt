@@ -1643,8 +1643,10 @@ button.primary:hover {
 }
 
 /* ------- Query blocks (```dataview / ```query) ------- */
+/* Padding, not margin, on block widgets: CodeMirror measures a widget without
+   its margins, so lines below would sit out of step with clicks. */
 .cm-query {
-  margin: 4px 0;
+  padding: 4px 0;
 }
 .query-block {
   font-size: 0.95em;
@@ -1782,7 +1784,9 @@ button.primary:hover {
   font-size: 12px;
   margin-top: 4px;
 }
-.cm-plugin-block,
+.cm-plugin-block {
+  padding: 4px 0;
+}
 .md-plugin-block {
   margin: 4px 0;
 }
@@ -1832,7 +1836,7 @@ button.primary:hover {
 }
 
 /* ------- Transclusion / embeds ------- */
-.cm-embed { margin: 4px 0; }
+.cm-embed { padding: 4px 0; }
 .embed {
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);

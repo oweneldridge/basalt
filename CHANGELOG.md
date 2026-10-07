@@ -45,6 +45,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Lines below a diagram, an image, an embedded note or a query result stay
+  where clicks and the arrow keys land once that content loads, and a click
+  just outside such a block lands on the line beside it.
 - Opening a note whose embedded image can't be found no longer rewrites the
   embed as "🖼 name" text on disk. Live Preview swapped the image out for that
   label in a way the editor read as typing, and autosave saved it.

@@ -750,6 +750,48 @@ test.describe("typing lists", () => {
   });
 });
 
+test.describe("lines below content that loads late", () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="320"><rect width="200" height="320" fill="#88a"/></svg>';
+  test.use({
+    vaultFiles: {
+      "Diagram.md": "above\n\n```mermaid\ngraph TD\nA-->B\nB-->C\nC-->D\n```\n\nbelow one\nbelow two\nbelow three\n",
+      "Picture.md": "above\n\n![[tall.svg]]\n\nbelow one\nbelow two\nbelow three\n",
+      "tall.svg": svg,
+      "Embedded.md": "above\n\n![[Inner]]\n\nbelow one\nbelow two\nbelow three\n",
+      "Inner.md": "inner one\n\ninner two\n\ninner three\n",
+    },
+  });
+
+  const offsets = (page: import("@playwright/test").Page) =>
+    page.evaluate(() => {
+      const el = document.querySelector(".pane:not(.dock) .cm-content") as HTMLElement & { cmTile?: { root: { view: any } } };
+      const view = el.cmTile!.root.view;
+      return [...el.querySelectorAll(".cm-line")].map((l) => {
+        const blk = view.lineBlockAt(view.posAtDOM(l, 0));
+        return Math.round(l.getBoundingClientRect().top - (blk.top + view.documentTop));
+      });
+    });
+
+  for (const [note, ready] of [
+    ["Diagram", ".cm-mermaid svg"],
+    ["Picture", "img[src]"],
+    ["Embedded", ".cm-embed .cm-embed-note, .cm-embed :text('inner three')"],
+  ] as const) {
+    test(`stay where clicks land below a ${note.toLowerCase()}`, async ({ page, vault }) => {
+      await openApp(page, vault);
+      await openNote(page, note);
+      await expect(page.locator(`.pane:not(.dock) ${ready}`).first()).toBeVisible({ timeout: 15000 });
+      await page.waitForTimeout(600);
+      expect((await offsets(page)).every((o: number) => Math.abs(o) <= 1)).toBe(true);
+      await page.locator(".pane:not(.dock) .cm-line", { hasText: "below two" }).click();
+      await page.keyboard.press("End");
+      await page.keyboard.type(" EDIT");
+      await settle(page, 1200);
+      expect(vault.read(`${note}.md`)).toContain("below two EDIT\n");
+    });
+  }
+});
+
 test.describe("a note with missing images", () => {
   const note = "before\n\n![my diagram](assets/does-not-exist.png)\n\n![[nope-missing.png]]\n\nafter\n";
   test.use({ vaultFiles: { "Missing.md": note } });

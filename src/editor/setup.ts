@@ -82,6 +82,7 @@ import { livePreview } from "./livePreview";
 import { tables } from "./tables";
 import { frontmatter } from "./frontmatter";
 import { clickGuard } from "./clickGuard";
+import { remeasure } from "./remeasure";
 import { codeBlocks } from "./codeBlocks";
 import { callouts } from "./callouts";
 import { calloutFold } from "./calloutFold";
@@ -192,6 +193,7 @@ export function reconfigurePlugins(view: EditorView): void {
 function renderExtensions(cb: EditorCallbacks): Extension[] {
   return [
     clickGuard,
+    remeasure,
     frontmatter,
     tables,
     mermaid,

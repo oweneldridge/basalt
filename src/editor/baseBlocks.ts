@@ -7,6 +7,7 @@ import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { notePathFacet } from "./query";
+import { blockEdges } from "./blockEdges";
 
 // Keyed by the element: CodeMirror may destroy an `eq` twin of the widget that
 // built the DOM.
@@ -80,4 +81,4 @@ const baseBlockClick = EditorView.domEventHandlers({
   },
 });
 
-export const baseBlocks: Extension = [baseBlockField, baseBlockClick];
+export const baseBlocks: Extension = [baseBlockField, baseBlockClick, blockEdges(baseBlockField)];

@@ -10,6 +10,7 @@ import type { DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { renderMermaid } from "../lib/mermaid";
 import { inertFragment } from "../lib/remoteImages";
+import { blockEdges } from "./blockEdges";
 
 class MermaidWidget extends WidgetType {
   constructor(readonly source: string) {
@@ -78,4 +79,4 @@ const mermaidClick = EditorView.domEventHandlers({
   },
 });
 
-export const mermaid: Extension = [mermaidField, mermaidClick];
+export const mermaid: Extension = [mermaidField, mermaidClick, blockEdges(mermaidField)];

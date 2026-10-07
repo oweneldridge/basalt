@@ -11,6 +11,7 @@ import { renderEmbedSource, getTranscludeHost } from "../lib/transclude";
 import { mediaKind, buildMediaElement, type MediaKind } from "../lib/media";
 import { targetPathPart } from "../lib/markdown";
 import { notePathFacet } from "./query";
+import { blockEdges } from "./blockEdges";
 
 const EMBED_RE = /!\[\[([^\]\[\n|]+?)(?:\|([^\]\[\n]+))?\]\]/g;
 const IMAGE_EXT = /\.(png|jpe?g|gif|svg|webp|bmp|avif|ico)$/i;
@@ -119,4 +120,4 @@ const transcludeClick = EditorView.domEventHandlers({
   },
 });
 
-export const transcludeBlocks: Extension = [transcludeField, transcludeClick];
+export const transcludeBlocks: Extension = [transcludeField, transcludeClick, blockEdges(transcludeField)];
