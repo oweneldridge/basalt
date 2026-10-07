@@ -13,6 +13,9 @@ interface PaletteProps<T> {
   emptyText?: string;
   /** Seed the query box (e.g. opening search pre-filled with a clicked tag). */
   initialQuery?: string;
+  /** A line above the results (a search's total), given every result and how
+   * many are shown. */
+  summary?: (all: T[], shown: number) => string;
 }
 
 const MAX_RENDER = 100;
@@ -26,12 +29,14 @@ export function Palette<T>({
   onClose,
   emptyText = "No results",
   initialQuery = "",
+  summary,
 }: PaletteProps<T>) {
   const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement | null>(null);
 
-  const items = useMemo(() => getItems(query).slice(0, MAX_RENDER), [query, getItems]);
+  const all = useMemo(() => getItems(query), [query, getItems]);
+  const items = useMemo(() => all.slice(0, MAX_RENDER), [all]);
 
   useEffect(() => {
     setActive(0);
@@ -79,6 +84,11 @@ export function Palette<T>({
           onChange={(e) => setQuery(e.currentTarget.value)}
           onKeyDown={onKeyDown}
         />
+        {summary && query.trim() && all.length > 0 && (
+          <div className="palette-summary" role="status">
+            {summary(all, items.length)}
+          </div>
+        )}
         <div className="palette-list" ref={listRef} id={listId} role="listbox" aria-label={placeholder}>
           {items.map((item, i) => (
             <button

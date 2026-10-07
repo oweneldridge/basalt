@@ -138,7 +138,7 @@ import { looksLikeAttachment, resolveAttachment } from "./lib/attachments";
 import { fillTemplate, formatMoment, UnsupportedTokenError } from "./lib/daily";
 import type { LinkFormat } from "./lib/rename";
 import { fuzzyRank } from "./lib/fuzzy";
-import { searchVault, type SearchHit } from "./lib/search";
+import { searchVault, SEARCH_MAX_HITS, type SearchHit } from "./lib/search";
 import "./styles.css";
 
 const LAST_VAULT_KEY = "basalt.lastVault";
@@ -5501,9 +5501,15 @@ export default function App() {
       )}
       {modal === "search" && (
         <Palette<SearchHit>
-          placeholder="Search… (path: file: tag: line:(a b) -exclude OR &quot;phrase&quot; /regex/)"
+          placeholder="Search… (path: file: tag: line: section: task: [prop] match-case: -x OR (a OR b) &quot;phrase&quot; /regex/)"
           initialQuery={searchSeed}
           getItems={(q) => searchVault(notesRef.current, q, { tagsOf: (p) => index.current.tagsOf(p) })}
+          summary={(hits, shown) => {
+            const notes = new Set(hits.map((h) => h.path)).size;
+            const total = hits.length >= SEARCH_MAX_HITS ? `${SEARCH_MAX_HITS}+` : String(hits.length);
+            const count = `${total} result${hits.length === 1 ? "" : "s"} in ${notes} note${notes === 1 ? "" : "s"}`;
+            return shown < hits.length ? `${count}, the first ${shown} shown` : count;
+          }}
           itemKey={(h, i) => `${h.path}:${h.line}:${i}`}
           renderItem={(h) => (
             <>

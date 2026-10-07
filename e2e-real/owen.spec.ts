@@ -1900,3 +1900,25 @@ test.describe("an image in an HTML block", () => {
     await expect.poll(() => rv.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0);
   });
 });
+
+test.describe("search", () => {
+  test.use({
+    vaultFiles: {
+      "Plan.md": "---\nstatus: draft\n---\n# Plan\n- [ ] call Alice about budget\n- [x] email Bob about budget\n",
+      "Other.md": "budget talk\n",
+    },
+  });
+
+  test("counts its results and knows Obsidian's operators", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await page.keyboard.press("ControlOrMeta+Shift+f");
+    const input = page.locator(".palette-input").first();
+    await input.fill("budget");
+    await expect(page.locator(".palette-summary")).toHaveText("3 results in 2 notes");
+    await input.fill("task-todo:budget");
+    await expect(page.locator("[role=option]")).toHaveCount(1);
+    await expect(page.locator("[role=option]")).toContainText("call Alice");
+    await input.fill("[status:draft] budget");
+    await expect(page.locator(".palette-summary")).toHaveText("2 results in 1 note");
+  });
+});
