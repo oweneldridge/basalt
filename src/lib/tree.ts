@@ -23,7 +23,8 @@ export type TreeNode = TreeFile | TreeFolder;
 export type SortOrder = "name-asc" | "name-desc" | "mtime-desc" | "ctime-desc";
 
 function sortFolder(folder: TreeFolder, order: SortOrder): void {
-  const byName = (a: TreeNode, b: TreeNode) => a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  // Natural order (2 before 10), ignoring case, as Obsidian sorts.
+  const byName = (a: TreeNode, b: TreeNode) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
   folder.children.sort((a, b) => {
     if (a.type !== b.type) return a.type === "folder" ? -1 : 1; // folders first
     if (a.type === "folder") return byName(a, b); // folders always by name
