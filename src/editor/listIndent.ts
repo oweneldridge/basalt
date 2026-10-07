@@ -40,7 +40,7 @@ function blockEnd(state: EditorState, n: number, indent: string): number {
   return last;
 }
 
-const BLOCK_START = /^\s*(?:#{1,6}(?:\s|$)|>|```|~~~|([-*_])(?:\s*\1){2,}\s*$)/;
+const BLOCK_START = /^\s*(?:#{1,6}(?:\s|$)|>|```|~~~|\$\$|\||<[a-zA-Z/!]|([-*_])(?:\s*\1){2,}\s*$)/;
 
 /** A line that carries on the paragraph above it without being indented (a
  * lazy continuation line): it isn't blank, follows a line that isn't, and

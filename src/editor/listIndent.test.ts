@@ -25,6 +25,11 @@ describe("Tab and Shift-Tab on a numbered item", () => {
     expect(run(indentListItem, "1. a\n2. b\n- bullet\n3. c", 2)).toBe("1. a\n\t1. b\n- bullet\n3. c");
     expect(run(indentListItem, "01. a\n02. b\n03. c", 2)).toBe("01. a\n\t1. b\n2. c");
   });
+  it("stop at a line that starts a block of its own", () => {
+    for (const between of ["<!-- note -->", "<div>", "| a | b |", "$$"]) {
+      expect(run(indentListItem, `1. a\n2. b\n${between}\n1. x\n2. y`, 2), between).toBe(`1. a\n\t1. b\n${between}\n1. x\n2. y`);
+    }
+  });
   it("number the items left under an outdented one from 1", () => {
     expect(run(outdentListItem, "1. a\n\t1. b\n\t2. c\n2. d", 2)).toBe("1. a\n2. b\n\t1. c\n3. d");
   });
