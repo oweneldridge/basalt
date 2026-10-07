@@ -931,3 +931,24 @@ test("Cmd-E switches between editing and Reading view", async ({ page, vault }) 
   await expect(page.locator(".pane:not(.dock) .reading-view")).toHaveCount(0);
   await expect(page.locator(".pane:not(.dock) .cm-content")).toHaveCount(1);
 });
+
+test.describe("link autocomplete", () => {
+  test.use({ vaultFiles: { "Getting Started Guide.md": "guide\n", "Draft.md": "start\n" } });
+
+  test("Enter picks the matching note, not Create new note", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Draft");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "start" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" [[Getting St");
+    await expect(page.locator(".cm-tooltip-autocomplete")).toBeVisible();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("End");
+    await page.keyboard.type(" [[Brand New Idea");
+    await expect(page.locator(".cm-tooltip-autocomplete")).toContainText("Create new note");
+    await page.keyboard.press("Enter");
+    await settle(page, 1500);
+    expect(vault.read("Draft.md")).toContain("[[Getting Started Guide]]");
+    expect(vault.read("Draft.md")).toContain("[[Brand New Idea]]");
+  });
+});

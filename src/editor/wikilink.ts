@@ -190,7 +190,9 @@ function wikilinkCompletions(opts: WikilinkCompletionOptions) {
     // note is created lazily when the inserted `[[name]]` link is clicked.
     const typed = before.text.slice(2).trim();
     if (typed && !notes.some((n) => normalizeName(n.name) === normalizeName(typed))) {
-      options.push({ label: typed, detail: "Create new note", type: "text", boost: -99, apply: insert(typed) });
+      // Matched on a label that can't be a prefix match, so any note whose name
+      // starts with what was typed ranks above it; shown as the typed name.
+      options.push({ label: `\u200b${typed}`, displayLabel: typed, detail: "Create new note", type: "text", boost: -99, apply: insert(typed) });
     }
     return { from: before.from + 2, options, filter: true };
   };

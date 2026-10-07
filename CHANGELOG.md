@@ -45,6 +45,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- In `[[` link completion, Enter picks the note whose name starts with what
+  was typed; "Create new note" no longer outranks it.
 - Cmd-E (Ctrl-E elsewhere) switches between editing and Reading view, as in
   Obsidian.
 - The file tree sorts names naturally, as Obsidian does: "Untitled 2" comes
