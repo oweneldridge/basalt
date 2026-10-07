@@ -68,11 +68,15 @@ wasn't run; where its behaviour was unclear, its own bundled code (1.14.4
   tree tags their extension.
 - Backlink and mention counts are per match; `resolvedLinks` and
   `unresolvedLinks` count every link, attachments included.
-- Numbered lists renumber after every edit by Obsidian's rules, checked
-  against its own filter over 170,000 Tab and Shift-Tab cases and 120,000 random
-  edits with no difference. That includes its quirks: a list keeps counting
-  across a blank line whatever the delimiter (`1.` then `1)`), and an item past
-  a gap isn't renumbered until it's edited.
+- Numbered lists renumber after every edit, as in Obsidian, but by the list
+  as it renders. Obsidian renumbers any line that starts with a number, so a
+  keystroke can change numbered lines in code, math, comments, frontmatter and
+  paragraphs, and it counts levels in tabs and 4-space runs, so items under a
+  3-space child restart. Basalt leaves those lines alone, nests by the list's
+  own indentation, keeps `01.` padded and reads a `1)` list after a `1.` list
+  as a list of its own. Over 37,000 one-key edits in a real vault, Obsidian's
+  rules made 2,629 correct numbers wrong and changed 83 lines in code or
+  paragraphs; Basalt changed neither.
 - Links in canvas text cards follow renames.
 
 Still different: a table whose header and delimiter rows have different cell

@@ -53,8 +53,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   code, or of text with no formatting, stays as it was.
 - Dataview JS pages have `file.inlinks`, `file.outlinks` and `file.aliases`.
 - Dataview JS blocks can use Obsidian's `app` (with `app.vault.getFiles()` and
-  `getAllLoadedFiles()` listing every file and folder), and `moment` has
-  `endOf`, `startOf` by year, month, week or hour, and `isBetween`.
+  `getAllLoadedFiles()` listing every file and folder, each in its folder), and
+  `moment` has `endOf`, `startOf` and `isBetween`. Its units, ISO offsets and
+  rounding follow moment.js, checked against it. A block can still declare its
+  own `app`.
 - Basalt follows the vault's "Show line number", "Confirm file deletion" and
   "Readable line length" settings (the last until it's switched in Basalt).
 - Images, PDFs, audio, video, canvases and bases can be renamed (right-click,
@@ -410,17 +412,25 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   way to the next save's "Saved".
 - In Dataview JS, `moment(…).isBefore("2026-08-01")` and the other comparisons
   read a date given as text instead of always answering false.
-- Renames and moves fix links in canvas text cards too, as Obsidian does.
+- Renames and moves fix links in canvas text cards too, as Obsidian does. A
+  card's links are read from the canvas's own folder, so moving a folder or
+  renaming an image no longer repoints one that still finds its file.
 - The editor menu's Cut and Paste, template inserts and plugin inserts can't
   change a folded section's hidden text either, and a triple-click on a folded
   heading no longer counts as selecting what it hides.
 - Link all also leaves callout types, footnote references, link reference
-  definitions and email addresses alone, and no longer skips prose that holds a
-  `<` (`null<Date`), or text after a `$$` written in code.
+  definitions, email addresses and autolinks (`<key:value>`) alone, never writes
+  into a linked image or a URL holding an `@`, and no longer skips prose that
+  holds a `<` (`null<Date`), or text after a `$$` written in code or a comment.
 - Search keeps a quoted phrase, a `[[link]]` or a regex whole inside `line:()`,
-  `task:()` and `section:()`, and counting every result costs little.
+  `task:()` and `section:()`, even against the brackets (`line:("a b" c)`),
+  reads `line:"a phrase"`, excludes a phrase with `-"a phrase"`, and counting
+  every result costs little.
 - Numbered lists renumber after any edit (deleting an item, typing a new one,
-  Tab and Shift-Tab) by the rules Obsidian follows.
+  Tab and Shift-Tab), as in Obsidian, but only lines that render as list items:
+  a numbered line in code, math, a comment, frontmatter or a paragraph is left
+  as typed. Items under a 3-space indent count as nested, `01.` keeps its zero,
+  and a number in a closed fold isn't changed.
 - A misspelled Dataview query type (`TABLEX`) is reported instead of running as
   a table of every note.
 
