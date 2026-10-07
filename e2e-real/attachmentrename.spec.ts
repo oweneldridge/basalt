@@ -23,6 +23,7 @@ test.use({
     "Bare.md": "Only ![[shot one.png]] here\n",
     "Tasks.base": "views:\n  - type: table\n    name: Table\n",
     "Dash.md": "![[Tasks.base]]\n",
+    "Sketches/Idea.canvas": JSON.stringify({ nodes: [{ id: "p1", type: "text", text: "Idea card", x: 0, y: 0, width: 200, height: 80 }], edges: [] }),
   },
 });
 
@@ -132,6 +133,59 @@ test("the tree lists a file without its extension and tags the extension, as Obs
   await expect(page.locator(".tree-row.file", { hasText: "Board" }).first().locator(".file-tag")).toHaveText("canvas");
   await expect(page.locator(".tree-row.file", { hasText: "Gallery" }).first().locator(".file-tag")).toHaveCount(0);
   await expect(shot).toHaveCSS("font-style", "normal");
+});
+
+test("typing in a canvas card while its rename waits is kept", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await page.locator(".tree-row.file", { hasText: "Board" }).first().click();
+  await expect(page.locator(".canvas-node").first()).toBeVisible();
+  await page.route("**/api/invoke", async (route) => {
+    const slow = (route.request().postData() ?? "").includes('"cmd":"rename_folder"');
+    const res = await route.fetch().catch(() => null);
+    if (!res) return;
+    if (slow) await new Promise((r) => setTimeout(r, 2500));
+    await route.fulfill({ response: res }).catch(() => {});
+  });
+  await page.locator(".tree-row.folder", { hasText: "Media" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename folder…" }).click();
+  await page.locator(".prompt-input").fill("Pics");
+  await page.locator(".prompt-input").press("Enter");
+  await page.locator(".tree-row.file", { hasText: "Board" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+  await page.locator(".prompt-input").fill("Board2");
+  await page.locator(".prompt-input").press("Enter");
+  await page.locator(".canvas-node", { hasText: "Card A" }).dblclick();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" typed while waiting");
+  await expect.poll(() => vault.exists("Board2.canvas"), { timeout: 15000 }).toBe(true);
+  await settle(page, 1500);
+  const card = JSON.parse(vault.read("Board2.canvas")).nodes.find((n: { id: string }) => n.id === "t1");
+  expect(card.text).toContain("typed while waiting");
+});
+
+test("typing in a canvas card while its folder's move waits is kept", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await page.locator(".tree-row.folder", { hasText: "Sketches" }).first().click();
+  await page.locator(".tree-row.file", { hasText: "Idea" }).first().click();
+  await expect(page.locator(".canvas-node").first()).toBeVisible();
+  await page.route("**/api/invoke", async (route) => {
+    const slow = (route.request().postData() ?? "").includes('"cmd":"rename_attachment"');
+    const res = await route.fetch().catch(() => null);
+    if (!res) return;
+    if (slow) await new Promise((r) => setTimeout(r, 2500));
+    await route.fulfill({ response: res }).catch(() => {});
+  });
+  await renameFromMenu(page, "taken", "Media/taken2");
+  await page.locator(".tree-row.folder", { hasText: "Sketches" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename folder…" }).click();
+  await page.locator(".prompt-input").fill("Ideas");
+  await page.locator(".prompt-input").press("Enter");
+  await page.locator(".canvas-node", { hasText: "Idea card" }).dblclick();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" typed while waiting");
+  await expect.poll(() => vault.exists("Ideas/Idea.canvas"), { timeout: 15000 }).toBe(true);
+  await settle(page, 1500);
+  expect(JSON.parse(vault.read("Ideas/Idea.canvas")).nodes[0].text).toContain("typed while waiting");
 });
 
 test.describe("a rename right after another", () => {

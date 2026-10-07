@@ -4628,6 +4628,7 @@ export default function App() {
       // Every note/viewer under the folder must be flushed first, then the
       // WHOLE operation aborts if anything is still unsaved — a mid-move
       // pending write to a now-moved path would be lost.
+      commitCanvasTyping((p) => attachmentsRef.current.some((a) => a.path === p && a.rel.startsWith(oldPrefix)));
       await flushAll();
       const movingNotes = notesRef.current.filter((n) => n.rel.startsWith(oldPrefix));
       const movingAtts = attachmentsRef.current.filter((a) => a.rel.startsWith(oldPrefix));
@@ -4840,6 +4841,14 @@ export default function App() {
     [enqueueRename, renameFolderNow],
   );
 
+  // A canvas card being typed into saves its text when it loses focus. A rename
+  // or move draws the canvas again, so the typing is committed first.
+  const commitCanvasTyping = (moving: (path: string) => boolean) => {
+    const el = document.activeElement;
+    const canvas = el instanceof HTMLElement ? el.closest<HTMLElement>(".canvas-view[data-path]") : null;
+    if (canvas && moving(canvas.dataset.path ?? "")) (el as HTMLElement).blur();
+  };
+
   // Rename or move an attachment, canvas or base (`newName` is folder-qualified,
   // without the extension), then fix the links and canvas cards that reach it.
   // It runs like a folder move that carries one file: the same flush-or-abort
@@ -4849,6 +4858,7 @@ export default function App() {
       const root = vaultRef.current;
       const att = attachmentsRef.current.find((a) => a.path === path);
       if (!root || !att) return;
+      commitCanvasTyping((p) => p === path);
       await flushAll();
       if (conflictsRef.current.has(path)) {
         setSaveError(`Resolve the "Changed on disk" conflict in ${att.name} before renaming it`);
@@ -5377,6 +5387,7 @@ export default function App() {
           /\.canvas$/i.test(path) ? (
             <ErrorBoundary key={`${id}:${path}:canvas`} resetKey={path} onClose={() => void closeTab(id, path)}>
               <CanvasView
+                path={path}
                 doc={pane.doc}
                 onOpenFile={(file, subpath) => openViewerFile(file + (subpath ?? ""))}
                 onOpenUrl={handleOpenUrl}

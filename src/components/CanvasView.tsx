@@ -22,6 +22,8 @@ interface Props {
   /** When provided, the canvas is EDITABLE and calls this with the new JSON on
    * every committed change (move/resize/create/edit/delete/color/edge). */
   onChange?: (json: string) => void;
+  /** The file's path, marked on the canvas so the app can find it. */
+  path?: string;
 }
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|svg|webp|bmp|avif|ico)$/i;
@@ -75,7 +77,7 @@ function openCardLink(e: React.MouseEvent, onOpenUrl: (url: string) => void): vo
   if (link.href) onOpenUrl(link.href);
 }
 
-export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange }: Props) {
+export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange, path }: Props) {
   const editable = !!onChange;
   const parsed = useMemo(() => parseCanvas(doc) ?? { nodes: [], edges: [] }, [doc]);
   const [data, setData] = useState<CanvasData>(parsed);
@@ -535,7 +537,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
   const b = canvasBounds(data.nodes);
 
   if (data.nodes.length === 0 && !editable) {
-    return <div className="canvas-view canvas-empty">Empty canvas</div>;
+    return <div className="canvas-view canvas-empty" data-path={path}>Empty canvas</div>;
   }
 
   const selectedNodes = data.nodes.filter((n) => selected.has(n.id));
@@ -550,7 +552,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
   };
 
   return (
-    <div className="canvas-view" ref={viewport} onDoubleClick={onDoubleClick} onContextMenu={onEmptyContextMenu}>
+    <div className="canvas-view" data-path={path} ref={viewport} onDoubleClick={onDoubleClick} onContextMenu={onEmptyContextMenu}>
       {editable && (
         <div className="canvas-toolbar">
           <button
