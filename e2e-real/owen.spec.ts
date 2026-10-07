@@ -1825,3 +1825,19 @@ test.describe("renumbering a list next to other lists", () => {
     expect(vault.read("Zeros.md")).toBe("01. a\n\t1. b\n2. c\n");
   });
 });
+
+test.describe("a property field just focused", () => {
+  test.use({ vaultFiles: { "Quoted.md": '---\ntitle: "Duck.ai"\ntags:\n  - one\n---\nbody\n' } });
+
+  test("leaves the file alone when nothing was typed", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Quoted");
+    await page.locator(".pane:not(.dock) .cm-properties input").first().click();
+    await page.keyboard.press("ControlOrMeta+e");
+    await page.keyboard.press("ControlOrMeta+e");
+    await page.locator(".pane:not(.dock) .cm-properties .cm-prop-pill input").first().click();
+    await page.keyboard.press("ControlOrMeta+e");
+    await settle(page, 1500);
+    expect(vault.read("Quoted.md")).toBe('---\ntitle: "Duck.ai"\ntags:\n  - one\n---\nbody\n');
+  });
+});

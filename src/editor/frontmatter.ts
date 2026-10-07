@@ -188,9 +188,12 @@ class PropertiesWidget extends WidgetType {
       };
       values.append(input);
     } else {
-      // text scalar / empty: a single editable (quoted) value
+      // text scalar / empty: a single editable (quoted) value. Only an edit
+      // writes: a field just focused and left keeps the note as it is.
       const input = this.valueInput(p.values[0] ?? "");
-      const fire = () => this.commit(view, (src) => setProp(src, p.key, [input.value], false));
+      const fire = () => {
+        if (input.value !== (p.values[0] ?? "")) this.commit(view, (src) => setProp(src, p.key, [input.value], false));
+      };
       input.onblur = fire;
       input.onkeydown = (e) => {
         if (e.key === "Enter") {
@@ -224,9 +227,10 @@ class PropertiesWidget extends WidgetType {
     const pill = document.createElement("span");
     pill.className = "cm-prop-pill";
     const input = this.valueInput(value);
-    const commitAll = () =>
-      this.commit(view, (src) => setProp(src, key, rereadValues(), multi));
-    input.onblur = commitAll;
+    // Only an edit writes, as for a single value.
+    input.onblur = () => {
+      if (input.value !== value) this.commit(view, (src) => setProp(src, key, rereadValues(), multi));
+    };
     input.onkeydown = (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
