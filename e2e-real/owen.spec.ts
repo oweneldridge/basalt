@@ -1650,3 +1650,51 @@ test.describe("a folded heading", () => {
     expect(vault.read("Fold.md")).toBe("# A\nhidden one\nhidden two\n# B\nafter!\n");
   });
 });
+
+test.describe("pasting HTML", () => {
+  test.use({ vaultFiles: { "Paste.md": "start\n\n```\ncode here\n```\n\nEND\n" } });
+
+  const paste = (page: import("@playwright/test").Page, html: string, text: string) =>
+    page.locator(".pane:not(.dock) .cm-content").evaluate(
+      (el, [h, t]) => {
+        const dt = new DataTransfer();
+        dt.setData("text/html", h);
+        dt.setData("text/plain", t);
+        el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      },
+      [html, text],
+    );
+
+  test("turns a web page into Markdown, and leaves code and plain text alone", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Paste");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    const html =
+      '<meta charset="utf-8"><b style="font-weight:normal;" id="docs-internal-guid-1"><h2>Plan</h2>' +
+      '<p>Read <a href="https://example.com/a b">the doc</a> and <span style="font-weight:700">ship</span> it, <i>soon</i>.</p>' +
+      '<ul><li>one</li><li>two<ul><li>nested</li></ul></li></ul><ol start="3"><li>third</li></ol>' +
+      "<blockquote><p>quoted</p></blockquote><pre><code class=\"language-js\">let x = 1;\n</code></pre>" +
+      "<table><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2|3</td></tr></table></b>";
+    await paste(page, html, "Plan Read the doc and ship it, soon.");
+    await settle(page, 1200);
+    const body = vault.read("Paste.md").split("END\n")[1];
+    expect(body).toBe(
+      "## Plan\n\nRead [the doc](https://example.com/a%20b) and **ship** it, *soon*.\n\n" +
+        "- one\n- two\n\t- nested\n\n3. third\n\n> quoted\n\n```js\nlet x = 1;\n```\n\n" +
+        "| a | b |\n| --- | --- |\n| 1 | 2\\|3 |" +
+        "\n",
+    );
+    // Plain text with no formatting pastes as it is.
+    await paste(page, "<span>just *text*</span>", "just *text*");
+    await settle(page, 1200);
+    expect(vault.read("Paste.md")).toContain("2\\|3 |just *text*");
+    // Into a code block, never converted.
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "code here" }).click();
+    await page.keyboard.press("End");
+    await paste(page, "<b>bold</b>", "bold");
+    await settle(page, 1200);
+    expect(vault.read("Paste.md")).toContain("code herebold\n");
+  });
+});

@@ -105,6 +105,7 @@ import { baseBlocks } from "./baseBlocks";
 import { pluginBlocks } from "./pluginBlocks";
 import { transcludeBlocks } from "./transcludeBlocks";
 import { pasteLink } from "./pasteLink";
+import { pasteHtml } from "./pasteHtml";
 import { pluginEditorExtensions } from "../lib/plugins";
 import type { LinkFormat } from "../lib/rename";
 
@@ -298,6 +299,7 @@ export function createEditorState(
     indentUnit.of("\t"),
     wrapSelectionOnType,
     pasteLink,
+    pasteHtml,
     // Native autocorrect/-capitalize (static); spellcheck is in a compartment
     // so it can be toggled live.
     EditorView.contentAttributes.of({ autocorrect: "on", autocapitalize: "on" }),
