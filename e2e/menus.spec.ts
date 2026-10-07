@@ -51,7 +51,7 @@ test("sidebar: collapse-all hides nested files; reveal-active brings them back",
   await page.locator('.icon-btn[title="Collapse all"]').click();
   await expect(page.locator(".tree-row.file", { hasText: "Roadmap" })).toHaveCount(0);
   // Open the nested note, collapse again, then reveal it.
-  await page.keyboard.press("Meta+o");
+  await page.keyboard.press("ControlOrMeta+o");
   await page.locator(".palette-input").first().fill("Roadmap");
   await page.keyboard.press("Enter");
   await page.locator('.icon-btn[title="Collapse all"]').click();
@@ -121,7 +121,7 @@ test("appearance settings change editor font size and accent color", async ({ pa
   await page.reload();
   await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
   await expect(page.locator(".cm-editor")).toBeVisible();
-  await page.keyboard.press("Meta+,");
+  await page.keyboard.press("ControlOrMeta+,");
   await expect(page.locator(".settings")).toBeVisible();
   // Font size → the editor scales.
   await page.locator('input[aria-label="Font size"]').fill("22");

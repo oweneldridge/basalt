@@ -7,7 +7,7 @@ test("Import from Obsidian applies appearance + hotkeys and reports plugins", as
   await page.evaluate(() => localStorage.clear());
   await page.reload();
   await page.waitForSelector(".sidebar");
-  await page.keyboard.press("Meta+,");
+  await page.keyboard.press("ControlOrMeta+,");
   await expect(page.locator(".settings")).toBeVisible();
   await page.locator(".settings-row", { hasText: "Import settings from Obsidian" }).locator("button").click();
 
