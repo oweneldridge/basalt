@@ -611,6 +611,9 @@ export default function App() {
   layoutRef.current = layout;
   const focusedIdRef = useRef<string | null>(null);
   focusedIdRef.current = focusedId;
+  // The editor pane last focused, for commands run from a sidebar.
+  const lastEditorIdRef = useRef<string | null>(null);
+  if (focusedId && panes[focusedId] && !panes[focusedId].dock) lastEditorIdRef.current = focusedId;
   const paneCounter = useRef(0);
 
   // The FOCUSED pane and its active note — the "current note" for the right
@@ -2822,20 +2825,31 @@ export default function App() {
   }, [panes]);
   const navigate = useCallback(
     (dir: -1 | 1) => {
-      const id = focusedIdRef.current;
+      // From a sidebar, the editor last worked in goes back, as in Obsidian.
+      let id = focusedIdRef.current;
+      if (!id || panesRef.current[id]?.dock) {
+        const last = lastEditorIdRef.current;
+        id = last && panesRef.current[last] ? last : (Object.values(panesRef.current).find((p) => !p.dock)?.id ?? null);
+      }
       const h = id ? navHistory.current.get(id) : undefined;
       if (!id || !h || !h.current) return;
       const from = dir < 0 ? h.back : h.forward;
       const to = dir < 0 ? h.forward : h.back;
       const exists = (p: string) => notesRef.current.some((n) => n.path === p) || attachmentsRef.current.some((a) => a.path === p);
+      // A renamed note is followed to its new name; a deleted one, or the
+      // note already showing, is passed over.
       let target: string | undefined;
-      while ((target = from.pop()) !== undefined && !exists(target));
+      while ((target = from.pop()) !== undefined) {
+        target = currentPath(target);
+        if (target !== h.current && exists(target)) break;
+      }
       if (target === undefined) return;
       to.push(h.current);
       navMoving.current.set(id, target);
+      focusPane(id);
       void openNoteByPath(target);
     },
-    [openNoteByPath],
+    [openNoteByPath, focusPane],
   );
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

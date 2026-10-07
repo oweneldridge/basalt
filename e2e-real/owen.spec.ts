@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { test, expect, openApp, openNote, settle } from "./fixture";
 
 test.describe("inline SVG in a note", () => {
@@ -1852,6 +1852,24 @@ test.describe("navigation history", () => {
     await page.locator(".pane:not(.dock) .cm-content").first().click();
     await page.keyboard.press("ControlOrMeta+Alt+ArrowLeft");
     await expect(active).toHaveText("First");
+  });
+
+  test("skips a deleted note and the note showing, and follows a renamed one", async ({ page, vault }) => {
+    await openApp(page, vault);
+    const active = page.locator(".pane:not(.dock) .tab.active .tab-name").first();
+    for (const n of ["Third", "First", "Second", "First"]) await openNote(page, n);
+    rmSync(vault.path("Second.md"));
+    await expect(page.locator(".tree-row.file", { hasText: "Second" })).toHaveCount(0);
+    await page.keyboard.press("ControlOrMeta+Alt+ArrowLeft");
+    await expect(active).toHaveText("Third");
+    await openNote(page, "First");
+    await page.locator(".tree-row.file", { hasText: "Third" }).click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+    await page.locator(".prompt-input").fill("Third renamed");
+    await page.locator(".prompt-input").press("Enter");
+    await expect(page.locator(".tree-row.file", { hasText: "Third renamed" })).toHaveCount(1);
+    await page.keyboard.press("ControlOrMeta+Alt+ArrowLeft");
+    await expect(active).toHaveText("Third renamed");
   });
 });
 
