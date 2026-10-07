@@ -15,7 +15,7 @@
 // moment(...) covers parsing and formatting dates, and a new note's tags are
 // processed when the vault's Templater has "Trigger on new file creation" on.
 // NOT full Templater: no tp.hooks, no dynamic commands, single cursor (no
-// tabstops). Runs JavaScript from your templates and user scripts — enable only
+// tabstops). Runs JavaScript from your templates and user scripts, so enable it only
 // in trusted vaults.
 const { Plugin, Notice, PluginSettingTab } = require("basalt");
 

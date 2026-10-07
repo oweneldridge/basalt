@@ -3,7 +3,7 @@
 // `^[text]` as its text, small and raised, as Obsidian shows both; the caret
 // landing on one reveals the raw token so it stays editable. Definitions are
 // left as plain text (they're the content you edit). Regex-scan the viewport
-// like highlight.ts — footnotes aren't a lezer node.
+// like highlight.ts, since footnotes aren't a lezer node.
 import { RangeSetBuilder } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
