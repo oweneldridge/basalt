@@ -17,9 +17,13 @@ function escapeRegex(s: string): string {
  * name, or a folder path when the name alone would resolve elsewhere); when it
  * differs from the matched text the result is `[[linkText|text]]`, as Obsidian
  * writes it. Returns the new line, or null if there's no mention. */
-export function linkifyMention(line: string, name: string, linkText?: string): string | null {
-  const needle = name.trim();
-  if (!needle) return null;
+export function linkifyMention(line: string, names: string | string[], linkText?: string): string | null {
+  // The note's name or one of its aliases, longest first.
+  const needles = (Array.isArray(names) ? names : [names])
+    .map((n) => n.trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  if (!needles.length) return null;
   // Mask code + existing links to spaces (length-preserving) so a match found
   // in the masked copy splices cleanly into the original by the same offset.
   const masked = line
@@ -28,7 +32,7 @@ export function linkifyMention(line: string, name: string, linkText?: string): s
     .replace(mdLinkRegexGlobal(), (m) => " ".repeat(m.length))
     .replace(URL_RE, (m) => " ".repeat(m.length))
     .replace(tagRegex(), (m) => " ".repeat(m.length));
-  const re = new RegExp(`(^|[^\\p{L}\\p{N}_])(${escapeRegex(needle)})([^\\p{L}\\p{N}_]|$)`, "iu");
+  const re = new RegExp(`(^|[^\\p{L}\\p{N}_])(${needles.map(escapeRegex).join("|")})([^\\p{L}\\p{N}_]|$)`, "iu");
   const m = re.exec(masked);
   if (!m) return null;
   // Offset of the matched name within the line (group 2 starts after group 1).

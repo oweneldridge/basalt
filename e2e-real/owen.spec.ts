@@ -909,3 +909,14 @@ test.describe("clicking a tag", () => {
     await expect(page.locator("input[type=search], .modal input").first()).toHaveValue(/^tag:#alpha/);
   });
 });
+
+test.describe("the quick switcher", () => {
+  test.use({ vaultFiles: { "Kubernetes CLI Tools.md": "---\naliases:\n  - kubectl reference\n---\nbody\n" } });
+
+  test("finds a note by its alias", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await page.keyboard.press("Meta+o");
+    await page.locator(".palette-input").fill("kubectl ref");
+    await expect(page.locator(".palette-item").first()).toContainText("Kubernetes CLI Tools");
+  });
+});

@@ -608,14 +608,18 @@ export class VaultIndex {
    * blocks are skipped, so only genuine, actionable mentions surface.
    */
   unlinkedMentionsFor(
-    noteName: string,
+    names: string | string[],
     notes: VaultNote[],
     excludePath?: string,
   ): Backlink[] {
-    const needle = noteName.trim();
-    if (!needle) return [];
+    // The note's name and its aliases, longest first (Obsidian counts both).
+    const needles = (Array.isArray(names) ? names : [names])
+      .map((n) => n.trim())
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+    if (!needles.length) return [];
     const boundary = new RegExp(
-      `(^|[^\\p{L}\\p{N}_])${escapeRegex(needle)}([^\\p{L}\\p{N}_]|$)`,
+      `(^|[^\\p{L}\\p{N}_])(?:${needles.map(escapeRegex).join("|")})([^\\p{L}\\p{N}_]|$)`,
       "iu",
     );
     const linkRe = wikilinkRegex();

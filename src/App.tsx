@@ -3712,7 +3712,11 @@ export default function App() {
   // changes — not on every debounced save — to keep typing smooth.
   const unlinked = useMemo(() => {
     if (!lastNoteName || !lastNotePath) return [];
-    return index.current.unlinkedMentionsFor(lastNoteName, notesRef.current, lastNotePath);
+    return index.current.unlinkedMentionsFor(
+      [lastNoteName, ...index.current.aliasesOf(lastNotePath)],
+      notesRef.current,
+      lastNotePath,
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastNoteName, lastNotePath]);
 
@@ -4278,7 +4282,7 @@ export default function App() {
         fmt === "shortest" && bareWorks
           ? target.name
           : linkTargetForFormat(fmt, target.rel.replace(/\.md$/i, ""), !bareWorks, srcRel);
-      const next = linkifyMention(lines[idx], target.name, linkText);
+      const next = linkifyMention(lines[idx], [target.name, ...index.current.aliasesOf(target.path)], linkText);
       if (next === null) return false;
       lines[idx] = next;
       const content = lines.join("\n");
@@ -4667,7 +4671,8 @@ export default function App() {
   const switcherItems = useCallback(
     (q: string) => {
       const all = notesRef.current;
-      if (q.trim()) return fuzzyRank(q, all, (n) => [n.name, n.rel]);
+      // Aliases find their note too, as in Obsidian.
+      if (q.trim()) return fuzzyRank(q, all, (n) => [n.name, n.rel, ...index.current.aliasesOf(n.path)]);
       const order = new Map(recents.current.map((rel, i) => [rel, i]));
       return [...all].sort((a, b) => {
         const ia = order.get(a.rel) ?? Infinity;

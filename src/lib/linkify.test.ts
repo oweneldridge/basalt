@@ -23,6 +23,14 @@ describe("linkifyMention", () => {
   });
 });
 
+describe("linkifyMention with aliases", () => {
+  it("links a mention of an alias to its note, keeping the alias as the text", () => {
+    expect(linkifyMention("See the kubectl reference here", ["Kubernetes CLI Tools", "kubectl reference"], "Kubernetes CLI Tools")).toBe(
+      "See the [[Kubernetes CLI Tools|kubectl reference]] here",
+    );
+  });
+});
+
 describe("linkifyMention, Obsidian's link form", () => {
   it("writes a folder path with the surface text as alias when given one", () => {
     expect(linkifyMention("met about meeting notes", "Meeting", "Work/Meeting")).toBe("met about [[Work/Meeting|meeting]] notes");

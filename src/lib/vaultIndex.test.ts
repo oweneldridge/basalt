@@ -249,6 +249,10 @@ describe("2.9b review regressions", () => {
     const notes2 = [note("y.md"), note("S2.md", "plain y here")];
     expect(indexOf(notes2).unlinkedMentionsFor("y", notes2)).toHaveLength(1);
   });
+  it("counts a mention of an alias as an unlinked mention", () => {
+    const notes = [note("Kubernetes CLI Tools.md"), note("S.md", "See the kubectl reference here")];
+    expect(indexOf(notes).unlinkedMentionsFor(["Kubernetes CLI Tools", "kubectl reference"], notes)).toHaveLength(1);
+  });
 });
 
 describe("outgoingLinksFor", () => {

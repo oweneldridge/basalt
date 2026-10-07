@@ -45,6 +45,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Aliases count, as in Obsidian: the quick switcher finds a note by its alias
+  instead of offering to create a duplicate, and an alias mentioned in another
+  note shows under unlinked mentions, where Link writes `[[Note|alias]]`.
 - Search: `-path:`, `-file:` and `-tag:` exclude instead of including,
   `path:"Daily Notes"` keeps its quoted value whole, and a `/regex/` may hold
   spaces. Clicking a tag in the Tags panel searches `tag:#name` rather than
