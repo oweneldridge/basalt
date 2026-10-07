@@ -8,6 +8,7 @@ import {
   drawSelection,
   rectangularSelection,
   highlightActiveLine,
+  lineNumbers,
 } from "@codemirror/view";
 import {
   defaultKeymap,
@@ -160,6 +161,13 @@ const spellcheckCompartment = new Compartment();
 const vimCompartment = new Compartment();
 // Right-to-left text direction (Obsidian's RTL editor setting), toggled live.
 const rtlCompartment = new Compartment();
+// Line numbers (Obsidian's "Show line number"), toggled live.
+const lineNumbersCompartment = new Compartment();
+
+/** Show or hide line numbers on a live editor. */
+export function setLineNumbers(view: EditorView, on: boolean): void {
+  view.dispatch({ effects: lineNumbersCompartment.reconfigure(on ? lineNumbers() : []) });
+}
 
 /** Tell the status bar where the caret is and what's selected. */
 export function reportCursor(state: EditorState, onCursor: EditorCallbacks["onCursor"]): void {
@@ -272,6 +280,7 @@ export function createEditorState(
   spellcheck = true,
   vimMode = false,
   rtl = false,
+  showLineNumbers = false,
 ): EditorState {
   const noteName = selfRel.split("/").pop()?.replace(/\.md$/i, "") ?? "";
   const extensions: Extension[] = [
@@ -281,6 +290,7 @@ export function createEditorState(
     // FIRST so its keymap wins in normal mode; toggled live via setVimMode().
     vimCompartment.of(vimMode ? vim() : []),
     rtlCompartment.of(EditorView.contentAttributes.of({ dir: rtl ? "rtl" : "ltr" })),
+    lineNumbersCompartment.of(showLineNumbers ? lineNumbers() : []),
     // CM6 extensions contributed by enabled plugins — in a compartment so
     // enable/disable reflects into live editors via reconfigurePlugins().
     pluginCompartment.of(pluginEditorExtensions()),

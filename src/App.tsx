@@ -169,6 +169,8 @@ function jsLog(msg: string): void {
 const SAVE_DEBOUNCE_MS = 500;
 // Notes longer than this are word-counted after typing pauses.
 const BIG_COUNT = 200_000;
+// Readable width, once chosen in Basalt (until then the vault's setting).
+const READABLE_WIDTH_KEY = "basalt-readable-width-choice";
 // Bound on the self-write suppression map (rel -> last written content).
 const SELF_WRITES_MAX = 128;
 
@@ -467,12 +469,19 @@ export default function App() {
     () => document.documentElement.dataset.theme !== "light",
   );
   // Readable line length (Obsidian default ON): constrains editor/reading width.
+  // It follows the vault's setting until it's switched here.
   const [readableWidth, setReadableWidth] = useState(
-    () => localStorage.getItem("basalt-readable-width") !== "false",
+    () => localStorage.getItem(READABLE_WIDTH_KEY) !== "false",
   );
-  useEffect(() => {
-    localStorage.setItem("basalt-readable-width", String(readableWidth));
-  }, [readableWidth]);
+  const chooseReadableWidth = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
+    setReadableWidth((prev) => {
+      const next = typeof v === "function" ? v(prev) : v;
+      localStorage.setItem(READABLE_WIDTH_KEY, String(next));
+      return next;
+    });
+  }, []);
+  // The vault's "Show line number".
+  const [lineNumbers, setLineNumbers] = useState(false);
   const [vim, setVim] = useState(() => localStorage.getItem("basalt-vim") === "true");
   useEffect(() => localStorage.setItem("basalt-vim", String(vim)), [vim]);
   const [rtl, setRtl] = useState(() => localStorage.getItem("basalt-rtl") === "true");
@@ -582,6 +591,12 @@ export default function App() {
   attachmentsRef.current = attachmentsList;
   // Read-only .obsidian settings (link format, daily notes, attachment folder).
   const obsConfigRef = useRef<ObsidianConfig | null>(null);
+  // Deleting asks first unless the vault turns that off ("Confirm file deletion").
+  const confirmDelete = useCallback(
+    (message: string, opts: Parameters<typeof confirm>[1]) =>
+      obsConfigRef.current?.promptDelete === false ? Promise.resolve(true) : confirm(message, opts),
+    [],
+  );
 
   // Workspace refs (read in callbacks/watcher without re-subscribing).
   const panesRef = useRef<Record<string, Pane>>({});
@@ -1736,6 +1751,8 @@ export default function App() {
       recents.current = loadRecents(root);
       obsConfigRef.current = await readObsidianConfig().catch(() => null);
       setStrictLineBreaks(obsConfigRef.current?.strictLineBreaks ?? false);
+      setLineNumbers(obsConfigRef.current?.showLineNumber ?? false);
+      if (localStorage.getItem(READABLE_WIDTH_KEY) === null) setReadableWidth(obsConfigRef.current?.readableLineLength ?? true);
       setBookmarks(await readObsidianBookmarks().catch(() => []));
       const savedTab = localStorage.getItem(rightTabKey(root));
       setRightTab(
@@ -3893,7 +3910,7 @@ export default function App() {
       const note = notesRef.current.find((n) => n.path === path);
       if (!note) return;
       if (!opts?.skipConfirm) {
-        const ok = await confirm(`Move "${note.name}" to the vault trash?`, {
+        const ok = await confirmDelete(`Move "${note.name}" to the vault trash?`, {
           title: "Delete note",
           kind: "warning",
         });
@@ -3932,7 +3949,7 @@ export default function App() {
       const att = attachmentsRef.current.find((a) => a.path === path);
       if (!att) return;
       const viewer = isViewerPath(path);
-      const ok = await confirm(`Move "${att.name}" to the vault trash?`, {
+      const ok = await confirmDelete(`Move "${att.name}" to the vault trash?`, {
         title: "Delete attachment",
         kind: "warning",
       });
@@ -4436,7 +4453,7 @@ export default function App() {
       // they get the SAME flush/conflict discipline as notes.
       const viewers = attachmentsRef.current.filter((a) => a.rel.startsWith(prefix) && isViewerPath(a.path));
       const all = [...inside, ...viewers];
-      const ok = await confirm(
+      const ok = await confirmDelete(
         `Move the folder "${folderRel}" (${inside.length} ${inside.length === 1 ? "note" : "notes"} + any attachments) to the vault trash?`,
         { title: "Delete folder", kind: "warning" },
       );
@@ -4834,7 +4851,7 @@ export default function App() {
       },
       { id: "settings", label: "Open settings", hint: "appearance, vault info (⌘,)", run: () => setModal("settings") },
       { id: "toggle-theme", label: "Toggle light/dark theme", hint: "switch appearance", run: toggleTheme },
-      { id: "toggle-readable-width", label: "Toggle readable line length", hint: "constrain content width", run: () => setReadableWidth((v) => !v) },
+      { id: "toggle-readable-width", label: "Toggle readable line length", hint: "constrain content width", run: () => chooseReadableWidth((v) => !v) },
       { id: "reveal-in-finder", label: "Reveal current note in file manager", hint: "show the file on disk", run: () => { const p = focusedIdRef.current ? panesRef.current[focusedIdRef.current]?.active : null; if (p) void revealItemInDir(p).catch((e) => setSaveError(`Couldn't reveal: ${e}`)); } },
       { id: "new-folder", label: "New folder…", hint: "create a folder at the vault root", run: () => setSubfolderParent("") },
       { id: "toggle-spellcheck", label: "Toggle spellcheck", hint: "native browser spellcheck in the editor", run: () => setSpellcheck((v) => !v) },
@@ -5125,6 +5142,7 @@ export default function App() {
                 spellcheck={spellcheck}
                 vim={vim}
                 rtl={rtl}
+                lineNumbers={lineNumbers}
                 onOpenWikilink={handleOpenWikilink}
                 onOpenUrl={handleOpenUrl}
                 resolveImage={(target) => (vaultRef.current ? resolveImage(target, tab.rel) : Promise.resolve(null))}
@@ -5221,6 +5239,7 @@ export default function App() {
               spellcheck={spellcheck}
               vim={vim}
               rtl={rtl}
+              lineNumbers={lineNumbers}
               onOpenWikilink={handleOpenWikilink}
               onOpenUrl={handleOpenUrl}
               resolveImage={(target) =>
@@ -5471,7 +5490,7 @@ export default function App() {
           enabledPlugins={vault ? loadEnabled(vault) : []}
           onTogglePlugin={(info, on) => void setPluginEnabled(info, on)}
           readableWidth={readableWidth}
-          onReadableWidth={setReadableWidth}
+          onReadableWidth={chooseReadableWidth}
           spellcheck={spellcheck}
           onSpellcheck={setSpellcheck}
           remoteImages={remoteImages}

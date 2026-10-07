@@ -1298,6 +1298,12 @@ pub struct ObsidianConfig {
     use_markdown_links: Option<bool>,
     /// Reading view: only a line ending in two spaces or a backslash breaks.
     strict_line_breaks: Option<bool>,
+    /// Ask before deleting a file (Obsidian's default is to ask).
+    prompt_delete: Option<bool>,
+    /// Line numbers in the editor.
+    show_line_number: Option<bool>,
+    /// Text kept to a readable width.
+    readable_line_length: Option<bool>,
     attachment_folder_path: Option<String>,
     daily_notes_folder: Option<String>,
     daily_notes_format: Option<String>,
@@ -1316,6 +1322,9 @@ pub fn read_obsidian_config(root: &Path) -> Result<ObsidianConfig, String> {
             cfg.new_link_format = v.get("newLinkFormat").and_then(|x| x.as_str()).map(String::from);
             cfg.use_markdown_links = v.get("useMarkdownLinks").and_then(|x| x.as_bool());
             cfg.strict_line_breaks = v.get("strictLineBreaks").and_then(|x| x.as_bool());
+            cfg.prompt_delete = v.get("promptDelete").and_then(|x| x.as_bool());
+            cfg.show_line_number = v.get("showLineNumber").and_then(|x| x.as_bool());
+            cfg.readable_line_length = v.get("readableLineLength").and_then(|x| x.as_bool());
             cfg.attachment_folder_path =
                 v.get("attachmentFolderPath").and_then(|x| x.as_str()).map(String::from);
         }
@@ -2189,8 +2198,12 @@ mod tests {
         fs::create_dir_all(root.join(".obsidian")).unwrap();
         let strict = |root: &Path| serde_json::to_value(read_obsidian_config(root).unwrap()).unwrap()["strictLineBreaks"].clone();
         assert_eq!(strict(&root), serde_json::Value::Null);
-        fs::write(root.join(".obsidian/app.json"), r#"{"strictLineBreaks": true}"#).unwrap();
+        fs::write(root.join(".obsidian/app.json"), r#"{"strictLineBreaks": true, "promptDelete": false, "showLineNumber": true, "readableLineLength": false}"#).unwrap();
         assert_eq!(strict(&root), serde_json::Value::Bool(true));
+        let cfg = serde_json::to_value(read_obsidian_config(&root).unwrap()).unwrap();
+        assert_eq!(cfg["promptDelete"], serde_json::Value::Bool(false));
+        assert_eq!(cfg["showLineNumber"], serde_json::Value::Bool(true));
+        assert_eq!(cfg["readableLineLength"], serde_json::Value::Bool(false));
         fs::remove_dir_all(&root).unwrap();
     }
 

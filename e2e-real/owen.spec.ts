@@ -1698,3 +1698,28 @@ test.describe("pasting HTML", () => {
     expect(vault.read("Paste.md")).toContain("code herebold\n");
   });
 });
+
+test.describe("the vault's own settings", () => {
+  test.use({
+    vaultFiles: {
+      ".obsidian/app.json": '{"promptDelete": false, "showLineNumber": true, "readableLineLength": false}',
+      "Gone.md": "to delete\n",
+    },
+  });
+
+  test("line numbers, full width, and deleting without a prompt, as in Obsidian", async ({ page, vault }) => {
+    let dialogs = 0;
+    page.on("dialog", (d) => {
+      dialogs++;
+      void d.accept();
+    });
+    await openApp(page, vault);
+    await openNote(page, "Ideas");
+    await expect(page.locator(".pane:not(.dock) .cm-lineNumbers")).toBeVisible();
+    await expect(page.locator(".app")).not.toHaveClass(/readable-width/);
+    await page.locator(".tree-row.file", { hasText: "Gone" }).click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: /^Delete/ }).click();
+    await expect.poll(() => vault.exists("Gone.md")).toBe(false);
+    expect(dialogs).toBe(0);
+  });
+});

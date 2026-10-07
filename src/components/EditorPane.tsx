@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { createEditorState, externalReload, reconfigurePlugins, reportCursor, setEditorTheme, setSourceMode, setSpellcheck, setVimMode, setRtl } from "../editor/setup";
+import { createEditorState, externalReload, reconfigurePlugins, reportCursor, setEditorTheme, setLineNumbers, setSourceMode, setSpellcheck, setVimMode, setRtl } from "../editor/setup";
 import type { EditorCallbacks } from "../editor/setup";
 import type { NoteRef } from "../editor/wikilink";
 import type { LinkFormat } from "../lib/rename";
@@ -43,6 +43,8 @@ interface Props {
   spellcheck: boolean;
   vim: boolean;
   rtl: boolean;
+  /** Line numbers in the gutter (the vault's "Show line number"). */
+  lineNumbers?: boolean;
   /** Bumps when the plugin registry changes → re-apply plugin editor extensions
    * and re-render plugin code-blocks in this live editor. */
   pluginVersion: number;
@@ -190,6 +192,7 @@ export function EditorPane({
   spellcheck,
   vim,
   rtl,
+  lineNumbers = false,
   pluginVersion,
   apiRef,
   paneId,
@@ -250,6 +253,8 @@ export function EditorPane({
   vimRef.current = vim;
   const rtlRef = useRef(rtl);
   rtlRef.current = rtl;
+  const lineNumbersRef = useRef(lineNumbers);
+  lineNumbersRef.current = lineNumbers;
   const selfRelRef = useRef(selfRel);
   selfRelRef.current = selfRel;
 
@@ -265,7 +270,7 @@ export function EditorPane({
     if (prevKey) handoff.delete(prevKey);
     const continuing = prev !== undefined;
     const v = new EditorView({
-      state: createEditorState(continuing ? prev.text : doc, adapter.current, sourceModeRef.current, darkRef.current, selfRelRef.current, spellcheckRef.current, vimRef.current, rtlRef.current),
+      state: createEditorState(continuing ? prev.text : doc, adapter.current, sourceModeRef.current, darkRef.current, selfRelRef.current, spellcheckRef.current, vimRef.current, rtlRef.current, lineNumbersRef.current),
       parent: host.current,
     });
     view.current = v;
@@ -511,6 +516,10 @@ export function EditorPane({
   useEffect(() => {
     if (view.current) setRtl(view.current, rtl);
   }, [rtl]);
+
+  useEffect(() => {
+    if (view.current) setLineNumbers(view.current, lineNumbers);
+  }, [lineNumbers]);
 
   return <div className="editor-host" data-self-rel={selfRel} ref={host} />;
 }
