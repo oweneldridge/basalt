@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { EditorState, type ChangeSpec } from "@codemirror/state";
 import { foldEffect } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { ensureSyntaxTree } from "@codemirror/language";
 import { GFM } from "@lezer/markdown";
+import { moveLineUp } from "@codemirror/commands";
 import { renumberLists } from "./listRenumber";
 import { headingFold, headingSectionAt } from "./headingFold";
 
@@ -67,6 +69,46 @@ describe("only real list items are renumbered", () => {
   it("leaves the lines of a code block alone while its fence is being edited", () => {
     const doc = "Steps:\n\n```\n4. x\n9. y\n```\n";
     expect(edit(doc, { from: 10, to: 11 }, "delete.backward")).toBe("Steps:\n\n``\n4. x\n9. y\n```\n");
+  });
+  it("renumbers lists in quotes and callouts", () => {
+    const callout = "> [!note] Plan\n> 1. one\n> 2. two\n> 3. three\n";
+    expect(edit(callout, { from: 24, to: 33 }, "delete.line")).toBe("> [!note] Plan\n> 1. one\n> 2. three\n");
+    expect(edit("> 3. three\n> 4. four\n> 5. five", { from: 0, to: 11 }, "delete.line")).toBe("> 3. four\n> 4. five");
+    expect(typeAt("> 1. a\n>    - x\n> 2. b\n> 3. c", 2)).toBe("> 1. a\n>    - xx\n> 2. b\n> 3. c");
+  });
+  it("renumbers a loose quoted list after its first item goes", () => {
+    const doc = "> a\n> \n> 1. one\n> \n> 2. two\n> \n> 3. three\n> \n> 4. four\n> \n> end\n";
+    const state = EditorState.create({ doc, extensions: [renumberLists, md] });
+    ensureSyntaxTree(state, doc.length, 5000);
+    const gone = state.update({ changes: { from: state.doc.line(3).from, to: state.doc.line(4).from }, userEvent: "delete.line" });
+    expect(gone.state.doc.toString()).toBe("> a\n> \n> \n> 1. two\n> \n> 2. three\n> \n> 3. four\n> \n> end\n");
+  });
+  it("renumbers a quoted list below other blocks when a line moves", () => {
+    const doc = "Book: x\nTags: y\n\n## Heading\n**Quote:**\n\n> 1. one\n> 2. two\n> 3. three\n";
+    const state = EditorState.create({ doc, extensions: [renumberLists, md] });
+    ensureSyntaxTree(state, doc.length, 5000);
+    let moved = state.update({ selection: { anchor: state.doc.line(8).to } }).state;
+    moveLineUp({ state: moved, dispatch: (tr) => (moved = tr.state) });
+    expect(moved.doc.toString()).toBe("Book: x\nTags: y\n\n## Heading\n**Quote:**\n\n> 1. two\n> 2. one\n> 3. three\n");
+  });
+  it("leaves the numbers of a list the edit splits in two", () => {
+    expect(edit("> 1. a\n>\n> 2. b\n>\n> 3. c\n", { from: 7, to: 8 }, "delete.backward")).toBe("> 1. a\n\n> 2. b\n>\n> 3. c\n");
+    expect(edit("1. a\n2. b\n3. c\n", { from: 4, insert: "\n\nNote\n" }, "input.paste")).toBe("1. a\n\nNote\n\n2. b\n3. c\n");
+  });
+  it("leaves lists in a fenced block parsed as Markdown alone", () => {
+    const nested = markdown({ base: markdownLanguage, extensions: GFM, codeLanguages: (info) => (info === "markdown" ? markdownLanguage : null) });
+    const doc = "Template:\n\n```markdown\n1. first\n1. second\n1. third\n```\n";
+    const state = EditorState.create({ doc, extensions: [renumberLists, nested] });
+    ensureSyntaxTree(state, doc.length, 5000);
+    const at = state.doc.line(4).to;
+    expect(state.update({ changes: { from: at, insert: "x" }, userEvent: "input.type" }).state.doc.toString()).toBe(
+      "Template:\n\n```markdown\n1. firstx\n1. second\n1. third\n```\n",
+    );
+  });
+  it("pairs $$ outside indented code", () => {
+    expect(typeAt("Intro\n\n    echo $$\n\n$$\n1. x\n1. y\n$$\n", 6)).toBe("Intro\n\n    echo $$\n\n$$\n1. xx\n1. y\n$$\n");
+    expect(typeAt("Price `$$` here\n\n1. a\n1. b\n", 3)).toBe("Price `$$` here\n\n1. ax\n2. b\n");
+    expect(typeAt("50%% off\n\n1. a\n1. b\n", 3)).toBe("50%% off\n\n1. ax\n2. b\n");
   });
   it("leaves the lines of a closed fold alone", () => {
     const doc = "# H\n1. a\n1. b\n1. c\n";
