@@ -76,7 +76,11 @@ wasn't run; where its behaviour was unclear, its own bundled code (1.14.4
   own indentation, keeps `01.` padded and reads a `1)` list after a `1.` list
   as a list of its own. Over 37,000 one-key edits in a real vault, Obsidian's
   rules made 2,629 correct numbers wrong and changed 83 lines in code or
-  paragraphs; Basalt changed neither.
+  paragraphs; Basalt changed neither. When an edit splits a list in two (a
+  paragraph pasted between items), both parts keep their numbers, where
+  Obsidian restarts the second part at the list's first number, and Basalt
+  leaves a number alone when the new one would stop the line being a list
+  item.
 - Links in canvas text cards follow renames.
 
 Still different: a table whose header and delimiter rows have different cell

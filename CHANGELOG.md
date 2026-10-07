@@ -419,12 +419,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   change a folded section's hidden text either, and a triple-click on a folded
   heading no longer counts as selecting what it hides.
 - Link all also leaves callout types, footnote references, link reference
-  definitions, reference links (`![][label]`), email addresses and autolinks
-  (`<key:value>`) alone, never writes into a linked image, a URL holding an
-  `@` or a link's address, and no longer skips prose that holds a `<`
+  definitions (in quotes too), reference links (`![][label]`, and `[label]`
+  when the note defines it), email addresses and autolinks (`<key:value>`)
+  alone, never writes into a linked image, a URL holding an `@` or a link's
+  address (one in angle brackets, or with brackets nested in the link's text
+  or parentheses in the address), and no longer skips prose that holds a `<`
   (`null<Date`), or text after a `$$` written in code or a comment.
 - Code fenced inside a quote or callout is code: Link all and renames leave
-  its text alone, and its links aren't counted.
+  its text alone, and its links aren't counted. A line that opens with inline
+  code in triple backticks doesn't start a code block, so the links, tags and
+  HTML after it still count.
 - Search keeps a quoted phrase, a `[[link]]` or a regex whole inside `line:()`,
   `task:()` and `section:()`, even against the brackets (`line:("a b" c)`),
   reads `line:"a phrase"`, excludes a phrase with `-"a phrase"`, and counting
@@ -434,8 +438,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   too, but only lines that render as list items: a numbered line in code
   (```markdown fences included), math, a comment, frontmatter or a paragraph
   is left as typed. Items under a 3-space indent count as nested, `01.` keeps
-  its zero, a list an edit splits in two keeps its numbers, and a number in a
-  closed fold isn't changed.
+  its zero, a list an edit splits in two keeps its numbers, and a number isn't
+  changed in a closed fold or where the new number would stop the line being a
+  list item (a list that starts past 1 can't break into a paragraph).
 - A misspelled Dataview query type (`TABLEX`) is reported instead of running as
   a table of every note.
 
