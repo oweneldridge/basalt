@@ -14,7 +14,11 @@ describe("tables", () => {
     expect(blocks("| a | b |\n| - | - |\n| 1 | 2 |\nafter\nmore\n")).toEqual(["Table:3", "Paragraph:2"]);
   });
   it("keep rows that have a pipe, and escaped pipes don't count", () => {
-    expect(blocks("| a | b |\n| - | - |\n1 | 2\nx \\| y\n")).toEqual(["Table:3", "Paragraph:1"]);
+    expect(blocks("a | b\n--- | ---\n1 | 2\nx \\| y\n")).toEqual(["Table:3", "Paragraph:1"]);
+  });
+  it("written with leading pipes, end at the first row without one", () => {
+    expect(blocks("| a | b |\n| - | - |\n| 1 | 2 |\nx | y\n")).toEqual(["Table:3", "Paragraph:1"]);
+    expect(blocks("a | b\n--- | ---\n1 | 2\nx | y\n")).toEqual(["Table:4"]);
   });
   it("still start right under a paragraph", () => {
     expect(blocks("first\n| a | b |\n| - | - |\n| 1 | 2 |\n")).toEqual(["Paragraph:1", "Table:3"]);
