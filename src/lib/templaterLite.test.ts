@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { installHost, loadPlugin, unloadAll, codeBlockProcessor, pluginCommands, type HostDeps, type PluginInfo } from "./plugins";
+import { installHost, loadPlugin, unloadAll, codeBlockProcessor, pluginCommands, emitVaultEvent, type HostDeps, type PluginInfo } from "./plugins";
 
 const code = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../plugins/templater-lite/main.js"), "utf8");
 
@@ -65,7 +65,12 @@ const CONTENT: Record<string, string> = {
   "Templates/Daily.md": "# <% tp.file.title %>\n<% tp.file.cursor() %>",
   "Journal/Today.md": "",
   "Journal/Note.md": "",
+  "Journal/2026-10-06.md":
+    "created: <% tp.file.creation_date('YYYY') %>\n<% await tp.user.hello('Owen') %>\n# <% moment(tp.file.title, 'YYYY-MM-DD').format('dddd, MMMM DD, YYYY') %>\n",
+  "Scripts/hello.js": "async function hello(name) { return `Hello ${name}`; }\nmodule.exports = hello;",
+  ".obsidian/plugins/templater-obsidian/data.json": '{"trigger_on_file_creation": true, "user_scripts_folder": "Scripts"}',
 };
+const modified: Record<string, string> = {};
 const STATS: Record<string, { ctime: number; mtime: number }> = {
   "Journal/Note.md": { ctime: new Date(2024, 0, 2).getTime(), mtime: new Date(2024, 0, 3).getTime() },
 };
@@ -77,7 +82,9 @@ function fakeHost(): HostDeps {
       Object.keys(CONTENT).map((p) => ({ path: p, name: p.split("/").pop()!.replace(/\.md$/, ""), ...(STATS[p] || {}) })),
     readNote: async (rel: string) => CONTENT[rel] ?? "",
     createNote: async () => {},
-    modifyNote: async () => {},
+    modifyNote: async (rel: string, content: string) => {
+      modified[rel] = content;
+    },
     deleteNote: async () => {},
     renameNote: async () => {},
     createFolder: async () => {},
@@ -138,6 +145,17 @@ describe("templater-lite", () => {
     await flush();
     expect(g.__tpRan).toBeUndefined();
     expect(textOf(el)).toContain(src);
+  });
+
+  it("moment parses and formats dates", async () => {
+    expect(await preview("<% moment('2026-10-06', 'YYYY-MM-DD').format('dddd, MMMM DD, YYYY') %>")).toBe("Tuesday, October 06, 2026");
+    expect(await preview("<% moment('2026-10-06').add(1, 'days').format('YYYY-MM-DD') %>")).toBe("2026-10-07");
+  });
+
+  it("processes a new note's tags when the vault's Templater triggers on creation", async () => {
+    emitVaultEvent("create", { path: "Journal/2026-10-06.md", name: "2026-10-06" });
+    for (let k = 0; k < 10 && !modified["Journal/2026-10-06.md"]; k++) await flush();
+    expect(modified["Journal/2026-10-06.md"]).toBe(`created: ${new Date().getFullYear()}\nHello Owen\n# Tuesday, October 06, 2026\n`);
   });
 
   it("reports a template error instead of throwing", async () => {

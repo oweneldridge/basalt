@@ -45,6 +45,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A new daily note made from a Templater template gets its `<% %>` tags
+  processed, as in Obsidian, when Templater Lite is on and the vault's Templater
+  has "Trigger on new file creation" set. Templater Lite now also runs
+  `tp.user` scripts from Templater's user scripts folder and provides
+  `moment()`. A vault's installed copy of the plugin needs updating to get this.
 - Dollar amounts stay text: a `$` followed by a digit closes no math, as in
   Obsidian, so "$25 and $25" no longer turns into italic math, and inline code
   holding a `$` is never swallowed by math.

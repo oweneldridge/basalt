@@ -11,9 +11,12 @@
 // cursor/selection), date (now/tomorrow/yesterday/weekday), system (prompt/
 // suggester/clipboard), plus tp.frontmatter and tp.config.
 //
-// NOT full Templater: no tp.user user-script files, no tp.hooks, no dynamic
-// commands, single cursor (no tabstops), no template-on-creation automation.
-// Runs JavaScript from your templates — enable only in trusted vaults.
+// Also: tp.user.<name>() runs <name>.js from Templater's user scripts folder,
+// moment(...) covers parsing and formatting dates, and a new note's tags are
+// processed when the vault's Templater has "Trigger on new file creation" on.
+// NOT full Templater: no tp.hooks, no dynamic commands, single cursor (no
+// tabstops). Runs JavaScript from your templates and user scripts — enable only
+// in trusted vaults.
 const { Plugin, Notice, PluginSettingTab } = require("basalt");
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -123,14 +126,40 @@ function compileTemplate(text) {
     }
   }
   body += "return tR;";
-  return new AsyncFunction("tp", "__s", body);
+  return new AsyncFunction("tp", "__s", "moment", body);
 }
 
 const coerce = (v) => (v == null ? "" : String(v));
 
+// The part of moment.js templates use: moment(), moment(text, format),
+// .format(), .isValid(), .add()/.subtract() by days, weeks, months or years.
+function moment(input, format) {
+  const d = input === undefined ? new Date() : parseDateish(input, format);
+  const shift = (n, unit, sign) => {
+    const k = sign * (Number(n) || 0);
+    const u = String(unit || "days").replace(/s$/, "");
+    if (u === "day" || u === "d") d.setDate(d.getDate() + k);
+    else if (u === "week" || u === "w") d.setDate(d.getDate() + 7 * k);
+    else if (u === "month" || u === "M") d.setMonth(d.getMonth() + k);
+    else if (u === "year" || u === "y") d.setFullYear(d.getFullYear() + k);
+    else if (u === "hour" || u === "h") d.setHours(d.getHours() + k);
+    else if (u === "minute" || u === "m") d.setMinutes(d.getMinutes() + k);
+  };
+  const m = {
+    format: (fmt) => formatMoment(d, fmt || "YYYY-MM-DDTHH:mm:ss"),
+    isValid: () => !Number.isNaN(d.getTime()),
+    add: (n, unit) => (shift(n, unit, 1), m),
+    subtract: (n, unit) => (shift(n, unit, -1), m),
+    toDate: () => new Date(d.getTime()),
+    valueOf: () => d.getTime(),
+    toString: () => d.toString(),
+  };
+  return m;
+}
+
 async function processTemplate(text, tp) {
   const fn = compileTemplate(text);
-  const out = await fn(tp, coerce);
+  const out = await fn(tp, coerce, moment);
   const idx = out.indexOf(CURSOR);
   return { text: out.split(CURSOR).join(""), caret: idx === -1 ? undefined : idx };
 }
@@ -198,13 +227,17 @@ function buildTp(fileInfo, frontmatter, io) {
     },
     frontmatter: frontmatter || {},
     config: { active_file: { path: fileInfo.path }, target_file: { path: fileInfo.path }, template_file: fileInfo.templatePath ? { path: fileInfo.templatePath } : null, run_mode: 0 },
-    // tp.user scripts require loading arbitrary JS files — unsupported in lite.
+    // tp.user.<name>(...) runs the user script <name>.js when the host can load it.
     user: new Proxy(
       {},
       {
-        get: () => () => {
-          io.notice && io.notice("tp.user.* scripts aren't supported in Templater Lite");
-          return "";
+        get: (_t, name) => async (...args) => {
+          if (!io.userScript) {
+            io.notice && io.notice("tp.user.* scripts aren't available here");
+            return "";
+          }
+          const fn = await io.userScript(String(name));
+          return typeof fn === "function" ? fn(...args) : "";
         },
       },
     ),
@@ -312,6 +345,23 @@ function suggesterModal(labels, values, placeholder) {
 module.exports = class TemplaterLite extends Plugin {
   async onload() {
     this.settings = Object.assign({ folder: "Templates" }, (await this.loadData()) || {});
+    // The vault's own Templater settings, when it has them.
+    this.vaultTemplater = {};
+    try {
+      this.vaultTemplater = JSON.parse(await this.app.vault.read(".obsidian/plugins/templater-obsidian/data.json")) || {};
+    } catch {
+      /* no Templater in this vault */
+    }
+
+    // Like Templater's "Trigger on new file creation": a new note made from a
+    // template (a daily note, say) gets its tags processed once it exists.
+    if (this.vaultTemplater.trigger_on_file_creation) {
+      this.registerEvent(
+        this.app.vault.on("create", (file) => {
+          if (file && /\.md$/i.test(file.path)) void this.processNewFile(file.path);
+        }),
+      );
+    }
 
     this.addCommand({ id: "insert", name: "Insert template", callback: () => this.insertTemplate() });
 
@@ -369,6 +419,39 @@ module.exports = class TemplaterLite extends Plugin {
     this.addSettingTab(tab);
   }
 
+  /** Load a Templater user script (CommonJS, `module.exports = function`). */
+  async userScript(name) {
+    const folder = String(this.vaultTemplater.user_scripts_folder || "").replace(/^\/+|\/+$/g, "");
+    if (!folder || !/^[\w.-]+$/.test(name)) return null;
+    const code = await this.app.vault.read(`${folder}/${name}.js`);
+    const module = { exports: {} };
+    new Function("module", "exports", code)(module, module.exports);
+    return module.exports;
+  }
+
+  async processNewFile(path) {
+    let text;
+    try {
+      text = await this.app.vault.read(path);
+    } catch {
+      return;
+    }
+    if (!text.includes("<%")) return;
+    const io = {
+      prompt: async (_m, def) => def,
+      suggester: async (_labels, values) => (values.length ? values[0] : ""),
+      notice: (msg) => new Notice(msg),
+      userScript: (name) => this.userScript(name),
+    };
+    const fileInfo = this.fileInfoFor(path);
+    try {
+      const res = await processTemplate(text, buildTp(fileInfo, fileInfo.frontmatter, io));
+      if (res.text !== text) await this.app.vault.modify(path, res.text);
+    } catch (e) {
+      new Notice(`Templater error in ${path}: ${e && e.message ? e.message : e}`);
+    }
+  }
+
   fileInfoFor(path, templatePath) {
     const rel = path || "";
     const meta = this.app.vault.getMarkdownFiles().find((f) => f.path === rel);
@@ -419,6 +502,7 @@ module.exports = class TemplaterLite extends Plugin {
       prompt: (m, def, multiline) => promptModal(m, def, multiline),
       suggester: (labels, values, ph) => suggesterModal(labels, values, ph),
       notice: (msg) => new Notice(msg),
+      userScript: (name) => this.userScript(name),
     };
     const fileInfo = this.fileInfoFor(active.path, chosen.path);
     try {

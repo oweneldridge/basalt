@@ -2861,6 +2861,8 @@ export default function App() {
           : [...prev, note].sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
       );
       bumpStructure();
+      // Plugins hear of it once its template is in (Templater processes it then).
+      emitVaultEvent("create", { path: rel, name: note.name });
       await openNoteByPath(path);
     } catch (e) {
       setSaveError(`Couldn't open daily note: ${e}`);
@@ -3362,7 +3364,10 @@ export default function App() {
       getMarkdownFiles: () => notesRef.current.map((n) => ({ path: n.rel, name: n.name, ctime: n.ctime, mtime: n.mtime })),
       readNote: (rel) => {
         const note = notesRef.current.find((n) => n.rel === rel);
-        return readNote(note ? note.path : rel);
+        // Any vault file by its vault path (a plugin's config, a script); the
+        // core still refuses anything outside the vault.
+        const root = vaultRef.current ?? "";
+        return readNote(note ? note.path : rel.startsWith(root) || !root ? rel : `${root.replace(/[/\\]+$/, "")}/${rel}`);
       },
       createNote: async (rel, content) => {
         const name = rel.replace(/\.md$/i, "");
