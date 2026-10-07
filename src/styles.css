@@ -2124,6 +2124,12 @@ button.primary:hover {
   font-weight: 500;
 }
 .hover-preview-body > :first-child { margin-top: 0; }
+/* It borrows Reading view's type, not its page padding or scrolling. */
+.hover-preview-body.reading-view {
+  padding: 0;
+  max-width: none;
+  overflow: visible;
+}
 
 /* ------- File-tree drag-drop ------- */
 .tree-row.folder.drop-target {

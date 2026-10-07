@@ -1122,3 +1122,62 @@ test.describe("links to files that don't exist", () => {
     await expect(pane.locator(".reading-view .is-unresolved")).toHaveText(["m"]);
   });
 });
+
+test.describe("the hover preview", () => {
+  const long = Array.from({ length: 400 }, (_, i) => `filler sentence number ${i} to push the second part far down`).join("\n\n");
+  test.use({
+    vaultFiles: {
+      "Hub.md": "# Hub\n\n[[Other#Part two]] and [[Other]] and [[#Hub section]]\n\nEND\n\n## Hub section\n\nHub section text.\n",
+      "Other.md": `# Other\n\nFirst part text.\n\n${long}\n\n## Part two\n\nSecond part text, see [[Third]].\n\n![[Third]]\n\n## Part three\n\nThird part text.\n`,
+      "Third.md": "Embedded words from Third.\n",
+    },
+  });
+  const preview = (page: import("@playwright/test").Page) => page.locator(".hover-preview");
+
+  test("shows the linked section with its embeds", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Hub");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await page.locator(".pane:not(.dock) .reading-view .md-wikilink", { hasText: "Part two" }).hover();
+    await expect(preview(page)).toBeVisible();
+    await expect(preview(page)).toContainText("Second part text");
+    await expect(preview(page)).not.toContainText("First part text.");
+    await expect(preview(page)).not.toContainText("Third part text.");
+    await expect(preview(page)).toContainText("Embedded words from Third.");
+    await preview(page).locator(".md-wikilink", { hasText: "Third" }).click();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Third");
+    await expect(preview(page)).toBeHidden();
+  });
+
+  test("of a link to a heading in the same note shows that section", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Hub");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await page.locator(".pane:not(.dock) .reading-view .md-wikilink", { hasText: "Hub section" }).hover();
+    await expect(preview(page)).toContainText("Hub section text.");
+    await expect(preview(page)).not.toContainText("END");
+  });
+
+  test("closes when the link is clicked", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Hub");
+    const link = page.locator(".pane:not(.dock) .cm-wikilink", { hasText: /^Other$/ });
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    await link.hover();
+    await expect(preview(page)).toBeVisible();
+    await link.click();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Other");
+    await page.waitForTimeout(600);
+    await expect(preview(page)).toBeHidden();
+  });
+
+  test("never opens for a link clicked before it shows", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Hub");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    await page.locator(".pane:not(.dock) .cm-wikilink", { hasText: /^Other$/ }).click();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Other");
+    await page.waitForTimeout(800);
+    await expect(preview(page)).toBeHidden();
+  });
+});

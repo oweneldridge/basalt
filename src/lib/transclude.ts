@@ -305,14 +305,27 @@ export function renderEmbedElement(
   title.className = "embed-title";
   title.textContent = resolved.name + (subpath ? ` › ${subpath.replace(/^\^/, "^")}` : "");
   title.addEventListener("click", () => host.onOpen(rawTarget));
-  wrap.append(title);
+  wrap.append(title, embedBody(resolved, subpath, host, chain, budget));
+  return wrap;
+}
 
+/** The rendered content of a resolved note's section (`subpath`), or of the
+ * whole note, as an embed shows it: images and media resolved from that note,
+ * math, raw HTML and nested embeds filled in, and its tasks read-only. With
+ * `limit`, only that many characters of it render (the hover preview). */
+export function embedBody(
+  resolved: { path: string; rel: string; name: string },
+  subpath: string,
+  host: TranscludeHost,
+  chain: string[] = [],
+  budget: { n: number } = { n: 0 },
+  limit = Infinity,
+): HTMLElement {
   const body = document.createElement("div");
   body.className = "embed-body";
-  wrap.append(body);
 
   const fill = (content: string) => {
-    const slice = extractSection(content, subpath);
+    const slice = extractSection(content, subpath).slice(0, limit);
     if (!slice) {
       body.append(box("embed-missing", subpath ? `"${subpath}" not found in ${resolved.name}` : "(empty note)"));
       return;
@@ -344,6 +357,9 @@ export function renderEmbedElement(
     // Render math + sanitize raw HTML inside the embed (lazy, like the reader).
     if (body.querySelector("[data-math]")) void import("./math").then((m) => m.fillMath(body));
     if (body.querySelector("[data-basalt-html]")) void import("./sanitize").then((m) => m.fillRawHtml(body));
+    if (body.querySelector("[data-basalt-media]")) {
+      void import("./media").then((m) => m.fillMedia(body, (t) => host.resolveImage(t, resolved.rel)));
+    }
     // Recurse into nested embeds (breadth-capped via the shared budget).
     body.querySelectorAll<HTMLElement>("[data-basalt-embed]").forEach((marker) => {
       if (budget.n > MAX_TOTAL_EMBEDS) {
@@ -371,5 +387,5 @@ export function renderEmbedElement(
         body.append(box("embed-error", `Could not read ${resolved.name}`));
       });
   }
-  return wrap;
+  return body;
 }
