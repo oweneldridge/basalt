@@ -3360,7 +3360,21 @@ export default function App() {
 
   // Install the plugin host once; its deps read live refs / stable callbacks.
   useEffect(() => {
+    let byRelFor: VaultNote[] | null = null;
+    let byRel = new Map<string, VaultNote>();
+    const noteByRel = (rel: string) => {
+      if (byRelFor !== notesRef.current) {
+        byRelFor = notesRef.current;
+        byRel = new Map(byRelFor.map((n) => [n.rel, n]));
+      }
+      return byRel.get(rel);
+    };
     const deps: HostDeps = {
+      cachedRead: (rel) => {
+        const note = noteByRel(rel);
+        // The index blanks notes over its size cap: those need a real read.
+        return !note || (note.content === "" && (note.size ?? 0) > 0) ? null : note.content;
+      },
       getMarkdownFiles: () => notesRef.current.map((n) => ({ path: n.rel, name: n.name, ctime: n.ctime, mtime: n.mtime })),
       readNote: (rel) => {
         const note = notesRef.current.find((n) => n.rel === rel);

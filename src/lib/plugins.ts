@@ -61,6 +61,9 @@ export interface FileCache {
 /** The concrete capabilities App wires into the host. Keeping the host UI- and
  * Tauri-agnostic makes it unit-testable and keeps the trust surface explicit. */
 export interface HostDeps {
+  /** A note's text as the app last saw it on disk, without a round trip
+   * (null when it doesn't hold it, e.g. a note over the index cap). */
+  cachedRead?: (rel: string) => string | null;
   /** Vault notes. `ctime`/`mtime` are epoch-ms (for Dataview-style file dates);
    * older callers may omit them. */
   getMarkdownFiles: () => { path: string; name: string; ctime?: number; mtime?: number }[];
@@ -277,6 +280,11 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       getMarkdownFiles: () => host.getMarkdownFiles(),
       read: (file: { path: string } | string) =>
         host.readNote(typeof file === "string" ? file : file.path),
+      /** Obsidian's cachedRead: the app's copy when it has one, else a read. */
+      cachedRead: async (file: { path: string } | string) => {
+        const rel = typeof file === "string" ? file : file.path;
+        return host.cachedRead?.(rel) ?? host.readNote(rel);
+      },
       create: (path: string, content: string) => host.createNote(path, content),
       modify: (file: { path: string } | string, content: string) =>
         host.modifyNote(typeof file === "string" ? file : file.path, content),

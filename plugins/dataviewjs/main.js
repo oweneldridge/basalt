@@ -12,6 +12,7 @@
 // limited `dv.pages("a" or "b")` source algebra. Runs JavaScript from your
 // notes — enable only in trusted vaults.
 const { Plugin } = require("basalt");
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 // ---- minimal Luxon DateTime ---------------------------------------------
 // Backed by a native Date in local time. Covers the surface real dataviewjs
@@ -49,6 +50,10 @@ class DateTime {
   }
   static fromJSDate(d) {
     return new DateTime(new Date(d.getTime()));
+  }
+  // The formats notes use (yyyy-MM-dd, with or without a time) read as ISO.
+  static fromFormat(s, _format) {
+    return DateTime.fromISO(s);
   }
   static fromISO(s) {
     const d = parseISOish(s);
@@ -279,42 +284,107 @@ function momentTime(o) {
   const d = parseISOish(o);
   return d ? d.getTime() : new Date(o).getTime();
 }
-function makeMoment(input) {
-  const d = input == null ? new Date() : parseISOish(input) || new Date(input);
-  const valid = !Number.isNaN(d.getTime());
+const M_TOKENS = /\[[^\]]*\]|YYYY|YY|MMMM|MMM|MM|M|Do|DD|D|dddd|ddd|dd|HH|H|hh|h|mm|m|ss|s|A|a/g;
+function momentFormat(d, fmt) {
+  if (Number.isNaN(d.getTime())) return "Invalid date";
   const pad = (n) => String(n).padStart(2, "0");
-  return {
+  const h12 = d.getHours() % 12 || 12;
+  const ord = (n) => n + (n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th");
+  const map = {
+    YYYY: String(d.getFullYear()),
+    YY: String(d.getFullYear()).slice(-2),
+    MMMM: L_MONTHS[d.getMonth()],
+    MMM: L_MONTHS[d.getMonth()].slice(0, 3),
+    MM: pad(d.getMonth() + 1),
+    M: String(d.getMonth() + 1),
+    Do: ord(d.getDate()),
+    DD: pad(d.getDate()),
+    D: String(d.getDate()),
+    dddd: M_DAYS[d.getDay()],
+    ddd: M_DAYS[d.getDay()].slice(0, 3),
+    dd: M_DAYS[d.getDay()].slice(0, 2),
+    HH: pad(d.getHours()),
+    H: String(d.getHours()),
+    hh: pad(h12),
+    h: String(h12),
+    mm: pad(d.getMinutes()),
+    m: String(d.getMinutes()),
+    ss: pad(d.getSeconds()),
+    s: String(d.getSeconds()),
+    A: d.getHours() < 12 ? "AM" : "PM",
+    a: d.getHours() < 12 ? "am" : "pm",
+  };
+  return String(fmt || "YYYY-MM-DDTHH:mm:ss").replace(M_TOKENS, (t) => (t[0] === "[" ? t.slice(1, -1) : map[t]));
+}
+function makeMoment(input) {
+  const d =
+    input == null
+      ? new Date()
+      : input instanceof Date
+        ? new Date(input.getTime())
+        : typeof input === "number" || (input && typeof input.valueOf === "function" && typeof input.valueOf() === "number")
+          ? new Date(Number(input.valueOf()))
+          : parseISOish(input) || new Date(input);
+  const shift = (n, unit, sign) => {
+    const k = sign * (Number(n) || 0);
+    const u = String(unit || "days").replace(/s$/, "");
+    if (u === "day" || u === "d") d.setDate(d.getDate() + k);
+    else if (u === "week" || u === "w") d.setDate(d.getDate() + 7 * k);
+    else if (u === "month" || u === "M") d.setMonth(d.getMonth() + k);
+    else if (u === "year" || u === "y") d.setFullYear(d.getFullYear() + k);
+    else if (u === "hour" || u === "h") d.setHours(d.getHours() + k);
+    else if (u === "minute" || u === "m") d.setMinutes(d.getMinutes() + k);
+  };
+  const m = {
     _isMoment: true,
-    isValid: () => valid,
+    isValid: () => !Number.isNaN(d.getTime()),
     valueOf: () => d.getTime(),
-    toDate: () => d,
+    toDate: () => new Date(d.getTime()),
+    toISOString: () => d.toISOString(),
+    clone: () => makeMoment(d),
     isBefore: (o) => d.getTime() < momentTime(o),
     isAfter: (o) => d.getTime() > momentTime(o),
-    isSame: (o) => d.getTime() === momentTime(o),
+    isSame: (o, unit) => (unit === "day" ? momentFormat(d, "YYYY-MM-DD") === makeMoment(o).format("YYYY-MM-DD") : d.getTime() === momentTime(o)),
     isSameOrBefore: (o) => d.getTime() <= momentTime(o),
     isSameOrAfter: (o) => d.getTime() >= momentTime(o),
     diff: (o, unit) => {
       const ms = d.getTime() - momentTime(o);
-      return unit === "days" ? Math.trunc(ms / 86400000) : ms;
+      return unit === "days" || unit === "day" ? Math.trunc(ms / 86400000) : ms;
     },
-    format: (fmt) =>
-      (fmt || "YYYY-MM-DD").replace(/YYYY|MMMM|MM|DD|dddd|HH|mm|ss/g, (t) => {
-        if (t === "YYYY") return String(d.getFullYear());
-        if (t === "MMMM") return L_MONTHS[d.getMonth()];
-        if (t === "MM") return pad(d.getMonth() + 1);
-        if (t === "DD") return pad(d.getDate());
-        if (t === "dddd") return M_DAYS[d.getDay()];
-        if (t === "HH") return pad(d.getHours());
-        if (t === "mm") return pad(d.getMinutes());
-        if (t === "ss") return pad(d.getSeconds());
-        return t;
-      }),
+    add: (n, unit) => (shift(n, unit, 1), m),
+    subtract: (n, unit) => (shift(n, unit, -1), m),
+    startOf: (unit) => {
+      if (unit === "day") d.setHours(0, 0, 0, 0);
+      return m;
+    },
+    format: (fmt) => momentFormat(d, fmt),
+    toString: () => d.toString(),
   };
+  return m;
 }
-const moment = (input) => makeMoment(input);
+// moment(text, format): the formats notes use are ISO-shaped, which the parse
+// above already reads. moment.utc reads the same way.
+const moment = (input, _format) => makeMoment(input);
+moment.utc = (input) => makeMoment(input);
 
 // ---- DataArray: a chainable list of pages/values -------------------------
 class DataArray extends Array {
+  static from(items, mapFn) {
+    const arr = super.from(items, mapFn);
+    return new Proxy(arr, {
+      get(target, prop, receiver) {
+        if (typeof prop === "symbol" || prop in target) return Reflect.get(target, prop, receiver);
+        // `pages.file.tasks`: map the property over every element, flattening lists.
+        const out = [];
+        for (const v of target) {
+          const x = v == null ? undefined : v[prop];
+          if (Array.isArray(x)) out.push(...x);
+          else if (x !== undefined) out.push(x);
+        }
+        return DataArray.from(out);
+      },
+    });
+  }
   where(fn) {
     return DataArray.from([...this].filter(fn));
   }
@@ -364,6 +434,17 @@ class DataArray extends Array {
   }
   array() {
     return [...this];
+  }
+}
+
+// A file link: renders as a link, and prints as [[path|name]] in text.
+class Link {
+  constructor(path, display) {
+    this.path = path;
+    this.display = display;
+  }
+  toString() {
+    return `[[${this.path.replace(/\.md$/i, "")}|${this.display}]]`;
   }
 }
 
@@ -420,14 +501,24 @@ function fileDay(name, frontmatter) {
   return m ? DateTime.fromISO(m[1]) : null;
 }
 
-// ---- page index (built once per render, briefly cached) -----------------
+// ---- page index (built once, kept until the vault changes) --------------
 let _cache = null; // { at, pages, byPath }
+const MAX_AGE = 60000;
+function clearIndex() {
+  _cache = null;
+}
 async function buildIndex(app) {
   const files = app.vault.getMarkdownFiles();
   const now = typeof Date !== "undefined" && Date.now ? Date.now() : 0;
-  if (_cache && now - _cache.at < 1000) return _cache;
+  if (_cache && now - _cache.at < MAX_AGE) return _cache;
 
-  const contents = await Promise.all(files.map((f) => app.vault.read(f.path).catch(() => "")));
+  // The app's own copy of each note (no request per note); a host without one
+  // is read a few files at a time rather than all at once.
+  const read = (path) => (app.vault.cachedRead ? app.vault.cachedRead(path) : app.vault.read(path)).catch(() => "");
+  const contents = [];
+  for (let k = 0; k < files.length; k += 32) {
+    contents.push(...(await Promise.all(files.slice(k, k + 32).map((f) => read(f.path)))));
+  }
   const byPath = new Map();
   const pages = DataArray.from(
     files.map((f, i) => {
@@ -443,7 +534,7 @@ async function buildIndex(app) {
           name,
           path: f.path,
           folder,
-          link: { path: f.path, display: name },
+          link: new Link(f.path, name),
           ctime: DateTime.fromMillis(ctime),
           mtime: DateTime.fromMillis(mtime),
           cday: DateTime.fromMillis(ctime).startOf("day"),
@@ -492,13 +583,13 @@ function buildDv(idx, el, notePath) {
   };
   // Render a string into `parent`, turning [[wikilinks]] and [text](url) into
   // clickable links (like Dataview's dv.paragraph, which renders markdown).
-  const INLINE_LINK = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+  const INLINE_LINK = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*|`([^`\n]+)`/g;
   const appendInline = (parent, text) => {
     const str = String(text);
     let last = 0;
     let m;
-    INLINE_LINK.lastIndex = 0;
-    while ((m = INLINE_LINK.exec(str))) {
+    const re = new RegExp(INLINE_LINK.source, "g"); // fresh: bold/italic recurse into this
+    while ((m = re.exec(str))) {
       if (m.index > last) parent.appendChild(document.createTextNode(str.slice(last, m.index)));
       if (m[1] !== undefined) {
         const target = m[1].trim().replace(/\.md$/i, "");
@@ -511,6 +602,12 @@ function buildDv(idx, el, notePath) {
           openLink(target);
         });
         parent.appendChild(a);
+      } else if (m[5] !== undefined || m[6] !== undefined || m[7] !== undefined) {
+        const tag = m[5] !== undefined ? "strong" : m[6] !== undefined ? "em" : "code";
+        const e = document.createElement(tag);
+        if (tag === "code") e.textContent = m[7];
+        else appendInline(e, m[5] ?? m[6]);
+        parent.appendChild(e);
       } else {
         const a = document.createElement("a");
         a.href = m[4];
@@ -550,9 +647,10 @@ function buildDv(idx, el, notePath) {
     pagePaths: (source) => filterSource(pages, source).map((p) => p.file.path),
     page: (path) => byPath.get(path) || byPath.get(String(path).replace(/\.md$/i, "")),
     array: (x) => DataArray.from(x),
+    io: { load: (path) => idx.read(String(path)) },
     date: (x) => (x == null ? DateTime.now() : x instanceof DateTime ? x : DateTime.fromISO(x)),
     duration: (x) => parseDuration(x),
-    fileLink: (path, _embed, display) => ({ path, display: display || (path.split("/").pop() || path).replace(/\.md$/i, "") }),
+    fileLink: (path, _embed, display) => new Link(path, display || (path.split("/").pop() || path).replace(/\.md$/i, "")),
     paragraph: (md) => {
       const p = document.createElement("p");
       p.className = "dvjs-p";
@@ -630,6 +728,7 @@ function buildDv(idx, el, notePath) {
 
 module.exports = class DataviewJs extends Plugin {
   onload() {
+    for (const ev of ["create", "modify", "delete", "rename"]) this.registerEvent(this.app.vault.on(ev, clearIndex));
     this.registerMarkdownCodeBlockProcessor("dataviewjs", (source, el, ctx) => {
       el.replaceChildren();
       const loading = document.createElement("div");
@@ -640,11 +739,12 @@ module.exports = class DataviewJs extends Plugin {
       buildIndex(this.app)
         .then((idx) => {
           idx.openLinkText = (t) => this.app.workspace.openLinkText(t);
+          idx.read = (p) => this.app.vault.read(p);
           el.replaceChildren();
           const dv = buildDv(idx, el, ctx.notePath);
           try {
             // The block's JS runs with `dv` and `moment` in scope (like Dataview).
-            const fn = new Function("dv", "moment", `"use strict";\n${source}`);
+            const fn = new AsyncFunction("dv", "moment", `"use strict";\n${source}`);
             const result = fn(dv, moment);
             if (result && typeof result.catch === "function") {
               result.catch((e) => this.error(el, e));

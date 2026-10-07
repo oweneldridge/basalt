@@ -45,6 +45,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Dataview JS (lite) reads notes from the app's own copy instead of asking
+  the server for every note on every block (one daily note fired about 35,000
+  requests, and the failed ones silently counted as empty). It also allows
+  top-level `await` and `dv.io.load`, passes property access through page
+  lists (`pages.file.tasks`), prints links as `[[…]]`, renders bold, italic
+  and code in `dv.paragraph`, and formats dates like moment.js
+  (`MMM DD, YYYY [at] HH:mm`). A vault's installed copy of the plugin needs
+  updating to get this.
 - A new daily note made from a Templater template gets its `<% %>` tags
   processed, as in Obsidian, when Templater Lite is on and the vault's Templater
   has "Trigger on new file creation" set. Templater Lite now also runs

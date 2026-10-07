@@ -76,11 +76,16 @@ const NOTES: { path: string; ctime: number; mtime: number; content: string }[] =
   { path: "Other/Misc.md", ctime: JUL10, mtime: JUL10, content: "- [ ] stray task\n" },
 ];
 const byPath = new Map(NOTES.map((n) => [n.path, n]));
+let reads = 0;
 function fakeHost(): HostDeps {
   return {
+    cachedRead: (rel: string) => byPath.get(rel)?.content ?? null,
     getMarkdownFiles: () =>
       NOTES.map((n) => ({ path: n.path, name: n.path.split("/").pop()!.replace(/\.md$/, ""), ctime: n.ctime, mtime: n.mtime })),
-    readNote: async (rel: string) => byPath.get(rel)?.content ?? "",
+    readNote: async (rel: string) => {
+      reads++;
+      return byPath.get(rel)?.content ?? "";
+    },
     createNote: async () => {},
     modifyNote: async () => {},
     deleteNote: async () => {},
@@ -105,12 +110,47 @@ async function run(source: string, notePath = "SmithRx/Daily Notes/2026-07-01.md
 }
 
 beforeEach(async () => {
+  reads = 0;
   await unloadAll();
   installHost(fakeHost());
   await loadPlugin(info());
 });
 
 describe("dataviewjs (lite)", () => {
+  it("reads notes from memory, not once per note for every block", async () => {
+    await run(`dv.paragraph(String(dv.pages().length))`);
+    await run(`dv.paragraph(String(dv.pages().length))`);
+    expect(reads).toBe(0);
+  });
+
+  it("allows top-level await, with dv.io.load", async () => {
+    const el = await run(`const t = await dv.io.load("Other/Misc.md"); dv.paragraph(t.trim());`);
+    await flush();
+    expect(textOf(el)).toContain("- [ ] stray task");
+  });
+
+  it("passes property access through page lists (pages.file.tasks)", async () => {
+    const el = await run(`dv.taskList(dv.pages('"SmithRx/Daily Notes"').file.tasks.where(t => !t.completed));`);
+    expect(findAll(el, "li").map(textOf)).toEqual(["morning standup 📅 2026-07-03 #work", "review PR"]);
+  });
+
+  it("prints links as wikilinks and renders markdown in paragraphs", async () => {
+    const el = await run("dv.paragraph(`**Week 1** · *soon* → ${dv.current().file.link}`);");
+    expect(findAll(el, "strong").map(textOf)).toEqual(["Week 1"]);
+    expect(findAll(el, "em").map(textOf)).toEqual(["soon"]);
+    expect(findAll(el, "a").map(textOf)).toEqual(["2026-07-01"]);
+  });
+
+  it("formats and compares dates with moment like moment.js", async () => {
+    const el = await run(`
+      dv.paragraph(moment("2026-10-02T17:59:00").format("MMM DD, YYYY [at] HH:mm"));
+      dv.paragraph(String(moment("2026-10-02", "YYYY-MM-DD").isBefore(moment("2026-10-03", "YYYY-MM-DD"))));
+      dv.paragraph(moment("2026-10-02", "YYYY-MM-DD").add(1, "days").format("ddd, MMMM Do"));
+      dv.paragraph(dv.luxon.DateTime.fromFormat("2026-07-01", "yyyy-MM-dd").toISODate());
+    `);
+    expect(findAll(el, "p").map(textOf)).toEqual(["Oct 02, 2026 at 17:59", "true", "Sat, October 3rd", "2026-07-01"]);
+  });
+
   it("runs a daily-notes query sorted by file.day, formatted with Luxon", async () => {
     const el = await run(`
       const pages = dv.pages('"SmithRx/Daily Notes"')
