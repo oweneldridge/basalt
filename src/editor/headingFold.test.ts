@@ -127,6 +127,18 @@ describe("deleting next to a folded section", () => {
     expect(after.doc.toString()).toBe(doc);
     expect(foldedRanges(after).size).toBe(0);
   });
+  it("opens it when text is typed at its hidden end, so the text shows where it goes", () => {
+    const { state, range } = folded();
+    const after = state.update({ changes: { from: range.to, insert: "Z" }, userEvent: "input.type" }).state;
+    expect(after.doc.toString()).toBe("# A\nhidden one\nhidden twoZ\n# B\nafter");
+    expect(foldedRanges(after).size).toBe(0);
+  });
+  it("keeps it folded when Enter starts a line after it", () => {
+    const { state, range } = folded();
+    const after = state.update({ changes: { from: range.to, insert: "\n" }, userEvent: "input" }).state;
+    expect(after.doc.toString()).toBe("# A\nhidden one\nhidden two\n\n# B\nafter");
+    expect(foldedRanges(after).size).toBe(1);
+  });
   it("still deletes the heading's own text", () => {
     const { state, range } = folded();
     const after = del(state, range.from - 1, range.from);

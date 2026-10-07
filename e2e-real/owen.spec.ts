@@ -1678,6 +1678,20 @@ test.describe("a folded heading", () => {
     expect(vault.read("Fold.md")).toBe("# A\nhidden one\nhidden two\n# B\nafter!\n");
   });
 
+  test("shows the section when typing after its placeholder", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Fold");
+    const pane = page.locator(".pane:not(.dock)");
+    await pane.locator(".cm-line", { hasText: "after" }).click();
+    await pane.locator(".cm-fold-marker").first().click({ force: true });
+    await expect(pane.locator(".cm-line", { hasText: "hidden one" })).toHaveCount(0);
+    await pane.locator(".cm-line").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("Z");
+    await expect(pane.locator(".cm-line", { hasText: "hidden twoZ" })).toHaveCount(1);
+    await expect.poll(() => vault.read("Fold.md")).toBe("# A\nhidden one\nhidden twoZ\n# B\nafter\n");
+  });
+
   test("lets a selection the user made be deleted, hidden text and all", async ({ page, vault }) => {
     await openApp(page, vault);
     await openNote(page, "Fold");

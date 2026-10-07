@@ -146,6 +146,20 @@ const openBeforeDeleting = EditorState.transactionFilter.of((tr) => {
   return { effects: open.map((r) => unfoldEffect.of(r)) };
 });
 
-export const headingFold: Extension = [codeFolding(), headingFoldGutter, openBeforeDeleting];
+/** Text typed or pasted at a folded section's hidden end (where the caret
+ * sits after its placeholder) would join its last hidden line, so the section
+ * opens to show where it went. Enter starts a line after the section as usual. */
+const openWhenTypedAtEnd = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || !(tr.isUserEvent("input.type") || tr.isUserEvent("input.paste"))) return tr;
+  const open: { from: number; to: number }[] = [];
+  foldedRanges(tr.startState).between(0, tr.startState.doc.length, (from, to) => {
+    tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+      if (fromA === to && toA === to && !inserted.sliceString(0, 1).startsWith("\n")) open.push({ from, to });
+    });
+  });
+  return open.length ? [tr, { effects: open.map((r) => unfoldEffect.of(r)) }] : tr;
+});
+
+export const headingFold: Extension = [codeFolding(), headingFoldGutter, openBeforeDeleting, openWhenTypedAtEnd];
 
 export { foldKeymap };
