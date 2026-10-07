@@ -1335,3 +1335,21 @@ test.describe("tags", () => {
     await expect(page.locator(".pane:not(.dock) .reading-view .md-tag")).toHaveText(want);
   });
 });
+
+test.describe("escaped characters in Live Preview", () => {
+  test.use({ vaultFiles: { "Esc.md": "ESC \\*not italic\\* and \\#nottag end\n\nEND\n" } });
+
+  test("hide their backslash until the caret reaches them", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Esc");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const line = page.locator(".pane:not(.dock) .cm-line", { hasText: "ESC" });
+    await expect(line).toHaveText("ESC *not italic* and #nottag end");
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("Home");
+    for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowRight");
+    await expect(line).toHaveText("ESC \\*not italic* and #nottag end");
+    expect(vault.read("Esc.md")).toBe("ESC \\*not italic\\* and \\#nottag end\n\nEND\n");
+  });
+});

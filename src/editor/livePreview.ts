@@ -252,6 +252,12 @@ function buildDecorations(
           return;
         }
 
+        // `\*`: the backslash hides until the caret reaches it, as in Obsidian.
+        if (name === "Escape") {
+          if (!touches(node.from, node.to)) builder.add(node.from, node.from + 1, CONCEAL);
+          return;
+        }
+
         if (name === "QuoteMark") {
           if (lineTouched(node.from)) return;
           let end = node.to;
