@@ -46,6 +46,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   colours use Obsidian's `--code-*` variables, so themes and snippets apply.
 - Empty folders show in the file tree, and New folder makes a folder instead
   of a starter note.
+- Back and forward (Cmd-Opt-Left and Cmd-Opt-Right, or the command palette)
+  move through the notes a pane has shown, as in Obsidian.
+- Pasting from a web page or a document gives Markdown: headings, lists,
+  links, bold and italics, code, quotes and tables come across. A paste into
+  code, or of text with no formatting, stays as it was.
+- Dataview JS pages have `file.inlinks`, `file.outlinks` and `file.aliases`.
+- Basalt follows the vault's "Show line number", "Confirm file deletion" and
+  "Readable line length" settings (the last until it's switched in Basalt).
 
 ### Changed
 
@@ -90,12 +98,29 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   header keeps its extra cells.
 - Tables in Live Preview follow their column alignment, break lines at `<br>`,
   and their links open.
-- A property value being typed is kept when you press Cmd-E or close the tab.
+- A property value being typed is kept when you press Cmd-E or Ctrl-Tab or
+  close the tab, and a field that was only focused leaves the note as it was.
 - Templater Lite never overwrites text typed into a new note while its template
   runs, and leaves copies made in the templates folder alone. Plugins get
   Obsidian's `vault.process`.
 - Tab and Shift-Tab keep a loose numbered list's numbers.
 - Text after an HTML comment on the same line shows in Reading view.
+- Links in properties open from Reading view.
+- A PDF embed with `#page=3` or `#height=400` shows, opening at that page;
+  before, it showed as missing.
+- A folded section opens when Backspace or Delete would change what it hides,
+  and clicking a fold arrow leaves the editor focused.
+- Typing in a very long note keeps up: a 4 MB note went from 59 to 21 ms a key.
+- An inline formula and a `$$` block on the same line no longer make an edit
+  fail.
+- A callout inside a callout shows in Live Preview.
+- Backspace on a quote line written without a space (`>text`) deletes one
+  character, never the marker with it.
+- Renumbering a list keeps to that list, and to numbers written like `02.`.
+- A heading link inside an embed goes to the embedded note.
+- A table written with leading pipes ends at the first row without one, as in
+  Obsidian.
+- `%%` inside `~~~` fences and double-backtick code stays as written.
 
 - Ticking a task in Reading view keeps your place instead of jumping back to
   the top of the note.
