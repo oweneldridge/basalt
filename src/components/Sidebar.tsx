@@ -83,7 +83,15 @@ export function Sidebar({ notes, attachments, folders = [], revealFolder = null,
   );
   useEffect(() => localStorage.setItem("basalt.fileSort", sort), [sort]);
 
-  const tree = useMemo(() => buildTree(notes, attachments, sort, folders), [notes, attachments, sort, folders]);
+  // The tree only needs each note's path and dates: an edit to a note's text
+  // (a link fix across hundreds of notes, say) doesn't rebuild it.
+  const shapeRef = useRef<VaultNote[]>(notes);
+  const shape = useMemo(() => {
+    const prev = shapeRef.current;
+    const same = prev.length === notes.length && prev.every((n, i) => n.path === notes[i].path && n.mtime === notes[i].mtime && n.ctime === notes[i].ctime);
+    return (shapeRef.current = same ? prev : notes);
+  }, [notes]);
+  const tree = useMemo(() => buildTree(shape, attachments, sort, folders), [shape, attachments, sort, folders]);
 
   // Load persisted expansion when the vault changes.
   useEffect(() => {

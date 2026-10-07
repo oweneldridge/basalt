@@ -22,9 +22,12 @@ export type TreeNode = TreeFile | TreeFolder;
 /** File explorer sort order (folders always come first, sorted by name). */
 export type SortOrder = "name-asc" | "name-desc" | "mtime-desc" | "ctime-desc";
 
+// Natural order (2 before 10), ignoring case, as Obsidian sorts. One collator:
+// localeCompare with options sets one up on every call, which is slow.
+const NAME_ORDER = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
 function sortFolder(folder: TreeFolder, order: SortOrder): void {
-  // Natural order (2 before 10), ignoring case, as Obsidian sorts.
-  const byName = (a: TreeNode, b: TreeNode) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+  const byName = (a: TreeNode, b: TreeNode) => NAME_ORDER.compare(a.name, b.name);
   folder.children.sort((a, b) => {
     if (a.type !== b.type) return a.type === "folder" ? -1 : 1; // folders first
     if (a.type === "folder") return byName(a, b); // folders always by name
