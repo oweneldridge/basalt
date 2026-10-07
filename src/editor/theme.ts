@@ -116,6 +116,9 @@ const themeSpec = {
       borderRadius: "6px",
       padding: "6px 0",
     },
+    // The holder wraps a block image: give it the image's box, or CodeMirror
+    // sees only an empty inline span and puts a click beside it before it.
+    ".cm-md-image-holder:has(> img.cm-md-image)": { display: "block", width: "fit-content", maxWidth: "100%" },
     ".cm-md-image-missing": { color: "var(--text-faint)", fontSize: "0.9em" },
     ".cm-embed-source": { color: "var(--accent)" },
     ".cm-embed-note": {

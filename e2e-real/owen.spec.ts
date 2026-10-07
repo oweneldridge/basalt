@@ -873,3 +873,28 @@ test.describe("dollar amounts in Live Preview", () => {
     await expect(page.locator(".pane:not(.dock) .cm-math")).toHaveCount(1);
   });
 });
+
+test.describe("a click beside an image", () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#8a8"/></svg>';
+  test.use({ vaultFiles: { "Beside.md": "top line\n\n![a|150](pic.svg)\n\n![[pic.svg|200]]\n\nbottom line\n", "pic.svg": svg } });
+
+  test("types after the image, as before", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Beside");
+    for (const [i, ch] of [
+      [0, "Z"],
+      [1, "Y"],
+    ] as const) {
+      await page.locator(".pane:not(.dock) .cm-line", { hasText: "top line" }).click();
+      const img = page.locator(".pane:not(.dock) img.cm-md-image").nth(i);
+      await expect(img).toHaveAttribute("src", /^data:/);
+      const box = (await img.boundingBox())!;
+      await page.mouse.click(box.x + box.width + 40, box.y + box.height / 2);
+      await page.keyboard.type(ch);
+    }
+    await settle(page, 1500);
+    const disk = vault.read("Beside.md");
+    expect(disk).toContain("![a|150](pic.svg)Z");
+    expect(disk).toContain("![[pic.svg|200]]Y");
+  });
+});
