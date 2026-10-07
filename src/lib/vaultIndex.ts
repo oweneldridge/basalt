@@ -502,6 +502,24 @@ export class VaultIndex {
     return aliasCands && aliasCands.length ? this.pickBest(aliasCands) : null;
   }
 
+  /** Obsidian's metadataCache.resolvedLinks: for each note (vault-relative
+   * path), the notes its links resolve to and how many times. A link written
+   * the same way twice counts once (Obsidian counts each). */
+  resolvedLinks(): Record<string, Record<string, number>> {
+    const out: Record<string, Record<string, number>> = {};
+    for (const [sourcePath, occs] of this.occ) {
+      const from = this.meta.get(sourcePath)?.rel;
+      if (!from) continue;
+      const counts: Record<string, number> = (out[from] = {});
+      for (const o of occs) {
+        const target = this.resolve(o.rawTarget, sourcePath);
+        const to = target ? this.meta.get(target)?.rel : undefined;
+        if (to) counts[to] = (counts[to] ?? 0) + 1;
+      }
+    }
+    return out;
+  }
+
   /** The whole vault as a graph: a node per note, an edge per resolved link. */
   graph(): GraphData {
     const nodes: GraphNode[] = [];

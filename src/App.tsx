@@ -3536,6 +3536,7 @@ export default function App() {
           frontmatter: parseProperties(note.content),
         };
       },
+      resolvedLinks: () => index.current.resolvedLinks(),
       insertAtCursor: (text, caretOffset) => editorApiRef.current?.insertAtCursor(text, caretOffset),
       openDailyNote: (date, folderIfUnset) => dailyNoteApi.current.open(date, folderIfUnset),
       hasDailyNote: (date, folderIfUnset) => dailyNoteApi.current.has(date, folderIfUnset),

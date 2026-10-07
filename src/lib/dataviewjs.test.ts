@@ -96,7 +96,8 @@ function fakeHost(): HostDeps {
     vaultName: () => "V",
     savePluginData: async () => {},
     notice: () => {},
-    getFileCache: () => ({ tags: [], links: [], headings: [], frontmatter: {} }),
+    getFileCache: (rel: string) => ({ tags: [], links: [], headings: [], frontmatter: rel === "Other/Misc.md" ? { aliases: ["Odds"] } : {} }),
+    resolvedLinks: () => ({ "SmithRx/Daily Notes/2026-07-05.md": { "Other/Misc.md": 2 }, "Other/Misc.md": {} }),
     onRegistryChanged: () => {},
   };
 }
@@ -117,6 +118,15 @@ beforeEach(async () => {
 });
 
 describe("dataviewjs (lite)", () => {
+  it("gives each page its links both ways and its aliases", async () => {
+    const el = await run(
+      'const m = dv.page("Other/Misc"); const d = dv.page("SmithRx/Daily Notes/2026-07-05");\n' +
+        'dv.paragraph([m.file.inlinks.map(String).join(","), d.file.outlinks.map(String).join(","), m.file.aliases.join(",")].join(" | "));',
+    );
+    // Paragraphs render the links, so their names show.
+    expect(textOf(el)).toContain("2026-07-05 | Misc | Odds");
+  });
+
   it("reads notes from memory, not once per note for every block", async () => {
     await run(`dv.paragraph(String(dv.pages().length))`);
     await run(`dv.paragraph(String(dv.pages().length))`);

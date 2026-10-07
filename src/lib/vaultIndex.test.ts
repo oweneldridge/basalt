@@ -398,3 +398,15 @@ describe("tags and raw HTML", () => {
     expect(extractTags("x<y and #between z>w")).toEqual(["between"]);
   });
 });
+
+describe("resolvedLinks", () => {
+  it("counts each note's links by the notes they resolve to, as Obsidian does", () => {
+    const idx = new VaultIndex();
+    idx.build([
+      { path: "/v/A.md", rel: "A.md", name: "A", content: "[[B]] and [[B]] and [[Missing]] and [x](sub/C.md)" },
+      { path: "/v/B.md", rel: "B.md", name: "B", content: "no links" },
+      { path: "/v/sub/C.md", rel: "sub/C.md", name: "C", content: "[[A]]" },
+    ] as never);
+    expect(idx.resolvedLinks()).toEqual({ "A.md": { "B.md": 1, "sub/C.md": 1 }, "B.md": {}, "sub/C.md": { "A.md": 1 } });
+  });
+});

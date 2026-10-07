@@ -520,6 +520,16 @@ async function buildIndex(app) {
     contents.push(...(await Promise.all(files.slice(k, k + 32).map((f) => read(f.path)))));
   }
   const byPath = new Map();
+  // Links both ways, as Dataview's file.outlinks and file.inlinks.
+  const resolved = app.metadataCache.resolvedLinks || {};
+  const linkTo = (path) => new Link(path, (path.split("/").pop() || path).replace(/\.md$/i, ""));
+  const inlinks = new Map();
+  for (const [from, targets] of Object.entries(resolved)) {
+    for (const to of Object.keys(targets)) {
+      if (!inlinks.has(to)) inlinks.set(to, []);
+      inlinks.get(to).push(linkTo(from));
+    }
+  }
   const pages = DataArray.from(
     files.map((f, i) => {
       const content = contents[i];
@@ -544,7 +554,9 @@ async function buildIndex(app) {
           tasks: DataArray.from(parseTasks(content, f.path)),
           tags: (cache.tags || []).map((t) => (t[0] === "#" ? t : "#" + t)),
           etags: cache.tags || [],
-          outlinks: cache.links || [],
+          outlinks: DataArray.from(Object.keys(resolved[f.path] || {}).map(linkTo)),
+          inlinks: DataArray.from(inlinks.get(f.path) || []),
+          aliases: DataArray.from([].concat(fm.aliases || fm.alias || []).map(String)),
         },
         tags: (cache.tags || []).map((t) => (t[0] === "#" ? t : "#" + t)),
       };
@@ -645,7 +657,8 @@ function buildDv(idx, el, notePath) {
       },
     pages: (source) => filterSource(pages, source),
     pagePaths: (source) => filterSource(pages, source).map((p) => p.file.path),
-    page: (path) => byPath.get(path) || byPath.get(String(path).replace(/\.md$/i, "")),
+    // By path (with or without .md) or by name, as Dataview finds a page.
+    page: (path) => byPath.get(path) || byPath.get(`${path}.md`) || byPath.get(String(path).replace(/\.md$/i, "")),
     array: (x) => DataArray.from(x),
     io: { load: (path) => idx.read(String(path)) },
     date: (x) => (x == null ? DateTime.now() : x instanceof DateTime ? x : DateTime.fromISO(x)),
