@@ -97,7 +97,8 @@ function fakeHost(): HostDeps {
     savePluginData: async () => {},
     notice: () => {},
     getFileCache: (rel: string) => ({ tags: [], links: [], headings: [], frontmatter: rel === "Other/Misc.md" ? { aliases: ["Odds"] } : {} }),
-    resolvedLinks: () => ({ "SmithRx/Daily Notes/2026-07-05.md": { "Other/Misc.md": 2 }, "Other/Misc.md": {} }),
+    resolvedLinks: () => ({ "SmithRx/Daily Notes/2026-07-05.md": { "Other/Misc.md": 2, "img/pic.png": 1 }, "Other/Misc.md": {} }),
+    unresolvedLinks: () => ({ "SmithRx/Daily Notes/2026-07-05.md": { "Not Yet": 1 }, "Other/Misc.md": {} }),
     onRegistryChanged: () => {},
   };
 }
@@ -124,7 +125,7 @@ describe("dataviewjs (lite)", () => {
         'dv.paragraph([m.file.inlinks.map(String).join(","), d.file.outlinks.map(String).join(","), m.file.aliases.join(",")].join(" | "));',
     );
     // Paragraphs render the links, so their names show.
-    expect(textOf(el)).toContain("2026-07-05 | Misc | Odds");
+    expect(textOf(el)).toContain("2026-07-05 | Misc,pic.png,Not Yet | Odds");
   });
 
   it("reads notes from memory, not once per note for every block", async () => {

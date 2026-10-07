@@ -487,18 +487,35 @@ export class VaultIndex {
   /** Obsidian's metadataCache.resolvedLinks: for each note (vault-relative
    * path), the notes its links resolve to and how many times. */
   resolvedLinks(): Record<string, Record<string, number>> {
-    const out: Record<string, Record<string, number>> = {};
+    return this.linkCounts().resolved;
+  }
+
+  /** Obsidian's resolvedLinks and unresolvedLinks together: for each note
+   * (vault-relative path), how many of its links reach each file, and how many
+   * name one that isn't there (by the name as written). `other` finds a file
+   * that isn't a note, such as an attachment, by its vault-relative path. */
+  linkCounts(other?: (rawTarget: string, sourceRel: string) => string | null): {
+    resolved: Record<string, Record<string, number>>;
+    unresolved: Record<string, Record<string, number>>;
+  } {
+    const resolved: Record<string, Record<string, number>> = {};
+    const unresolved: Record<string, Record<string, number>> = {};
     for (const [sourcePath, occs] of this.occ) {
       const from = this.meta.get(sourcePath)?.rel;
       if (!from) continue;
-      const counts: Record<string, number> = (out[from] = {});
+      const found: Record<string, number> = (resolved[from] = {});
+      const missing: Record<string, number> = (unresolved[from] = {});
       for (const o of occs) {
         const target = this.resolve(o.rawTarget, sourcePath);
-        const to = target ? this.meta.get(target)?.rel : undefined;
-        if (to) counts[to] = (counts[to] ?? 0) + 1;
+        const to = target ? this.meta.get(target)?.rel : other?.(o.rawTarget, from);
+        if (to) found[to] = (found[to] ?? 0) + 1;
+        else if (other) {
+          const name = targetPathPart(o.rawTarget).trim();
+          missing[name] = (missing[name] ?? 0) + 1;
+        }
       }
     }
-    return out;
+    return { resolved, unresolved };
   }
 
   /** The whole vault as a graph: a node per note, an edge per resolved link. */

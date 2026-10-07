@@ -417,4 +417,11 @@ describe("resolvedLinks", () => {
     ] as never);
     expect(idx.resolvedLinks()).toEqual({ "A.md": { "B.md": 2, "sub/C.md": 1 }, "B.md": {}, "sub/C.md": { "A.md": 1 } });
   });
+  it("counts links to attachments and links to nothing, as Obsidian's unresolvedLinks", () => {
+    const idx = new VaultIndex();
+    idx.build([{ path: "/v/A.md", rel: "A.md", name: "A", content: "![[pic.png]] [[Missing#h]] [[Missing]] [[B]]" }] as never);
+    const counts = idx.linkCounts((raw) => (raw === "pic.png" ? "img/pic.png" : null));
+    expect(counts.resolved).toEqual({ "A.md": { "img/pic.png": 1 } });
+    expect(counts.unresolved).toEqual({ "A.md": { Missing: 2, B: 1 } });
+  });
 });

@@ -3543,6 +3543,8 @@ export default function App() {
       }
       return byRel.get(rel);
     };
+    // Links reach attachments too, as in Obsidian's link counts.
+    const attachmentRel = (raw: string, fromRel: string) => resolveAttachment(attachmentsRef.current, raw, fromRel)?.rel ?? null;
     const deps: HostDeps = {
       cachedRead: (rel) => {
         const note = noteByRel(rel);
@@ -3627,7 +3629,8 @@ export default function App() {
           frontmatter: parseProperties(note.content),
         };
       },
-      resolvedLinks: () => index.current.resolvedLinks(),
+      resolvedLinks: () => index.current.linkCounts(attachmentRel).resolved,
+      unresolvedLinks: () => index.current.linkCounts(attachmentRel).unresolved,
       insertAtCursor: (text, caretOffset) => editorApiRef.current?.insertAtCursor(text, caretOffset),
       openDailyNote: (date, folderIfUnset) => dailyNoteApi.current.open(date, folderIfUnset),
       hasDailyNote: (date, folderIfUnset) => dailyNoteApi.current.has(date, folderIfUnset),

@@ -522,6 +522,7 @@ async function buildIndex(app) {
   const byPath = new Map();
   // Links both ways, as Dataview's file.outlinks and file.inlinks.
   const resolved = app.metadataCache.resolvedLinks || {};
+  const unresolved = app.metadataCache.unresolvedLinks || {};
   const linkTo = (path) => new Link(path, (path.split("/").pop() || path).replace(/\.md$/i, ""));
   const inlinks = new Map();
   for (const [from, targets] of Object.entries(resolved)) {
@@ -554,7 +555,7 @@ async function buildIndex(app) {
           tasks: DataArray.from(parseTasks(content, f.path)),
           tags: (cache.tags || []).map((t) => (t[0] === "#" ? t : "#" + t)),
           etags: cache.tags || [],
-          outlinks: DataArray.from(Object.keys(resolved[f.path] || {}).map(linkTo)),
+          outlinks: DataArray.from([...Object.keys(resolved[f.path] || {}), ...Object.keys(unresolved[f.path] || {})].map(linkTo)),
           inlinks: DataArray.from(inlinks.get(f.path) || []),
           aliases: DataArray.from([].concat(fm.aliases || fm.alias || []).map(String)),
         },

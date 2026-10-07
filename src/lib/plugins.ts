@@ -84,8 +84,11 @@ export interface HostDeps {
   notice: (message: string, timeoutMs?: number) => void;
   /** Parsed metadata for a note (by vault-relative path), or null if unknown. */
   getFileCache: (path: string) => FileCache | null;
-  /** Obsidian's resolvedLinks: source note → the notes it links to → count. */
+  /** Obsidian's resolvedLinks: source note → the files it links to → count. */
   resolvedLinks?: () => Record<string, Record<string, number>>;
+  /** Obsidian's unresolvedLinks: source note → names it links to that aren't
+   * in the vault → count. */
+  unresolvedLinks?: () => Record<string, Record<string, number>>;
   /** Insert text at the focused editor's caret (replacing any selection); place
    * the caret `caretOffset` chars into the inserted text. No-op if no editor.
    * Optional so older host wirings still satisfy the type. */
@@ -326,6 +329,10 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       /** Each note's resolved links, as Obsidian's `resolvedLinks`. */
       get resolvedLinks(): Record<string, Record<string, number>> {
         return host.resolvedLinks?.() ?? {};
+      },
+      /** Each note's links to files that aren't there, as Obsidian's `unresolvedLinks`. */
+      get unresolvedLinks(): Record<string, Record<string, number>> {
+        return host.unresolvedLinks?.() ?? {};
       },
     },
     workspace: {
