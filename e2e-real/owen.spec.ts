@@ -1276,3 +1276,20 @@ test.describe("the status bar", () => {
     await expect(bar).not.toContainText("Ln ");
   });
 });
+
+test.describe("Cmd-B with nothing selected", () => {
+  test.use({ vaultFiles: { "Fmt.md": "make this bold\n" } });
+
+  test("bolds the word at the caret", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Fmt");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "make this bold" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("ControlOrMeta+b");
+    await page.keyboard.press("End");
+    await page.keyboard.type(" now");
+    await settle(page, 1500);
+    expect(vault.read("Fmt.md")).toBe("make this **bold** now\n");
+  });
+});

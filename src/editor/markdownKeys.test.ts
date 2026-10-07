@@ -64,10 +64,38 @@ describe("Mod-B / Mod-I syntax-aware toggling", () => {
   it("nested ***bi***: Mod-I removes only the italic layer", () => {
     expect(apply(italic, "***bi***", 3, 5)).toBe("**bi**");
   });
-  it("empty selection wraps with caret markers", () => {
-    expect(apply(bold, "ab", 1)).toBe("a****b");
+  it("a caret in a word bolds the word, as in Obsidian", () => {
+    expect(apply(bold, "ab", 1)).toBe("**ab**");
+    expect(applySel(bold, "say hello there", 6)).toEqual({ doc: "say **hello** there", head: 8 });
+  });
+  it("a caret between words gets the markers with the caret inside", () => {
+    expect(applySel(bold, "a  b", 2)).toEqual({ doc: "a **** b", head: 4 });
+  });
+  it("a caret just before the closing markers steps out of them", () => {
+    expect(applySel(bold, "**bold** x", 6)).toEqual({ doc: "**bold** x", head: 8 });
+    expect(applySel(italic, "*it* x", 3)).toEqual({ doc: "*it* x", head: 4 });
+  });
+  it("spaces at the ends of the selection stay outside the markers", () => {
+    expect(apply(bold, "hello world", 0, 6)).toBe("**hello** world");
+    expect(apply(italic, "a  word  b", 1, 8)).toBe("a  *word*  b");
   });
 });
+
+function applySel(cmd: StateCmdLike, doc: string, anchor: number, head = anchor): { doc: string; head: number } {
+  const state = EditorState.create({
+    doc,
+    selection: EditorSelection.single(anchor, head),
+    extensions: [markdown({ base: markdownLanguage, extensions: GFM })],
+  });
+  let out = { doc, head };
+  cmd({
+    state,
+    dispatch: (tr) => {
+      out = { doc: tr.state.doc.toString(), head: tr.state.selection.main.head };
+    },
+  });
+  return out;
+}
 
 describe("Mod-K link insertion", () => {
   it("wraps a selection as [text]() ", () => {
