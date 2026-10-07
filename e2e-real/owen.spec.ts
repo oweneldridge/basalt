@@ -1705,6 +1705,37 @@ test.describe("a folded heading", () => {
   });
 });
 
+test.describe("links inside a Live Preview embed", () => {
+  test.use({
+    vaultFiles: {
+      "Host.md": "![[Embedded]]\n\nend\n",
+      "Embedded.md": "Go to [[#Target]] or [md](#Target) or [[NavA]] or [web](https://example.com/x).\n\n## Target\n\ntext\n",
+      "NavA.md": "# NavA\n",
+    },
+  });
+
+  test("open, as in Obsidian, and leave the embed rendered", async ({ page, vault }) => {
+    await openApp(page, vault);
+    const pane = page.locator(".pane:not(.dock)").first();
+    const active = pane.locator(".tab.active .tab-name");
+    const embed = pane.locator(".cm-embed");
+    const host = async () => {
+      await openNote(page, "Host");
+      await pane.locator(".cm-line", { hasText: /^end$/ }).click();
+    };
+    await host();
+    await embed.locator(".md-wikilink", { hasText: "NavA" }).click();
+    await expect(active).toHaveText("NavA");
+    await host();
+    await embed.locator(".md-wikilink", { hasText: "Target" }).click();
+    await expect(active).toHaveText("Embedded");
+    await host();
+    await embed.locator(".md-link", { hasText: "md" }).click();
+    await expect(active).toHaveText("Embedded");
+    expect(vault.read("Host.md")).toBe("![[Embedded]]\n\nend\n");
+  });
+});
+
 test.describe("pasting HTML", () => {
   test.use({ vaultFiles: { "Paste.md": "start\n\n```\ncode here\n```\n\nEND\n" } });
 

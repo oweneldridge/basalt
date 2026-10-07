@@ -223,7 +223,7 @@ function renderExtensions(cb: EditorCallbacks): Extension[] {
     query,
     baseBlocks,
     pluginBlocks,
-    transcludeBlocks,
+    transcludeBlocks({ onOpenInternal: cb.onOpenWikilink, onOpenUrl: cb.onOpenUrl }),
     codeBlocks,
     callouts,
     calloutFold,
