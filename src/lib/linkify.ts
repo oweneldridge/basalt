@@ -20,34 +20,81 @@ const HTML_TAG_RE =
   /<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^'\n]*'|"[^"\n]*"))?)*\s*\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>/g;
 // An autolink, `<scheme:...>` or `<user@host>`.
 const AUTOLINK_RE = /<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>|<[\w.+-]+@[\w-]+(?:\.[\w-]+)+>/g;
-// A link reference definition.
-const REF_DEF_RE = /^ {0,3}\[[^\]\n]+\]:\s*\S.*$/g;
+// A link reference definition, in a quote too.
+const REF_DEF_RE = /^(?: {0,3}>[ \t]?)* {0,3}\[([^\]\n]+)\]:\s*\S.*$/g;
 // A reference link or image, `[text][label]`, `![alt][label]` or `[label][]`.
 const REF_LINK_RE = /!?\[[^\]\n]*\]\[[^\]\n]*\]/g;
-// A link's address, `](address)`, whatever brackets its text holds.
-const LINK_DEST_RE = /\]\((?:<[^>\n]*>[^)\n]*|[^)\n]*)\)/g;
+// A shortcut reference link, `[label]`, a link only when the note defines it.
+const SHORTCUT_RE = /!?\[([^\][\n]+)\]/g;
 // A callout's type, a footnote reference and an email address. Run after the
 // links and URLs are masked, so a linked image's `[![` isn't read as a callout.
 const OTHER_RE = /\[![^\]\n]*\]|\[\^[^\]\n]+\]|[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 
+/** A reference label as links match it: case and runs of spaces ignored. */
+const label = (text: string) => text.trim().replace(/\s+/g, " ").toLowerCase();
+
 /** `line` with what can't hold a linkable mention (inline code and math, HTML
  * tags, autolinks, links and reference links, URLs, tags, callout types,
  * footnotes, references, emails) blanked to spaces, same length, so offsets
- * still match the line. */
-export function maskForMentions(line: string): string {
-  return line
+ * still match the line. `refs` are the labels the note defines. */
+export function maskForMentions(line: string, refs: ReadonlySet<string> = new Set()): string {
+  const code = line
     .replace(REF_DEF_RE, (m) => " ".repeat(m.length))
     .replace(INLINE_CODE_RE, (m) => " ".repeat(m.length))
     .replace(INLINE_MATH_RE, (m) => " ".repeat(m.length))
     .replace(AUTOLINK_RE, (m) => " ".repeat(m.length))
     .replace(HTML_TAG_RE, (m) => " ".repeat(m.length))
-    .replace(wikilinkRegex(), (m) => " ".repeat(m.length))
+    .replace(wikilinkRegex(), (m) => " ".repeat(m.length));
+  return blankLinks(code)
     .replace(mdLinkRegexGlobal(), (m) => " ".repeat(m.length))
     .replace(REF_LINK_RE, (m) => " ".repeat(m.length))
-    .replace(LINK_DEST_RE, (m) => " ".repeat(m.length))
+    .replace(SHORTCUT_RE, (m, text: string) => (refs.has(label(text)) ? " ".repeat(m.length) : m))
     .replace(URL_RE, (m) => " ".repeat(m.length))
     .replace(OTHER_RE, (m) => " ".repeat(m.length))
     .replace(tagRegex(), (m) => " ".repeat(m.length));
+}
+
+/** `line` with each inline link and image blanked, however deep the brackets
+ * in its text or the parentheses in its address go. A `](` with no `[`
+ * before it ends a link whose text began on a line above. */
+function blankLinks(line: string): string {
+  const open: number[] = [];
+  let out = line;
+  for (let j = 0; j < line.length; j++) {
+    if (line[j] === "\\") j++;
+    else if (line[j] === "[") open.push(j);
+    else if (line[j] === "]") {
+      const i = open.pop() ?? j;
+      const end = line[j + 1] === "(" ? addressEnd(line, j + 2) : -1;
+      if (end < 0) continue;
+      const from = line[i - 1] === "!" ? i - 1 : i;
+      out = out.slice(0, from) + " ".repeat(end - from) + out.slice(end);
+      j = end - 1;
+    }
+  }
+  return out;
+}
+
+/** Where a link's `(address "title")` ends, from where its address starts,
+ * or -1 if it isn't one. An address in angle brackets may hold a `)`. */
+function addressEnd(line: string, at: number): number {
+  let j = at;
+  while (line[j] === " " || line[j] === "\t") j++;
+  if (line[j] === "<") {
+    for (j++; j < line.length && line[j] !== ">"; j++) {
+      if (line[j] === "<") return -1;
+      if (line[j] === "\\") j++;
+    }
+    j++;
+  } else {
+    for (let depth = 0; j < line.length && line[j] !== " " && line[j] !== "\t"; j++) {
+      if (line[j] === "\\") j++;
+      else if (line[j] === "(") depth++;
+      else if (line[j] === ")" && depth-- === 0) return j + 1;
+    }
+  }
+  const rest = /^[ \t]*(?:"[^"]*"|'[^']*'|\([^()]*\))?[ \t]*\)/.exec(line.slice(j));
+  return rest ? j + rest[0].length : -1;
 }
 
 /** Each line of a note as `maskForMentions` leaves it, with what spans lines
@@ -56,9 +103,17 @@ export function maskForMentions(line: string): string {
 export function mentionLines(content: string, indented = true): string[] {
   const lines = content.split("\n");
   const prose = proseMask(lines);
+  const refs = new Set<string>();
+  if (content.includes("]:")) {
+    const def = new RegExp(REF_DEF_RE.source);
+    lines.forEach((l, i) => {
+      const m = prose[i] && def.exec(l);
+      if (m) refs.add(label(m[1]));
+    });
+  }
   return blank(content, hiddenSpans(content, indented, lines, prose))
     .split("\n")
-    .map((l, i) => (prose[i] ? maskForMentions(l) : " ".repeat(l.length)));
+    .map((l, i) => (prose[i] ? maskForMentions(l, refs) : " ".repeat(l.length)));
 }
 
 /** Where a note's text isn't prose though its lines are: `%%comments%%`, `$$`

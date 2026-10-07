@@ -84,4 +84,13 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
     expect(linkifyMention("[a [b [c]] d](<Zqn file.md>)", "Zqn")).toBeNull();
     expect(linkifyMention("Zqn and [Zqn][ref]", "Zqn")).toBe("[[Zqn]] and [Zqn][ref]");
   });
+  it("skips a shortcut reference link, an address in angle brackets that holds a ) and nested parentheses", () => {
+    const link = (note: string, n: number, name: string) => linkifyMention(note.split("\n")[n], name, undefined, mentionLines(note)[n]);
+    expect(link("See [Qsh8] and Qsh8.\n\n[qsh8]: https://e.com\n", 0, "Qsh8")).toBe("See [Qsh8] and [[Qsh8]].");
+    expect(link("> [Qsh8]: https://e.com\n", 0, "Qsh8")).toBeNull();
+    expect(linkifyMention("[l](<a)b Qsh8.md>)", "Qsh8")).toBeNull();
+    expect(linkifyMention("[x [y [z]] w](a(b)Qsh8.md)", "Qsh8")).toBeNull();
+    expect(linkifyMention("[see [Qsh8 [v2]] notes](x.md) then Qsh8", "Qsh8")).toBe("[see [Qsh8 [v2]] notes](x.md) then [[Qsh8]]");
+    expect(linkifyMention("link text](Qsh8.md) and](<Qsh8 b.md>)", "Qsh8")).toBeNull();
+  });
 });
