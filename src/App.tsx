@@ -3405,7 +3405,7 @@ export default function App() {
   // Write a plugin-modified note through the SAME vetted path as autosave
   // (atomic + .md-only backend guard + self-write suppression + index update).
   const pluginModifyNote = useCallback(
-    async (rel: string, content: string) => {
+    async (rel: string, content: string, expected?: string) => {
       const note = notesRef.current.find((n) => n.rel === rel);
       if (!note) throw new Error(`no such note: ${rel}`);
       // Refuse to be a SECOND uncoordinated writer: if the note has an unsaved
@@ -3420,7 +3420,10 @@ export default function App() {
       }
       // The index copy is the last content seen on disk (unknown for oversized notes).
       const known = note.content === "" && (note.size ?? 0) > 0 ? undefined : note.content;
-      await writeNote(note.path, content, known);
+      if (expected !== undefined && known !== undefined && known !== expected) {
+        throw new Error(`"${rel}" changed while a plugin was changing it`);
+      }
+      await writeNote(note.path, content, expected ?? known);
       rememberSelfWrite(rel, content); // AFTER a successful write (no stale suppression)
       const updated: VaultNote = {
         ...note,
@@ -3478,7 +3481,7 @@ export default function App() {
         );
         bumpStructure();
       },
-      modifyNote: (rel, content) => pluginModifyNote(rel, content),
+      modifyNote: (rel, content, expected) => pluginModifyNote(rel, content, expected),
       deleteNote: async (rel) => {
         const note = notesRef.current.find((n) => n.rel === rel || n.path === rel);
         if (note) await handleDeleteNoteRef.current(note.path, { skipConfirm: true });

@@ -68,9 +68,13 @@ const CONTENT: Record<string, string> = {
   "Journal/2026-10-06.md":
     "created: <% tp.file.creation_date('YYYY') %>\n<% await tp.user.hello('Owen') %>\n# <% moment(tp.file.title, 'YYYY-MM-DD').format('dddd, MMMM DD, YYYY') %>\n",
   "Scripts/hello.js": "async function hello(name) { return `Hello ${name}`; }\nmodule.exports = hello;",
-  ".obsidian/plugins/templater-obsidian/data.json": '{"trigger_on_file_creation": true, "user_scripts_folder": "Scripts"}',
+  ".obsidian/plugins/templater-obsidian/data.json":
+    '{"trigger_on_file_creation": true, "user_scripts_folder": "Scripts", "templates_folder": "Templates"}',
 };
 const modified: Record<string, string> = {};
+// A note whose text changes after its first read (typing while a template runs).
+const typedAfter = new Map<string, string>();
+const reads: Record<string, number> = {};
 const STATS: Record<string, { ctime: number; mtime: number }> = {
   "Journal/Note.md": { ctime: new Date(2024, 0, 2).getTime(), mtime: new Date(2024, 0, 3).getTime() },
 };
@@ -80,9 +84,10 @@ function fakeHost(): HostDeps {
   return {
     getMarkdownFiles: () =>
       Object.keys(CONTENT).map((p) => ({ path: p, name: p.split("/").pop()!.replace(/\.md$/, ""), ...(STATS[p] || {}) })),
-    readNote: async (rel: string) => CONTENT[rel] ?? "",
+    readNote: async (rel: string) => (typedAfter.has(rel) && reads[rel]++ > 0 ? typedAfter.get(rel)! : CONTENT[rel]) ?? "",
     createNote: async () => {},
-    modifyNote: async (rel: string, content: string) => {
+    modifyNote: async (rel: string, content: string, expected?: string) => {
+      if (expected !== undefined && expected !== (typedAfter.get(rel) ?? CONTENT[rel])) throw new Error("changed");
       modified[rel] = content;
     },
     deleteNote: async () => {},
@@ -156,6 +161,27 @@ describe("templater-lite", () => {
     emitVaultEvent("create", { path: "Journal/2026-10-06.md", name: "2026-10-06" });
     for (let k = 0; k < 10 && !modified["Journal/2026-10-06.md"]; k++) await flush();
     expect(modified["Journal/2026-10-06.md"]).toBe(`created: ${new Date().getFullYear()}\nHello Owen\n# Tuesday, October 06, 2026\n`);
+  });
+
+  it("leaves a new note alone when it changes while its template runs", async () => {
+    const path = "Journal/2026-10-07.md";
+    CONTENT[path] = "<% tp.file.title %>\n";
+    typedAfter.set(path, "<% tp.file.title %>\nMY FIRST THOUGHT\n");
+    reads[path] = 0;
+    emitVaultEvent("create", { path, name: "2026-10-07" });
+    for (let k = 0; k < 10; k++) await flush();
+    expect(reads[path]).toBeGreaterThan(1);
+    expect(modified[path]).toBeUndefined();
+    delete CONTENT[path];
+    typedAfter.delete(path);
+  });
+
+  it("never processes a copy made in the templates folder", async () => {
+    CONTENT["Templates/Daily copy.md"] = CONTENT["Templates/Daily.md"];
+    emitVaultEvent("create", { path: "Templates/Daily copy.md", name: "Daily copy" });
+    for (let k = 0; k < 10; k++) await flush();
+    expect(modified["Templates/Daily copy.md"]).toBeUndefined();
+    delete CONTENT["Templates/Daily copy.md"];
   });
 
   it("reports a template error instead of throwing", async () => {

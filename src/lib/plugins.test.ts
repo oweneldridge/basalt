@@ -332,6 +332,26 @@ describe("plugin vault mutations", () => {
     await loadPlugin(info({ id: "vmut", code }));
     expect(calls).toEqual(["delete:A.md", "rename:A.md->B.md", "mkdir:Folder"]);
   });
+
+  it("process writes only over the text it read, and not at all when unchanged", async () => {
+    const writes: [string, string, string | undefined][] = [];
+    const { host } = fakeHost({
+      readNote: async () => "old text",
+      modifyNote: async (pth, content, expected) => { writes.push([pth, content, expected]); },
+    });
+    installHost(host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        async onload() {
+          await this.app.vault.process("A.md", (s) => s.toUpperCase());
+          await this.app.vault.process("A.md", (s) => s);
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "vproc", code }));
+    expect(writes).toEqual([["A.md", "OLD TEXT", "old text"]]);
+  });
 });
 
 describe("enabled plugins are tied to their code", () => {

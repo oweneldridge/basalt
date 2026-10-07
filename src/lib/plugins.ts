@@ -69,7 +69,8 @@ export interface HostDeps {
   getMarkdownFiles: () => { path: string; name: string; ctime?: number; mtime?: number }[];
   readNote: (path: string) => Promise<string>;
   createNote: (path: string, content: string) => Promise<void>;
-  modifyNote: (path: string, content: string) => Promise<void>;
+  /** With `expected`, the write is refused unless the note still reads so. */
+  modifyNote: (path: string, content: string, expected?: string) => Promise<void>;
   /** Move a note (by vault-relative path) to the vault trash. */
   deleteNote: (path: string) => Promise<void>;
   /** Rename/move a note; `newPath` is a vault-relative path (with or without .md). */
@@ -288,6 +289,15 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       create: (path: string, content: string) => host.createNote(path, content),
       modify: (file: { path: string } | string, content: string) =>
         host.modifyNote(typeof file === "string" ? file : file.path, content),
+      /** Obsidian's process: change a note from its current text in one step;
+       * refused if the note changes between the read and the write. */
+      process: async (file: { path: string } | string, fn: (data: string) => string) => {
+        const rel = typeof file === "string" ? file : file.path;
+        const current = await host.readNote(rel);
+        const next = fn(current);
+        if (next !== current) await host.modifyNote(rel, next, current);
+        return next;
+      },
       delete: (file: { path: string } | string) =>
         host.deleteNote(typeof file === "string" ? file : file.path),
       rename: (file: { path: string } | string, newPath: string) =>

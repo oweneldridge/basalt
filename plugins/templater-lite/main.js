@@ -358,7 +358,7 @@ module.exports = class TemplaterLite extends Plugin {
     if (this.vaultTemplater.trigger_on_file_creation) {
       this.registerEvent(
         this.app.vault.on("create", (file) => {
-          if (file && /\.md$/i.test(file.path)) void this.processNewFile(file.path);
+          if (file && /\.md$/i.test(file.path) && !this.inTemplatesFolder(file.path)) void this.processNewFile(file.path);
         }),
       );
     }
@@ -429,6 +429,12 @@ module.exports = class TemplaterLite extends Plugin {
     return module.exports;
   }
 
+  /** A copy of a template stays a template: Templater leaves its folder alone. */
+  inTemplatesFolder(path) {
+    const folder = (this.vaultTemplater.templates_folder || "").replace(/^\/+|\/+$/g, "");
+    return !!folder && (path + "/").toLowerCase().startsWith(folder.toLowerCase() + "/");
+  }
+
   async processNewFile(path) {
     let text;
     try {
@@ -446,7 +452,14 @@ module.exports = class TemplaterLite extends Plugin {
     const fileInfo = this.fileInfoFor(path);
     try {
       const res = await processTemplate(text, buildTp(fileInfo, fileInfo.frontmatter, io));
-      if (res.text !== text) await this.app.vault.modify(path, res.text);
+      if (res.text === text) return;
+      // Only over the text it read: anything typed meanwhile stays.
+      let changed = false;
+      await this.app.vault.process(path, (now) => {
+        changed = now !== text;
+        return changed ? now : res.text;
+      });
+      if (changed) new Notice(`Templater: ${path} changed before its template ran, so its tags were left as written`);
     } catch (e) {
       new Notice(`Templater error in ${path}: ${e && e.message ? e.message : e}`);
     }
