@@ -37,6 +37,7 @@ function toggleWrap(marker: string, alt: string, typeName: string): StateCommand
   const len = marker.length;
   return ({ state, dispatch }) => {
     if (state.readOnly) return false;
+    const wrapped = new Set<number>(); // words already wrapped (two carets in one)
     const tr = state.changeByRange((range) => {
       let { from, to } = range;
       while (from < to && /\s/.test(state.sliceDoc(from, from + 1))) from++;
@@ -76,7 +77,9 @@ function toggleWrap(marker: string, alt: string, typeName: string): StateCommand
       }
       // A bare caret wraps the word it's in, keeping its place in it.
       const word = range.empty ? state.wordAt(from) : null;
+      if (word && wrapped.has(word.from)) return { range: EditorSelection.cursor(from) };
       if (word) {
+        wrapped.add(word.from);
         return {
           changes: [
             { from: word.from, insert: marker },

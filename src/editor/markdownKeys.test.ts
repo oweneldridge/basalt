@@ -105,3 +105,16 @@ describe("Mod-K link insertion", () => {
     expect(apply(link, "x", 1)).toBe("x[]()");
   });
 });
+
+describe("Cmd-B with two carets in one word", () => {
+  it("bolds the word once", () => {
+    const state = EditorState.create({
+      doc: "one two",
+      selection: EditorSelection.create([EditorSelection.cursor(1), EditorSelection.cursor(2)]),
+      extensions: [EditorState.allowMultipleSelections.of(true), markdown({ base: markdownLanguage, extensions: GFM })],
+    });
+    let out = "";
+    bold({ state, dispatch: (tr) => (out = tr.state.doc.toString()) });
+    expect(out).toBe("**one** two");
+  });
+});
