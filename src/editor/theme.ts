@@ -47,6 +47,8 @@ const themeSpec = {
     ".cm-wikilink-source": { color: "var(--accent)" },
     // Markdown links
     ".cm-md-link": { color: "var(--accent)", textDecoration: "none", cursor: "pointer" },
+    // A bare URL's own highlighting (muted) gives way to the link colour.
+    ".cm-md-link span": { color: "inherit" },
     ".cm-md-link:hover": { textDecoration: "underline" },
     // Links to files not in the vault (see .is-unresolved in styles.css).
     ".cm-wikilink.is-unresolved": {
@@ -100,17 +102,19 @@ const themeSpec = {
       padding: "1px 7px",
       fontSize: "0.86em",
     },
-    // Blockquotes + callouts
+    // Blockquotes + callouts: the bar on the text's left edge, the text
+    // indented after it, as in Reading view (not out in the left gutter).
     ".cm-blockquote": {
       borderLeft: "3px solid var(--border)",
+      marginLeft: "48px",
       paddingLeft: "12px",
-      color: "var(--text-muted)",
     },
     ".cm-callout": {
       borderLeft: "3px solid var(--cg)",
       background: "var(--cgbg)",
       paddingTop: "1px",
       paddingBottom: "1px",
+      marginLeft: "48px",
       paddingLeft: "12px",
     },
     // Colour groups (--cg) are theme variables in styles.css, shared with
@@ -375,7 +379,7 @@ const highlight = HighlightStyle.define([
   { tag: t.link, color: "var(--accent)" },
   { tag: t.url, color: "var(--text-muted)" },
   { tag: t.monospace, fontFamily: "var(--font-mono)", color: "var(--code)" },
-  { tag: t.quote, color: "var(--text-muted)", fontStyle: "italic" },
+  { tag: t.quote, color: "inherit" },
   { tag: t.list, color: "var(--text)" },
   { tag: t.contentSeparator, color: "var(--text-muted)" },
   { tag: [t.meta, t.processingInstruction], color: "var(--text-faint)" },

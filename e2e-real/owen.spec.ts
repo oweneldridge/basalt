@@ -1465,3 +1465,27 @@ test.describe("callout colours", () => {
     expect(rv).toEqual(lp);
   });
 });
+
+test.describe("quotes and bare links in Live Preview", () => {
+  test.use({ vaultFiles: { "Q.md": "Body text line\n\n> a quote line\n\n> [!tip] Tip\n> callout body\n\nsee https://example.com/path here\n\nEND\n" } });
+
+  test("sit on the text column, in plain type, and links take the link colour", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Q");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const left = (text: string) =>
+      page.locator(".pane:not(.dock) .cm-line", { hasText: text }).evaluate((e) => {
+        const r = document.createRange();
+        r.selectNodeContents(e);
+        return [...r.getClientRects()].find((x) => x.width > 0)!.left;
+      });
+    const body = await left("Body text line");
+    expect(await left("a quote line")).toBeGreaterThan(body);
+    expect(await left("callout body")).toBeGreaterThan(body);
+    await expect(page.locator(".pane:not(.dock) .cm-line", { hasText: "a quote line" })).toHaveCSS("font-style", "normal");
+    const link = page.locator(".pane:not(.dock) .cm-md-link", { hasText: "example.com" });
+    const own = await link.evaluate((e) => getComputedStyle(e).color);
+    const inner = await link.evaluate((e) => getComputedStyle(e.querySelector("span") ?? e).color);
+    expect(inner).toBe(own);
+  });
+});
