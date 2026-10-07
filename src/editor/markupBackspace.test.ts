@@ -21,6 +21,10 @@ describe("Backspace after a marker", () => {
     expect(backspace("> a\n> b", 6)).toBe("> a\nb");
     expect(backspace(">body", 1)).toBe("body");
   });
+  it("never cuts a marker in part", () => {
+    expect(backspace("- > - > w\n  2. 3. c", 18)).toBeNull();
+    expect(backspace("> [!note] T\n2. second", 14)).toBeNull();
+  });
   it("removes a quote marker inside a list item", () => {
     expect(backspace("- > q", 4)).toBe("- q");
   });
