@@ -52,6 +52,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   links, bold and italics, code, quotes and tables come across. A paste into
   code, or of text with no formatting, stays as it was.
 - Dataview JS pages have `file.inlinks`, `file.outlinks` and `file.aliases`.
+- Dataview JS blocks can use Obsidian's `app` (with `app.vault.getFiles()` and
+  `getAllLoadedFiles()` listing every file and folder), and `moment` has
+  `endOf`, `startOf` by year, month, week or hour, and `isBetween`.
 - Basalt follows the vault's "Show line number", "Confirm file deletion" and
   "Readable line length" settings (the last until it's switched in Basalt).
 - Images, PDFs, audio, video, canvases and bases can be renamed (right-click,
@@ -405,6 +408,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that follows an HTML, table or `$$` line alone.
 - A rename's report of notes it couldn't fix stays on screen instead of giving
   way to the next save's "Saved".
+- In Dataview JS, `moment(…).isBefore("2026-08-01")` and the other comparisons
+  read a date given as text instead of always answering false.
 
 ### Security
 
