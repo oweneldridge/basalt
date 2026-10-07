@@ -1752,3 +1752,17 @@ test.describe("navigation history", () => {
     await expect(active).toHaveText("First");
   });
 });
+
+test.describe("a callout inside a callout", () => {
+  test.use({ vaultFiles: { "Nest.md": "> [!note] Outer\n> outer text\n> > [!tip] Inner\n> > inner text\n\nEND\n" } });
+
+  test("shows its own title and bar in Live Preview", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Nest");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const inner = page.locator(".pane:not(.dock) .cm-callout-inner-title");
+    await expect(inner).toHaveText("💡Inner");
+    await expect(page.locator(".pane:not(.dock) .cm-quote-inner")).toHaveCount(2);
+    await expect(page.locator(".pane:not(.dock) .cm-callout-title")).toHaveText("🗒️Outer");
+  });
+});

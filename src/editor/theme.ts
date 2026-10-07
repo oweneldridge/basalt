@@ -121,6 +121,13 @@ const themeSpec = {
     // Colour groups (--cg) are theme variables in styles.css, shared with
     // Reading view.
     ".cm-callout-title": { fontWeight: "700", color: "var(--cg)" },
+    // A quote or callout inside one: its own bar (and tint) inside the parent's.
+    ".cm-quote-inner": {
+      paddingLeft: "27px",
+      backgroundImage:
+        "linear-gradient(to right, transparent 12px, var(--cg2, var(--border)) 12px, var(--cg2, var(--border)) 15px, var(--cg2bg, transparent) 15px)",
+    },
+    ".cm-callout-inner-title": { fontWeight: "700", color: "var(--cg2)" },
     // Images + embeds
     ".cm-md-image": {
       display: "block",

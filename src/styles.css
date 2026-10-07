@@ -684,6 +684,15 @@ button.primary:hover {
 .cm-callout-red, .md-callout-color-red { --cg: var(--callout-red); }
 .cm-callout-purple, .md-callout-color-purple { --cg: var(--callout-purple); }
 .cm-callout-gray, .md-callout-color-gray { --cg: var(--callout-gray); }
+/* A callout inside another (Live Preview): its own colour as --cg2. */
+.cm-callout-inner { --cg2bg: color-mix(in srgb, var(--cg2) 8%, transparent); }
+.cm-callout-inner-blue { --cg2: var(--callout-blue); }
+.cm-callout-inner-cyan { --cg2: var(--callout-cyan); }
+.cm-callout-inner-green { --cg2: var(--callout-green); }
+.cm-callout-inner-orange { --cg2: var(--callout-orange); }
+.cm-callout-inner-red { --cg2: var(--callout-red); }
+.cm-callout-inner-purple { --cg2: var(--callout-purple); }
+.cm-callout-inner-gray { --cg2: var(--callout-gray); }
 .reading-view .md-mermaid { text-align: center; margin: 12px 0; }
 .reading-view .md-mermaid svg { max-width: 100%; height: auto; }
 .reading-view .md-mermaid-error {
