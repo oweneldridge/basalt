@@ -5,7 +5,8 @@
 import { wikilinkRegex, mdLinkRegexGlobal, tagRegex, proseMask } from "./markdown";
 import { commentRanges, indentedCodeRanges } from "./render";
 
-const INLINE_CODE_RE = /`[^`\n]*`/g;
+// A code span: a run of backticks, closed by a run of the same length.
+const INLINE_CODE_RE = /(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g;
 const URL_RE = /\b(?:[a-z][a-z0-9+.-]*:\/\/|www\.)[^\s<>()[\]]+/gi;
 
 function escapeRegex(s: string): string {
@@ -13,16 +14,23 @@ function escapeRegex(s: string): string {
 }
 
 const INLINE_MATH_RE = /\$(?=[^\s$])(?:[^$\n]*?[^\s$])?\$(?!\d)/g;
-const HTML_TAG_RE = /<\/?[a-zA-Z][^>\n]*>/g;
+// An HTML tag as CommonMark reads one, so prose with a `<` in it isn't taken
+// for one.
+const HTML_TAG_RE =
+  /<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^'\n]*'|"[^"\n]*"))?)*\s*\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>/g;
+// A callout's type, a footnote reference, a link reference definition and an
+// email address: none of them is prose a link can go into.
+const OTHER_RE = /\[![^\]\n]*\]|\[\^[^\]\n]+\]|^ {0,3}\[[^\]\n]+\]:\s*\S.*$|[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 
 /** `line` with what can't hold a linkable mention (inline code and math, HTML
- * tags, links, URLs, tags) blanked to spaces, same length, so offsets still
- * match the line. */
+ * tags, links, URLs, tags, callout types, footnotes, references, emails)
+ * blanked to spaces, same length, so offsets still match the line. */
 export function maskForMentions(line: string): string {
   return line
     .replace(INLINE_CODE_RE, (m) => " ".repeat(m.length))
     .replace(INLINE_MATH_RE, (m) => " ".repeat(m.length))
     .replace(HTML_TAG_RE, (m) => " ".repeat(m.length))
+    .replace(OTHER_RE, (m) => " ".repeat(m.length))
     .replace(wikilinkRegex(), (m) => " ".repeat(m.length))
     .replace(mdLinkRegexGlobal(), (m) => " ".repeat(m.length))
     .replace(URL_RE, (m) => " ".repeat(m.length))
@@ -34,8 +42,15 @@ export function maskForMentions(line: string): string {
  * math and HTML comments. What's left is where a mention can be linked. */
 export function mentionLines(content: string, indented = true): string[] {
   const spans: [number, number][] = content.includes("%%") ? commentRanges(content) : [];
-  if (content.includes("$$") || content.includes("<!--"))
-    for (const m of content.matchAll(/\$\$[\s\S]*?\$\$|<!--[\s\S]*?-->/g)) spans.push([m.index!, m.index! + m[0].length]);
+  const lines = content.split("\n");
+  const prose = proseMask(lines);
+  if (content.includes("$$") || content.includes("<!--")) {
+    // Paired outside code, so a `$$` in code can't shift the pairs.
+    const outside = lines
+      .map((l, i) => (prose[i] ? l.replace(INLINE_CODE_RE, (m) => " ".repeat(m.length)) : " ".repeat(l.length)))
+      .join("\n");
+    for (const m of outside.matchAll(/\$\$[\s\S]*?\$\$|<!--[\s\S]*?-->/g)) spans.push([m.index!, m.index! + m[0].length]);
+  }
   // Finding indented code takes a parse; `indented: false` skips it when no
   // line that matters is indented.
   if (indented) spans.push(...indentedCodeRanges(content));
@@ -45,7 +60,6 @@ export function mentionLines(content: string, indented = true): string[] {
     for (const [from, to] of spans) for (let i = from; i < to; i++) if (chars[i] !== "\n") chars[i] = " ";
     text = chars.join("");
   }
-  const prose = proseMask(content.split("\n"));
   return text.split("\n").map((l, i) => (prose[i] ? maskForMentions(l) : " ".repeat(l.length)));
 }
 

@@ -107,7 +107,9 @@ test.describe("unlinked mentions", () => {
 });
 
 test.describe("Link all", () => {
-  const body = 'Ideas in prose\nmath $Ideas^2$ here\n%% Ideas\nstill Ideas %%\n\n    Ideas in code\n\n<span title="Ideas">x</span>\n<!-- Ideas -->\n';
+  const body =
+    'Ideas in prose\nmath $Ideas^2$ here\n%% Ideas\nstill Ideas %%\n\n    Ideas in code\n\n<span title="Ideas">x</span>\n<!-- Ideas -->\n' +
+    "Run `echo $$` now\n\n$$\nIdeas + x\n$$\n\n> [!ideas] T\n\nnote[^Ideas] and ideas@x.com\n\n[Ideas]: https://x.com/a\n";
   test.use({ vaultFiles: { "Odd.md": body } });
 
   test("links only mentions in the text, not in math, comments, code or HTML", async ({ page, vault }) => {

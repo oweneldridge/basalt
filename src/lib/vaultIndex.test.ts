@@ -274,6 +274,23 @@ describe("2.9b review regressions", () => {
     const notes = [note("Ideas.md"), note("S.md", body)];
     expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([1]);
   });
+  it("leaves out callout types, footnotes, references, emails and code, and keeps prose with < in it", () => {
+    const body = [
+      "Run `echo $$` here", // 1
+      "",
+      "$$",
+      "Ideas + x = y", // 4: math
+      "$$",
+      "null<Date coerces Ideas to InputMaybe<Time>", // 6: listed
+      "> [!ideas] Title", // 7
+      "see ``code Ideas `x` here`` end", // 8
+      "a footnote[^Ideas] here", // 9
+      "[Ideas]: https://x.com/a", // 10
+      "mail ideas@x.com", // 11
+    ].join("\n");
+    const notes = [note("Ideas.md"), note("S.md", body)];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([6]);
+  });
   it("lists only mentions the Link action can link, not tags or URLs", () => {
     const notes = [note("Ideas.md"), note("S.md", "#ideas\nhttps://x.com/ideas\nsee ideas")];
     expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([3]);
