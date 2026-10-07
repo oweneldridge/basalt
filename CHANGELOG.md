@@ -45,6 +45,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Search: `-path:`, `-file:` and `-tag:` exclude instead of including,
+  `path:"Daily Notes"` keeps its quoted value whole, and a `/regex/` may hold
+  spaces. Clicking a tag in the Tags panel searches `tag:#name` rather than
+  the text `#name`.
 - Dataview JS (lite) reads notes from the app's own copy instead of asking
   the server for every note on every block (one daily note fired about 35,000
   requests, and the failed ones silently counted as empty). It also allows

@@ -45,6 +45,10 @@ interface Query {
   paths: string[];
   files: string[];
   tags: string[];
+  /** `-path:` / `-file:` / `-tag:` exclusions. */
+  notPaths: string[];
+  notFiles: string[];
+  notTags: string[];
   regex: RegExp | null;
   /** `line:(a b)` groups — each inner array's terms must all appear on ONE line. */
   lineGroups: string[][];
@@ -70,9 +74,11 @@ function extractLineGroups(s: string): { lineGroups: string[][]; rest: string } 
 /** Split a query on spaces, keeping "quoted phrases" intact. */
 function tokenize(q: string): string[] {
   const out: string[] = [];
-  const re = /"([^"]*)"|(\S+)/g;
+  // A quoted phrase (an operator's quoted value stays one token with it), a
+  // /regex/ that may hold spaces, or a run of non-space.
+  const re = /(-?[a-z]+:)?"([^"]*)"|(\/(?:\\.|[^/\\\n])+\/[gimsuy]*)(?=\s|$)|(\S+)/gi;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(q))) out.push(m[1] !== undefined ? m[1] : m[2]);
+  while ((m = re.exec(q))) out.push(m[2] !== undefined ? (m[1] ?? "") + m[2] : (m[3] ?? m[4]));
   return out;
 }
 
@@ -101,7 +107,7 @@ function splitOnOr(query: string): string[] {
 
 function buildQuery(groupStr: string): Query {
   const { lineGroups, rest } = extractLineGroups(groupStr);
-  const q: Query = { terms: [], negations: [], paths: [], files: [], tags: [], regex: null, lineGroups };
+  const q: Query = { terms: [], negations: [], paths: [], files: [], tags: [], notPaths: [], notFiles: [], notTags: [], regex: null, lineGroups };
   for (const tok of tokenize(rest)) {
     if (!tok) continue;
     const rx = /^\/(.+)\/([gimsuy]*)$/.exec(tok);
@@ -116,8 +122,11 @@ function buildQuery(groupStr: string): Query {
     const op = /^(-?)(path|file|tag):(.*)$/i.exec(tok);
     if (op && op[3]) {
       const val = norm(op[3]);
-      const bucket = op[2].toLowerCase() === "path" ? q.paths : op[2].toLowerCase() === "file" ? q.files : q.tags;
-      bucket.push(op[2].toLowerCase() === "tag" ? val.replace(/^#/, "") : val);
+      const kind = op[2].toLowerCase();
+      const not = op[1] === "-";
+      const bucket =
+        kind === "path" ? (not ? q.notPaths : q.paths) : kind === "file" ? (not ? q.notFiles : q.files) : not ? q.notTags : q.tags;
+      bucket.push(kind === "tag" ? val.replace(/^#/, "") : val);
       continue;
     }
     if (tok.startsWith("-") && tok.length > 1) q.negations.push(norm(tok.slice(1)));
@@ -137,11 +146,15 @@ export function parseSearchGroups(query: string): Query[] {
 function noteMatchesFilters(note: VaultNote, q: Query, opts: SearchOpts): boolean {
   const rel = norm(note.rel);
   if (!q.paths.every((p) => rel.includes(p))) return false;
+  if (q.notPaths.some((p) => rel.includes(p))) return false;
   const nm = norm(note.name);
   if (!q.files.every((f) => nm.includes(f))) return false;
-  if (q.tags.length) {
+  if (q.notFiles.some((f) => nm.includes(f))) return false;
+  if (q.tags.length || q.notTags.length) {
     const tags = (opts.tagsOf?.(note.path) ?? []).map(norm);
-    if (!q.tags.every((t) => tags.some((nt) => nt === t || nt.startsWith(t + "/")))) return false;
+    const has = (t: string) => tags.some((nt) => nt === t || nt.startsWith(t + "/"));
+    if (!q.tags.every(has)) return false;
+    if (q.notTags.some(has)) return false;
   }
   return true;
 }
@@ -151,7 +164,10 @@ function groupHasContent(q: Query): boolean {
   return q.terms.length > 0 || q.regex !== null || q.lineGroups.length > 0;
 }
 function groupHasAny(q: Query): boolean {
-  return groupHasContent(q) || !!(q.paths.length || q.files.length || q.tags.length || q.negations.length);
+  return (
+    groupHasContent(q) ||
+    !!(q.paths.length || q.files.length || q.tags.length || q.negations.length || q.notPaths.length || q.notFiles.length || q.notTags.length)
+  );
 }
 /** A note satisfies a group's note-level filters + AND-terms + no-negation +
  * every `line:` group being satisfiable by some single line. */

@@ -61,6 +61,20 @@ describe("searchVault operators", () => {
     expect(hits.some((h) => h.lineText.includes("quick"))).toBe(true);
   });
 
+  it("-path:, -file: and -tag: exclude, as in Obsidian", () => {
+    const names = (q: string) => [...new Set(searchVault(NOTES, q, { tagsOf }).map((h) => h.name))];
+    expect(names("quick -path:proj")).toEqual(["Alpha"]);
+    expect(names("quick -file:alpha")).toEqual(["Beta"]);
+    expect(names("quick -tag:animals")).toEqual(["Beta"]);
+  });
+
+  it("quoted operator values and regexes with spaces stay whole", () => {
+    const notes = [...NOTES, note("Daily Notes/Day.md", "a quick daily line")];
+    const names = (q: string) => [...new Set(searchVault(notes, q).map((h) => h.name))];
+    expect(names('path:"Daily Notes" quick')).toEqual(["Day"]);
+    expect(names("/quick daily/")).toEqual(["Day"]);
+  });
+
   it("empty / whitespace query returns nothing", () => {
     expect(searchVault(NOTES, "   ")).toEqual([]);
   });
