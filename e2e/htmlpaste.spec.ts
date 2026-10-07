@@ -65,6 +65,16 @@ const cases: [string, string, string][] = [
     '<img alt="dot" src="data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=">',
     "![dot](data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=)",
   ],
+  ["a code block with line breaks", "<pre>alpha<br>beta</pre>", "```\nalpha\nbeta\n```"],
+  ["a code block of line blocks", "<pre><div>one</div><div>two</div></pre>", "```\none\ntwo\n```"],
+  [
+    "code copied from an IntelliJ IDE",
+    `<pre style="background-color:#2b2b2b;color:#a9b7c6;font-family:'JetBrains Mono',monospace;"><span style="color:#cc7832;">def </span><span style="color:#ffc66d;">f</span>():<br>    <span style="color:#cc7832;">return </span><span style="color:#6897bb;">1</span><br></pre>`,
+    "```\ndef f():\n    return 1\n```",
+  ],
+  ["spaces at a link's edges", '<p>Read the<a href="https://e.com"> docs</a>now</p>', "Read the [docs](https://e.com)now"],
+  ["non-breaking spaces", "<p>a&nbsp;&nbsp;&nbsp;b</p>", "a\u00a0\u00a0\u00a0b"],
+  ["empty inline code", "<p>x <code></code> y</p>", "x  y"],
 ];
 
 for (const [name, html, md] of cases) {
@@ -84,6 +94,10 @@ test("paste: Google Docs bold and italics convert", async ({ page }) => {
     "</p></b>";
   expect(await matters(page, html)).toBe(true);
   expect(await convert(page, html)).toBe("**Bold words** and *italic words*");
+});
+
+test("paste: a document with Apple's tab spans converts", async ({ page }) => {
+  expect(await matters(page, '<p><b>bold</b><span class="Apple-tab-span" style="white-space:pre">\t</span>text</p>')).toBe(true);
 });
 
 test("paste: code copied from an editor stays plain text", async ({ page }) => {

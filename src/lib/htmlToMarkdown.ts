@@ -19,8 +19,10 @@ const SKIP = new Set(["SCRIPT", "STYLE", "TEMPLATE", "NOSCRIPT", "HEAD", "TITLE"
  * spans in a `white-space: pre` box and is best taken as plain text. Google
  * Docs marks its spans `pre` too, but its pastes are documents. */
 export function pastedHtmlMatters(html: string): boolean {
+  // Apple's apps keep a tab in a `pre` span, which isn't code.
+  const probe = html.replace(/<span[^>]*\bApple-tab-span\b[^>]*>/gi, "<span>");
   const code =
-    /white-space:\s*pre\s*(?:[;"']|$)/im.test(html) &&
+    /white-space:\s*pre\s*(?:[;"']|$)/im.test(probe) &&
     !/docs-internal-guid/i.test(html) &&
     !/<(h[1-6]|ul|ol|table|blockquote|a\s)/i.test(html);
   if (code) return false;
@@ -55,6 +57,7 @@ function wrap(text: string, mark: string): string {
 /** Inline code, fenced with more backticks than any run inside it. */
 function codeSpan(text: string): string {
   const code = text.replace(/\r?\n|\r/g, " ");
+  if (!code) return "";
   const longest = (code.match(/`+/g) ?? []).reduce((n, r) => Math.max(n, r.length), 0);
   const fence = "`".repeat(longest + 1);
   const spaced = code.startsWith(" ") && code.endsWith(" ") && code.trim() !== "";
@@ -68,6 +71,23 @@ function codeBlock(code: string, lang: string): string {
   for (const m of code.matchAll(/^ {0,3}(`{3,})/gm)) fence = Math.max(fence, m[1].length + 1);
   const f = "`".repeat(fence);
   return `${f}${lang}\n${code.replace(/\n$/, "")}\n${f}\n\n`;
+}
+
+/** A code block's text as it shows: a `<br>` or a block inside it (how IDEs
+ * copy each line) breaks the line. */
+function preText(node: Node): string {
+  let out = "";
+  for (const c of Array.from(node.childNodes)) {
+    if (c.nodeType === 3) out += c.textContent ?? "";
+    else if (c.nodeType !== 1) continue;
+    else if (c.nodeName === "BR") out += "\n";
+    else if (BLOCK.has(c.nodeName)) {
+      if (out && !out.endsWith("\n")) out += "\n";
+      out += preText(c);
+      if (!out.endsWith("\n")) out += "\n";
+    } else out += preText(c);
+  }
+  return out;
 }
 
 /** A link or image address, written so Markdown keeps it whole. */
@@ -98,7 +118,7 @@ class Converter {
   inline(node: Node, pre = false): string {
     if (node.nodeType === 3) {
       const text = node.textContent ?? "";
-      return pre ? text : text.replace(/\s+/g, " ");
+      return pre ? text : text.replace(/[ \t\n\r\f]+/g, " "); // a non-breaking space stays
     }
     if (node.nodeType !== 1) return "";
     const el = node as Element;
@@ -118,9 +138,12 @@ class Converter {
     if (name === "A") {
       const href = (el.getAttribute("href") ?? "").trim();
       if (!href || /^javascript:/i.test(href) || href.startsWith("#")) return inner;
+      // Spaces at the link's edges go outside it, as the text reads.
       const text = inner.trim();
-      if ((!text || text === href) && /^[a-z][a-z0-9+.-]*:/i.test(href)) return `<${href.replace(/ /g, "%20")}>`;
-      return `[${text || href}](${address(href)})`;
+      const lead = inner.slice(0, inner.length - inner.trimStart().length);
+      const tail = text ? inner.slice(inner.trimEnd().length) : "";
+      if ((!text || text === href) && /^[a-z][a-z0-9+.-]*:/i.test(href)) return `${lead}<${href.replace(/ /g, "%20")}>${tail}`;
+      return `${lead}[${text || href}](${address(href)})${tail}`;
     }
     if (name === "MARK") inner = wrap(inner, "==");
     if (/^(S|DEL|STRIKE)$/.test(name)) inner = wrap(inner, "~~");
@@ -145,7 +168,7 @@ class Converter {
     if (name === "PRE") {
       const cls = `${el.querySelector("code")?.className ?? ""} ${el.className} ${el.parentElement?.className ?? ""}`;
       const lang = /(?:language|lang|highlight-(?:text|source))-([\w+-]+)/.exec(cls)?.[1] ?? "";
-      return codeBlock(el.textContent ?? "", lang);
+      return codeBlock(preText(el), lang);
     }
     if (name === "BLOCKQUOTE") {
       const body = this.blocks(el).trim();
