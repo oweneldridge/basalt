@@ -3497,6 +3497,15 @@ export default function App() {
     setNotices((n) => [...n, { id, msg }].slice(-6));
     window.setTimeout(() => setNotices((n) => n.filter((x) => x.id !== id)), Math.max(500, timeoutMs));
   }, []);
+  // Notes and canvases a rename or move couldn't fix links in. A notice, so the
+  // next save's "Saved" doesn't replace it before it's read.
+  const reportLinkFixes = useCallback(
+    (done: string, failed: string[]) => {
+      setSaveError(null);
+      if (failed.length) showNotice(`${done}, but links weren't updated in: ${failed.join(", ")}`, 15000);
+    },
+    [showNotice],
+  );
 
   // Write a plugin-modified note through the SAME vetted path as autosave
   // (atomic + .md-only backend guard + self-write suppression + index update).
@@ -4424,14 +4433,12 @@ export default function App() {
           new Map([[oldNote.rel, newRel]]),
         );
         const allFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
-        setSaveError(
-          allFails.length > 0 ? `Renamed, but link updates failed in: ${allFails.join(", ")}` : null,
-        );
+        reportLinkFixes("Renamed", allFails);
       } catch (e) {
         setSaveError(`Couldn't rename: ${e}`);
       }
     },
-    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs, rewriteNoteLinks, registerRewrite, reconcileRewrites, queueWrite],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs, rewriteNoteLinks, registerRewrite, reconcileRewrites, queueWrite, reportLinkFixes],
   );
   // Renames and folder moves run one at a time: a second one waits for the
   // first to finish rewriting links, so it never starts from stale paths.
@@ -4831,11 +4838,9 @@ export default function App() {
       const canvasFails = await rewriteCanvasRefs(postCanvases, moveRelMap);
 
       const folderFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
-      setSaveError(
-        folderFails.length > 0 ? `Folder moved, but link updates failed in: ${folderFails.join(", ")}` : null,
-      );
+      reportLinkFixes("Folder moved", folderFails);
     },
-    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs, rewriteNoteLinks],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs, rewriteNoteLinks, reportLinkFixes],
   );
   const handleRenameFolder = useCallback(
     (folderRel: string, newFolderRel: string) => enqueueRename(() => renameFolderNow(folderRel, newFolderRel)),
@@ -4965,9 +4970,9 @@ export default function App() {
         new Map([[att.rel, newRel]]),
       );
       const allFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
-      setSaveError(allFails.length > 0 ? `Renamed, but link updates failed in: ${allFails.join(", ")}` : null);
+      reportLinkFixes("Renamed", allFails);
     },
-    [flushAll, flushPath, bumpStructure, moveBigBase, getLinkFormat, rewriteNoteLinks, rewriteCanvasRefs],
+    [flushAll, flushPath, bumpStructure, moveBigBase, getLinkFormat, rewriteNoteLinks, rewriteCanvasRefs, reportLinkFixes],
   );
   const handleRenameAttachment = useCallback(
     (path: string, newName: string) => enqueueRename(() => renameAttachmentNow(currentPath(path), newName)),

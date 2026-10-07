@@ -185,7 +185,7 @@ test("rename leaves a linking note with an open conflict alone and says so", asy
   await expect(page.locator(".conflict")).toBeVisible({ timeout: 5000 });
   await renameFromTree(page, "Ideas", "Ideas Renamed");
   await expect.poll(() => vault.exists("Ideas Renamed.md")).toBe(true);
-  await expect(page.locator(".status")).toContainText("Welcome.md (unsaved edits)");
+  await expect(page.locator(".notice")).toContainText("Welcome.md (unsaved edits)");
   expect(vault.read("Welcome.md")).toBe(theirs);
   await expect(page.locator(".pane:not(.dock) .cm-content").first()).toContainText("mine, unsaved");
   expect(vault.read("Projects/Alpha.md")).toContain("[[Ideas Renamed]]");
