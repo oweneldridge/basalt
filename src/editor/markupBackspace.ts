@@ -6,7 +6,7 @@
 import type { StateCommand, Transaction } from "@codemirror/state";
 import { deleteMarkupBackward } from "@codemirror/lang-markdown";
 
-const LINE_MARKUP = /^[ \t]*(?:>[ \t]?)*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[^\]\n]\][ \t]+)?)?/;
+const LINE_MARKUP = /^[ \t]*(?:>[ \t]?|(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[^\]\n]\][ \t]+)?)*/;
 
 export const deleteMarkupOnly: StateCommand = ({ state, dispatch }) => {
   let tr: Transaction | null = null;
