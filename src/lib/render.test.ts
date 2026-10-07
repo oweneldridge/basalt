@@ -2,7 +2,7 @@ import { toggleTaskLine } from "./render";
 // Markdown→HTML rendering for Reading mode / export. Output is inserted via
 // innerHTML, so escaping is security-critical and gets first-class coverage.
 import { afterEach, describe, expect, it } from "vitest";
-import { renderMarkdown, renderInline, escapeHtml, setStrictLineBreaks } from "./render";
+import { renderMarkdown, renderInline, escapeHtml, setStrictLineBreaks, commentRanges } from "./render";
 
 describe("escaping (XSS safety)", () => {
   it("escapes HTML in prose, code, and attributes", () => {
@@ -530,6 +530,15 @@ describe("property values", () => {
 });
 
 describe("%% inside code", () => {
+  it("stays in an indented code block, and a comment after it still goes", () => {
+    const html = renderMarkdown("para\n\n    x = 10 %% 3\n\nafter %%gone%% end\n");
+    expect(html).toContain("x = 10 %% 3");
+    expect(html).not.toContain("gone");
+    expect(commentRanges("para\n\n    x %% y\n\n%% real %%")).toEqual([[18, 28]]);
+  });
+  it("still goes from an indented line that continues a list item", () => {
+    expect(renderMarkdown("- item\n\n    more %%hidden%% text\n")).not.toContain("hidden");
+  });
   it("stays as written in Reading view", () => {
     expect(renderMarkdown("~~~\nx = 10 %% 3\ny = 7 %% 2\n~~~\n")).toContain("x = 10 %% 3\ny = 7 %% 2");
     expect(renderMarkdown("see `` a %% b %% `` here\n")).toContain("a %% b %%");

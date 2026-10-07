@@ -922,16 +922,52 @@ export function stripComments(md: string): string {
  * Obsidian `%%comment%%`, inline or over lines. */
 const COMMENT_OR_CODE = /(```[\s\S]*?```|~~~[\s\S]*?~~~|``[^\n]*?``|`[^`\n]*`)|%%[\s\S]*?%%/g;
 
+/** Whether an indented line holds a `%%`, which may be code rather than a
+ * comment depending on the lines around it. */
+export function mayHaveIndentedComment(md: string): boolean {
+  return /^(?: {4}|\t).*%%/m.test(md);
+}
+
+/** Indented code blocks (four spaces or a tab, outside a list), whose text is
+ * literal. Only parsed for when an indented line holds a `%%`. */
+function indentedCode(md: string): [number, number][] {
+  if (!mayHaveIndentedComment(md)) return [];
+  const out: [number, number][] = [];
+  mdParser.parse(md).iterate({
+    enter: (n) => {
+      if (n.name === "CodeBlock") out.push([n.from, n.to]);
+      return n.name !== "CodeBlock";
+    },
+  });
+  return out;
+}
+
+/** The code and comments in `md`, in order: `code` is true for code (left as
+ * written), false for a `%%comment%%`. */
+function* commentsAndCode(md: string): Generator<{ from: number; to: number; code: boolean }> {
+  const re = new RegExp(COMMENT_OR_CODE.source, "g");
+  const blocks = indentedCode(md);
+  let b = 0;
+  for (let m; (m = re.exec(md)); ) {
+    while (b < blocks.length && blocks[b][1] <= m.index) b++;
+    const block = blocks[b];
+    if (block && block[0] <= m.index) {
+      yield { from: block[0], to: block[1], code: true };
+      re.lastIndex = block[1];
+      continue;
+    }
+    yield { from: m.index, to: m.index + m[0].length, code: m[1] !== undefined };
+  }
+}
+
 /** Where each `%%comment%%` is, as [from, to) offsets, skipping code. */
 export function commentRanges(md: string): [number, number][] {
-  const re = new RegExp(COMMENT_OR_CODE.source, "g");
   const out: [number, number][] = [];
-  for (let m; (m = re.exec(md)); ) if (m[1] === undefined) out.push([m.index, m.index + m[0].length]);
+  for (const r of commentsAndCode(md)) if (!r.code) out.push([r.from, r.to]);
   return out;
 }
 
 function stripCommentsMapped(md: string): { text: string; map: number[] } {
-  const re = new RegExp(COMMENT_OR_CODE.source, "g");
   const map = [0];
   let text = "";
   let src = 0; // source line at the current position
@@ -940,12 +976,13 @@ function stripCommentsMapped(md: string): { text: string; map: number[] } {
     for (let p = chunk.indexOf("\n"); p !== -1; p = chunk.indexOf("\n", p + 1)) map.push(++src);
   };
   let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(md))) {
-    copy(md.slice(last, m.index));
-    if (m[1] !== undefined) copy(m[0]);
-    else for (let p = m[0].indexOf("\n"); p !== -1; p = m[0].indexOf("\n", p + 1)) src++;
-    last = m.index + m[0].length;
+  for (const r of commentsAndCode(md)) {
+    if (r.from < last) continue;
+    const found = md.slice(r.from, r.to);
+    copy(md.slice(last, r.from));
+    if (r.code) copy(found);
+    else for (let p = found.indexOf("\n"); p !== -1; p = found.indexOf("\n", p + 1)) src++;
+    last = r.to;
   }
   copy(md.slice(last));
   return { text, map };

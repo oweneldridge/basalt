@@ -5,7 +5,7 @@ import { commentRanges } from "../lib/render";
 
 const spans = (state: EditorState) => {
   const out: string[] = [];
-  state.field(comments).between(0, state.doc.length, (from, to) => {
+  state.field(comments).deco.between(0, state.doc.length, (from, to) => {
     out.push(state.sliceDoc(from, to));
   });
   return out;

@@ -1328,7 +1328,7 @@ test.describe("a link's text in Live Preview", () => {
 });
 
 test.describe("comments in Live Preview", () => {
-  test.use({ vaultFiles: { "Cmt.md": "before %%inline note%% after\n\n%%\nblock line\n%%\n\n`code %%not%%` x\n\nEND\n" } });
+  test.use({ vaultFiles: { "Cmt.md": "before %%inline note%% after\n\n%%\nblock line\n%%\n\n`code %%not%%` x\n\n    indented %%code%% too\n\nEND\n" } });
 
   test("show dimmed, as in Obsidian, not hidden", async ({ page, vault }) => {
     await openApp(page, vault);
@@ -1339,6 +1339,10 @@ test.describe("comments in Live Preview", () => {
     await expect(pane.locator(".cm-comment", { hasText: "inline note" })).toHaveCount(1);
     await expect(pane.locator(".cm-line", { hasText: "block line" }).locator(".cm-comment")).toHaveCount(1);
     await expect(pane.locator(".cm-comment", { hasText: "%%not%%" })).toHaveCount(0);
+    await expect(pane.locator(".cm-comment", { hasText: "%%code%%" })).toHaveCount(0);
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await expect(pane.locator(".reading-view pre", { hasText: "indented %%code%% too" })).toHaveCount(1);
+    await expect(pane.locator(".reading-view")).not.toContainText("inline note");
   });
 });
 

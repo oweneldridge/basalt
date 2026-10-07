@@ -13,7 +13,7 @@ import { commentRanges } from "../lib/render";
 const BASE = [
   "---", "title: x", "---", "intro $a$ and $$b$$ here", "", "<div>", "html body", "</div>", "after", "",
   "```", "<div>not html</div> $not math$", "```", "", "$$", "x^2", "$$", "", "text with `$code$` and $5 and $10",
-  "<center>one line</center>", "plain words", "", "last $z$",
+  "<center>one line</center>", "plain words", "", "last $z$", "para", "    x = 10 %% 3", "", "    code %% y", "- item", "", "    more %%c%% text",
 ].join("\n");
 
 // A small deterministic random source, so a failure can be replayed.
@@ -46,7 +46,7 @@ describe("incremental fields", () => {
         const math = state.field(mathField).spans.map((s) => [s.from, s.to, s.tex, s.block]);
         expect(math, `math after step ${step}`).toEqual(scanMath(state));
         const cm: number[][] = [];
-        state.field(comments).between(0, state.doc.length, (f, t) => {
+        state.field(comments).deco.between(0, state.doc.length, (f, t) => {
           cm.push([f, t]);
         });
         expect(cm, `comments after step ${step}`).toEqual(commentRanges(state.doc.toString()));
