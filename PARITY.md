@@ -68,6 +68,12 @@ wasn't run; where its behaviour was unclear, its own bundled code (1.14.4
   tree tags their extension.
 - Backlink and mention counts are per match; `resolvedLinks` and
   `unresolvedLinks` count every link, attachments included.
+- Numbered lists renumber after every edit by Obsidian's rules, checked
+  against its own filter over 170,000 Tab and Shift-Tab cases and 120,000 random
+  edits with no difference. That includes its quirks: a list keeps counting
+  across a blank line whatever the delimiter (`1.` then `1)`), and an item past
+  a gap isn't renumbered until it's edited.
+- Links in canvas text cards follow renames.
 
 Still different: a table whose header and delimiter rows have different cell
 counts isn't read as a table (Obsidian draws one), and Basalt's link colours

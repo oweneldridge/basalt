@@ -410,6 +410,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   way to the next save's "Saved".
 - In Dataview JS, `moment(…).isBefore("2026-08-01")` and the other comparisons
   read a date given as text instead of always answering false.
+- Renames and moves fix links in canvas text cards too, as Obsidian does.
+- The editor menu's Cut and Paste, template inserts and plugin inserts can't
+  change a folded section's hidden text either, and a triple-click on a folded
+  heading no longer counts as selecting what it hides.
+- Link all also leaves callout types, footnote references, link reference
+  definitions and email addresses alone, and no longer skips prose that holds a
+  `<` (`null<Date`), or text after a `$$` written in code.
+- Search keeps a quoted phrase, a `[[link]]` or a regex whole inside `line:()`,
+  `task:()` and `section:()`, and counting every result costs little.
+- Numbered lists renumber after any edit (deleting an item, typing a new one,
+  Tab and Shift-Tab) by the rules Obsidian follows.
+- A misspelled Dataview query type (`TABLEX`) is reported instead of running as
+  a table of every note.
 
 ### Security
 
