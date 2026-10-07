@@ -1552,3 +1552,20 @@ test.describe("a property being typed", () => {
     await expect.poll(() => vault.read("Prop.md")).toContain("StressXYZ2");
   });
 });
+
+test.describe("a loose numbered list", () => {
+  test.use({ vaultFiles: { "Loose.md": "1. alpha\n\n2. bravo\n\n3. charlie\n\nEND\n" } });
+
+  test("keeps its numbers through Tab and Shift-Tab", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Loose");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: "bravo" }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.press("Tab");
+    await settle(page, 1200);
+    expect(vault.read("Loose.md")).toBe("1. alpha\n\n\t1. bravo\n\n2. charlie\n\nEND\n");
+    await page.keyboard.press("Shift+Tab");
+    await settle(page, 1200);
+    expect(vault.read("Loose.md")).toBe("1. alpha\n\n2. bravo\n\n3. charlie\n\nEND\n");
+  });
+});

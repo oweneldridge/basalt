@@ -32,7 +32,8 @@ function blockEnd(state: EditorState, n: number, indent: string): number {
 }
 
 /** Renumber the run of numbered items at `indent` that contains line `n`.
- * `restart` makes a run that begins at line `n` count from 1. */
+ * `restart` makes a run that begins at line `n` count from 1. Blank lines
+ * between items (a loose list) don't end the run. */
 function renumber(state: EditorState, n: number, indent: string, restart = false): ChangeSpec[] {
   const at = (k: number) => {
     const it = item(state.doc.line(k));
@@ -40,7 +41,7 @@ function renumber(state: EditorState, n: number, indent: string, restart = false
   };
   const deeper = (k: number) => {
     const text = state.doc.line(k).text;
-    return text.trim() !== "" && text.startsWith(indent) && /^\s/.test(text.slice(indent.length));
+    return text.trim() === "" || (text.startsWith(indent) && /^\s/.test(text.slice(indent.length)));
   };
   let first = n;
   for (let k = n - 1; k >= 1; k--) {
@@ -68,7 +69,7 @@ function renumber(state: EditorState, n: number, indent: string, restart = false
 function nextAt(state: EditorState, end: number, indent: string): number | null {
   for (let k = end + 1; k <= state.doc.lines; k++) {
     const text = state.doc.line(k).text;
-    if (text.trim() === "") return null;
+    if (text.trim() === "") continue;
     const it = item(state.doc.line(k));
     if (it && it.indent === indent) return k;
     if (!text.startsWith(indent)) return null;
