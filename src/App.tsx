@@ -155,6 +155,13 @@ const WINDOW_LABEL: string = (() => {
 
 // Mirrors a frontend diagnostic into the dev terminal (used for failures that
 // must never be silently swallowed).
+/** A property value being typed in an editor commits when it loses focus, so
+ * take the focus before the editor goes (Reading view, a closed tab). */
+function commitFieldEdit(): void {
+  const el = document.activeElement;
+  if (el instanceof HTMLElement && el.matches("input, textarea") && el.closest(".cm-editor")) el.blur();
+}
+
 function jsLog(msg: string): void {
   console.log("[basalt]", msg);
   invoke("debug_log", { msg }).catch(() => {});
@@ -1412,6 +1419,7 @@ export default function App() {
     async (id: string, path: string) => {
       const pane = panesRef.current[id];
       if (!pane) return;
+      commitFieldEdit();
       if (pane.pinned?.includes(path)) {
         setSaveError("Unpin the tab before closing it");
         return;
@@ -2742,6 +2750,7 @@ export default function App() {
   }, []);
 
   const toggleReading = useCallback(() => {
+    commitFieldEdit();
     setReadingMode((on) => {
       const next = !on;
       const v = vaultRef.current;

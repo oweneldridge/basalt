@@ -1531,3 +1531,24 @@ test.describe("code blocks", () => {
     expect(await colors(pane.locator(".reading-view"))).toEqual(lp);
   });
 });
+
+test.describe("a property being typed", () => {
+  test.use({ vaultFiles: { "Prop.md": "---\ntitle: Stress\n---\nbody\n" } });
+
+  test("is kept by Cmd-E and by closing the tab", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Prop");
+    const input = page.locator(".pane:not(.dock) .cm-properties input").first();
+    await input.click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("XYZ");
+    await page.keyboard.press("ControlOrMeta+e");
+    await page.keyboard.press("ControlOrMeta+e");
+    await expect.poll(() => vault.read("Prop.md")).toContain("StressXYZ");
+    await page.locator(".pane:not(.dock) .cm-properties input").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("2");
+    await page.keyboard.press("ControlOrMeta+w");
+    await expect.poll(() => vault.read("Prop.md")).toContain("StressXYZ2");
+  });
+});
