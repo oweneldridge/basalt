@@ -309,6 +309,8 @@ const isMarkdownPath = (p: string) => /\.md$/i.test(p);
 
 /** Files that open in a pane as a READ-ONLY viewer rather than an editor. */
 const isViewerPath = (p: string) => /\.(canvas|base)$/i.test(p);
+// Notes a rename or move fixes links in at the same time.
+const REWRITES_AT_ONCE = 6;
 
 /** Find a task's CURRENT line in freshly-read content, verifying identity
  * (text + status + indent) so a toggle never flips the wrong line or
@@ -4176,24 +4178,28 @@ export default function App() {
   );
 
   // Fix the links `mapperFor` changes in each note, reading DISK so a fresher
-  // outside edit is never reverted (a cheap in-memory pass picks the notes). As
-  // in note rename, a conflict is reported and a note being typed into gets the
-  // fix in its editor, merged with the typing. Returns the notes left unfixed.
+  // outside edit is never reverted (a cheap in-memory pass picks the notes). A
+  // note with an open conflict is reported (rewriting would drop "mine"); one
+  // being typed into gets the fix in its editor, merged with the typing and
+  // saved with it. A few notes are fixed at once, each in its own save queue,
+  // so a rename's round trips overlap. Returns the notes left unfixed and how
+  // many were written.
   const rewriteNoteLinks = useCallback(
-    async (notes: VaultNote[], mapperFor: (n: VaultNote) => LinkMapper): Promise<string[]> => {
+    async (notes: VaultNote[], mapperFor: (n: VaultNote) => LinkMapper): Promise<{ failures: string[]; written: number }> => {
       const failures: string[] = [];
-      for (const note of notes) {
-        const mapper = mapperFor(note);
-        if (rewriteLinks(note.content, mapper) === null) continue; // unaffected
-        if (conflictsRef.current.has(note.path)) {
-          failures.push(`${note.rel} (unsaved edits)`);
-          continue;
-        }
-        if (pending.current.has(note.path)) {
-          if (fixOpenEditors(note.path, (t) => rewriteLinks(t, mapper) ?? t) === null) failures.push(`${note.rel} (unsaved edits)`);
-          continue;
-        }
+      let written = 0;
+      const fix = async (note: VaultNote) => {
         try {
+          const mapper = mapperFor(note);
+          if (rewriteLinks(note.content, mapper) === null) return; // unaffected
+          if (conflictsRef.current.has(note.path)) {
+            failures.push(`${note.rel} (unsaved edits)`);
+            return;
+          }
+          if (pending.current.has(note.path)) {
+            if (fixOpenEditors(note.path, (t) => rewriteLinks(t, mapper) ?? t) === null) failures.push(`${note.rel} (unsaved edits)`);
+            return;
+          }
           await queueWrite(note.path, async () => {
             const known = knownText(note.path);
             const disk = await readNote(note.path);
@@ -4202,14 +4208,21 @@ export default function App() {
             rememberSelfWrite(note.rel, next); // before the write: its echo isn't an outside edit
             await writeNote(note.path, next, disk);
             registerRewrite({ ...note, content: next });
+            written++;
+            // Editors take the outcome now, before a save queued behind this job.
             reconcileRewrites([{ path: note.path, base: disk, next, mapper, known }]);
           });
         } catch (e) {
           failures.push(note.rel);
           console.error("[basalt] link rewrite failed", note.rel, e);
         }
-      }
-      return failures;
+      };
+      let next = 0;
+      const worker = async () => {
+        while (next < notes.length) await fix(notes[next++]);
+      };
+      await Promise.all(Array.from({ length: REWRITES_AT_ONCE }, worker));
+      return { failures, written };
     },
     [queueWrite, rememberSelfWrite, registerRewrite, reconcileRewrites],
   );
@@ -4392,43 +4405,11 @@ export default function App() {
           !literal && preIndex.resolve(raw, notePath) === oldPath && !viaAlias(raw)
             ? linkTargetForFormat(fmt, newRelNoExt, taken, noteRel)
             : null;
-        const done: string[] = [];
-        const failures: string[] = [];
-        for (const note of preNotes) {
-          if (note.path === oldPath) continue;
-          if (rewriteLinks(note.content, sourceMap(note.path, note.rel)) === null) continue; // unaffected
-          // An open conflict: rewriting would drop "mine". Report it instead.
-          if (conflictsRef.current.has(note.path)) {
-            failures.push(`${note.rel} (unsaved edits)`);
-            continue;
-          }
-          // Being typed into: fix the links in its editor, where they merge with
-          // the typing and get saved with it.
-          if (pending.current.has(note.path)) {
-            const map = sourceMap(note.path, note.rel);
-            if (fixOpenEditors(note.path, (t) => rewriteLinks(t, map) ?? t) === null) failures.push(`${note.rel} (unsaved edits)`);
-            continue;
-          }
-          try {
-            const mapper = sourceMap(note.path, note.rel);
-            await queueWrite(note.path, async () => {
-              const known = knownText(note.path);
-              const disk = await readNote(note.path);
-              const next = rewriteLinks(disk, mapper);
-              if (next === null) return;
-              rememberSelfWrite(note.rel, next); // before the write: its echo isn't an outside edit
-              await writeNote(note.path, next, disk);
-              registerRewrite({ ...note, content: next });
-              done.push(note.path);
-              // Editors take the outcome now, before a save queued behind this job.
-              reconcileRewrites([{ path: note.path, base: disk, next, mapper, known }]);
-            });
-          } catch (e) {
-            failures.push(note.rel);
-            console.error("[basalt] link rewrite failed", note.rel, e);
-          }
-        }
-        if (done.length > 0) bumpStructure();
+        const { failures, written } = await rewriteNoteLinks(
+          preNotes.filter((n) => n.path !== oldPath),
+          (n) => sourceMap(n.path, n.rel),
+        );
+        if (written > 0) bumpStructure();
         // Repoint canvas file-node embeds of the renamed note (canvases aren't
         // in the note link-rewrite loop above; without this they'd dangle).
         const canvasFails = await rewriteCanvasRefs(
@@ -4445,7 +4426,7 @@ export default function App() {
         setSaveError(`Couldn't rename: ${e}`);
       }
     },
-    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs, registerRewrite, reconcileRewrites, queueWrite],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs, rewriteNoteLinks, registerRewrite, reconcileRewrites, queueWrite],
   );
   // Renames and folder moves run one at a time: a second one waits for the
   // first to finish rewriting links, so it never starts from stale paths.
@@ -4828,7 +4809,7 @@ export default function App() {
         folderMoveMapper(moveCtx, postToOld.get(post.path) ?? post.path, post.path, post.rel);
 
       // One pass over every note, moved and unmoved.
-      const failures = await rewriteNoteLinks(postNotes, makeMapper);
+      const { failures } = await rewriteNoteLinks(postNotes, makeMapper);
 
       // Repoint canvas file-node embeds of every moved note AND moved
       // attachment (canvas file-nodes can embed images/PDFs/nested canvases, not
@@ -4961,7 +4942,7 @@ export default function App() {
           return next === (literal ? raw : targetPathPart(raw)) ? null : next;
         };
       };
-      const failures = await rewriteNoteLinks(preNotes, mapperFor);
+      const { failures } = await rewriteNoteLinks(preNotes, mapperFor);
       const canvasFails = await rewriteCanvasRefs(
         postAtts.filter((a) => /\.canvas$/i.test(a.path)).map((a) => ({ path: a.path, rel: a.rel })),
         new Map([[att.rel, newRel]]),
