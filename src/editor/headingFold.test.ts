@@ -158,13 +158,27 @@ describe("deleting next to a folded section", () => {
   });
   it("lets a selection into the text after it, or the whole note, delete it", () => {
     const { state, range } = folded();
-    const past = state.update({ selection: { anchor: 0, head: range.to + 1 } }).state;
-    expect(past.update({ changes: { from: 0, to: range.to + 1 }, userEvent: "delete.backward" }).state.doc.toString()).toBe("# B\nafter");
+    const past = state.update({ selection: { anchor: 0, head: range.to + 2 } }).state;
+    expect(past.update({ changes: { from: 0, to: range.to + 2 }, userEvent: "delete.backward" }).state.doc.toString()).toBe(" B\nafter");
     const tail = "# A\nhidden";
     const base = EditorState.create({ doc: tail, extensions: [markdown({ base: markdownLanguage, extensions: GFM }), headingFold] });
     ensureSyntaxTree(base, tail.length, 5000);
     const end = base.update({ effects: foldEffect.of(headingSectionAt(base, 0)!), selection: { anchor: 0, head: tail.length } }).state;
     expect(end.update({ changes: { from: 0, to: tail.length }, userEvent: "delete.backward" }).state.doc.toString()).toBe("");
+  });
+  it("opens it when a selection ends with the line it heads (a triple-click)", () => {
+    const { state, range } = folded();
+    const line = state.update({ selection: { anchor: 0, head: range.to + 1 } }).state;
+    const after = line.update({ changes: { from: 0, to: range.to + 1, insert: "# Fresh" }, userEvent: "input.type" }).state;
+    expect(after.doc.toString()).toBe(doc);
+    expect(foldedRanges(after).size).toBe(0);
+  });
+  it("lets the app's own edits through, and opens it for a drop at its end", () => {
+    const { state, range } = folded();
+    expect(state.update({ changes: { from: range.from, to: range.to } }).state.doc.toString()).toBe("# A\n# B\nafter");
+    const dropped = state.update({ changes: { from: range.to, insert: "x" }, userEvent: "input.drop" }).state;
+    expect(dropped.doc.toString()).toBe("# A\nhidden one\nhidden twox\n# B\nafter");
+    expect(foldedRanges(dropped).size).toBe(0);
   });
   it("lets undo bring back what it hid", () => {
     const { state, range } = folded();

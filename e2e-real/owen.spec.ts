@@ -1741,6 +1741,29 @@ test.describe("a folded heading", () => {
     }
   });
 
+  test("opens instead of letting the right-click Cut or Paste change it", async ({ page, vault, context }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await openApp(page, vault);
+    await openNote(page, "Fold");
+    const pane = page.locator(".pane:not(.dock)");
+    for (const item of ["Cut", "Paste"]) {
+      await pane.locator(".cm-line", { hasText: "after" }).click();
+      await page.evaluate(() => navigator.clipboard.writeText("PASTED"));
+      await pane.locator(".cm-fold-marker").first().click({ force: true });
+      await expect(pane.locator(".cm-line", { hasText: "hidden one" })).toHaveCount(0);
+      await page.keyboard.press("ControlOrMeta+Home");
+      await page.keyboard.press("ArrowRight");
+      await page.keyboard.press("ArrowRight");
+      await page.keyboard.press("Shift+End");
+      const box = (await pane.locator(".cm-selectionBackground").first().boundingBox())!;
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: "right" });
+      await page.locator(".ctx-item", { hasText: new RegExp(`^${item}$`) }).click();
+      await expect(pane.locator(".cm-line", { hasText: "hidden two" }), item).toHaveCount(1);
+      await settle(page, 900);
+      expect(vault.read("Fold.md"), item).toBe("# A\nhidden one\nhidden two\n# B\nafter\n");
+    }
+  });
+
   test("lets a selection the user made be deleted, hidden text and all", async ({ page, vault }) => {
     await openApp(page, vault);
     await openNote(page, "Fold");

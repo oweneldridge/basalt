@@ -139,7 +139,9 @@ const guardFolds = EditorState.transactionFilter.of((tr) => {
   const all = tr.startState.doc.length;
   const open: { from: number; to: number }[] = [];
   foldedRanges(tr.startState).between(0, all, (from, to) => {
-    const covered = tr.startState.selection.ranges.some((r) => r.from <= from && (r.to > to || (r.from === 0 && r.to === all)));
+    // Into the text of the line after it: a selection that ends at the line's
+    // end (Shift+End, a triple-click) shows only the placeholder selected.
+    const covered = tr.startState.selection.ranges.some((r) => r.from <= from && (r.to > to + 1 || (r.from === 0 && r.to === all)));
     if (covered) return;
     tr.changes.iterChanges((fromA, toA) => {
       if ((fromA < to && toA > from) || (fromA === to && toA > to)) open.push({ from, to });
@@ -152,11 +154,13 @@ const guardFolds = EditorState.transactionFilter.of((tr) => {
   return { effects: open.map((r) => unfoldEffect.of(r)), selection: sel.empty ? undefined : EditorSelection.cursor(sel.from) };
 });
 
-/** Text typed or pasted at a folded section's hidden end (where the caret
- * sits after its placeholder) would join its last hidden line, so the section
- * opens to show where it went. Enter starts a line after the section as usual. */
+/** Text typed, pasted, dropped or inserted at a folded section's hidden end
+ * (where the caret sits after its placeholder) would join its last hidden
+ * line, so the section opens to show where it went. Enter starts a line after
+ * the section as usual. */
 const openWhenTypedAtEnd = EditorState.transactionFilter.of((tr) => {
-  if (!tr.docChanged || !(tr.isUserEvent("input.type") || tr.isUserEvent("input.paste"))) return tr;
+  const event = tr.annotation(Transaction.userEvent);
+  if (!tr.docChanged || !event || /^(undo|redo|input\.indent|delete\.dedent)/.test(event)) return tr;
   const open: { from: number; to: number }[] = [];
   foldedRanges(tr.startState).between(0, tr.startState.doc.length, (from, to) => {
     tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {

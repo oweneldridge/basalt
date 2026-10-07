@@ -351,6 +351,7 @@ export function EditorPane({
           changes: { from: sel.from, to: sel.to, insert: text },
           selection: EditorSelection.cursor(caret),
           scrollIntoView: true,
+          userEvent: "input",
         });
         v.focus();
       },
@@ -365,6 +366,7 @@ export function EditorPane({
           changes: { from: at, insert: text },
           selection: EditorSelection.cursor(at + (caretOffset ?? text.length)),
           scrollIntoView: true,
+          userEvent: "input",
         });
         v.focus();
       },
@@ -373,7 +375,7 @@ export function EditorPane({
         if (!v) return;
         const doc = v.state.doc.toString();
         const changes = textChanges(doc, fn(doc));
-        if (changes.length) v.dispatch({ changes });
+        if (changes.length) v.dispatch({ changes, userEvent: "input" });
       },
       hasSelection: () => {
         const v = view.current;
@@ -395,7 +397,7 @@ export function EditorPane({
         const text = v.state.sliceDoc(m.from, m.to);
         if (!text) return;
         void navigator.clipboard?.writeText(text);
-        v.dispatch({ changes: { from: m.from, to: m.to, insert: "" }, selection: EditorSelection.cursor(m.from) });
+        v.dispatch({ changes: { from: m.from, to: m.to, insert: "" }, selection: EditorSelection.cursor(m.from), userEvent: "delete.cut" });
         v.focus();
       },
       paste: () => {
@@ -409,6 +411,7 @@ export function EditorPane({
             changes: { from: m.from, to: m.to, insert: text },
             selection: EditorSelection.cursor(m.from + text.length),
             scrollIntoView: true,
+            userEvent: "input.paste",
           });
           vv.focus();
         });
