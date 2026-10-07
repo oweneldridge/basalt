@@ -407,7 +407,7 @@ fn collect_vault(dir: &Path, root: &Path, out: &mut Vec<VaultNote>) {
 /// write temps, and return the canonical root (the path form every subsequent
 /// command and event will use).
 pub fn open_vault(path: &str) -> Result<PathBuf, String> {
-    let root = fs::canonicalize(&path).map_err(|e| format!("vault: {e}"))?;
+    let root = fs::canonicalize(path).map_err(|e| format!("vault: {e}"))?;
     if !root.is_dir() {
         return Err("vault is not a directory".into());
     }
@@ -433,7 +433,7 @@ pub fn percent_encode(s: &str) -> String {
 /// the frontend link/metadata index. Async so the walk stays off the main thread.
 pub fn read_vault(root: &Path) -> Vec<VaultNote> {
     let mut out = Vec::new();
-    collect_vault(&root, &root, &mut out);
+    collect_vault(root, root, &mut out);
     out.sort_by_key(|a| a.rel.to_lowercase());
     out
 }
@@ -443,7 +443,7 @@ pub fn read_vault(root: &Path) -> Vec<VaultNote> {
 /// — a deliberate data-safety stance (Obsidian vaults are UTF-8). Surfaces a
 /// clear, actionable message for that case instead of a raw IO error.
 pub fn read_note(root: &Path, path: String) -> Result<String, String> {
-    let resolved = ensure_in_vault(&root, &path)?;
+    let resolved = ensure_in_vault(root, &path)?;
     match fs::read_to_string(&resolved) {
         // Normalize to LF for the editor; write_note re-applies the file's EOL.
         Ok(raw) => Ok(to_lf(&raw)),
@@ -498,7 +498,7 @@ fn check_unchanged(path: &Path, expected: Option<&str>, content: &str) -> Result
 
 /// Atomically write a note's contents, only within the vault.
 pub fn write_note(root: &Path, path: String, content: String, expected: Option<String>) -> Result<(), String> {
-    let resolved = ensure_in_vault(&root, &path)?;
+    let resolved = ensure_in_vault(root, &path)?;
     // Defense in depth: write_note IS the Markdown-note pipeline, so it must only
     // ever touch a `.md` file. This turns the "never write back a .canvas (or any
     // attachment) opened in a read-only viewer" rule — otherwise enforced only by
@@ -525,7 +525,7 @@ pub fn write_note(root: &Path, path: String, content: String, expected: Option<S
 /// vault. Extension-gated like write_note so this pipeline can only ever touch a
 /// `.canvas` — never a note or another attachment.
 pub fn write_canvas(root: &Path, path: String, content: String, expected: Option<String>) -> Result<(), String> {
-    let resolved = ensure_in_vault(&root, &path)?;
+    let resolved = ensure_in_vault(root, &path)?;
     let is_canvas = resolved
         .extension()
         .and_then(|e| e.to_str())
@@ -552,7 +552,7 @@ pub fn write_canvas(root: &Path, path: String, content: String, expected: Option
 /// within the vault. Extension-gated like write_canvas so this pipeline can only
 /// ever touch a `.base`.
 pub fn write_base(root: &Path, path: String, content: String, expected: Option<String>) -> Result<(), String> {
-    let resolved = ensure_in_vault(&root, &path)?;
+    let resolved = ensure_in_vault(root, &path)?;
     let is_base = resolved
         .extension()
         .and_then(|e| e.to_str())
@@ -628,7 +628,7 @@ fn occupied(path: &Path) -> bool {
 /// Create a new empty note, returning its canonical path. `name` may be folder-
 /// qualified (`sub/New`); parent folders are created.
 pub fn create_note(root: &Path, name: String) -> Result<String, String> {
-    let path = build_note_path(&root, &name)?;
+    let path = build_note_path(root, &name)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
@@ -637,7 +637,7 @@ pub fn create_note(root: &Path, name: String) -> Result<String, String> {
     }
     atomic_write(&path, b"")?;
     let canonical = fs::canonicalize(&path).map_err(|e| e.to_string())?;
-    if !canonical.starts_with(&root) {
+    if !canonical.starts_with(root) {
         let _ = fs::remove_file(&canonical);
         return Err("path escapes vault".into());
     }
@@ -647,7 +647,7 @@ pub fn create_note(root: &Path, name: String) -> Result<String, String> {
 /// Move a note to `<vault>/.trash/` (Obsidian-compatible, recoverable). A name
 /// collision in the trash gets a timestamp suffix.
 pub fn delete_note(root: &Path, path: String) -> Result<(), String> {
-    let resolved = ensure_in_vault(&root, &path)?;
+    let resolved = ensure_in_vault(root, &path)?;
     if !resolved.is_file() {
         return Err("not a file".into());
     }
@@ -721,11 +721,11 @@ pub fn delete_folder(root: &Path, rel: String) -> Result<(), String> {
     }
     let resolved = root.join(rp);
     let canon = fs::canonicalize(&resolved).map_err(|e| e.to_string())?;
-    if !canon.starts_with(&root) || !canon.is_dir() {
+    if !canon.starts_with(root) || !canon.is_dir() {
         return Err("not a folder in the vault".into());
     }
     // Re-validate the RESOLVED location too (a symlink could alias a dot-folder).
-    let crel = canon.strip_prefix(&root).map_err(|_| "path escapes vault")?;
+    let crel = canon.strip_prefix(root).map_err(|_| "path escapes vault")?;
     if crel.as_os_str().is_empty()
         || crel.components().any(|c| {
             matches!(c, Component::Normal(s) if s.to_string_lossy().starts_with('.'))
@@ -817,7 +817,7 @@ pub fn list_foreign_files(root: &Path, rel: String) -> Result<Vec<String>, Strin
             }
         }
     }
-    walk(&canon, &root, &mut out, 0);
+    walk(&canon, root, &mut out, 0);
     Ok(out)
 }
 
@@ -850,7 +850,7 @@ pub fn list_subfolders(root: &Path, rel: String) -> Result<Vec<String>, String> 
             walk(&p, root, out, depth + 1);
         }
     }
-    walk(&canon, &root, &mut out, 0);
+    walk(&canon, root, &mut out, 0);
     Ok(out)
 }
 
@@ -902,7 +902,7 @@ pub fn create_folder(root: &Path, rel: String) -> Result<(), String> {
     let parent = target.parent().ok_or("invalid path")?;
     fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
     let cparent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
-    if !cparent.starts_with(&root) {
+    if !cparent.starts_with(root) {
         return Err("path escapes vault".into());
     }
     fs::create_dir_all(&target).map_err(|e| format!("mkdir: {e}"))
@@ -951,7 +951,7 @@ pub fn rename_folder(root: &Path, from_rel: String, to_rel: String) -> Result<St
     while let Some(a) = anc {
         match fs::canonicalize(a) {
             Ok(canon) => {
-                if !canon.starts_with(&root) {
+                if !canon.starts_with(root) {
                     return Err("path escapes vault".into());
                 }
                 break;
@@ -969,7 +969,7 @@ pub fn rename_folder(root: &Path, from_rel: String, to_rel: String) -> Result<St
     let parent = to_abs.parent().ok_or("invalid path")?;
     fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
     let cparent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
-    if !cparent.starts_with(&root) {
+    if !cparent.starts_with(root) {
         return Err("path escapes vault".into());
     }
     fs::rename(&from_canon, &to_abs).map_err(|e| format!("move folder: {e}"))?;
@@ -980,11 +980,11 @@ pub fn rename_folder(root: &Path, from_rel: String, to_rel: String) -> Result<St
 /// Rename/move a note to a new folder-qualified name (no `.md`), creating
 /// parent folders. Refuses to overwrite. Returns the canonical new path.
 pub fn rename_note(root: &Path, path: String, new_name: String) -> Result<String, String> {
-    let from = ensure_in_vault(&root, &path)?;
+    let from = ensure_in_vault(root, &path)?;
     if !from.is_file() {
         return Err("not a file".into());
     }
-    let to = build_note_path(&root, &new_name)?;
+    let to = build_note_path(root, &new_name)?;
     move_file(root, from, to, "a note with that name already exists")
 }
 
@@ -1008,7 +1008,7 @@ fn move_file(root: &Path, from: PathBuf, to: PathBuf, taken: &str) -> Result<Str
         // Validate the destination BEFORE moving (a symlinked subfolder would
         // otherwise carry the file outside the vault).
         let cparent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
-        if !cparent.starts_with(&root) {
+        if !cparent.starts_with(root) {
             return Err("path escapes vault".into());
         }
     }
@@ -1036,7 +1036,7 @@ fn move_file(root: &Path, from: PathBuf, to: PathBuf, taken: &str) -> Result<Str
         fs::rename(&from, &to).map_err(|e| format!("rename: {e}"))?;
     }
     let canonical = fs::canonicalize(&to).map_err(|e| e.to_string())?;
-    if !canonical.starts_with(&root) {
+    if !canonical.starts_with(root) {
         let _ = fs::rename(&canonical, &from); // undo
         return Err("path escapes vault".into());
     }
@@ -1119,7 +1119,7 @@ fn collect_attachments(dir: &Path, root: &Path, out: &mut Vec<AttachmentEntry>, 
 /// List every attachment (non-md supported file) in the open vault.
 pub fn list_attachments(root: &Path) -> Vec<AttachmentEntry> {
     let mut out = Vec::new();
-    collect_attachments(&root, &root, &mut out, 0);
+    collect_attachments(root, root, &mut out, 0);
     out.sort_by_key(|a| a.rel.to_lowercase());
     out
 }
@@ -1209,18 +1209,18 @@ pub fn write_attachment(
     }
     let bytes = base64_decode(&data_b64)?; // decode before any filesystem effects
 
-    let dir = attachment_dir(&root, &source_rel);
+    let dir = attachment_dir(root, &source_rel);
     // Lexical containment BEFORE creating anything: no `..`, no escape, and no
     // dot-prefixed folder (every reader skips those — the file would be
     // invisible and its embed broken immediately).
     if dir
         .components()
         .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
-        || !dir.starts_with(&root)
+        || !dir.starts_with(root)
     {
         return Err("attachment folder escapes vault".into());
     }
-    if let Ok(rel_dir) = dir.strip_prefix(&root) {
+    if let Ok(rel_dir) = dir.strip_prefix(root) {
         let rel_str = rel_dir.to_string_lossy();
         if !rel_str.is_empty() && rel_has_ignored_component(&rel_str) {
             return Err(
@@ -1231,7 +1231,7 @@ pub fn write_attachment(
     }
     fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
     let cdir = fs::canonicalize(&dir).map_err(|e| e.to_string())?;
-    if !cdir.starts_with(&root) {
+    if !cdir.starts_with(root) {
         return Err("attachment folder escapes vault".into());
     }
     // Uniquify by atomically RESERVING the name (create_new) — a plain
@@ -1264,7 +1264,7 @@ pub fn write_attachment(
     drop(file);
     let canonical = fs::canonicalize(&dest).map_err(|e| e.to_string())?;
     let rel = canonical
-        .strip_prefix(&root)
+        .strip_prefix(root)
         .map_err(|_| "path escapes vault")?
         .to_string_lossy()
         .to_string();
@@ -1514,8 +1514,8 @@ pub fn read_obsidian_bookmarks(root: &Path) -> Result<Vec<Bookmark>, String> {
 /// and the write is atomic (temp + fsync + rename) so a torn write can't corrupt
 /// the bookmarks Obsidian shares.
 pub fn toggle_file_bookmark(root: &Path, path: String) -> Result<bool, String> {
-    let resolved = ensure_in_vault(&root, &path)?;
-    let rel = rel_under(&root, &resolved)
+    let resolved = ensure_in_vault(root, &path)?;
+    let rel = rel_under(root, &resolved)
         .ok_or("path escapes vault")?
         .replace('\\', "/");
     let bpath = root.join(".obsidian/bookmarks.json");
@@ -1787,7 +1787,7 @@ pub fn read_image(root: &Path, target: String, source_rel: String) -> Result<Str
 
     let path = found.ok_or_else(|| format!("image not found: {t}"))?;
     let canon = fs::canonicalize(&path).map_err(|e| e.to_string())?;
-    if !canon.starts_with(&root) {
+    if !canon.starts_with(root) {
         return Err("path escapes vault".into());
     }
     let meta = fs::metadata(&canon).map_err(|e| e.to_string())?;
@@ -1945,7 +1945,7 @@ pub fn write_plugin_data(root: &Path, id: String, data: String) -> Result<(), St
     // Defense in depth beyond valid_plugin_id: confirm the resolved folder is
     // really inside the vault (a symlinked plugin dir can't escape it).
     let canon = fs::canonicalize(&pdir).map_err(|e| e.to_string())?;
-    if !canon.starts_with(&root) {
+    if !canon.starts_with(root) {
         return Err("plugin path escapes vault".into());
     }
     atomic_write(&canon.join("data.json"), data.as_bytes())
