@@ -29,7 +29,7 @@ test.beforeEach(async ({ page }) => {
 const view = (page: import("@playwright/test").Page) => page.locator(".pane:not(.dock) .base-view");
 
 test("a list view joins each file's non-empty properties with the separator", async ({ page }) => {
-  await page.locator(".tree-row.attachment", { hasText: "Plain.base" }).click();
+  await page.locator(".tree-row.attachment", { hasText: "Plain" }).click();
   const list = view(page).locator("ul.base-list-bullet");
   await expect(list.getByRole("listitem")).toHaveText(["Apple, open, Ann", "Bean", "Cherry, done"]);
   await list.getByRole("button", { name: "Bean" }).click();
@@ -37,7 +37,7 @@ test("a list view joins each file's non-empty properties with the separator", as
 });
 
 test("numbered, indented list skips files whose first property is empty", async ({ page }) => {
-  await page.locator(".tree-row.attachment", { hasText: "Indented.base" }).click();
+  await page.locator(".tree-row.attachment", { hasText: "Indented" }).click();
   const list = view(page).locator("ol.base-list-number");
   const items = list.locator(":scope > li");
   await expect(items).toHaveCount(2);
@@ -48,14 +48,14 @@ test("numbered, indented list skips files whose first property is empty", async 
 });
 
 test("a list without markers keeps list semantics and uses its separator", async ({ page }) => {
-  await page.locator(".tree-row.attachment", { hasText: "Bare.base" }).click();
+  await page.locator(".tree-row.attachment", { hasText: "Bare" }).click();
   const list = view(page).getByRole("list");
   await expect(list).toHaveClass(/base-list-none/);
   await expect(list.getByRole("listitem").filter({ hasText: "Cherry" })).toHaveText("Cherry / done");
 });
 
 test("the view editor switches a base to a numbered list and saves it", async ({ page }) => {
-  await page.locator(".tree-row.attachment", { hasText: "Plain.base" }).click();
+  await page.locator(".tree-row.attachment", { hasText: "Plain" }).click();
   await view(page).getByRole("button", { name: "✎ Edit" }).click();
   const editor = page.locator(".base-editor");
   await editor.getByLabel("Markers").selectOption("number");

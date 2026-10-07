@@ -324,11 +324,18 @@ button.primary:hover {
   background: var(--bg-elev);
   color: var(--text);
 }
-.tree-row.attachment {
+.file-tag {
+  flex: none;
+  margin-left: auto;
+  padding: 0 4px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   color: var(--text-faint);
-  font-style: italic;
 }
-.tree-row.attachment:hover {
+.tree-row:hover .file-tag,
+.tree-row.active .file-tag {
   color: var(--text-muted);
 }
 .chevron {
@@ -343,6 +350,7 @@ button.primary:hover {
   transform: rotate(90deg);
 }
 .tree-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }

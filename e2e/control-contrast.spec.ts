@@ -48,7 +48,7 @@ for (const scheme of ["light", "dark"] as const) {
     await page.goto("/app-harness.html");
     await expect(page.locator(".sidebar")).toBeVisible();
     expect(await weakControls(page)).toEqual([]);
-    await page.locator(".tree-row.attachment", { hasText: "Notes.base" }).click();
+    await page.locator(".tree-row.attachment", { hasText: "Notes" }).click();
     await page.getByRole("button", { name: "✎ Edit" }).click();
     await expect(page.locator(".base-editor")).toBeVisible();
     expect(await weakControls(page)).toEqual([]);

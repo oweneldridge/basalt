@@ -121,3 +121,15 @@ test("renaming a base rewrites its embeds", async ({ page, vault }) => {
   expect(vault.exists("Views/Todo.base")).toBe(true);
   expect(vault.exists("Tasks.base")).toBe(false);
 });
+
+test("the tree lists a file without its extension and tags the extension, as Obsidian does", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await page.locator(".tree-row.folder", { hasText: "Media" }).first().click();
+  const shot = page.locator(".tree-row.file", { hasText: "shot one" }).first();
+  await expect(shot.locator(".tree-name")).toHaveText("shot one");
+  await expect(shot.locator(".file-tag")).toHaveText("png");
+  await expect(shot.locator(".file-tag")).toHaveCSS("text-transform", "uppercase");
+  await expect(page.locator(".tree-row.file", { hasText: "Board" }).first().locator(".file-tag")).toHaveText("canvas");
+  await expect(page.locator(".tree-row.file", { hasText: "Gallery" }).first().locator(".file-tag")).toHaveCount(0);
+  await expect(shot).toHaveCSS("font-style", "normal");
+});

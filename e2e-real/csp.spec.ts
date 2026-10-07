@@ -62,7 +62,7 @@ test.describe("the web app's security headers", () => {
     const reading = page.locator(".pane:not(.dock) .reading-view");
     await expect(reading.locator("svg").first()).toBeVisible({ timeout: 15000 });
     await expect(reading.locator(".raw b")).toHaveText("html");
-    await page.locator(".tree-row.attachment", { hasText: "Board.canvas" }).click();
+    await page.locator(".tree-row.attachment", { hasText: "Board" }).click();
     await expect(page.locator(".canvas-node")).toHaveCount(1);
     await page.waitForTimeout(500);
     expect(violations).toEqual([]);

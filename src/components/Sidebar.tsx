@@ -48,6 +48,19 @@ function saveExpanded(vault: string | null, set: Set<string>): void {
 
 const DND_MIME = "application/x-basalt-note";
 
+/** A non-note file's name as Obsidian lists it: the name without its
+ * extension, then the extension as a small tag. */
+function FileName({ name }: { name: string }) {
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot === name.length - 1) return <span className="tree-name">{name}</span>;
+  return (
+    <>
+      <span className="tree-name">{name.slice(0, dot)}</span>
+      <span className="file-tag">{name.slice(dot + 1)}</span>
+    </>
+  );
+}
+
 export function Sidebar({ notes, attachments, folders = [], revealFolder = null, activePath, vaultName, onOpen, onNewNote, onOpenAttachment, onContextMenu, onAttachmentContextMenu, onFolderContextMenu, onMoveToFolder }: Props) {
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -230,7 +243,7 @@ export function Sidebar({ notes, attachments, folders = [], revealFolder = null,
                 }}
                 title={a.rel}
               >
-                {a.name}
+                <FileName name={a.name} />
               </button>
             ))}
             {filtered.notes.length === 0 && filtered.attachments.length === 0 && (
@@ -291,7 +304,7 @@ export function Sidebar({ notes, attachments, folders = [], revealFolder = null,
                 }}
                 title={node.name}
               >
-                <span className="tree-name">{node.name}</span>
+                {node.attachment ? <FileName name={node.name} /> : <span className="tree-name">{node.name}</span>}
               </button>
             ),
           )

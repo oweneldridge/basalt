@@ -124,7 +124,7 @@ test.describe("a canvas edited during a rename's canvas write", () => {
     await openNote(page, "Ideas");
     await page.getByRole("button", { name: "Split right" }).first().click();
     await expect(page.locator(".pane:not(.dock)")).toHaveCount(2);
-    await page.locator(".tree-row.attachment", { hasText: "Board.canvas" }).click();
+    await page.locator(".tree-row.attachment", { hasText: "Board" }).click();
     const addCard = page.locator('button[title="Add a card"]');
     await expect(addCard).toBeVisible();
     let release: () => void = () => {};
@@ -176,7 +176,7 @@ test.describe("links inside rendered HTML", () => {
     await page.waitForTimeout(500);
     expect(page.url()).toBe(start);
     await page.locator('button[title^="Toggle Reading view"]').click();
-    await page.locator(".tree-row.attachment", { hasText: "Cards.canvas" }).click();
+    await page.locator(".tree-row.attachment", { hasText: "Cards" }).click();
     await page.locator(".canvas-node-content a", { hasText: "CARDLINK" }).click();
     await page.waitForTimeout(500);
     expect(page.url()).toBe(start);
@@ -1270,7 +1270,7 @@ test.describe("the status bar", () => {
     await expect(bar).not.toContainText("Ln ");
     await expect(bar).toContainText("3 words");
     await page.locator('button[title^="Toggle Reading view"]').click();
-    await page.locator(".tree-row.attachment", { hasText: "Board.canvas" }).click();
+    await page.locator(".tree-row.attachment", { hasText: "Board" }).click();
     await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toContainText("Board");
     await expect(bar).not.toContainText("words");
     await expect(bar).not.toContainText("Ln ");

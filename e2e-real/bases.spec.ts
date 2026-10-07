@@ -22,7 +22,7 @@ test.describe("bases on disk", () => {
 
   test("a list view edit writes its options and keeps the rest of the file", async ({ page, vault }) => {
     await openApp(page, vault);
-    await page.locator(".tree-row.attachment", { hasText: "Projects.base" }).click();
+    await page.locator(".tree-row.attachment", { hasText: "Projects" }).click();
     const view = page.locator(".pane:not(.dock) .base-view");
     await expect(view.locator("ul.base-list").getByRole("listitem")).toHaveText(["Alpha", "Beta"]);
     await view.getByRole("button", { name: "✎ Edit" }).click();

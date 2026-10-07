@@ -814,7 +814,7 @@ test.describe("a canvas edited while a rename fixes its links", () => {
     await openNote(page, "Ideas");
     await page.getByRole("button", { name: "Split right" }).first().click();
     await expect(page.locator(".pane:not(.dock)")).toHaveCount(2);
-    await page.locator(".tree-row.attachment", { hasText: "Board.canvas" }).click();
+    await page.locator(".tree-row.attachment", { hasText: "Board" }).click();
     const addCard = page.locator('button[title="Add a card"]');
     await expect(addCard).toBeVisible();
     let release: () => void = () => {};

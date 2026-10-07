@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/app-harness.html");
   // The canvas may already be open (persisted workspace) or need opening.
   if ((await page.locator(".canvas-view").count()) === 0) {
-    await page.locator(".tree-row.attachment", { hasText: "Board.canvas" }).click();
+    await page.locator(".tree-row.attachment", { hasText: "Board" }).click();
   }
   await expect(page.locator(".canvas-view")).toBeVisible();
   await expect(page.locator(".canvas-node")).toHaveCount(3);
