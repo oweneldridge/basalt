@@ -382,6 +382,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   work while a sidebar has the focus.
 - Numbered lists renumber across a line that carries on the item above it, and
   the items left under an outdented item count from 1.
+- `%%` inside an indented code block stays as written, in both views.
+- Renaming a note with hundreds of links to it is about four times faster
+  (316 linking notes: 12 s down to 3 s here): the file tree no longer rebuilds
+  for each fixed note, sorts faster, and links are fixed in several notes at
+  once.
+- The web app loads a vault sooner: the server compresses at a faster gzip
+  level for a few percent more bytes.
 
 ### Security
 
