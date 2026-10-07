@@ -40,6 +40,16 @@ function blockEnd(state: EditorState, n: number, indent: string): number {
   return last;
 }
 
+const BLOCK_START = /^\s*(?:#{1,6}(?:\s|$)|>|```|~~~|([-*_])(?:\s*\1){2,}\s*$)/;
+
+/** A line that carries on the paragraph above it without being indented (a
+ * lazy continuation line): it isn't blank, follows a line that isn't, and
+ * starts nothing of its own. It belongs to the item above. */
+function lazy(state: EditorState, k: number): boolean {
+  const line = state.doc.line(k);
+  return k > 1 && line.text.trim() !== "" && state.doc.line(k - 1).text.trim() !== "" && !BLOCK_START.test(line.text) && !item(line);
+}
+
 /** Renumber the run of numbered items at `indent` that contains line `n`.
  * `restart` makes a run that begins at line `n` count from 1. Blank lines
  * between items (a loose list) don't end the run; a bullet, or a number with
@@ -54,7 +64,7 @@ function renumber(state: EditorState, n: number, indent: string, restart = false
   const sameList = (it: Item) => it.num !== null && it.delim === own.delim;
   const deeper = (k: number) => {
     const text = state.doc.line(k).text;
-    return text.trim() === "" || (text.startsWith(indent) && /^\s/.test(text.slice(indent.length)));
+    return text.trim() === "" || (text.startsWith(indent) && /^\s/.test(text.slice(indent.length))) || lazy(state, k);
   };
   let first = n;
   for (let k = n - 1; k >= 1; k--) {
@@ -122,6 +132,9 @@ function shift(view: EditorView, dir: 1 | -1): boolean {
   const movedEnd = blockEnd(moved, n, now.indent);
   // The level it joined (a new nested list starts at 1).
   if (now.num !== null) fixes.push(...renumber(moved, n, now.indent, dir > 0));
+  // Outdented, it takes the items that followed it as its own, numbered from 1.
+  const child = dir < 0 ? nextAt(moved, n, it.indent) : null;
+  if (child !== null && child <= movedEnd && item(moved.doc.line(child))!.num !== null) fixes.push(...renumber(moved, child, it.indent, true));
   // The level it left: the items that followed it there.
   const after = nextAt(moved, movedEnd, it.indent);
   if (after !== null && item(moved.doc.line(after))!.num !== null) fixes.push(...renumber(moved, after, it.indent, dir < 0));
