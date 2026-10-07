@@ -1511,3 +1511,23 @@ test.describe("block widgets in Live Preview", () => {
     }
   });
 });
+
+test.describe("code blocks", () => {
+  test.use({ vaultFiles: { "Code.md": "```js\nconst answer = \"forty\"; // note\nfunction go() { return 42; }\n```\n\nEND\n" } });
+
+  test("are coloured the same in both views", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Code");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const pane = page.locator(".pane:not(.dock)");
+    const colors = async (scope: import("@playwright/test").Locator) => ({
+      keyword: await scope.locator(".code-keyword", { hasText: "const" }).evaluate((e) => getComputedStyle(e).color),
+      string: await scope.locator(".code-string").first().evaluate((e) => getComputedStyle(e).color),
+      number: await scope.locator(".code-value", { hasText: "42" }).evaluate((e) => getComputedStyle(e).color),
+    });
+    const lp = await colors(pane.locator(".cm-content"));
+    expect(new Set(Object.values(lp)).size).toBe(3);
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    expect(await colors(pane.locator(".reading-view"))).toEqual(lp);
+  });
+});

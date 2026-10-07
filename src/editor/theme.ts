@@ -1,6 +1,7 @@
 // Editor theme + Markdown syntax highlighting. Dark, Obsidian-adjacent.
 import { EditorView } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { codeHighlighter } from "../lib/codeHighlight";
 import { tags as t } from "@lezer/highlight";
 import type { Extension } from "@codemirror/state";
 
@@ -384,7 +385,7 @@ const highlight = HighlightStyle.define([
   { tag: t.list, color: "var(--text)" },
   { tag: t.contentSeparator, color: "var(--text-muted)" },
   { tag: [t.meta, t.processingInstruction], color: "var(--text-faint)" },
-  { tag: t.comment, color: "var(--text-faint)", fontStyle: "italic" },
+  { tag: t.comment, color: "var(--code-comment)", fontStyle: "italic" },
 ]);
 
-export const basaltHighlight: Extension = syntaxHighlighting(highlight);
+export const basaltHighlight: Extension = [syntaxHighlighting(highlight), syntaxHighlighting(codeHighlighter)];

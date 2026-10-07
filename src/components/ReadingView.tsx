@@ -183,6 +183,11 @@ export function ReadingView({
       });
     });
 
+    // Colour code blocks as Live Preview does (each language loads on demand).
+    if (el.querySelector("pre.md-code > code[class^='language-']")) {
+      void import("../lib/codeHighlight").then((m) => m.highlightCodeBlocks(el, () => !cancelled));
+    }
+
     // Resolve vault images asynchronously (external http(s) src pass through).
     el.querySelectorAll<HTMLImageElement>("img[data-basalt-img]").forEach((img) => {
       const target = img.dataset.basaltImg ?? "";

@@ -1,4 +1,13 @@
 :root {
+  /* Code colours, under Obsidian's names (4.5:1 or more on --bg-elev). */
+  --code-keyword: #f472b6;
+  --code-string: #9ece6a;
+  --code-function: #e0af68;
+  --code-value: #bb9af7;
+  --code-property: #7dcfff;
+  --code-tag: #f7768e;
+  --code-comment: #9a9ca0;
+  --code-punctuation: #b4b6ba;
   /* Callout colours, by Obsidian's groups (titles keep 4.5:1 on their tint). */
   --callout-blue: #7aa2f7;
   --callout-cyan: #7dcfff;
@@ -42,6 +51,14 @@
    Applied by data-theme="light" on <html> (lib/theme.ts + the index.html
    no-flash script). */
 :root[data-theme="light"] {
+  --code-keyword: #a3196e;
+  --code-string: #2c6a1c;
+  --code-function: #7c5600;
+  --code-value: #6236b0;
+  --code-property: #0a6475;
+  --code-tag: #b0221a;
+  --code-comment: #5c6066;
+  --code-punctuation: #45494f;
   --callout-blue: #1f5fbf;
   --callout-cyan: #0a6f80;
   --callout-green: #2e7a32;
@@ -2997,3 +3014,13 @@ dialog.modal:not([open]) {
 dialog.modal::backdrop {
   background: transparent;
 }
+
+/* ------- Code colours (both views; see lib/codeHighlight.ts) ------- */
+.code-keyword { color: var(--code-keyword); }
+.code-string { color: var(--code-string); }
+.code-function { color: var(--code-function); }
+.code-value { color: var(--code-value); }
+.code-property { color: var(--code-property); }
+.code-tag { color: var(--code-tag); }
+.code-punctuation { color: var(--code-punctuation); }
+.code-comment { color: var(--code-comment); font-style: italic; }
