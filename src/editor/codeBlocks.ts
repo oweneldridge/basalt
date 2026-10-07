@@ -14,22 +14,31 @@ const codeLine = Decoration.line({ class: "cm-code-line" });
 const codeFirst = Decoration.line({ class: "cm-code-line cm-code-first" });
 const codeLast = Decoration.line({ class: "cm-code-line cm-code-last" });
 
+/** Only the lines on screen: a long note full of code would otherwise be
+ * walked line by line on every keystroke. */
 function build(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const { doc } = view.state;
-  syntaxTree(view.state).iterate({
-    enter: (node) => {
-      if (node.name !== "FencedCode" && node.name !== "CodeBlock") return;
-      const startLine = doc.lineAt(node.from).number;
-      const endLine = doc.lineAt(Math.min(node.to, doc.length)).number;
-      for (let n = startLine; n <= endLine; n++) {
-        const line = doc.line(n);
-        const deco = n === startLine ? codeFirst : n === endLine ? codeLast : codeLine;
-        builder.add(line.from, line.from, deco);
-      }
-      return false;
-    },
-  });
+  let done = 0; // the last line decorated (visible ranges may share a block)
+  for (const { from, to } of view.visibleRanges) {
+    syntaxTree(view.state).iterate({
+      from,
+      to,
+      enter: (node) => {
+        if (node.name !== "FencedCode" && node.name !== "CodeBlock") return;
+        const startLine = doc.lineAt(node.from).number;
+        const endLine = doc.lineAt(Math.min(node.to, doc.length)).number;
+        const last = Math.min(endLine, doc.lineAt(to).number);
+        for (let n = Math.max(startLine, doc.lineAt(from).number, done + 1); n <= last; n++) {
+          const line = doc.line(n);
+          const deco = n === startLine ? codeFirst : n === endLine ? codeLast : codeLine;
+          builder.add(line.from, line.from, deco);
+          done = n;
+        }
+        return false;
+      },
+    });
+  }
   return builder.finish();
 }
 

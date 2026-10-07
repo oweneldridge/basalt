@@ -203,7 +203,9 @@ export function EditorPane({
   // prop equal to one of them, with no new docRev, is an echo of its own typing
   // and must not be applied. Echoes come back in order, so a text older than
   // one already echoed was put back by someone else (another pane or device).
-  const reported = useRef<{ hash: number; seq: number }[]>([]);
+  // The latest few keep their text too: the app usually hands back the very
+  // string reported, which matches without hashing a long note again.
+  const reported = useRef<{ hash: number; seq: number; text?: string }[]>([]);
   const reportSeq = useRef(0);
   const echoFloor = useRef(0);
   // The text showText last put in this editor: a `doc` prop equal to it has
@@ -229,8 +231,10 @@ export function EditorPane({
     saveAttachment: (f) => cbs.current.saveAttachment(f),
     replacePlaceholder: (ph, rep) => cbs.current.replacePlaceholder(ph, rep),
     onChange: (d) => {
-      reported.current.push({ hash: textHash(d), seq: reportSeq.current++ });
+      reported.current.push({ hash: textHash(d), seq: reportSeq.current++, text: d });
       if (reported.current.length > 64) reported.current.shift();
+      const stale = reported.current[reported.current.length - 9];
+      if (stale) stale.text = undefined;
       cbs.current.onChange(d);
     },
     onCursor: (l, c, s, t) => cbs.current.onCursor?.(l, c, s, t),
@@ -437,8 +441,12 @@ export function EditorPane({
     if (doc === shownText.current) return;
     shownText.current = null;
     if (!explicit) {
-      const h = textHash(doc);
-      const echo = [...reported.current].reverse().find((r) => r.hash === h);
+      const recent = [...reported.current].reverse();
+      let echo = recent.find((r) => r.text === doc);
+      if (!echo) {
+        const h = textHash(doc);
+        echo = recent.find((r) => r.hash === h);
+      }
       if (echo && echo.seq >= echoFloor.current) {
         echoFloor.current = echo.seq;
         return;

@@ -2,7 +2,7 @@
 // multi-line block). Rendered with KaTeX (lazy-loaded). Caret outside → render;
 // inside → reveal the raw source, like mermaid/transclusion.
 import { EditorSelection, EditorState as State, Prec, RangeSetBuilder, StateField } from "@codemirror/state";
-import type { EditorState, Extension } from "@codemirror/state";
+import type { EditorState, Extension, Transaction } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { isInExcludedRegion } from "./regions";
@@ -72,14 +72,19 @@ class MathWidget extends WidgetType {
   }
 }
 
-function compute(state: EditorState): DecorationSet {
+interface MathState {
+  spans: MathSpan[];
+  deco: DecorationSet;
+}
+
+function decorate(state: EditorState, spans: MathSpan[]): MathState {
   const builder = new RangeSetBuilder<Decoration>();
   const sel = state.selection;
   // A `$$` block takes its whole line, so it can start before an inline
   // formula earlier on that line: keep them in order and never overlapping
   // (out of order, the builder throws and the keystroke is lost).
   let end = -1;
-  for (const s of findMath(state.doc.toString()).sort((a, b) => a.from - b.from || a.to - b.to)) {
+  for (const s of [...spans].sort((a, b) => a.from - b.from || a.to - b.to)) {
     if (s.from >= s.to || s.from < end) continue;
     end = s.to;
     if (isInExcludedRegion(state, s.from)) continue; // math inside code stays raw
@@ -90,21 +95,50 @@ function compute(state: EditorState): DecorationSet {
       Decoration.replace({ widget: new MathWidget(s.tex, s.display, s.block, mathGeneration()), block: s.block }),
     );
   }
-  return builder.finish();
+  return { spans, deco: builder.finish() };
 }
 
-const mathField = StateField.define<DecorationSet>({
-  create: (state) => compute(state),
-  update: (deco, tr) => (tr.docChanged || tr.selection || hasMathLoaded(tr.effects) ? compute(tr.state) : deco),
-  provide: (f) => EditorView.decorations.from(f),
+/** Whether an edit can change what's math: it adds or removes a `$`, a
+ * backtick, a fence, a backslash or a line break, edits a line with a `$` on
+ * it (a space or digit beside one counts), or edits inside a formula. Any
+ * other edit only shifts the formulas, so a long note isn't scanned again on
+ * every keystroke. */
+function changesMath(tr: Transaction, spans: MathSpan[]): boolean {
+  const start = tr.startState.doc;
+  let yes = false;
+  tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    if (yes) return;
+    yes =
+      /[$`~\\\n]/.test(start.sliceString(fromA, toA) + inserted.toString()) ||
+      start.lineAt(fromA).text.includes("$") ||
+      start.lineAt(toA).text.includes("$") ||
+      spans.some((s) => fromA <= s.to && toA >= s.from);
+  });
+  return yes;
+}
+
+/** Exported for tests: the formulas the field holds. */
+export const mathField = StateField.define<MathState>({
+  create: (state) => decorate(state, findMath(state.doc.toString())),
+  update: (value, tr) => {
+    if (tr.docChanged) {
+      if (changesMath(tr, value.spans)) return decorate(tr.state, findMath(tr.state.doc.toString()));
+      const spans = value.spans.map((s) => ({ ...s, from: tr.changes.mapPos(s.from, 1), to: tr.changes.mapPos(s.to, -1) }));
+      return decorate(tr.state, spans);
+    }
+    return tr.selection || hasMathLoaded(tr.effects) ? decorate(tr.state, value.spans) : value;
+  },
+  provide: (f) => EditorView.decorations.from(f, (v) => v.deco),
 });
+
+export { findMath };
 
 // A click on a rendered block's padding, or a pixel row along it, resolves to
 // the very start or end of its source. Put the caret just inside the `$$`
 // instead, so the source opens for editing and a key never breaks a delimiter.
 const edgeClick = State.transactionFilter.of((tr) => {
   if (!tr.isUserEvent("select.pointer") || tr.docChanged || !tr.selection) return tr;
-  const deco = tr.startState.field(mathField);
+  const deco = tr.startState.field(mathField).deco;
   const doc = tr.startState.doc;
   let moved = false;
   const ranges = tr.newSelection.ranges.map((r) => {

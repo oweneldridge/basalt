@@ -4,7 +4,7 @@
 // inside. A block replacement, so it comes from a StateField. Block boundaries
 // come from the same scanner the Reading view uses, so both agree.
 import { RangeSetBuilder, StateField } from "@codemirror/state";
-import type { EditorState, Extension } from "@codemirror/state";
+import type { EditorState, Extension, Text, Transaction } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { htmlBlockRanges } from "../lib/htmlBlocks";
@@ -28,25 +28,74 @@ class HtmlBlockWidget extends WidgetType {
   }
 }
 
-function compute(state: EditorState): DecorationSet {
-  const builder = new RangeSetBuilder<Decoration>();
-  const sel = state.selection;
-  const doc = state.doc;
-  for (const range of htmlBlockRanges(doc.toString())) {
-    const from = doc.line(range.fromLine + 1).from;
-    const to = doc.line(range.toLine + 1).to;
-    // Editing inside the block → leave it raw.
-    if (sel.ranges.some((r) => r.from <= to && r.to >= from)) continue;
-    const source = doc.sliceString(from, to);
-    builder.add(from, to, Decoration.replace({ widget: new HtmlBlockWidget(source), block: true }));
-  }
-  return builder.finish();
+interface Block {
+  from: number;
+  to: number;
+}
+interface HtmlBlocks {
+  blocks: Block[];
+  deco: DecorationSet;
 }
 
-const htmlBlockField = StateField.define<DecorationSet>({
-  create: (state) => compute(state),
-  update: (deco, tr) => (tr.docChanged || tr.selection ? compute(tr.state) : deco),
-  provide: (f) => EditorView.decorations.from(f),
+function scan(doc: Text): Block[] {
+  return htmlBlockRanges(doc.toString()).map((r) => ({ from: doc.line(r.fromLine + 1).from, to: doc.line(r.toLine + 1).to }));
+}
+
+function decorate(state: EditorState, blocks: Block[]): HtmlBlocks {
+  const builder = new RangeSetBuilder<Decoration>();
+  const sel = state.selection;
+  for (const { from, to } of blocks) {
+    // Editing inside the block → leave it raw.
+    if (sel.ranges.some((r) => r.from <= to && r.to >= from)) continue;
+    const source = state.doc.sliceString(from, to);
+    builder.add(from, to, Decoration.replace({ widget: new HtmlBlockWidget(source), block: true }));
+  }
+  return { blocks, deco: builder.finish() };
+}
+
+/** Where a leading frontmatter ends (-1 when there's none). */
+function frontmatterEnd(doc: Text): number {
+  if (doc.line(1).text.trim() !== "---") return -1;
+  for (let n = 2; n <= doc.lines; n++) {
+    const t = doc.line(n).text.trim();
+    if (t === "---" || t === "...") return doc.line(n).to;
+  }
+  return doc.length;
+}
+
+/** Whether an edit can move where HTML blocks are: it adds or removes a tag
+ * bracket, a fence, `$$` or a line break, edits a line holding one (a tag's
+ * name, or a fence, can change), a block (or the line after one) or the
+ * frontmatter. Any other edit only shifts the blocks, so a long note isn't
+ * scanned again on every keystroke. */
+function moves(tr: Transaction, blocks: Block[]): boolean {
+  const start = tr.startState.doc;
+  const fm = frontmatterEnd(start);
+  let yes = false;
+  tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    if (yes) return;
+    yes =
+      /[<>`~$\n]/.test(start.sliceString(fromA, toA) + inserted.toString()) ||
+      /[<>`~$]/.test(start.lineAt(fromA).text) ||
+      /[<>`~$]/.test(start.lineAt(toA).text) ||
+      fromA <= fm ||
+      blocks.some((b) => fromA <= b.to + 1 && toA >= b.from);
+  });
+  return yes;
+}
+
+/** Exported for tests: the HTML blocks the field holds. */
+export const htmlBlockField = StateField.define<HtmlBlocks>({
+  create: (state) => decorate(state, scan(state.doc)),
+  update: (value, tr) => {
+    if (tr.docChanged) {
+      if (moves(tr, value.blocks)) return decorate(tr.state, scan(tr.state.doc));
+      const blocks = value.blocks.map((b) => ({ from: tr.changes.mapPos(b.from, 1), to: tr.changes.mapPos(b.to, -1) }));
+      return decorate(tr.state, blocks);
+    }
+    return tr.selection ? decorate(tr.state, value.blocks) : value;
+  },
+  provide: (f) => EditorView.decorations.from(f, (v) => v.deco),
 });
 
 // Click the rendered HTML to place the caret inside the block (reveal raw).
@@ -58,7 +107,7 @@ const htmlBlockClick = EditorView.domEventHandlers({
     // would break the tag (and with it the whole block).
     const pos = view.posAtDOM(el);
     let end = view.state.doc.lineAt(Math.min(pos + 1, view.state.doc.length)).to;
-    view.state.field(htmlBlockField).between(pos, pos + 1, (_from, to) => {
+    view.state.field(htmlBlockField).deco.between(pos, pos + 1, (_from, to) => {
       end = to;
     });
     view.dispatch({ selection: { anchor: end } });
