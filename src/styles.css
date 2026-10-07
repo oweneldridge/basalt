@@ -2214,6 +2214,12 @@ button.primary:hover {
   cursor: default;
   padding: 0 1px;
 }
+.cm-footnote-inline {
+  color: var(--text-muted);
+  font-size: 0.75em;
+  vertical-align: super;
+  line-height: 0;
+}
 
 /* ------- Tab drag & drop ------- */
 .tab[draggable="true"] { cursor: grab; }

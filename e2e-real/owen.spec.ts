@@ -1384,3 +1384,19 @@ test.describe("inline HTML in Live Preview", () => {
     await expect(line.locator(".cm-html-font")).toHaveCSS("color", "rgb(0, 128, 0)");
   });
 });
+
+test.describe("footnotes in Live Preview", () => {
+  test.use({ vaultFiles: { "Fn.md": "A claim[^1] and an aside^[said in passing] here.\n\n[^1]: The source.\n\nEND\n" } });
+
+  test("show as small raised marks, as in Obsidian", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Fn");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const line = page.locator(".pane:not(.dock) .cm-line").first();
+    await expect(line).toHaveText("A claim1 and an asidesaid in passing here.");
+    await expect(line.locator(".cm-footnote-ref")).toHaveText("1");
+    await expect(line.locator(".cm-footnote-inline")).toHaveText("said in passing");
+    await expect(line.locator(".cm-footnote-inline")).toHaveCSS("vertical-align", "super");
+    await expect(page.locator(".pane:not(.dock) .cm-line", { hasText: "The source." })).toHaveText("[^1]: The source.");
+  });
+});
