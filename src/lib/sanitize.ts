@@ -3,6 +3,7 @@
 // (render.ts only emits placeholders and stays node-testable).
 import DOMPurify, { type Config } from "dompurify";
 import { blockRemoteImages } from "./remoteImages";
+import { mdImageTarget } from "./markdown";
 
 // Belt-and-braces on top of DOMPurify's safe defaults: never allow scripts,
 // event handlers, or javascript: URLs; keep target=_blank links safe. HTML and
@@ -39,12 +40,22 @@ export function sanitizeHtml(dirty: string): string {
 }
 
 /** Sanitized HTML as nodes ready to insert. It's built in an inert template,
- * so remote images (when they're off) are swapped out before anything loads.
+ * so remote images (when they're off) are swapped out before anything loads,
+ * and a vault image (`<img src="assets/pic.png">`) waits, as `data-basalt-img`,
+ * for the note's resolver instead of loading from the app's own address.
  * Export passes `forDisplay = false`: a saved file keeps its image URLs. */
 export function sanitizeToFragment(dirty: string, forDisplay = true): DocumentFragment {
   const t = document.createElement("template");
   t.innerHTML = sanitizeHtml(dirty);
-  if (forDisplay) blockRemoteImages(t.content);
+  if (forDisplay) {
+    blockRemoteImages(t.content);
+    t.content.querySelectorAll("img[src]").forEach((img) => {
+      const src = img.getAttribute("src") ?? "";
+      if (!src || /^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith("//")) return;
+      img.setAttribute("data-basalt-img", mdImageTarget(src));
+      img.removeAttribute("src");
+    });
+  }
   return t.content;
 }
 

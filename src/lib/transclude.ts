@@ -348,8 +348,8 @@ export function embedBody(
       cb.disabled = true;
     });
     const nextChain = [...chain, resolved.path];
-    // Resolve images relative to the EMBEDDED note.
-    body.querySelectorAll<HTMLImageElement>("img[data-basalt-img]").forEach((img) => {
+    // Resolve images relative to the EMBEDDED note (again once raw HTML is in).
+    const images = () => body.querySelectorAll<HTMLImageElement>("img[data-basalt-img]").forEach((img) => {
       const target = img.dataset.basaltImg ?? "";
       img.removeAttribute("data-basalt-img");
       if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//")) {
@@ -364,7 +364,13 @@ export function embedBody(
     });
     // Render math + sanitize raw HTML inside the embed (lazy, like the reader).
     if (body.querySelector("[data-math]")) void import("./math").then((m) => m.fillMath(body));
-    if (body.querySelector("[data-basalt-html]")) void import("./sanitize").then((m) => m.fillRawHtml(body));
+    images();
+    if (body.querySelector("[data-basalt-html]")) {
+      void import("./sanitize").then((m) => {
+        m.fillRawHtml(body);
+        images();
+      });
+    }
     if (body.querySelector("[data-basalt-media]")) {
       void import("./media").then((m) => m.fillMedia(body, (t) => host.resolveImage(t, resolved.rel)));
     }

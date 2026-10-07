@@ -9,18 +9,32 @@ import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { htmlBlockRanges } from "../lib/htmlBlocks";
 import { sanitizeToFragment } from "../lib/sanitize";
+import { getTranscludeHost } from "../lib/transclude";
+import { notePathFacet } from "./query";
 
 class HtmlBlockWidget extends WidgetType {
-  constructor(readonly source: string) {
+  constructor(
+    readonly source: string,
+    readonly notePath: string,
+  ) {
     super();
   }
   eq(other: HtmlBlockWidget): boolean {
-    return other.source === this.source;
+    return other.source === this.source && other.notePath === this.notePath;
   }
   toDOM(): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "cm-html-block";
     wrap.replaceChildren(sanitizeToFragment(this.source)); // DOMPurify: no scripts, styles or handlers
+    // A vault image in it loads through the note's resolver.
+    const host = getTranscludeHost();
+    wrap.querySelectorAll<HTMLImageElement>("img[data-basalt-img]").forEach((img) => {
+      const target = img.dataset.basaltImg ?? "";
+      img.removeAttribute("data-basalt-img");
+      void host?.resolveImage(target, this.notePath).then((url) => {
+        if (url) img.src = url;
+      });
+    });
     return wrap;
   }
   ignoreEvent(): boolean {
@@ -48,7 +62,8 @@ function decorate(state: EditorState, blocks: Block[]): HtmlBlocks {
     // Editing inside the block → leave it raw.
     if (sel.ranges.some((r) => r.from <= to && r.to >= from)) continue;
     const source = state.doc.sliceString(from, to);
-    builder.add(from, to, Decoration.replace({ widget: new HtmlBlockWidget(source), block: true }));
+    const widget = new HtmlBlockWidget(source, state.facet(notePathFacet));
+    builder.add(from, to, Decoration.replace({ widget, block: true }));
   }
   return { blocks, deco: builder.finish() };
 }

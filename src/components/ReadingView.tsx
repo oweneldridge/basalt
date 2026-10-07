@@ -131,10 +131,13 @@ export function ReadingView({
       });
     }
 
-    // Sanitize + insert any raw HTML blocks (lazy-load DOMPurify on demand).
+    // Sanitize + insert any raw HTML blocks (lazy-load DOMPurify on demand);
+    // their vault images resolve like any other.
     if (el.querySelector("[data-basalt-html]")) {
       void import("../lib/sanitize").then((mod) => {
-        if (!cancelled && el.isConnected) mod.fillRawHtml(el);
+        if (cancelled || !el.isConnected) return;
+        mod.fillRawHtml(el);
+        resolveImages();
       });
     }
 
@@ -189,26 +192,30 @@ export function ReadingView({
     }
 
     // Resolve vault images asynchronously (external http(s) src pass through).
-    el.querySelectorAll<HTMLImageElement>("img[data-basalt-img]").forEach((img) => {
-      const target = img.dataset.basaltImg ?? "";
-      if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//")) {
-        if (isRemoteUrl(target) && !remoteImagesAllowed()) img.replaceWith(blockedImage(target, img.alt));
-        else img.src = target; // already a URL
-        return;
-      }
-      void resolver.current(target).then((url) => {
-        if (cancelled) return;
-        if (url) img.src = url;
-        else {
-          img.replaceWith(
-            Object.assign(document.createElement("span"), {
-              className: "md-image-missing",
-              textContent: `🖼 ${target}`,
-            }),
-          );
+    resolveImages();
+    function resolveImages() {
+      el!.querySelectorAll<HTMLImageElement>("img[data-basalt-img]").forEach((img) => {
+        const target = img.dataset.basaltImg ?? "";
+        img.removeAttribute("data-basalt-img");
+        if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//")) {
+          if (isRemoteUrl(target) && !remoteImagesAllowed()) img.replaceWith(blockedImage(target, img.alt));
+          else img.src = target; // already a URL
+          return;
         }
+        void resolver.current(target).then((url) => {
+          if (cancelled) return;
+          if (url) img.src = url;
+          else {
+            img.replaceWith(
+              Object.assign(document.createElement("span"), {
+                className: "md-image-missing",
+                textContent: `🖼 ${target}`,
+              }),
+            );
+          }
+        });
       });
-    });
+    }
     return () => {
       cancelled = true;
       unmounts.forEach((u) => u());

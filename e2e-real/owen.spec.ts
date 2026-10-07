@@ -1883,3 +1883,20 @@ test.describe("Backspace on a quote line written without a space", () => {
     expect(vault.read("Bs.md")).toBe("> [!note] T\n>ody\n\nEND\n");
   });
 });
+
+test.describe("an image in an HTML block", () => {
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+  test.use({ vaultFiles: { "Html img.md": '<div align="center"><img src="assets/pic.png" alt="P" width="40"></div>\n\nEND\n', "assets/pic.png": png } });
+
+  test("shows the vault's image in both views", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Html img");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const lp = page.locator(".pane:not(.dock) .cm-html-block img");
+    await expect(lp).toHaveAttribute("src", /^(data:|blob:|asset:|http)/);
+    await expect.poll(() => lp.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0);
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    const rv = page.locator(".pane:not(.dock) .reading-view img");
+    await expect.poll(() => rv.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0);
+  });
+});
