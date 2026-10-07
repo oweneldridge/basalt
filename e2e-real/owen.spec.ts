@@ -1075,3 +1075,23 @@ test.describe("links to headings, blocks and footnotes", () => {
     await expect(heading).toBeInViewport();
   });
 });
+
+test.describe("a selection in Reading view", () => {
+  test.use({ vaultFiles: { "Read.md": "# Read\n\nA sentence to copy from.\n", "Other.md": "other\n" } });
+
+  test("stays when the app updates around it", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Read");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    const para = page.locator(".pane:not(.dock) .reading-view p", { hasText: "A sentence" });
+    await para.click({ clickCount: 3 });
+    await para.evaluate((el) => el.setAttribute("data-probe", "1"));
+    expect(await page.evaluate(() => String(window.getSelection()))).toContain("A sentence to copy from.");
+    vault.write("Other.md", "other, changed elsewhere\n");
+    vault.write("New.md", "a new note\n");
+    await expect(page.locator(".tree-row.file", { hasText: "New" })).toBeVisible();
+    await page.waitForTimeout(1000);
+    await expect(page.locator(".reading-view p[data-probe]")).toHaveCount(1);
+    expect(await page.evaluate(() => String(window.getSelection()))).toContain("A sentence to copy from.");
+  });
+});

@@ -64,6 +64,10 @@ export function ReadingView({
   scrollRev,
 }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
+  // The app passes a new resolver on every render; rendering again for each
+  // would reset the note (and any selection in it) whenever anything changes.
+  const resolver = useRef(resolveImage);
+  resolver.current = resolveImage;
   // The note last shown: the same note re-rendering (a ticked task, an outside
   // edit) keeps its scroll position; another note starts at the top.
   const shownRel = useRef<string | null>(null);
@@ -134,7 +138,7 @@ export function ReadingView({
     // Audio / video / PDF embeds → players (resolved like images).
     if (el.querySelector("[data-basalt-media]")) {
       void import("../lib/media").then((mod) => {
-        if (!cancelled && el.isConnected) mod.fillMedia(el, resolveImage);
+        if (!cancelled && el.isConnected) mod.fillMedia(el, (t) => resolver.current(t));
       });
     }
 
@@ -184,7 +188,7 @@ export function ReadingView({
         else img.src = target; // already a URL
         return;
       }
-      void resolveImage(target).then((url) => {
+      void resolver.current(target).then((url) => {
         if (cancelled) return;
         if (url) img.src = url;
         else {
@@ -201,7 +205,7 @@ export function ReadingView({
       cancelled = true;
       unmounts.forEach((u) => u());
     };
-  }, [doc, selfRel, resolveImage, dark]);
+  }, [doc, selfRel, dark]);
 
   // Scroll to a linked heading or block, holding it in place while images,
   // diagrams and embeds above it load, until the reader scrolls.
