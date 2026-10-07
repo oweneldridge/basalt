@@ -849,6 +849,34 @@ pub fn list_subfolders(root: &Path, rel: String) -> Result<Vec<String>, String> 
     Ok(out)
 }
 
+/// Every folder in the vault, empty ones included, as the file tree lists
+/// them: dot-folders such as `.obsidian` stay out, and links aren't followed.
+pub fn list_folders(root: &Path) -> Vec<String> {
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>, depth: usize) {
+        if depth > MAX_WALK_DEPTH {
+            return;
+        }
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            if is_ignored_dir(&e.file_name().to_string_lossy()) {
+                continue;
+            }
+            let p = e.path();
+            if let Ok(rp) = p.strip_prefix(root) {
+                out.push(rp.to_string_lossy().to_string());
+            }
+            walk(&p, root, out, depth + 1);
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out, 0);
+    out.sort_by_key(|a| a.to_lowercase());
+    out
+}
+
 /// Create a folder (validated, vault-contained). Used to preserve empty
 /// subfolder structure across a folder rename.
 pub fn create_folder(root: &Path, rel: String) -> Result<(), String> {
@@ -2164,6 +2192,17 @@ mod tests {
         fs::write(root.join(".obsidian/app.json"), r#"{"strictLineBreaks": true}"#).unwrap();
         assert_eq!(strict(&root), serde_json::Value::Bool(true));
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn list_folders_includes_empty_ones_but_not_dot_folders() {
+        let root = scratch_vault("folders");
+        fs::create_dir_all(root.join("Empty")).unwrap();
+        fs::create_dir_all(root.join("A/B/C")).unwrap();
+        fs::create_dir_all(root.join(".obsidian/plugins")).unwrap();
+        fs::create_dir_all(root.join("A/.hidden")).unwrap();
+        fs::write(root.join("A/note.md"), "x").unwrap();
+        assert_eq!(list_folders(&root), vec!["A", "A/B", "A/B/C", "Empty"]);
     }
 
     #[test]

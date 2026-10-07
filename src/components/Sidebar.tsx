@@ -6,6 +6,10 @@ import { menuKeyOpens } from "./ContextMenu";
 interface Props {
   notes: VaultNote[];
   attachments: Attachment[];
+  /** Every folder in the vault, so empty ones show too. */
+  folders?: string[];
+  /** A folder to show (its parents opened): one just made. */
+  revealFolder?: string | null;
   activePath: string | null;
   vaultName: string | null;
   onOpen: (path: string) => void;
@@ -44,7 +48,7 @@ function saveExpanded(vault: string | null, set: Set<string>): void {
 
 const DND_MIME = "application/x-basalt-note";
 
-export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onNewNote, onOpenAttachment, onContextMenu, onAttachmentContextMenu, onFolderContextMenu, onMoveToFolder }: Props) {
+export function Sidebar({ notes, attachments, folders = [], revealFolder = null, activePath, vaultName, onOpen, onNewNote, onOpenAttachment, onContextMenu, onAttachmentContextMenu, onFolderContextMenu, onMoveToFolder }: Props) {
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const noteListRef = useRef<HTMLDivElement | null>(null);
@@ -66,7 +70,7 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
   );
   useEffect(() => localStorage.setItem("basalt.fileSort", sort), [sort]);
 
-  const tree = useMemo(() => buildTree(notes, attachments, sort), [notes, attachments, sort]);
+  const tree = useMemo(() => buildTree(notes, attachments, sort, folders), [notes, attachments, sort, folders]);
 
   // Load persisted expansion when the vault changes.
   useEffect(() => {
@@ -97,6 +101,12 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
       return changed ? next : prev;
     });
   }, [activePath, notes]);
+
+  useEffect(() => {
+    if (!revealFolder) return;
+    const anc = ancestorFolders(revealFolder);
+    if (anc.length) setExpanded((prev) => new Set([...prev, ...anc]));
+  }, [revealFolder]);
 
   const toggle = (path: string) =>
     setExpanded((prev) => {

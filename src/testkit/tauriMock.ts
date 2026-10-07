@@ -150,6 +150,7 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
       ]);
     case "list_subfolders":
     case "list_foreign_files":
+    case "list_folders":
       return ok([]);
     case "read_image":
       return ok("");

@@ -253,6 +253,13 @@ fn rename_note(path: String, new_name: String, window: tauri::Window, state: Sta
     basalt_core::rename_note(&root, path, new_name)
 }
 
+/// Every folder in the open vault, empty ones included.
+#[tauri::command]
+async fn list_folders(window: tauri::Window, state: State<'_, VaultState>) -> Result<Vec<String>, String> {
+    let root = current_root(&state, window.label())?;
+    Ok(basalt_core::list_folders(&root))
+}
+
 /// List every attachment (non-md supported file) in the open vault.
 #[tauri::command]
 async fn list_attachments(window: tauri::Window, state: State<'_, VaultState>) -> Result<Vec<basalt_core::AttachmentEntry>, String> {
@@ -537,6 +544,7 @@ pub fn run() {
             delete_note,
             rename_note,
             list_attachments,
+            list_folders,
             write_attachment,
             read_obsidian_config,
             read_obsidian_import,

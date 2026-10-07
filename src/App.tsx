@@ -6,6 +6,7 @@ import {
   createFolder,
   deleteNote,
   listAttachments,
+  listFolders,
   nameFromRel,
   renameNote,
   writeAttachment,
@@ -368,6 +369,9 @@ export default function App() {
   const [vault, setVault] = useState<string | null>(null);
   const [notes, setNotes] = useState<VaultNote[]>([]);
   const [attachmentsList, setAttachmentsList] = useState<Attachment[]>([]);
+  // Every folder on disk, so the tree shows empty ones too.
+  const [folders, setFolders] = useState<string[]>([]);
+  const [madeFolder, setMadeFolder] = useState<string | null>(null);
   // Split-pane workspace: a layout tree of panes (by id), the panes map, and
   // which pane has focus (drives the right panel / toolbar / open targets).
   const [panes, setPanes] = useState<Record<string, Pane>>({});
@@ -658,6 +662,23 @@ export default function App() {
     setIndexVersion((v) => v + 1);
     setStructureVersion((v) => v + 1);
   }, []);
+
+  // The folder list follows every change to the vault's files and folders.
+  useEffect(() => {
+    if (!vault) {
+      setFolders([]);
+      return;
+    }
+    let stale = false;
+    listFolders()
+      .then((list) => {
+        if (!stale) setFolders(showHidden ? list : list.filter((f) => !isHiddenRel(f)));
+      })
+      .catch((e) => jsLog(`list_folders failed: ${e}`));
+    return () => {
+      stale = true;
+    };
+  }, [vault, structureVersion, showHidden]);
 
   // Stable index accessors for the Bases viewer (index is a ref, so these
   // never change identity; BaseView invalidates its rows via structureVersion
@@ -4394,6 +4415,7 @@ export default function App() {
         for (const n of inside) index.current.removeNote(n.path);
         setNotes((prev) => prev.filter((n) => !n.rel.startsWith(prefix)));
         setAttachmentsList((prev) => prev.filter((a) => !a.rel.startsWith(prefix)));
+        setFolders((prev) => prev.filter((f) => f !== folderRel && !f.startsWith(prefix)));
         recents.current = recents.current.filter((r) => !r.startsWith(prefix));
         bumpStructure();
       } catch (e) {
@@ -4485,6 +4507,7 @@ export default function App() {
         return;
       }
       for (const p of movingPaths) renaming.current.delete(p);
+      setFolders((prev) => prev.map((f) => (f === folderRel || f.startsWith(oldPrefix) ? swap(f) : f)));
 
       // Migrate any pending edit / save timer keyed by a moving OLD path to its
       // new path — a keystroke landing during the renameFolder IPC would else
@@ -4851,6 +4874,8 @@ export default function App() {
           <Sidebar
             notes={notes}
             attachments={attachmentsList}
+            folders={folders}
+            revealFolder={madeFolder}
             activePath={lastNotePath}
             vaultName={basename(vault)}
             onOpen={(path) => openNoteByPath(path)}
@@ -5759,7 +5784,12 @@ export default function App() {
               return;
             }
             const full = (parent ? `${parent}/` : "") + folder;
-            void handleNewNoteIn(full); // a starter note makes the new folder appear
+            createFolder(full)
+              .then(() => {
+                setMadeFolder(full);
+                bumpStructure();
+              })
+              .catch((e) => setSaveError(`Couldn't create folder: ${e}`));
           }}
           onClose={() => setSubfolderParent(null)}
         />

@@ -1,3 +1,4 @@
+import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { test, expect, openApp, openNote, settle } from "./fixture";
 
 test.describe("inline SVG in a note", () => {
@@ -1179,5 +1180,31 @@ test.describe("the hover preview", () => {
     await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Other");
     await page.waitForTimeout(800);
     await expect(preview(page)).toBeHidden();
+  });
+});
+
+test.describe("empty folders", () => {
+  test("show in the tree, and New folder makes one without a note", async ({ page, vault }) => {
+    mkdirSync(vault.path("Empty"));
+    mkdirSync(vault.path("Projects/Sub/Deeper"), { recursive: true });
+    await openApp(page, vault);
+    await expect(page.locator(".tree-row.folder", { hasText: "Empty" })).toBeVisible();
+    await page.locator(".tree-row.folder", { hasText: "Projects" }).click();
+    await page.locator(".tree-row.folder", { hasText: "Sub" }).click();
+    await expect(page.locator(".tree-row.folder", { hasText: "Deeper" })).toBeVisible();
+
+    await page.locator(".tree-row.folder", { hasText: "Empty" }).click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "New folder…" }).click();
+    await page.locator(".prompt-input").fill("Fresh");
+    await page.locator(".prompt-input").press("Enter");
+    await expect.poll(() => vault.exists("Empty/Fresh") && statSync(vault.path("Empty/Fresh")).isDirectory()).toBe(true);
+    expect(readdirSync(vault.path("Empty/Fresh"))).toEqual([]);
+    await expect(page.locator(".tree-row.folder", { hasText: "Fresh" })).toBeVisible();
+
+    page.once("dialog", (d) => void d.accept());
+    await page.locator(".tree-row.folder", { hasText: "Fresh" }).click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Delete folder" }).click();
+    await expect.poll(() => vault.exists("Empty/Fresh")).toBe(false);
+    await expect(page.locator(".tree-row.folder", { hasText: "Fresh" })).toHaveCount(0);
   });
 });

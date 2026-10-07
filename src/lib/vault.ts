@@ -168,6 +168,11 @@ export function renameFolder(fromRel: string, toRel: string): Promise<string> {
   return invoke<string>("rename_folder", { fromRel, toRel });
 }
 
+/** Every folder in the open vault, empty ones included (not dot-folders). */
+export function listFolders(): Promise<string[]> {
+  return invoke<string[]>("list_folders");
+}
+
 /** List every attachment (supported non-md file) in the open vault. */
 export function listAttachments(): Promise<Attachment[]> {
   return invoke<Attachment[]>("list_attachments");

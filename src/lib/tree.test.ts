@@ -29,3 +29,13 @@ describe("buildTree name order", () => {
     ]);
   });
 });
+
+describe("empty folders", () => {
+  it("show in the tree beside the ones holding notes", () => {
+    const alpha = { path: "/v/Projects/Alpha.md", rel: "Projects/Alpha.md", name: "Alpha", content: "", mtime: 1, ctime: 1 };
+    const tree = buildTree([alpha], [], "name-asc", ["Empty", "Projects", "Projects/Sub/Deeper"]);
+    expect(tree.map((n) => n.name)).toEqual(["Empty", "Projects"]);
+    const projects = tree[1] as { children: { name: string; type: string }[] };
+    expect(projects.children.map((c) => `${c.type}:${c.name}`)).toEqual(["folder:Sub", "file:Alpha"]);
+  });
+});

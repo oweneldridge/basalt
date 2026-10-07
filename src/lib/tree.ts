@@ -49,16 +49,16 @@ export function buildTree(
   notes: VaultNote[],
   attachments: Attachment[] = [],
   order: SortOrder = "name-asc",
+  emptyFolders: string[] = [],
 ): TreeNode[] {
   const root: TreeFolder = { type: "folder", name: "", path: "", children: [] };
   const folders = new Map<string, TreeFolder>([["", root]]);
 
-  const insert = (rel: string, file: TreeFile) => {
-    const parts = rel.split(/[/\\]/);
+  /** The folder at `parts`, made along with any folders above it. */
+  const folderAt = (parts: string[]): TreeFolder => {
     let parent = root;
     let parentPath = "";
-    for (let i = 0; i < parts.length - 1; i++) {
-      const seg = parts[i];
+    for (const seg of parts) {
       const fp = parentPath ? `${parentPath}/${seg}` : seg;
       let folder = folders.get(fp);
       if (!folder) {
@@ -69,8 +69,12 @@ export function buildTree(
       parent = folder;
       parentPath = fp;
     }
-    parent.children.push(file);
+    return parent;
   };
+  const insert = (rel: string, file: TreeFile) => {
+    folderAt(rel.split(/[/\\]/).slice(0, -1)).children.push(file);
+  };
+  for (const f of emptyFolders) if (f) folderAt(f.split(/[/\\]/));
 
   for (const note of notes) {
     insert(note.rel, { type: "file", name: note.name, path: note.path, mtime: note.mtime, ctime: note.ctime });

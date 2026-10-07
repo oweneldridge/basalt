@@ -355,6 +355,7 @@ fn dispatch(root: &Path, cmd: &str, a: &Value) -> Result<Value, String> {
         "open_vault" => Ok(json!(root.to_string_lossy())),
         "read_vault" => to_val(basalt_core::read_vault(root)),
         "list_attachments" => to_val(basalt_core::list_attachments(root)),
+        "list_folders" => to_val(basalt_core::list_folders(root)),
         "read_note" => basalt_core::read_note(root, s("path")?).map(|x| json!(x)),
         "write_note" => basalt_core::write_note(root, s("path")?, s("content")?, opt("expected")).map(|_| Value::Null),
         "write_canvas" => basalt_core::write_canvas(root, s("path")?, s("content")?, opt("expected")).map(|_| Value::Null),
