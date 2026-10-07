@@ -1676,8 +1676,10 @@ button.primary:hover {
 /* ------- Query blocks (```dataview / ```query) ------- */
 /* Padding, not margin, on block widgets: CodeMirror measures a widget without
    its margins, so lines below would sit out of step with clicks. */
+/* Block widgets start on the text column (lines are inset 48px), not out in
+   the left gutter. */
 .cm-query {
-  padding: 4px 0;
+  padding: 4px 2px 4px 48px;
 }
 .query-block {
   font-size: 0.95em;
@@ -1816,7 +1818,7 @@ button.primary:hover {
   margin-top: 4px;
 }
 .cm-plugin-block {
-  padding: 4px 0;
+  padding: 4px 2px 4px 48px;
 }
 .md-plugin-block {
   margin: 4px 0;
@@ -1867,7 +1869,7 @@ button.primary:hover {
 }
 
 /* ------- Transclusion / embeds ------- */
-.cm-embed { padding: 4px 0; }
+.cm-embed { padding: 4px 2px 4px 48px; }
 .embed {
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
@@ -2091,7 +2093,7 @@ button.primary:hover {
 /* ------- Math (KaTeX) ------- */
 .math-block, .cm-math-block { display: block; text-align: center; margin: 8px 0; overflow-x: auto; }
 /* An editor widget takes no vertical margin: CodeMirror measures it without one. */
-.cm-math-block { margin: 0; padding: 8px 0; }
+.cm-math-block { margin: 0; padding: 8px 2px 8px 48px; }
 .math-inline, .cm-math { }
 .math-error { color: var(--danger); font-family: var(--font-mono, monospace); font-size: 0.9em; }
 .cm-math { cursor: default; }
@@ -2916,7 +2918,7 @@ textarea.tp-modal-input {
 
 /* Live Preview raw-HTML block widget (renders sanitized HTML; click to edit). */
 .cm-html-block {
-  padding: 2px 0;
+  padding: 2px 2px 2px 48px;
   cursor: text;
 }
 .cm-html-block :where(center) {

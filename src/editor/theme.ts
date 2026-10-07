@@ -333,8 +333,9 @@ const themeSpec = {
       display: "block",
       textAlign: "center",
       // Padding, not margin: CodeMirror measures a block widget without its
-      // margins, so lines below would sit out of step with clicks.
-      padding: "16px 0",
+      // margins, so lines below would sit out of step with clicks. Inset to
+      // the text column like the lines.
+      padding: "16px 2px 16px 48px",
       color: "var(--text-muted)",
       cursor: "pointer",
     },

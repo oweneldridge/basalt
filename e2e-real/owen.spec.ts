@@ -1489,3 +1489,25 @@ test.describe("quotes and bare links in Live Preview", () => {
     expect(inner).toBe(own);
   });
 });
+
+test.describe("block widgets in Live Preview", () => {
+  test.use({
+    vaultFiles: { "W.md": "Body text\n\n```query\ntag:#x\n```\n\n<div>html block</div>\n\n![[Inner]]\n\nEND\n", "Inner.md": "Inner words.\n" },
+  });
+
+  test("start on the text column, as Reading view's do", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "W");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const pane = page.locator(".pane:not(.dock)");
+    const x = (loc: import("@playwright/test").Locator) => loc.evaluate((e) => e.getBoundingClientRect().left);
+    const body = await pane.locator(".cm-line", { hasText: "Body text" }).evaluate((e) => {
+      const r = document.createRange();
+      r.selectNodeContents(e);
+      return r.getClientRects()[0].left;
+    });
+    for (const sel of [".cm-query .query-error", ".cm-html-block > *", ".cm-embed .embed"]) {
+      expect(Math.abs((await x(pane.locator(sel).first())) - body)).toBeLessThan(4);
+    }
+  });
+});
