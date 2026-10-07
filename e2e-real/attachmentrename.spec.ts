@@ -23,6 +23,7 @@ test.use({
     "Bare.md": "Only ![[shot one.png]] here\n",
     "Tasks.base": "views:\n  - type: table\n    name: Table\n",
     "Dash.md": "![[Tasks.base]]\n",
+    "Links.canvas": JSON.stringify({ nodes: [{ id: "c1", type: "text", text: "see [[Gallery]] and ![[Media/shot one.png]]", x: 0, y: 0, width: 300, height: 80 }], edges: [] }),
     "Sketches/Idea.canvas": JSON.stringify({ nodes: [{ id: "p1", type: "text", text: "Idea card", x: 0, y: 0, width: 200, height: 80 }], edges: [] }),
   },
 });
@@ -186,6 +187,25 @@ test("typing in a canvas card while its folder's move waits is kept", async ({ p
   await expect.poll(() => vault.exists("Ideas/Idea.canvas"), { timeout: 15000 }).toBe(true);
   await settle(page, 1500);
   expect(JSON.parse(vault.read("Ideas/Idea.canvas")).nodes[0].text).toContain("typed while waiting");
+});
+
+test("links in a canvas text card follow renames and moves, as in Obsidian", async ({ page, vault }) => {
+  await openApp(page, vault);
+  const card = () => JSON.parse(vault.read("Links.canvas")).nodes[0].text as string;
+  await page.locator(".tree-row.file", { hasText: "Gallery" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+  await page.locator(".prompt-input").fill("Photos");
+  await page.locator(".prompt-input").press("Enter");
+  await expect.poll(card).toBe("see [[Photos]] and ![[Media/shot one.png]]");
+  await renameFromMenu(page, "shot one", "Media/sunset");
+  await expect.poll(card).toBe("see [[Photos]] and ![[sunset.png]]");
+  await page.locator(".tree-row.folder", { hasText: "Media" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename folder…" }).click();
+  await page.locator(".prompt-input").fill("Pics");
+  await page.locator(".prompt-input").press("Enter");
+  await expect.poll(() => vault.exists("Pics/sunset.png")).toBe(true);
+  await settle(page, 1000);
+  expect(card()).toBe("see [[Photos]] and ![[sunset.png]]");
 });
 
 test.describe("a rename right after another", () => {

@@ -201,6 +201,12 @@ describe("canvasBounds / canvasColor", () => {
 });
 
 describe("rewriteCanvasFileRefs", () => {
+  it("fixes links in text cards too, when given a fixer", () => {
+    const canvas = JSON.stringify({ nodes: [{ id: "t", type: "text", text: "see [[Old]]", x: 0, y: 0, width: 1, height: 1 }], edges: [] });
+    const fix = (t: string) => (t.includes("[[Old]]") ? t.replace("[[Old]]", "[[New]]") : null);
+    expect(JSON.parse(rewriteCanvasFileRefs(canvas, new Map([["Old.md", "New.md"]]), fix)!).nodes[0].text).toBe("see [[New]]");
+    expect(rewriteCanvasFileRefs(canvas, new Map([["Old.md", "New.md"]]))).toBeNull();
+  });
   const canvas = JSON.stringify({
     nodes: [
       { id: "a", type: "file", file: "Notes/Old.md", x: 0, y: 0, width: 200, height: 100 },

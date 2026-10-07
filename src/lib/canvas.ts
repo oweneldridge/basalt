@@ -135,8 +135,13 @@ function end(v: unknown): End | undefined {
  * fields and re-stringifies, so it never rounds geometry or drops fields the
  * canvas modeler doesn't understand (unlike serializeCanvas). Returns the new
  * JSON, or null if nothing changed / the JSON is unparseable. A file-node's
- * subpath lives in a separate field, so `Note.md#heading` embeds keep it. */
-export function rewriteCanvasFileRefs(json: string, relMap: Map<string, string>): string | null {
+ * subpath lives in a separate field, so `Note.md#heading` embeds keep it.
+ * With `fixText`, each text card's text goes through it too. */
+export function rewriteCanvasFileRefs(
+  json: string,
+  relMap: Map<string, string>,
+  fixText?: (text: string) => string | null,
+): string | null {
   let data: unknown;
   try {
     data = JSON.parse(json);
@@ -151,7 +156,16 @@ export function rewriteCanvasFileRefs(json: string, relMap: Map<string, string>)
   let changed = false;
   for (const n of (data as { nodes: unknown[] }).nodes) {
     if (!n || typeof n !== "object") continue;
-    const node = n as { type?: unknown; file?: unknown };
+    const node = n as { type?: unknown; file?: unknown; text?: unknown };
+    // A text card's links, as Obsidian fixes them on a rename.
+    if (node.type === "text" && typeof node.text === "string" && fixText) {
+      const text = fixText(node.text);
+      if (text !== null && text !== node.text) {
+        node.text = text;
+        changed = true;
+      }
+      continue;
+    }
     if (node.type !== "file" || typeof node.file !== "string") continue;
     const to = relMap.get(node.file) ?? lower.get(node.file.toLowerCase());
     if (to !== undefined && to !== node.file) {

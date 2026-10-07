@@ -4111,10 +4111,17 @@ export default function App() {
   }, []);
 
   const rewriteCanvasRefs = useCallback(
-    async (canvases: { path: string; rel: string }[], relMap: Map<string, string>): Promise<string[]> => {
+    async (
+      canvases: { path: string; rel: string }[],
+      relMap: Map<string, string>,
+      textLinks?: (canvas: { path: string; rel: string }) => LinkMapper,
+    ): Promise<string[]> => {
       const failed: string[] = [];
       if (relMap.size === 0) return failed;
       for (const c of canvases) {
+        // Links in text cards are fixed as in a note at the canvas's place.
+        const mapper = textLinks?.(c);
+        const fixText = mapper ? (t: string) => rewriteLinks(t, mapper) : undefined;
         try {
           // In the canvas's save queue, so a save made meanwhile waits for this.
           // A canvas with unsaved edits, before or during the read, is left as
@@ -4125,7 +4132,7 @@ export default function App() {
               return;
             }
             const json = await readNote(c.path);
-            const next = rewriteCanvasFileRefs(json, relMap);
+            const next = rewriteCanvasFileRefs(json, relMap, fixText);
             if (next === null) return;
             if (pending.current.has(c.path)) {
               failed.push(c.rel);
@@ -4136,7 +4143,7 @@ export default function App() {
             // Edited during the write: the save queued behind this carries the
             // edit, so give it the same fix and show that, not the fix alone.
             const edited = pending.current.get(c.path);
-            const doc = edited === undefined ? next : (rewriteCanvasFileRefs(edited, relMap) ?? edited);
+            const doc = edited === undefined ? next : (rewriteCanvasFileRefs(edited, relMap, fixText) ?? edited);
             if (edited !== undefined) pending.current.set(c.path, doc);
             for (const p of Object.values(panesRef.current)) {
               if (p.active === c.path) patchPane(p.id, { doc });
@@ -4422,8 +4429,9 @@ export default function App() {
           const last = normalizeName(targetPathPart(raw).split(/[/\\]/).pop() ?? "");
           return aliasSet.has(last) && last !== normalizeName(newBase) && last !== normalizeName(oldNote.name);
         };
-        const sourceMap = (notePath: string, noteRel: string): LinkMapper => (raw, literal) =>
-          !literal && preIndex.resolve(raw, notePath) === oldPath && !viaAlias(raw)
+        // By the linking file's place, so a canvas's text cards resolve too.
+        const sourceMap = (_path: string, noteRel: string): LinkMapper => (raw, literal) =>
+          !literal && preIndex.resolveFromRel(raw, noteRel) === oldPath && !viaAlias(raw)
             ? linkTargetForFormat(fmt, newRelNoExt, taken, noteRel)
             : null;
         const { failures, written } = await rewriteNoteLinks(
@@ -4438,6 +4446,7 @@ export default function App() {
             .filter((a) => /\.canvas$/i.test(a.path))
             .map((a) => ({ path: a.path, rel: a.rel })),
           new Map([[oldNote.rel, newRel]]),
+          (c) => sourceMap(c.path, c.rel),
         );
         const allFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
         reportLinkFixes("Renamed", allFails);
@@ -4842,7 +4851,10 @@ export default function App() {
       const postCanvases = preAtts.map((a) =>
         a.rel.startsWith(oldPrefix) ? { path: `${root}/${swap(a.rel)}`, rel: swap(a.rel) } : { path: a.path, rel: a.rel },
       ).filter((a) => /\.canvas$/i.test(a.path));
-      const canvasFails = await rewriteCanvasRefs(postCanvases, moveRelMap);
+      const oldCanvasPath = new Map(preAtts.filter((a) => a.rel.startsWith(oldPrefix)).map((a) => [`${root}/${swap(a.rel)}`, a.path]));
+      const canvasFails = await rewriteCanvasRefs(postCanvases, moveRelMap, (c) =>
+        folderMoveMapper(moveCtx, oldCanvasPath.get(c.path) ?? c.path, c.path, c.rel),
+      );
 
       const folderFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
       reportLinkFixes("Folder moved", folderFails);
@@ -4975,6 +4987,7 @@ export default function App() {
       const canvasFails = await rewriteCanvasRefs(
         postAtts.filter((a) => /\.canvas$/i.test(a.path)).map((a) => ({ path: a.path, rel: a.rel })),
         new Map([[att.rel, newRel]]),
+        (c) => mapperFor({ path: c.path, rel: c.rel, name: c.rel, content: "" }),
       );
       const allFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
       reportLinkFixes("Renamed", allFails);
