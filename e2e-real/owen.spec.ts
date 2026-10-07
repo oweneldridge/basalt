@@ -967,3 +967,18 @@ test.describe("callouts in Live Preview", () => {
     await expect(page.locator(".pane:not(.dock) .cm-callout-fold")).toHaveCount(1);
   });
 });
+
+test.describe("tasks with other statuses", () => {
+  test.use({ vaultFiles: { "States.md": "- [ ] open\n- [x] done\n- [/] doing\n- [-] dropped\n1. [ ] numbered\n\nEND\n" } });
+
+  test("render as checkboxes and toggle", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "States");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const boxes = page.locator(".pane:not(.dock) .cm-task-checkbox");
+    await expect(boxes).toHaveCount(5);
+    await boxes.nth(2).click();
+    await settle(page, 1500);
+    expect(vault.read("States.md")).toContain("- [ ] doing\n");
+  });
+});

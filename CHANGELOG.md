@@ -45,6 +45,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Tasks with any status, such as `- [/]`, `- [-]` or `- [>]`, and tasks in
+  numbered lists show as checkboxes in Live Preview and Reading view, as in
+  Obsidian; clicking one marks it open or done.
 - In Live Preview a callout with no title shows its type as the title
   ("> [!warning]" reads "Warning"), and only callouts marked foldable (`-` or
   `+`) get a fold arrow, as in Obsidian.

@@ -122,11 +122,12 @@ class CheckboxWidget extends WidgetType {
       e.preventDefault();
       const pos = view.posAtDOM(box);
       const line = view.state.doc.lineAt(pos);
-      const m = /\[[ xX]\]/.exec(line.text);
+      const m = /\[[^\]\n]\]/.exec(line.text);
       if (!m) return;
       const from = line.from + m.index;
       const to = from + 3;
-      const checked = /\[[xX]\]/.test(view.state.doc.sliceString(from, to));
+      // Any status but a space counts as done (Obsidian's `[/]`, `[-]`…).
+      const checked = view.state.doc.sliceString(from + 1, from + 2) !== " ";
       view.dispatch({ changes: { from, to, insert: checked ? "[ ]" : "[x]" } });
     });
     return box;
@@ -258,7 +259,7 @@ function buildDecorations(
 
         if (name === "ListMark") {
           if (lineTouched(node.from)) return;
-          const isTask = /^\s?\[[ xX]\]/.test(doc.sliceString(node.to, node.to + 4));
+          const isTask = /^\s?\[[^\]\n]\][ \t]/.test(doc.sliceString(node.to, node.to + 5));
           if (isTask) {
             builder.add(node.from, node.to, CONCEAL); // hide '-', checkbox renders
             return;
@@ -271,7 +272,7 @@ function buildDecorations(
 
         if (name === "TaskMarker") {
           if (lineTouched(node.from)) return;
-          const checked = /\[[xX]\]/.test(doc.sliceString(node.from, node.to));
+          const checked = doc.sliceString(node.from + 1, node.from + 2) !== " ";
           builder.add(node.from, node.to, Decoration.replace({ widget: new CheckboxWidget(checked) }));
           return;
         }

@@ -185,7 +185,7 @@ const ATX = /^(#{1,6})\s+(.*?)\s*#*\s*$/;
 const HR = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
 const BULLET = /^(\s*)([-*+])\s+(.*)$/;
 const ORDERED = /^(\s*)(\d{1,9})[.)]\s+(.*)$/;
-const TASK = /^\[([ xX])\]\s+(.*)$/;
+const TASK = /^\[([^\]\n])\]\s+(.*)$/; // any status, as Obsidian reads tasks
 const QUOTE = /^ {0,3}>\s?(.*)$/;
 const CALLOUT = /^\[!([A-Za-z]+)\]([+-]?)\s*(.*)$/;
 // A line opening a BLOCK-LEVEL HTML tag (CommonMark type-6-ish list). Inline
@@ -321,9 +321,10 @@ export function toggleTaskLine(doc: string, line: number): string | null {
   const lines = doc.split("\n");
   if (line < 0 || line >= lines.length) return null;
   // Tasks inside blockquotes and callouts carry a `> ` prefix.
-  const re = /^((?:\s*>)*\s*[-*+]\s+\[)([ xX])(\])/;
+  const re = /^((?:\s*>)*\s*(?:[-*+]|\d{1,9}[.)])\s+\[)([^\]\n])(\])/;
   const m = re.exec(lines[line]);
   if (!m) return null;
+  // Any status but a space is done, and goes back to open.
   lines[line] = lines[line].replace(re, (_full, pre, mark, post) => pre + (mark === " " ? "x" : " ") + post);
   return lines.join("\n");
 }
@@ -496,7 +497,7 @@ export function renderMarkdown(src: string, lineMap?: number[]): string {
         }
         const indent = (b ?? o)![1].length;
         const content = (b ?? o)![3];
-        const task = b ? TASK.exec(content) : null;
+        const task = TASK.exec(content);
         items.push({
           indent,
           ordered: !!o,

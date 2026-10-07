@@ -171,6 +171,18 @@ describe("dollar amounts aren't math", () => {
   });
 });
 
+describe("tasks with other statuses", () => {
+  it("render as checkboxes, including in numbered lists", () => {
+    const html = renderMarkdown("- [/] doing\n- [-] dropped\n1. [ ] numbered");
+    expect(html.match(/md-task-check/g)).toHaveLength(3);
+    expect(html.match(/ checked/g)).toHaveLength(2);
+  });
+  it("toggle back to open, and numbered tasks toggle too", () => {
+    expect(toggleTaskLine("- [/] doing", 0)).toBe("- [ ] doing");
+    expect(toggleTaskLine("1. [ ] numbered", 0)).toBe("1. [x] numbered");
+  });
+});
+
 describe("stripComments (Obsidian %% comments)", () => {
   it("removes inline and multi-line comments but keeps code", () => {
     expect(renderMarkdown("a %%hidden%% b")).toContain("a  b");
