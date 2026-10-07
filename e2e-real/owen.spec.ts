@@ -1569,3 +1569,17 @@ test.describe("a loose numbered list", () => {
     expect(vault.read("Loose.md")).toBe("1. alpha\n\n2. bravo\n\n3. charlie\n\nEND\n");
   });
 });
+
+test.describe("an HTML comment with text after it", () => {
+  test.use({ vaultFiles: { "Hc.md": "<!-- c --> visible tail\n\n<!-- only a comment -->\n\npara\n" } });
+
+  test("keeps the text in Reading view", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Hc");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    const view = page.locator(".pane:not(.dock) .reading-view");
+    await expect(view).toContainText("visible tail");
+    await expect(view).not.toContainText("only a comment");
+    await expect(view).toContainText("para");
+  });
+});

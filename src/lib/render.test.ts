@@ -495,3 +495,10 @@ describe("source lines", () => {
     expect(renderMarkdown(src)).not.toContain("data-line");
   });
 });
+
+describe("HTML comments", () => {
+  it("hide, but text after one on its line stays", () => {
+    expect(renderMarkdown("<!-- only -->\n\npara")).toBe("<p>para</p>");
+    expect(renderMarkdown("<!-- c --> visible tail\n\npara")).toContain("visible tail");
+  });
+});

@@ -688,6 +688,8 @@ class Blocks {
       case "HTMLBlock":
         return this.html(n);
       case "CommentBlock":
+        // Text after the comment on its last line shows, as HTML shows it.
+        return /-->[ \t]*$/.test(this.src(n)) ? "" : this.html(n);
       case "LinkReference":
       case "QuoteMark":
       case "ListMark":
