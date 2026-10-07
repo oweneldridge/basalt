@@ -3736,7 +3736,7 @@ export default function App() {
   }, [rightTab]);
 
   const handleSelectTag = useCallback((tag: string) => {
-    setSearchSeed(`#${tag} `);
+    setSearchSeed(`tag:#${tag} `); // the tag itself, as Obsidian searches it
     setModal("search");
   }, []);
   const handleOpenBookmark = useCallback(

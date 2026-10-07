@@ -898,3 +898,14 @@ test.describe("a click beside an image", () => {
     expect(disk).toContain("![[pic.svg|200]]Y");
   });
 });
+
+test.describe("clicking a tag", () => {
+  test.use({ vaultFiles: { "Tagged.md": "one #alpha line\n", "Mentions.md": "`#alpha` in code only\n" } });
+
+  test("searches the tag, not its text", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await page.getByRole("tab", { name: "Tags" }).click();
+    await page.locator(".tag-name-btn", { hasText: "alpha" }).click();
+    await expect(page.locator("input[type=search], .modal input").first()).toHaveValue(/^tag:#alpha/);
+  });
+});
