@@ -125,3 +125,38 @@ describe("line: same-line operator", () => {
     expect(hits[0].lineText).toContain("lazy dog");
   });
 });
+
+describe("more of Obsidian's operators", () => {
+  const vault = [
+    note("Tasks.md", "# Plan\n- [ ] call Alice about budget\n- [x] email Bob about budget\nbudget notes\n## Later\nAlice again"),
+    note("Props.md", "---\nstatus: draft\ntags: [x]\naliases:\n  - Thing One\n---\nbody with Case words"),
+    note("Other.md", "Alice and budget in one section\n# Next\nnothing"),
+  ];
+  const paths = (q: string) => [...new Set(searchVault(vault, q).map((h) => h.path.replace("/v/", "")))].sort();
+  const lines = (q: string) => searchVault(vault, q).filter((h) => h.line > 1 || h.lineText !== h.name).map((h) => h.lineText);
+
+  it("task:, task-todo: and task-done: look in tasks only", () => {
+    expect(paths("task:budget")).toEqual(["Tasks.md"]);
+    expect(lines("task-todo:budget")).toEqual(["- [ ] call Alice about budget"]);
+    expect(lines("task-done:(bob budget)")).toEqual(["- [x] email Bob about budget"]);
+    expect(paths("task:nothing")).toEqual([]);
+  });
+  it("section: wants every term under one heading", () => {
+    expect(paths("section:(alice budget)")).toEqual(["Other.md", "Tasks.md"]);
+    expect(paths("section:(budget again)")).toEqual([]);
+  });
+  it("[property] and [property:value] look at the frontmatter", () => {
+    expect(paths("[status]")).toEqual(["Props.md"]);
+    expect(paths("[status:draft]")).toEqual(["Props.md"]);
+    expect(paths("[status:final]")).toEqual([]);
+    expect(paths('[aliases:"thing one"]')).toEqual(["Props.md"]);
+  });
+  it("match-case: is case-sensitive", () => {
+    expect(paths("match-case:Case")).toEqual(["Props.md"]);
+    expect(paths("match-case:case")).toEqual([]);
+  });
+  it("(a OR b) groups inside a search", () => {
+    expect(paths("budget (bob OR nobody)")).toEqual(["Tasks.md"]);
+    expect(paths("(alice OR thing) budget")).toEqual(["Other.md", "Tasks.md"]);
+  });
+});
