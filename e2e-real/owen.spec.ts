@@ -1353,3 +1353,17 @@ test.describe("escaped characters in Live Preview", () => {
     expect(vault.read("Esc.md")).toBe("ESC \\*not italic\\* and \\#nottag end\n\nEND\n");
   });
 });
+
+test.describe("a link with formatting in its text", () => {
+  test.use({ vaultFiles: { "Fmt2.md": "[plain **bold** and *it*](https://example.com)\n\nEND\n" } });
+
+  test("shows the formatting in Live Preview", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Fmt2");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const link = page.locator(".pane:not(.dock) .cm-md-link");
+    await expect(link).toHaveText("plain bold and it");
+    await expect(link.locator("strong")).toHaveText("bold");
+    await expect(link.locator("em")).toHaveText("it");
+  });
+});

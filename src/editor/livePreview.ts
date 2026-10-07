@@ -15,6 +15,7 @@ import { frontmatterRange, treeChanged } from "./regions";
 import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "../lib/remoteImages";
 import { linkResolves } from "../lib/transclude";
 import { notePathFacet } from "./query";
+import { renderInline } from "./inlineRender";
 
 export interface LivePreviewOptions {
   /** Open an external URL (a clicked Markdown link). */
@@ -165,7 +166,9 @@ class LinkWidget extends WidgetType {
     const a = document.createElement("a");
     a.className = this.unresolved ? "cm-md-link is-unresolved" : "cm-md-link";
     a.dataset.href = this.href;
-    a.textContent = this.text || this.href;
+    // Bold, italics or code in the link's text show as such.
+    if (this.text) a.append(renderInline(this.text));
+    else a.textContent = this.href;
     a.title = this.href;
     return a;
   }
