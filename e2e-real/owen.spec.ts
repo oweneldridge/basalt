@@ -982,3 +982,24 @@ test.describe("tasks with other statuses", () => {
     expect(vault.read("States.md")).toContain("- [ ] doing\n");
   });
 });
+
+test.describe("ticking a task in Reading view", () => {
+  const long = Array.from({ length: 80 }, (_, i) => `- [ ] task ${i}`).join("\n") + "\n";
+  test.use({ vaultFiles: { "Long.md": long } });
+
+  test("keeps the scroll position", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Long");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    const view = page.locator(".pane:not(.dock) .reading-view");
+    const box = view.locator("li", { hasText: "task 70" }).locator("input");
+    await box.scrollIntoViewIfNeeded();
+    const before = await view.evaluate((el) => el.scrollTop);
+    expect(before).toBeGreaterThan(200);
+    await box.click();
+    await settle(page, 1500);
+    expect(vault.read("Long.md")).toContain("- [x] task 70");
+    const after = await view.evaluate((el) => el.scrollTop);
+    expect(Math.abs(after - before)).toBeLessThan(40);
+  });
+});

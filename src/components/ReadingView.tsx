@@ -30,13 +30,18 @@ interface Props {
  * we resolve vault images and delegate link clicks to the app. */
 export function ReadingView({ doc, selfRel, onOpenInternal, onOpenUrl, resolveImage, onToggleTask, dark }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
+  // The note last shown: the same note re-rendering (a ticked task, an outside
+  // edit) keeps its scroll position; another note starts at the top.
+  const shownRel = useRef<string | null>(null);
 
   useEffect(() => {
     const el = host.current;
     if (!el) return;
     // Safe: renderMarkdown escapes all user text and emits only known tags.
+    const keep = shownRel.current === selfRel ? el.scrollTop : 0;
     el.innerHTML = renderMarkdown(doc);
-    el.scrollTop = 0;
+    el.scrollTop = keep;
+    shownRel.current = selfRel;
     // Note links are anchors without an href (the click handler routes them),
     // so make them reachable and announced as links.
     el.querySelectorAll<HTMLElement>("a.md-wikilink, a.md-link").forEach((a) => {

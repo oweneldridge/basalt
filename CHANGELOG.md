@@ -45,6 +45,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Ticking a task in Reading view keeps your place instead of jumping back to
+  the top of the note.
 - Reading view now parses with the same CommonMark and GFM parser as Live
   Preview, extended with Obsidian's syntax, instead of a line-by-line scanner.
   Among what that fixes in real notes:
