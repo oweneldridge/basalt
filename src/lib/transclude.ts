@@ -332,6 +332,14 @@ export function embedBody(
     }
     // renderMarkdown escapes all text and emits only known tags → innerHTML-safe.
     body.innerHTML = renderMarkdown(slice);
+    // A link to a heading in this note means the embedded note's heading.
+    const self = resolved.rel.replace(/\.md$/i, "");
+    body.querySelectorAll<HTMLElement>('a.md-wikilink[data-target^="#"]').forEach((a) => {
+      a.dataset.target = self + a.dataset.target;
+    });
+    body.querySelectorAll<HTMLElement>('a.md-link[data-href^="#"]').forEach((a) => {
+      a.dataset.href = encodeURI(self) + a.dataset.href;
+    });
     // Task lines here belong to the embedded note, not the host the reading
     // view would toggle, so show them read-only.
     body.querySelectorAll<HTMLInputElement>("input.md-task-check").forEach((cb) => {

@@ -1849,3 +1849,21 @@ test.describe("a property field just focused", () => {
     expect(vault.read("Quoted.md")).toBe('---\ntitle: "Duck.ai"\ntags:\n  - one\n---\nbody\n');
   });
 });
+
+test.describe("a heading link inside an embed", () => {
+  test.use({
+    vaultFiles: {
+      "Host.md": "# Host\n\n![[Embedded]]\n\nEND\n",
+      "Embedded.md": "See [[#Far part]] and [there](#Far%20part).\n\n" + "filler\n\n".repeat(80) + "## Far part\n\nfar text\n",
+    },
+  });
+
+  test("goes to the embedded note's heading", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Host");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await page.locator(".pane:not(.dock) .reading-view .embed .md-wikilink", { hasText: "Far part" }).click();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Embedded");
+    await expect(page.locator(".pane:not(.dock) .reading-view h2", { hasText: "Far part" })).toBeInViewport();
+  });
+});
