@@ -12,12 +12,21 @@ interface Item {
   indent: string;
   num: number | null; // a numbered item's number
   numFrom: number; // where its number starts
+  numLen: number; // how many digits it's written with (`02` is two)
+  delim: string | null; // `.` or `)` after the number
 }
 
 function item(line: Line): Item | null {
   const m = ITEM.exec(line.text);
   if (!m) return null;
-  return { line, indent: m[1], num: m[3] ? Number(m[3]) : null, numFrom: line.from + m[1].length };
+  return {
+    line,
+    indent: m[1],
+    num: m[3] ? Number(m[3]) : null,
+    numFrom: line.from + m[1].length,
+    numLen: m[3]?.length ?? 0,
+    delim: m[4] ?? null,
+  };
 }
 
 /** The last line of the item at `n`: lines below it indented deeper. */
@@ -33,20 +42,27 @@ function blockEnd(state: EditorState, n: number, indent: string): number {
 
 /** Renumber the run of numbered items at `indent` that contains line `n`.
  * `restart` makes a run that begins at line `n` count from 1. Blank lines
- * between items (a loose list) don't end the run. */
+ * between items (a loose list) don't end the run; a bullet, or a number with
+ * the other delimiter (`1)` after `1.`), starts another list and does. */
 function renumber(state: EditorState, n: number, indent: string, restart = false): ChangeSpec[] {
+  const own = item(state.doc.line(n));
+  if (!own || own.num === null) return [];
   const at = (k: number) => {
     const it = item(state.doc.line(k));
     return it && it.indent === indent ? it : null;
   };
+  const sameList = (it: Item) => it.num !== null && it.delim === own.delim;
   const deeper = (k: number) => {
     const text = state.doc.line(k).text;
     return text.trim() === "" || (text.startsWith(indent) && /^\s/.test(text.slice(indent.length)));
   };
   let first = n;
   for (let k = n - 1; k >= 1; k--) {
-    if (at(k)) first = k;
-    else if (!deeper(k)) break;
+    const it = at(k);
+    if (it) {
+      if (!sameList(it)) break;
+      first = k;
+    } else if (!deeper(k)) break;
   }
   const changes: ChangeSpec[] = [];
   let next: number | null = restart && first === n ? 1 : null;
@@ -56,9 +72,9 @@ function renumber(state: EditorState, n: number, indent: string, restart = false
       if (deeper(k)) continue;
       break;
     }
-    if (it.num === null) break; // a bullet: a different list
-    if (next === null) next = it.num;
-    else if (it.num !== next) changes.push({ from: it.numFrom, to: it.numFrom + String(it.num).length, insert: String(next) });
+    if (!sameList(it)) break;
+    if (next === null) next = it.num ?? 1;
+    else if (it.num !== next) changes.push({ from: it.numFrom, to: it.numFrom + it.numLen, insert: String(next) });
     next++;
   }
   return changes;

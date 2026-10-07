@@ -1788,3 +1788,40 @@ test.describe("hiding dot files while one is being typed in", () => {
     await expect(page.locator(".app")).not.toContainText("changed on disk");
   });
 });
+
+test.describe("renumbering a list next to other lists", () => {
+  test.use({
+    vaultFiles: {
+      "AfterBullets.md": "- a\n- b\n\n1. x\n2. y\n3. z\n",
+      "Delims.md": "1. a\n2. b\n\n1) x\n2) y\n",
+      "Zeros.md": "01. a\n02. b\n03. c\n",
+    },
+  });
+  const tabRoundTrip = async (page: import("@playwright/test").Page, line: string) => {
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: line }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.press("Tab");
+  };
+
+  test("keeps to its own list and its own numbers", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "AfterBullets");
+    await tabRoundTrip(page, "y");
+    await settle(page, 1200);
+    expect(vault.read("AfterBullets.md")).toBe("- a\n- b\n\n1. x\n\t1. y\n2. z\n");
+    await page.keyboard.press("Shift+Tab");
+    await settle(page, 1200);
+    expect(vault.read("AfterBullets.md")).toBe("- a\n- b\n\n1. x\n2. y\n3. z\n");
+
+    await openNote(page, "Delims");
+    await tabRoundTrip(page, "b");
+    await page.keyboard.press("Shift+Tab");
+    await settle(page, 1200);
+    expect(vault.read("Delims.md")).toBe("1. a\n2. b\n\n1) x\n2) y\n");
+
+    await openNote(page, "Zeros");
+    await tabRoundTrip(page, "b");
+    await settle(page, 1200);
+    expect(vault.read("Zeros.md")).toBe("01. a\n\t1. b\n2. c\n");
+  });
+});
