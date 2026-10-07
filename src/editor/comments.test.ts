@@ -13,8 +13,14 @@ const spans = (state: EditorState) => {
 
 describe("comments", () => {
   it("are found inline and over lines, never in code", () => {
-    const md = "a %%one%% b\n%%\ntwo\n%%\n`%%code%%` ```\n%%fence%%\n```";
+    const md = "a %%one%% b\n%%\ntwo\n%%\n`%%code%%` ```\n%%fence%%\n```\n~~~\nx = 10 %% 3\ny = 7 %% 2\n~~~\n`` a %% b %% ``";
     expect(commentRanges(md).map(([f, t]) => md.slice(f, t))).toEqual(["%%one%%", "%%\ntwo\n%%"]);
+  });
+  it("follow an edit that changes which % pair up", () => {
+    let state = EditorState.create({ doc: "%x%secret%% end", extensions: [comments] });
+    expect(spans(state)).toEqual([]);
+    state = state.update({ changes: { from: 1, to: 2 } }).state;
+    expect(spans(state)).toEqual(["%%secret%%"]);
   });
 
   it("follow typing: a new closing %% makes one, other keys just move them", () => {

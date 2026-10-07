@@ -528,3 +528,10 @@ describe("property values", () => {
     expect(html).toContain("&lt;b&gt;");
   });
 });
+
+describe("%% inside code", () => {
+  it("stays as written in Reading view", () => {
+    expect(renderMarkdown("~~~\nx = 10 %% 3\ny = 7 %% 2\n~~~\n")).toContain("x = 10 %% 3\ny = 7 %% 2");
+    expect(renderMarkdown("see `` a %% b %% `` here\n")).toContain("a %% b %%");
+  });
+});

@@ -918,8 +918,9 @@ export function stripComments(md: string): string {
 /** stripComments plus, for each output line, the source line it starts on, so
  * a reading-view checkbox can point back at the right line after a multi-line
  * comment is removed. */
-/** Code (left alone) or an Obsidian `%%comment%%`, inline or over lines. */
-const COMMENT_OR_CODE = /(```[\s\S]*?```|`[^`\n]*`)|%%[\s\S]*?%%/g;
+/** Code (left alone: ``` and ~~~ fences, `` `` `` and ` spans) or an
+ * Obsidian `%%comment%%`, inline or over lines. */
+const COMMENT_OR_CODE = /(```[\s\S]*?```|~~~[\s\S]*?~~~|``[^\n]*?``|`[^`\n]*`)|%%[\s\S]*?%%/g;
 
 /** Where each `%%comment%%` is, as [from, to) offsets, skipping code. */
 export function commentRanges(md: string): [number, number][] {
