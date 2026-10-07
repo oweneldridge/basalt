@@ -664,6 +664,9 @@ export default function App() {
   const pending = useRef<Map<string, string>>(new Map());
   // Paths whose rename is in flight: their saves wait, then follow the note.
   const renaming = useRef<Set<string>>(new Set());
+  // Renames and moves running or waiting, link passes included. A vault
+  // re-read waits for them: it would take a listing older than their writes.
+  const renameJobs = useRef(0);
   // Old path -> new path for a rename or folder move whose repoint React hasn't
   // committed yet. Until then an editor (a pane's or a stacked column's) can
   // still report the old path; afterwards every editor knows the new one, so
@@ -2345,7 +2348,7 @@ export default function App() {
         const u2 = await listen("vault-rescan", () => {
           window.clearTimeout(rescanTimer.current);
           const run = () => {
-            if (renaming.current.size > 0) rescanTimer.current = window.setTimeout(run, 300);
+            if (renaming.current.size > 0 || renameJobs.current > 0) rescanTimer.current = window.setTimeout(run, 300);
             else void handleRescan();
           };
           rescanTimer.current = window.setTimeout(run, 300);
@@ -4139,6 +4142,8 @@ export default function App() {
   // undo it, and a save typed meanwhile compares against what's on disk.
   const registerRewrite = useCallback((updated: VaultNote) => {
     if (bigBase.current.has(updated.path)) setBigBase(updated.path, updated.content);
+    // Like a save: a vault read in flight keeps this text over its listing.
+    lastSave.current.set(updated.path, { seq: ++saveSeq.current, content: updated.content });
     index.current.setNote(updated);
     notesRef.current = notesRef.current.map((n) => (n.path === updated.path ? updated : n));
     setNotes((prev) => prev.map((n) => (n.path === updated.path ? updated : n)));
@@ -4442,7 +4447,8 @@ export default function App() {
     return p;
   };
   const enqueueRename = useCallback(<T,>(job: () => Promise<T>): Promise<T> => {
-    const run = renameQueue.current.then(job);
+    renameJobs.current++;
+    const run = renameQueue.current.then(job).finally(() => renameJobs.current--);
     renameQueue.current = run.catch(() => {});
     return run;
   }, []);

@@ -133,3 +133,54 @@ test("the tree lists a file without its extension and tags the extension, as Obs
   await expect(page.locator(".tree-row.file", { hasText: "Gallery" }).first().locator(".file-tag")).toHaveCount(0);
   await expect(shot).toHaveCSS("font-style", "normal");
 });
+
+test.describe("a rename right after another", () => {
+  const many: Record<string, string | Uint8Array> = { "Media/qqpic.png": png };
+  for (let i = 0; i < 300; i++) many[`Many/n${i}.md`] = `# n${i}\n\n![[qqpic.png]]\n`;
+  test.use({ vaultFiles: many });
+
+  test("keeps every link on the file, even while the vault is read again", async ({ page, vault }) => {
+    await openApp(page, vault);
+    const all = () => Array.from({ length: 300 }, (_, i) => vault.read(`Many/n${i}.md`)).join("");
+    for (const [from, to] of [["qqpic", "Media/qqpic2"], ["qqpic2", "Media/qqpic3"]]) {
+      await page.locator(".tree-row.folder", { hasText: "Media" }).first().click();
+      await page.locator(".tree-row.file", { hasText: from }).first().click({ button: "right" });
+      await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+      await page.locator(".prompt-input").fill(to);
+      await page.locator(".prompt-input").press("Enter");
+      const name = to.split("/").pop() + ".png";
+      await expect.poll(all, { timeout: 30000 }).not.toMatch(new RegExp(`!\\[\\[${from}\\.png`));
+      expect(all().split(`![[${name}]]`).length - 1).toBe(300);
+      await page.locator(".tree-row.folder", { hasText: "Media" }).first().click();
+    }
+  });
+
+  test("keeps the fixed links when a vault read already under way returns", async ({ page, vault }) => {
+    await openApp(page, vault);
+    const all = () => Array.from({ length: 300 }, (_, i) => vault.read(`Many/n${i}.md`)).join("");
+    let held = 0;
+    await page.route("**/api/invoke", async (route) => {
+      const slow = (route.request().postData() ?? "").includes('"cmd":"read_vault"');
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
+      if (slow) {
+        held++;
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+      await route.fulfill({ response: res }).catch(() => {});
+    });
+    vault.write("Media/other.png", png); // a file from outside: the vault is read again
+    await expect.poll(() => held, { timeout: 5000 }).toBeGreaterThan(0);
+    for (const [from, to] of [["qqpic", "Media/qqpic2"], ["qqpic2", "Media/qqpic3"]]) {
+      await page.locator(".tree-row.folder", { hasText: "Media" }).first().click();
+      await page.locator(".tree-row.file", { hasText: from }).first().click({ button: "right" });
+      await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+      await page.locator(".prompt-input").fill(to);
+      await page.locator(".prompt-input").press("Enter");
+      await expect.poll(all, { timeout: 30000 }).not.toMatch(new RegExp(`!\\[\\[${from}\\.png`));
+      await page.waitForTimeout(3500);
+      await page.locator(".tree-row.folder", { hasText: "Media" }).first().click();
+    }
+    expect(all().split("![[qqpic3.png]]").length - 1).toBe(300);
+  });
+});
