@@ -1723,3 +1723,32 @@ test.describe("the vault's own settings", () => {
     expect(dialogs).toBe(0);
   });
 });
+
+test.describe("navigation history", () => {
+  test.use({ vaultFiles: { "First.md": "[[Second]]\n", "Second.md": "[[Third]]\n", "Third.md": "end\n" } });
+
+  test("goes back and forward through the notes shown, as in Obsidian", async ({ page, vault }) => {
+    await openApp(page, vault);
+    const active = page.locator(".pane:not(.dock) .tab.active .tab-name").first();
+    await openNote(page, "First");
+    await openNote(page, "Second");
+    await openNote(page, "Third");
+    await page.keyboard.press("ControlOrMeta+Alt+ArrowLeft");
+    await expect(active).toHaveText("Second");
+    await page.keyboard.press("ControlOrMeta+Alt+ArrowLeft");
+    await expect(active).toHaveText("First");
+    await page.keyboard.press("ControlOrMeta+Alt+ArrowRight");
+    await expect(active).toHaveText("Second");
+    // A new note from here drops what was ahead.
+    await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+    await expect(active).toHaveText("Ideas");
+    await page.keyboard.press("ControlOrMeta+Alt+ArrowRight");
+    await expect(active).toHaveText("Ideas");
+    await page.keyboard.press("ControlOrMeta+Alt+ArrowLeft");
+    await expect(active).toHaveText("Second");
+    // From inside the editor too.
+    await page.locator(".pane:not(.dock) .cm-content").first().click();
+    await page.keyboard.press("ControlOrMeta+Alt+ArrowLeft");
+    await expect(active).toHaveText("First");
+  });
+});

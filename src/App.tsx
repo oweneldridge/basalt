@@ -2789,6 +2789,55 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleReading]);
 
+  // Back and forward through the notes each pane has shown (Obsidian's
+  // Cmd-Opt-Left/Right). Recorded from the panes' active notes, so every way
+  // of opening a note counts.
+  const navHistory = useRef(new Map<string, { back: string[]; forward: string[]; current: string | null }>());
+  const navMoving = useRef(new Map<string, string>()); // pane → the note back/forward is opening
+  useEffect(() => {
+    for (const p of Object.values(panes)) {
+      const h = navHistory.current.get(p.id) ?? { back: [], forward: [], current: null };
+      navHistory.current.set(p.id, h);
+      if (p.active === h.current) continue;
+      const moved = navMoving.current.get(p.id) === p.active;
+      navMoving.current.delete(p.id);
+      if (!moved && h.current && p.active && !isViewPath(h.current) && !isViewPath(p.active)) {
+        h.back.push(h.current);
+        if (h.back.length > 100) h.back.shift();
+        h.forward = [];
+      }
+      h.current = p.active;
+    }
+  }, [panes]);
+  const navigate = useCallback(
+    (dir: -1 | 1) => {
+      const id = focusedIdRef.current;
+      const h = id ? navHistory.current.get(id) : undefined;
+      if (!id || !h || !h.current) return;
+      const from = dir < 0 ? h.back : h.forward;
+      const to = dir < 0 ? h.forward : h.back;
+      const exists = (p: string) => notesRef.current.some((n) => n.path === p) || attachmentsRef.current.some((a) => a.path === p);
+      let target: string | undefined;
+      while ((target = from.pop()) !== undefined && !exists(target));
+      if (target === undefined) return;
+      to.push(h.current);
+      navMoving.current.set(id, target);
+      void openNoteByPath(target);
+    },
+    [openNoteByPath],
+  );
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !vaultRef.current) return;
+      const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+      if (!mod || !e.altKey || e.shiftKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+      e.preventDefault();
+      navigate(e.key === "ArrowLeft" ? -1 : 1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navigate]);
+
   // Export the focused note as a self-contained HTML file (images inlined as
   // data URLs so it stands alone).
   const handleExportHtml = useCallback(async () => {
@@ -4815,6 +4864,8 @@ export default function App() {
       { id: "workspaces", label: "Manage workspaces…", hint: "save / switch named layouts", run: () => setModal("workspaces") },
       { id: "source-mode", label: "Toggle Source mode", hint: "raw Markdown ↔ Live Preview", run: toggleSourceMode },
       { id: "reading-mode", label: "Toggle Reading view", hint: "rendered, read-only ↔ edit", run: toggleReading },
+      { id: "navigate-back", label: "Navigate back", hint: "the note shown before", run: () => navigate(-1) },
+      { id: "navigate-forward", label: "Navigate forward", hint: "after going back", run: () => navigate(1) },
       { id: "export-html", label: "Export note as HTML…", hint: "self-contained file", run: () => void handleExportHtml() },
       { id: "print-pdf", label: "Print / Save as PDF…", hint: "prints the Reading view", run: handlePrintPdf },
       { id: "open-note", label: "Open note…", hint: "quick switcher (⌘O)", run: () => setModal("switcher") },
@@ -4897,7 +4948,7 @@ export default function App() {
       })),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, moveTabToNewWindow, resetWorkspace, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf, openNoteByPath, pluginVersion],
+    [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, moveTabToNewWindow, resetWorkspace, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf, openNoteByPath, navigate, pluginVersion],
   );
   const commandsRef = useRef(commands);
   commandsRef.current = commands;
