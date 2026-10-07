@@ -1287,6 +1287,7 @@ export default function App() {
     async (id: string, path: string, line?: number, mirror = false) => {
       const pane = panesRef.current[id];
       if (!pane) return;
+      if (!mirror) commitFieldEdit(); // however the pane moves on (Ctrl-Tab too)
       // A view tab (file tree, outline, plugin view…) has no note to load: just
       // add/activate it. No readNote, recents, or workspace events.
       if (isViewPath(path)) {

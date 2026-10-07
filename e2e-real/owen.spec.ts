@@ -1550,6 +1550,14 @@ test.describe("a property being typed", () => {
     await page.keyboard.type("2");
     await page.keyboard.press("ControlOrMeta+w");
     await expect.poll(() => vault.read("Prop.md")).toContain("StressXYZ2");
+    // Ctrl-Tab to another tab keeps it too.
+    await openNote(page, "Ideas");
+    await openNote(page, "Prop");
+    await page.locator(".pane:not(.dock) .cm-properties input").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("3");
+    await page.keyboard.press("Control+Tab");
+    await expect.poll(() => vault.read("Prop.md")).toContain("StressXYZ23");
   });
 });
 
