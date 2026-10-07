@@ -10,6 +10,7 @@
 import type { VaultNote } from "./vault";
 import { linkpathDest } from "./linkpath";
 import { htmlBlockRanges } from "./htmlBlocks";
+import { maskForMentions, mentionRegex } from "./linkify";
 import {
   internalMdHref,
   mdLinkRegexGlobal,
@@ -78,14 +79,6 @@ function normalizeRel(rel: string): string {
     .toLowerCase();
 }
 
-/** Per-line dedupe key for extracted targets. Unlike normalizeRel it KEEPS a
- * leading `./` — resolve() treats `./Note` (source-folder relative) and bare
- * `Note` (vault-wide root-most) differently, so they must not collapse into
- * one occurrence or a real backlink is silently dropped. */
-function dedupeKey(p: string): string {
-  return p.replace(/\\/g, "/").replace(/\.md$/i, "").normalize("NFC").trim().toLowerCase();
-}
-
 
 
 const INLINE_CODE_RE = /`[^`\n]*`/g;
@@ -102,7 +95,6 @@ function extractLinks(content: string): LinkOccurrence[] {
     const line = yaml ? lines[i] : lines[i].replace(INLINE_CODE_RE, " "); // `[[x]]` in code isn't a link
     const ctxAt = (pos: number, len: number) => (yaml ? yamlLinkAt(line, pos, len) : { ok: true, quote: null });
     const re = wikilinkRegex();
-    const seen = new Set<string>();
     let m: RegExpExecArray | null;
     while ((m = re.exec(line))) {
       const ctx = ctxAt(m.index, m[0].length);
@@ -112,9 +104,6 @@ function extractLinks(content: string): LinkOccurrence[] {
       if (m[2] !== undefined && rawTarget.endsWith("\\")) rawTarget = rawTarget.slice(0, -1).trimEnd();
       const pathPart = targetPathPart(rawTarget);
       if (!pathPart) continue; // [[#heading]] self-ref
-      const key = dedupeKey(pathPart); // dedupe identical targets, keep distinct paths
-      if (seen.has(key)) continue;
-      seen.add(key);
       out.push({ rawTarget, line: i + 1, snippet: lines[i].trim(), embed: line[m.index - 1] === "!" });
     }
     // Markdown-style internal links: [text](Note.md), [t](folder/My%20Note.md#H)
@@ -129,17 +118,10 @@ function extractLinks(content: string): LinkOccurrence[] {
       const internal = internalMdHref(yamlUnescape(parsed.href, ctx.quote));
       if (!internal) continue;
       const rawTarget = internal.path + internal.fragment;
-      const key = dedupeKey(internal.path);
-      if (seen.has(key)) continue;
-      seen.add(key);
       out.push({ rawTarget, line: i + 1, snippet: lines[i].trim() });
     }
   }
   return out;
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** A `#tag` aggregate row for the tag pane. */
@@ -503,8 +485,7 @@ export class VaultIndex {
   }
 
   /** Obsidian's metadataCache.resolvedLinks: for each note (vault-relative
-   * path), the notes its links resolve to and how many times. A link written
-   * the same way twice counts once (Obsidian counts each). */
+   * path), the notes its links resolve to and how many times. */
   resolvedLinks(): Record<string, Record<string, number>> {
     const out: Record<string, Record<string, number>> = {};
     for (const [sourcePath, occs] of this.occ) {
@@ -630,17 +611,10 @@ export class VaultIndex {
     notes: VaultNote[],
     excludePath?: string,
   ): Backlink[] {
-    // The note's name and its aliases, longest first (Obsidian counts both).
-    const needles = (Array.isArray(names) ? names : [names])
-      .map((n) => n.trim())
-      .filter(Boolean)
-      .sort((a, b) => b.length - a.length);
-    if (!needles.length) return [];
-    const boundary = new RegExp(
-      `(^|[^\\p{L}\\p{N}_])(?:${needles.map(escapeRegex).join("|")})([^\\p{L}\\p{N}_]|$)`,
-      "iu",
-    );
-    const linkRe = wikilinkRegex();
+    // The note's name and its aliases (Obsidian counts both).
+    const list = Array.isArray(names) ? names : [names];
+    if (!list.some((n) => n.trim())) return [];
+    const mention = mentionRegex(list, "giu");
     const out: Backlink[] = [];
     for (const note of notes) {
       if (note.path === excludePath) continue;
@@ -649,15 +623,10 @@ export class VaultIndex {
       for (let i = 0; i < lines.length; i++) {
         if (!prose[i]) continue;
         const raw = lines[i];
-        // Code FIRST, then links — the same order as extractLinks, so a link
-        // straddling one backtick of a code span (CommonMark gives code
-        // precedence) can't surface a false mention from inside code.
-        const stripped = raw
-          .replace(INLINE_CODE_RE, " ")
-          .replace(linkRe, " ")
-          .replace(mdLinkRegexGlobal(), " ");
-        if (!boundary.test(stripped)) continue;
-        out.push({ path: note.path, name: note.name, line: i + 1, snippet: raw.trim() });
+        // The mentions "Link" can link, one entry each (Obsidian counts every
+        // match); code is masked before links, as extractLinks does.
+        const count = maskForMentions(raw).match(mention)?.length ?? 0;
+        for (let k = 0; k < count; k++) out.push({ path: note.path, name: note.name, line: i + 1, snippet: raw.trim() });
       }
     }
     return out;

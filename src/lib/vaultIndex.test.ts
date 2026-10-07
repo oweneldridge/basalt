@@ -252,6 +252,14 @@ describe("2.9b review regressions", () => {
     const notes2 = [note("y.md"), note("S2.md", "plain y here")];
     expect(indexOf(notes2).unlinkedMentionsFor("y", notes2)).toHaveLength(1);
   });
+  it("counts each mention on a line, as Obsidian counts matches", () => {
+    const notes = [note("Ideas.md"), note("S.md", "Ideas and more ideas, Ideas")];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes)).toHaveLength(3);
+  });
+  it("lists only mentions the Link action can link, not tags or URLs", () => {
+    const notes = [note("Ideas.md"), note("S.md", "#ideas\nhttps://x.com/ideas\nsee ideas")];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([3]);
+  });
   it("counts a mention of an alias as an unlinked mention", () => {
     const notes = [note("Kubernetes CLI Tools.md"), note("S.md", "See the kubectl reference here")];
     expect(indexOf(notes).unlinkedMentionsFor(["Kubernetes CLI Tools", "kubectl reference"], notes)).toHaveLength(1);
@@ -407,6 +415,6 @@ describe("resolvedLinks", () => {
       { path: "/v/B.md", rel: "B.md", name: "B", content: "no links" },
       { path: "/v/sub/C.md", rel: "sub/C.md", name: "C", content: "[[A]]" },
     ] as never);
-    expect(idx.resolvedLinks()).toEqual({ "A.md": { "B.md": 1, "sub/C.md": 1 }, "B.md": {}, "sub/C.md": { "A.md": 1 } });
+    expect(idx.resolvedLinks()).toEqual({ "A.md": { "B.md": 2, "sub/C.md": 1 }, "B.md": {}, "sub/C.md": { "A.md": 1 } });
   });
 });

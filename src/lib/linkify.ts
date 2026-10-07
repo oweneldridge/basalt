@@ -11,6 +11,23 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** `line` with what can't hold a linkable mention (inline code, links, URLs,
+ * tags) blanked to spaces, same length, so offsets still match the line. */
+export function maskForMentions(line: string): string {
+  return line
+    .replace(INLINE_CODE_RE, (m) => " ".repeat(m.length))
+    .replace(wikilinkRegex(), (m) => " ".repeat(m.length))
+    .replace(mdLinkRegexGlobal(), (m) => " ".repeat(m.length))
+    .replace(URL_RE, (m) => " ".repeat(m.length))
+    .replace(tagRegex(), (m) => " ".repeat(m.length));
+}
+
+/** A note's names (longest first) as whole words, ignoring case. */
+export function mentionRegex(names: string[], flags = "iu"): RegExp {
+  const needles = names.map((n) => n.trim()).filter(Boolean).sort((a, b) => b.length - a.length);
+  return new RegExp(`(?<![\\p{L}\\p{N}_])(?:${needles.map(escapeRegex).join("|")})(?![\\p{L}\\p{N}_])`, flags);
+}
+
 /** Wrap the FIRST bare, word-bounded occurrence of `name` on `line` in a link.
  * Occurrences inside inline code, URLs, tags or existing links are skipped
  * (masked out first). `linkText` is what the link should point at (the bare
@@ -18,26 +35,13 @@ function escapeRegex(s: string): string {
  * differs from the matched text the result is `[[linkText|text]]`, as Obsidian
  * writes it. Returns the new line, or null if there's no mention. */
 export function linkifyMention(line: string, names: string | string[], linkText?: string): string | null {
-  // The note's name or one of its aliases, longest first.
-  const needles = (Array.isArray(names) ? names : [names])
-    .map((n) => n.trim())
-    .filter(Boolean)
-    .sort((a, b) => b.length - a.length);
-  if (!needles.length) return null;
-  // Mask code + existing links to spaces (length-preserving) so a match found
-  // in the masked copy splices cleanly into the original by the same offset.
-  const masked = line
-    .replace(INLINE_CODE_RE, (m) => " ".repeat(m.length))
-    .replace(wikilinkRegex(), (m) => " ".repeat(m.length))
-    .replace(mdLinkRegexGlobal(), (m) => " ".repeat(m.length))
-    .replace(URL_RE, (m) => " ".repeat(m.length))
-    .replace(tagRegex(), (m) => " ".repeat(m.length));
-  const re = new RegExp(`(^|[^\\p{L}\\p{N}_])(${needles.map(escapeRegex).join("|")})([^\\p{L}\\p{N}_]|$)`, "iu");
-  const m = re.exec(masked);
+  const list = Array.isArray(names) ? names : [names];
+  if (!list.some((n) => n.trim())) return null;
+  // Matched in the masked copy, spliced into the original by the same offset.
+  const m = mentionRegex(list).exec(maskForMentions(line));
   if (!m) return null;
-  // Offset of the matched name within the line (group 2 starts after group 1).
-  const start = m.index + m[1].length;
-  const end = start + m[2].length;
+  const start = m.index;
+  const end = start + m[0].length;
   const surface = line.slice(start, end); // preserve the original casing
   // Resolution ignores case, so only a different target needs the alias form.
   const same = !linkText || linkText.toLowerCase() === surface.toLowerCase();

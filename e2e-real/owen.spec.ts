@@ -106,6 +106,26 @@ test.describe("unlinked mentions", () => {
   });
 });
 
+test.describe("backlink counts", () => {
+  test.use({ vaultFiles: { "Mentions.md": "Ideas, then ideas again, and #ideas\n" } });
+
+  test("count every match, as Obsidian does, and list a line once", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Ideas");
+    await page.locator(".pane.dock .tab.view-tab", { hasText: "Backlinks" }).click();
+    const linked = page.locator(".panel-section").first();
+    await expect(linked.locator(".panel-title .count")).toHaveText("5");
+    const welcome = linked.locator(".ref-group", { hasText: "Welcome" });
+    await expect(welcome.locator(".ref-group-head .count")).toHaveText("4");
+    await expect(welcome.locator(".ref-child")).toHaveCount(3);
+    const unlinked = page.locator(".panel-section").nth(1);
+    await expect(unlinked.locator(".panel-title .count")).toHaveText("2");
+    await expect(unlinked.locator(".ref-group", { hasText: "Mentions" }).locator(".ref-child")).toHaveCount(1);
+    await unlinked.locator(".link-all-btn").click();
+    await expect.poll(() => vault.read("Mentions.md")).toBe("[[Ideas]], then [[ideas]] again, and #ideas\n");
+  });
+});
+
 test.describe("a canvas edited during a rename's canvas write", () => {
   test.use({
     vaultFiles: {
