@@ -920,3 +920,14 @@ test.describe("the quick switcher", () => {
     await expect(page.locator(".palette-item").first()).toContainText("Kubernetes CLI Tools");
   });
 });
+
+test("Cmd-E switches between editing and Reading view", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await openNote(page, "Ideas");
+  await page.locator(".pane:not(.dock) .cm-content").click();
+  await page.keyboard.press("Meta+e");
+  await expect(page.locator(".pane:not(.dock) .reading-view")).toHaveCount(1);
+  await page.keyboard.press("Meta+e");
+  await expect(page.locator(".pane:not(.dock) .reading-view")).toHaveCount(0);
+  await expect(page.locator(".pane:not(.dock) .cm-content")).toHaveCount(1);
+});

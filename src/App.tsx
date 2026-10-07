@@ -2697,6 +2697,19 @@ export default function App() {
     });
   }, []);
 
+  // Cmd/Ctrl-E: edit ↔ Reading view (Obsidian's default hotkey).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !vaultRef.current) return;
+      const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+      if (!mod || e.shiftKey || e.altKey || e.key.toLowerCase() !== "e") return;
+      e.preventDefault();
+      toggleReading();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleReading]);
+
   // Export the focused note as a self-contained HTML file (images inlined as
   // data URLs so it stands alone).
   const handleExportHtml = useCallback(async () => {

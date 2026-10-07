@@ -45,6 +45,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Cmd-E (Ctrl-E elsewhere) switches between editing and Reading view, as in
+  Obsidian.
 - The file tree sorts names naturally, as Obsidian does: "Untitled 2" comes
   before "Untitled 10".
 - Aliases count, as in Obsidian: the quick switcher finds a note by its alias
