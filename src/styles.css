@@ -2250,7 +2250,7 @@ button.primary:hover {
 .ribbon-btn:hover { background: var(--hover, rgba(127,127,127,0.15)); color: var(--text); }
 
 /* ------- %% comments (Live Preview) ------- */
-.cm-comment { color: var(--text-faint, var(--text-muted)); opacity: 0.6; }
+.cm-comment { color: var(--text-faint, var(--text-muted)); }
 
 /* ------- Callout icons ------- */
 .cm-callout-icon, .md-callout-icon { margin-right: 6px; }

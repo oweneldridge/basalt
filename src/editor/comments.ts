@@ -1,49 +1,28 @@
-// `%%comment%%` in Live Preview: hide inline comments (like Obsidian's LP),
-// revealing them dimmed only when the caret is on the span. Not a lezer node,
-// so regex-scan the viewport (the highlight.ts pattern); render.ts already
-// strips comments from Reading mode / export.
-import { RangeSetBuilder } from "@codemirror/state";
-import type { Extension } from "@codemirror/state";
-import { Decoration, EditorView, ViewPlugin } from "@codemirror/view";
-import type { DecorationSet, ViewUpdate } from "@codemirror/view";
-import { isInExcludedRegion, treeChanged } from "./regions";
+// `%%comment%%` in Live Preview: shown dimmed, `%%` and all, as Obsidian's
+// Live Preview shows them (only Reading view and export leave them out). They
+// may run over several lines, so the whole note is scanned, again only when
+// an edit adds or removes a `%` or a backtick.
+import { StateField } from "@codemirror/state";
+import type { Text } from "@codemirror/state";
+import { Decoration, EditorView } from "@codemirror/view";
+import type { DecorationSet } from "@codemirror/view";
+import { commentRanges } from "../lib/render";
 
 const DIM = Decoration.mark({ class: "cm-comment" });
-const CONCEAL = Decoration.replace({});
-const COMMENT_RE = /%%[^\n]*?%%/g;
 
-function build(view: EditorView): DecorationSet {
-  const builder = new RangeSetBuilder<Decoration>();
-  const sel = view.state.selection;
-  const touches = (from: number, to: number): boolean =>
-    sel.ranges.some((r) => r.from <= to && r.to >= from);
-
-  for (const { from, to } of view.visibleRanges) {
-    const text = view.state.doc.sliceString(from, to);
-    COMMENT_RE.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = COMMENT_RE.exec(text))) {
-      const start = from + m.index;
-      const end = start + m[0].length;
-      if (isInExcludedRegion(view.state, start)) continue;
-      if (touches(start, end)) builder.add(start, end, DIM); // editing → show dimmed
-      else builder.add(start, end, CONCEAL); // hidden in Live Preview
-    }
-  }
-  return builder.finish();
+function scan(doc: Text): DecorationSet {
+  return Decoration.set(commentRanges(doc.toString()).map(([from, to]) => DIM.range(from, to)));
 }
 
-export const comments: Extension = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    constructor(view: EditorView) {
-      this.decorations = build(view);
-    }
-    update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged || treeChanged(update)) {
-        this.decorations = build(update.view);
-      }
-    }
+export const comments = StateField.define<DecorationSet>({
+  create: (state) => scan(state.doc),
+  update(deco, tr) {
+    if (!tr.docChanged) return deco;
+    let rescan = false;
+    tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+      if (!rescan && /[%`]/.test(tr.startState.sliceDoc(fromA, toA) + inserted.toString())) rescan = true;
+    });
+    return rescan ? scan(tr.state.doc) : deco.map(tr.changes);
   },
-  { decorations: (v) => v.decorations },
-);
+  provide: (f) => EditorView.decorations.from(f),
+});

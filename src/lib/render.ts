@@ -907,8 +907,19 @@ export function stripComments(md: string): string {
 /** stripComments plus, for each output line, the source line it starts on, so
  * a reading-view checkbox can point back at the right line after a multi-line
  * comment is removed. */
+/** Code (left alone) or an Obsidian `%%comment%%`, inline or over lines. */
+const COMMENT_OR_CODE = /(```[\s\S]*?```|`[^`\n]*`)|%%[\s\S]*?%%/g;
+
+/** Where each `%%comment%%` is, as [from, to) offsets, skipping code. */
+export function commentRanges(md: string): [number, number][] {
+  const re = new RegExp(COMMENT_OR_CODE.source, "g");
+  const out: [number, number][] = [];
+  for (let m; (m = re.exec(md)); ) if (m[1] === undefined) out.push([m.index, m.index + m[0].length]);
+  return out;
+}
+
 function stripCommentsMapped(md: string): { text: string; map: number[] } {
-  const re = /(```[\s\S]*?```|`[^`\n]*`)|%%[\s\S]*?%%/g;
+  const re = new RegExp(COMMENT_OR_CODE.source, "g");
   const map = [0];
   let text = "";
   let src = 0; // source line at the current position

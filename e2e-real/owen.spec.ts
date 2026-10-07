@@ -1306,3 +1306,18 @@ test.describe("a link's text in Live Preview", () => {
     await expect(page.locator(".pane:not(.dock) .reading-view .md-wikilink")).toHaveText(["Projects/Alpha > Goals", "Top", "named"]);
   });
 });
+
+test.describe("comments in Live Preview", () => {
+  test.use({ vaultFiles: { "Cmt.md": "before %%inline note%% after\n\n%%\nblock line\n%%\n\n`code %%not%%` x\n\nEND\n" } });
+
+  test("show dimmed, as in Obsidian, not hidden", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Cmt");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const pane = page.locator(".pane:not(.dock)");
+    await expect(pane.locator(".cm-line", { hasText: "before" })).toHaveText("before %%inline note%% after");
+    await expect(pane.locator(".cm-comment", { hasText: "inline note" })).toHaveCount(1);
+    await expect(pane.locator(".cm-line", { hasText: "block line" }).locator(".cm-comment")).toHaveCount(1);
+    await expect(pane.locator(".cm-comment", { hasText: "%%not%%" })).toHaveCount(0);
+  });
+});
