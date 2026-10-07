@@ -1766,3 +1766,25 @@ test.describe("a callout inside a callout", () => {
     await expect(page.locator(".pane:not(.dock) .cm-callout-title")).toHaveText("🗒️Outer");
   });
 });
+
+test.describe("hiding dot files while one is being typed in", () => {
+  test.use({ vaultFiles: { ".dotnote.md": "dot\n" } });
+
+  test("saves the typing first, with no false conflict", async ({ page, vault }) => {
+    await openApp(page, vault);
+    const setting = page.getByLabel("Show hidden files (names starting with a dot)");
+    await page.getByRole("button", { name: "Settings" }).click();
+    await setting.check();
+    await page.keyboard.press("Escape");
+    await page.locator(".tree-row.file", { hasText: ".dotnote" }).click();
+    await page.locator(".pane:not(.dock) .cm-content").first().click();
+    await page.keyboard.press("ControlOrMeta+End");
+    await page.keyboard.type(" typed");
+    await page.getByRole("button", { name: "Settings" }).click();
+    await setting.uncheck();
+    await page.keyboard.press("Escape");
+    await expect.poll(() => vault.read(".dotnote.md")).toBe("dot\n typed");
+    await settle(page, 1200);
+    await expect(page.locator(".app")).not.toContainText("changed on disk");
+  });
+});

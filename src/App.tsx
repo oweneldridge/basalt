@@ -2286,15 +2286,24 @@ export default function App() {
       void handleRescan();
       return;
     }
-    const hidden = notesRef.current.filter((n) => isHiddenRel(n.rel));
-    for (const n of hidden) index.current.removeNote(n.path);
-    if (hidden.length) {
-      notesRef.current = notesRef.current.filter((n) => !isHiddenRel(n.rel));
-      setNotes(notesRef.current);
-    }
-    setAttachmentsList((prev) => prev.filter((a) => !isHiddenRel(a.rel)));
-    bumpStructure();
-  }, [showHidden, handleRescan, bumpStructure]);
+    void (async () => {
+      // Typing not yet saved in one of them is saved first: once a note is
+      // dropped, a late save has no note to go with. One that won't save stays.
+      for (const n of notesRef.current) {
+        if (isHiddenRel(n.rel) && pending.current.has(n.path)) await flushPath(n.path);
+      }
+      if (appliedShowHidden.current) return; // shown again meanwhile
+      const hide = (n: VaultNote) => isHiddenRel(n.rel) && !pending.current.has(n.path);
+      const hidden = notesRef.current.filter(hide);
+      for (const n of hidden) index.current.removeNote(n.path);
+      if (hidden.length) {
+        notesRef.current = notesRef.current.filter((n) => !hide(n));
+        setNotes(notesRef.current);
+      }
+      setAttachmentsList((prev) => prev.filter((a) => !isHiddenRel(a.rel)));
+      bumpStructure();
+    })();
+  }, [showHidden, handleRescan, bumpStructure, flushPath]);
 
   // Listen for on-disk changes; debounce; then apply.
   useEffect(() => {
