@@ -136,6 +136,12 @@ export function renameNote(path: string, newName: string): Promise<string> {
   return invoke<string>("rename_note", { path, newName });
 }
 
+/** Rename/move an attachment, canvas or base: `newName` is folder-qualified,
+ * without the extension, which the file keeps. Returns the new path. */
+export function renameAttachment(path: string, newName: string): Promise<string> {
+  return invoke<string>("rename_attachment", { path, newName });
+}
+
 /** Move a whole folder (vault-relative path) to the vault's .trash/. */
 export function deleteFolder(rel: string): Promise<void> {
   return invoke<void>("delete_folder", { rel });

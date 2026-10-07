@@ -573,6 +573,11 @@ pub fn write_base(root: &Path, path: String, content: String, expected: Option<S
 /// Build `<root>/<name>.md` from a folder-qualified note name, sanitizing each
 /// segment and rejecting `..`/absolute/dot-leading/reserved segments.
 fn build_note_path(root: &Path, name: &str) -> Result<PathBuf, String> {
+    build_vault_path(root, name, "md")
+}
+
+/// `<root>/<name>.<ext>`, built as `build_note_path` builds a note's path.
+fn build_vault_path(root: &Path, name: &str, ext: &str) -> Result<PathBuf, String> {
     let segments: Vec<String> = name
         .split(['/', '\\'])
         .map(|s| s.trim().to_string())
@@ -604,7 +609,7 @@ fn build_note_path(root: &Path, name: &str) -> Result<PathBuf, String> {
             return Err("note name is too long".into());
         }
         if i == last {
-            path.push(format!("{safe}.md"));
+            path.push(format!("{safe}.{ext}"));
         } else {
             path.push(safe);
         }
@@ -980,13 +985,28 @@ pub fn rename_note(root: &Path, path: String, new_name: String) -> Result<String
         return Err("not a file".into());
     }
     let to = build_note_path(&root, &new_name)?;
+    move_file(root, from, to, "a note with that name already exists")
+}
+
+/// Rename or move an attachment (image, PDF, audio, video, canvas, base) to a
+/// folder-qualified name without its extension, which it keeps. Refuses to
+/// overwrite. Returns the canonical new path.
+pub fn rename_attachment(root: &Path, path: String, new_name: String) -> Result<String, String> {
+    let from = attachment_to_open(root, &path)?;
+    let ext = from.extension().and_then(|e| e.to_str()).ok_or("not an attachment in this vault")?.to_string();
+    let to = build_vault_path(root, &new_name, &ext)?;
+    move_file(root, from, to, "a file with that name already exists")
+}
+
+/// Move a file to `to`, creating its folders, refusing to overwrite another file.
+fn move_file(root: &Path, from: PathBuf, to: PathBuf, taken: &str) -> Result<String, String> {
     if to == from {
         return Ok(from.to_string_lossy().to_string());
     }
     if let Some(parent) = to.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         // Validate the destination BEFORE moving (a symlinked subfolder would
-        // otherwise carry the note outside the vault).
+        // otherwise carry the file outside the vault).
         let cparent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
         if !cparent.starts_with(&root) {
             return Err("path escapes vault".into());
@@ -1011,7 +1031,7 @@ pub fn rename_note(root: &Path, path: String, new_name: String) -> Result<String
         fs::rename(&temp, &to).map_err(|e| format!("rename: {e}"))?;
     } else {
         if occupied(&to) {
-            return Err("a note with that name already exists".into());
+            return Err(taken.into());
         }
         fs::rename(&from, &to).map_err(|e| format!("rename: {e}"))?;
     }
@@ -2507,6 +2527,33 @@ mod tests {
         assert!(attachment_to_open(&root, &p("run.command")).is_err());
         assert!(attachment_to_open(&root, &p("note.md")).is_err());
         assert!(attachment_to_open(&root, "/bin/sh").is_err());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn attachments_rename_keeping_their_extension() {
+        let root = scratch_vault("att-rename");
+        fs::write(root.join("pic.png"), "img").unwrap();
+        fs::write(root.join("taken.png"), "other").unwrap();
+        fs::write(root.join("note.md"), "x").unwrap();
+        let p = |n: &str| root.join(n).to_string_lossy().to_string();
+        let moved = rename_attachment(&root, p("pic.png"), "media/Photo".into()).unwrap();
+        assert!(moved.ends_with("media/Photo.png"));
+        assert_eq!(fs::read_to_string(root.join("media/Photo.png")).unwrap(), "img");
+        assert!(!root.join("pic.png").exists());
+        assert!(rename_attachment(&root, p("media/Photo.png"), "taken".into()).is_err());
+        assert_eq!(fs::read_to_string(root.join("taken.png")).unwrap(), "other");
+        assert!(rename_attachment(&root, p("media/Photo.png"), "../out".into()).is_err());
+        assert!(rename_attachment(&root, p("media/Photo.png"), ".obsidian/x".into()).is_err());
+        assert!(rename_attachment(&root, p("media/Photo.png"), "a#b".into()).is_err());
+        assert!(rename_attachment(&root, p("note.md"), "moved".into()).is_err());
+        assert!(root.join("note.md").is_file());
+        rename_attachment(&root, p("media/Photo.png"), "media/photo".into()).unwrap();
+        let names: Vec<String> = fs::read_dir(root.join("media"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["photo.png".to_string()]);
         fs::remove_dir_all(&root).unwrap();
     }
 

@@ -363,6 +363,7 @@ fn dispatch(root: &Path, cmd: &str, a: &Value) -> Result<Value, String> {
         "create_note" => basalt_core::create_note(root, s("name")?).map(|x| json!(x)),
         "delete_note" => basalt_core::delete_note(root, s("path")?).map(|_| Value::Null),
         "rename_note" => basalt_core::rename_note(root, s("path")?, s("newName")?).map(|x| json!(x)),
+        "rename_attachment" => basalt_core::rename_attachment(root, s("path")?, s("newName")?).map(|x| json!(x)),
         "delete_folder" => basalt_core::delete_folder(root, s("rel")?).map(|_| Value::Null),
         "remove_empty_folder" => basalt_core::remove_empty_folder(root, s("rel")?).map(|_| Value::Null),
         "list_foreign_files" => basalt_core::list_foreign_files(root, s("rel")?).and_then(|v| to_val(v)),

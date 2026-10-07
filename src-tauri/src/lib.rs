@@ -253,6 +253,14 @@ fn rename_note(path: String, new_name: String, window: tauri::Window, state: Sta
     basalt_core::rename_note(&root, path, new_name)
 }
 
+/// Rename/move an attachment, canvas or base to a new folder-qualified name
+/// without its extension, which it keeps. Returns the canonical new path.
+#[tauri::command]
+fn rename_attachment(path: String, new_name: String, window: tauri::Window, state: State<VaultState>) -> Result<String, String> {
+    let root = current_root(&state, window.label())?;
+    basalt_core::rename_attachment(&root, path, new_name)
+}
+
 /// Every folder in the open vault, empty ones included.
 #[tauri::command]
 async fn list_folders(window: tauri::Window, state: State<'_, VaultState>) -> Result<Vec<String>, String> {
@@ -543,6 +551,7 @@ pub fn run() {
             create_note,
             delete_note,
             rename_note,
+            rename_attachment,
             list_attachments,
             list_folders,
             write_attachment,

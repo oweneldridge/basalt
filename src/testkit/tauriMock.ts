@@ -81,6 +81,8 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
     }
     case "rename_note":
       return ok(`${VAULT}/${String(a.newName)}.md`);
+    case "rename_attachment":
+      return ok(`${VAULT}/${String(a.newName)}${/\.[^./]+$/.exec(String(a.path))?.[0] ?? ""}`);
     case "read_obsidian_config":
       return ok(config);
     case "read_obsidian_import":

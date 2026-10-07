@@ -22,7 +22,7 @@ interface Props {
   onAttachmentContextMenu: (path: string, x: number, y: number) => void;
   /** Open the folder context menu (New note here) for a folder rel path. */
   onFolderContextMenu: (folderRel: string, x: number, y: number) => void;
-  /** Move a note (by path) into a folder (rel, "" = vault root). */
+  /** Move a note or attachment (by path) into a folder (rel, "" = vault root). */
   onMoveToFolder: (notePath: string, folderRel: string) => void;
 }
 
@@ -275,7 +275,7 @@ export function Sidebar({ notes, attachments, folders = [], revealFolder = null,
                 data-path={node.path}
                 className={`tree-row file${node.attachment ? " attachment" : ""}${node.path === activePath ? " active" : ""}`}
                 style={{ paddingLeft: 22 + depth * 14 }}
-                draggable={!node.attachment}
+                draggable
                 onDragStart={(e) => e.dataTransfer.setData(DND_MIME, node.path)}
                 onClick={() => (node.attachment ? onOpenAttachment(node.path) : onOpen(node.path))}
                 onContextMenu={(e) => {

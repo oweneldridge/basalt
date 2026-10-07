@@ -9,6 +9,7 @@ import {
   listFolders,
   nameFromRel,
   renameNote,
+  renameAttachment,
   writeAttachment,
   openVaultBackend,
   openNewWindow,
@@ -131,7 +132,7 @@ import {
   watchSystemTheme,
   type ThemeMode,
 } from "./lib/theme";
-import { linkTargetForFormat, rewriteLinks, folderMoveMapper, type LinkMapper } from "./lib/rename";
+import { linkTargetForFormat, rewriteLinks, folderMoveMapper, type FolderMoveCtx, type LinkMapper } from "./lib/rename";
 import { rewriteCanvasFileRefs } from "./lib/canvas";
 import { countWords, countableText } from "./lib/wordCount";
 import { looksLikeAttachment, resolveAttachment } from "./lib/attachments";
@@ -580,7 +581,7 @@ export default function App() {
   const [subfolderParent, setSubfolderParent] = useState<string | null>(null);
   // Folder rel pending a "Rename folder…" prompt.
   const [renameFolderTarget, setRenameFolderTarget] = useState<string | null>(null);
-  const [renameTarget, setRenameTarget] = useState<{ path: string; rel: string } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{ path: string; rel: string; attachment?: boolean } | null>(null);
 
   const index = useRef(new VaultIndex());
   const vaultRef = useRef<string | null>(null);
@@ -4157,6 +4158,45 @@ export default function App() {
     [flushPath, patchPane, addConflict],
   );
 
+  // Fix the links `mapperFor` changes in each note, reading DISK so a fresher
+  // outside edit is never reverted (a cheap in-memory pass picks the notes). As
+  // in note rename, a conflict is reported and a note being typed into gets the
+  // fix in its editor, merged with the typing. Returns the notes left unfixed.
+  const rewriteNoteLinks = useCallback(
+    async (notes: VaultNote[], mapperFor: (n: VaultNote) => LinkMapper): Promise<string[]> => {
+      const failures: string[] = [];
+      for (const note of notes) {
+        const mapper = mapperFor(note);
+        if (rewriteLinks(note.content, mapper) === null) continue; // unaffected
+        if (conflictsRef.current.has(note.path)) {
+          failures.push(`${note.rel} (unsaved edits)`);
+          continue;
+        }
+        if (pending.current.has(note.path)) {
+          if (fixOpenEditors(note.path, (t) => rewriteLinks(t, mapper) ?? t) === null) failures.push(`${note.rel} (unsaved edits)`);
+          continue;
+        }
+        try {
+          await queueWrite(note.path, async () => {
+            const known = knownText(note.path);
+            const disk = await readNote(note.path);
+            const next = rewriteLinks(disk, mapper);
+            if (next === null) return;
+            rememberSelfWrite(note.rel, next); // before the write: its echo isn't an outside edit
+            await writeNote(note.path, next, disk);
+            registerRewrite({ ...note, content: next });
+            reconcileRewrites([{ path: note.path, base: disk, next, mapper, known }]);
+          });
+        } catch (e) {
+          failures.push(note.rel);
+          console.error("[basalt] link rewrite failed", note.rel, e);
+        }
+      }
+      return failures;
+    },
+    [queueWrite, rememberSelfWrite, registerRewrite, reconcileRewrites],
+  );
+
   const renameNoteNow = useCallback(
     async (oldPath: string, newName: string) => {
       const root = vaultRef.current;
@@ -4393,13 +4433,14 @@ export default function App() {
   // Renames and folder moves run one at a time: a second one waits for the
   // first to finish rewriting links, so it never starts from stale paths.
   const renameQueue = useRef<Promise<unknown>>(Promise.resolve());
-  // Where finished renames and moves took each note. A rename queued behind
-  // them may name a path that has since moved; it follows the note, but only
+  // Where finished renames and moves took each file. A rename queued behind
+  // them may name a path that has since moved; it follows the file, but only
   // when nothing is at that path now.
   const movedTo = useRef<Map<string, string>>(new Map());
   const currentPath = (path: string) => {
+    const there = (p: string) => notesRef.current.some((n) => n.path === p) || attachmentsRef.current.some((a) => a.path === p);
     let p = path;
-    for (let i = 0; i < 16 && movedTo.current.has(p) && !notesRef.current.some((n) => n.path === p); i++) p = movedTo.current.get(p)!;
+    for (let i = 0; i < 16 && movedTo.current.has(p) && !there(p); i++) p = movedTo.current.get(p)!;
     return p;
   };
   const enqueueRename = useCallback(<T,>(job: () => Promise<T>): Promise<T> => {
@@ -4688,6 +4729,7 @@ export default function App() {
       const byRel = (a: VaultNote, b: VaultNote) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase());
       notesRef.current = [...postNotes].sort(byRel);
       setNotes(() => notesRef.current);
+      attachmentsRef.current = postAtts;
       setAttachmentsList((prev) =>
         prev.map((a) =>
           a.rel.startsWith(oldPrefix)
@@ -4768,39 +4810,8 @@ export default function App() {
       const makeMapper = (post: VaultNote) =>
         folderMoveMapper(moveCtx, postToOld.get(post.path) ?? post.path, post.path, post.rel);
 
-      // One pass: rewrite affected notes (moved and unmoved), reading DISK so a
-      // fresher external edit is never reverted. Cheap in-memory pre-filter.
-      // Each rewrite is registered as soon as it's written (see registerRewrite).
-      const failures: string[] = [];
-      for (const post of postNotes) {
-        const mapper = makeMapper(post);
-        if (rewriteLinks(post.content, mapper) === null) continue; // unaffected
-        // As in note rename: a conflict is reported; a note being typed into
-        // gets the fix in its editor, merged with the typing.
-        if (conflictsRef.current.has(post.path)) {
-          failures.push(`${post.rel} (unsaved edits)`);
-          continue;
-        }
-        if (pending.current.has(post.path)) {
-          if (fixOpenEditors(post.path, (t) => rewriteLinks(t, mapper) ?? t) === null) failures.push(`${post.rel} (unsaved edits)`);
-          continue;
-        }
-        try {
-          await queueWrite(post.path, async () => {
-            const known = knownText(post.path);
-            const disk = await readNote(post.path);
-            const next = rewriteLinks(disk, mapper);
-            if (next === null) return;
-            rememberSelfWrite(post.rel, next); // before the write: its echo isn't an outside edit
-            await writeNote(post.path, next, disk);
-            registerRewrite({ ...post, content: next });
-            reconcileRewrites([{ path: post.path, base: disk, next, mapper, known }]);
-          });
-        } catch (e) {
-          failures.push(post.rel);
-          console.error("[basalt] folder-move link rewrite failed", post.rel, e);
-        }
-      }
+      // One pass over every note, moved and unmoved.
+      const failures = await rewriteNoteLinks(postNotes, makeMapper);
 
       // Repoint canvas file-node embeds of every moved note AND moved
       // attachment (canvas file-nodes can embed images/PDFs/nested canvases, not
@@ -4818,21 +4829,156 @@ export default function App() {
         folderFails.length > 0 ? `Folder moved, but link updates failed in: ${folderFails.join(", ")}` : null,
       );
     },
-    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs, registerRewrite, reconcileRewrites, queueWrite],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs, rewriteNoteLinks],
   );
   const handleRenameFolder = useCallback(
     (folderRel: string, newFolderRel: string) => enqueueRename(() => renameFolderNow(folderRel, newFolderRel)),
     [enqueueRename, renameFolderNow],
   );
 
+  // Rename or move an attachment, canvas or base (`newName` is folder-qualified,
+  // without the extension), then fix the links and canvas cards that reach it.
+  // It runs like a folder move that carries one file: the same flush-or-abort
+  // first, the same state commit before any other await, the same link pass.
+  const renameAttachmentNow = useCallback(
+    async (path: string, newName: string) => {
+      const root = vaultRef.current;
+      const att = attachmentsRef.current.find((a) => a.path === path);
+      if (!root || !att) return;
+      await flushAll();
+      if (conflictsRef.current.has(path)) {
+        setSaveError(`Resolve the "Changed on disk" conflict in ${att.name} before renaming it`);
+        return;
+      }
+      if (pending.current.has(path)) {
+        setSaveError("Couldn't rename: unsaved changes failed to save");
+        return;
+      }
+      const preNotes = notesRef.current;
+      const preIndex = new VaultIndex();
+      preIndex.build(preNotes);
+      const preAtts = attachmentsRef.current;
+
+      renaming.current.add(path);
+      let newPath = path;
+      try {
+        newPath = await renameAttachment(path, newName);
+      } catch (e) {
+        setSaveError(`Couldn't rename: ${e}`);
+      } finally {
+        renaming.current.delete(path);
+        if (newPath === path && pending.current.has(path)) void flushPath(path);
+      }
+      if (newPath === path) return;
+      const newRel = newPath.startsWith(root) ? newPath.slice(root.length).replace(/^[/\\]+/, "") : newPath;
+      const moved: Attachment = { ...att, path: newPath, rel: newRel, name: newRel.split("/").pop() ?? newRel };
+      const postAtts = preAtts.map((a) => (a.path === path ? moved : a));
+      attachmentsRef.current = postAtts;
+      setAttachmentsList((prev) => prev.map((a) => (a.path === path ? moved : a)));
+      movedTo.current.set(path, newPath);
+      movedTo.current.delete(newPath);
+      moveBigBase(path, newPath);
+      // An edit made during the rename goes to the new path.
+      const typed = pending.current.get(path);
+      const timer = saveTimers.current.get(path);
+      if (timer !== undefined) window.clearTimeout(timer);
+      saveTimers.current.delete(path);
+      pending.current.delete(path);
+      const baseline = selfWrites.current.get(att.rel);
+      selfWrites.current.delete(att.rel);
+      if (baseline !== undefined) selfWrites.current.set(newRel, baseline);
+      recents.current = recents.current.map((r) => (r === att.rel ? newRel : r));
+      const live = liveDocs.current.get(path);
+      if (live !== undefined) liveDocs.current.set(newPath, live);
+      renameWindow.current.set(path, newPath);
+      const repoint = (pane: Pane): Pane => {
+        if (!pane.tabs.includes(path)) return pane;
+        const isActive = pane.active === path;
+        return {
+          ...pane,
+          tabs: pane.tabs.map((p) => (p === path ? newPath : p)),
+          active: isActive ? newPath : pane.active,
+          doc: isActive ? (typed ?? live ?? pane.doc) : pane.doc,
+          docRev: isActive ? (pane.docRev ?? 0) + 1 : pane.docRev,
+          pinned: pane.pinned?.map((p) => (p === path ? newPath : p)),
+        };
+      };
+      panesRef.current = Object.fromEntries(Object.entries(panesRef.current).map(([id, pane]) => [id, repoint(pane)]));
+      setPanes((ps) => Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, repoint(pane)])));
+      if (typed !== undefined) {
+        pending.current.set(newPath, typed);
+        void flushPath(newPath);
+      }
+      if (isViewerPath(path)) void renameSnapshots(root, att.rel, newRel);
+      bumpStructure();
+
+      const fmt = getLinkFormat();
+      const byPath = new Map(preNotes.map((n) => [n.path, n]));
+      const postAttByPath = new Map(postAtts.map((a) => [a.path, a]));
+      const ctx: FolderMoveCtx = {
+        resolvePre: (raw, from) => preIndex.resolve(raw, from),
+        resolvePost: (raw, from) => preIndex.resolve(raw, from),
+        movedNewPathByOld: new Map(),
+        noteAt: (p) => byPath.get(p),
+        nameTaken: (name, except) => preNotes.some((n) => n.path !== except && normalizeName(n.name) === normalizeName(name)),
+        format: fmt,
+        resolveAttPre: (raw, from, literal) =>
+          resolveAttachment(preAtts, raw, byPath.get(from)?.rel ?? null, literal)?.path ?? null,
+        resolveAttPost: (raw, from, literal) =>
+          resolveAttachment(postAtts, raw, byPath.get(from)?.rel ?? null, literal)?.path ?? null,
+        movedAttNewPathByOld: new Map([[path, newPath]]),
+        attAt: (p) => postAttByPath.get(p),
+        attNameTaken: (name, except) =>
+          postAtts.some((a) => a.path !== except && normalizeName(a.name) === normalizeName(name)),
+      };
+      // Every link that reached the file is written afresh, as for a renamed
+      // note, so a case-only rename shows in the links too; the move mapper
+      // catches links to other files that the new name now shadows.
+      const taken = postAtts.some((a) => a.path !== newPath && normalizeName(a.name) === normalizeName(moved.name));
+      const mapperFor = (n: VaultNote): LinkMapper => {
+        const others = folderMoveMapper(ctx, n.path, n.path, n.rel);
+        return (raw, literal = false) => {
+          if ((!literal && preIndex.resolve(raw, n.path)) || resolveAttachment(preAtts, raw, n.rel, literal)?.path !== path)
+            return others(raw, literal);
+          const next = linkTargetForFormat(fmt, newRel, taken, n.rel);
+          return next === (literal ? raw : targetPathPart(raw)) ? null : next;
+        };
+      };
+      const failures = await rewriteNoteLinks(preNotes, mapperFor);
+      const canvasFails = await rewriteCanvasRefs(
+        postAtts.filter((a) => /\.canvas$/i.test(a.path)).map((a) => ({ path: a.path, rel: a.rel })),
+        new Map([[att.rel, newRel]]),
+      );
+      const allFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
+      setSaveError(allFails.length > 0 ? `Renamed, but link updates failed in: ${allFails.join(", ")}` : null);
+    },
+    [flushAll, flushPath, bumpStructure, moveBigBase, getLinkFormat, rewriteNoteLinks, rewriteCanvasRefs],
+  );
+  const handleRenameAttachment = useCallback(
+    (path: string, newName: string) => enqueueRename(() => renameAttachmentNow(currentPath(path), newName)),
+    [enqueueRename, renameAttachmentNow],
+  );
+
   // Move a note into a folder (rel, "" = root) by renaming — reuses the
-  // link-rewriting rename path. No-op if it's already there.
+  // link-rewriting rename path. No-op if it's already there. Attachments,
+  // canvases and bases move the same way.
   const handleMoveToFolder = useCallback(
     (notePath: string, folderRel: string) => {
+      const inFolder = (rel: string) => normalizeName(rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "") === normalizeName(folderRel);
+      const att = attachmentsRef.current.find((a) => a.path === notePath);
+      if (att) {
+        if (inFolder(att.rel)) return;
+        void enqueueRename(async () => {
+          const now = currentPath(notePath);
+          const cur = attachmentsRef.current.find((a) => a.path === now);
+          const stem = cur?.name.replace(/\.[^.]+$/, "");
+          if (cur && stem) await renameAttachmentNow(now, (folderRel ? `${folderRel}/` : "") + stem);
+        });
+        return;
+      }
       const note = notesRef.current.find((n) => n.path === notePath);
       if (!note) return;
-      const curFolder = note.rel.includes("/") ? note.rel.slice(0, note.rel.lastIndexOf("/")) : "";
-      if (normalizeName(curFolder) === normalizeName(folderRel)) return;
+      if (inFolder(note.rel)) return;
       // The name as of when the move runs: a title rename queued ahead of it
       // may change it.
       void enqueueRename(async () => {
@@ -4841,7 +4987,7 @@ export default function App() {
         if (cur) await renameNoteNow(now, (folderRel ? `${folderRel}/` : "") + cur.name);
       });
     },
-    [enqueueRename, renameNoteNow],
+    [enqueueRename, renameNoteNow, renameAttachmentNow],
   );
 
   // Blank-query switcher shows recently opened notes first.
@@ -5837,6 +5983,16 @@ export default function App() {
             <button
               className="ctx-item"
               onClick={() => {
+                const att = attachmentsRef.current.find((a) => a.path === attMenu.path);
+                setAttMenu(null);
+                if (att) setRenameTarget({ path: att.path, rel: att.rel, attachment: true });
+              }}
+            >
+              Rename…
+            </button>
+            <button
+              className="ctx-item"
+              onClick={() => {
                 const path = attMenu.path;
                 setAttMenu(null);
                 void revealItemInDir(path).catch((e) => setSaveError(`Couldn't reveal: ${e}`));
@@ -5944,17 +6100,18 @@ export default function App() {
       )}
       {renameTarget && (
         <PromptModal
-          title="Rename note (edit the folders to move it)"
-          defaultValue={renameTarget.rel.replace(/\.md$/i, "")}
+          title={`Rename ${renameTarget.attachment ? "file" : "note"} (edit the folders to move it)`}
+          defaultValue={renameTarget.attachment ? renameTarget.rel.replace(/\.[^./]+$/, "") : renameTarget.rel.replace(/\.md$/i, "")}
           confirmLabel="Rename"
           onConfirm={(value) => {
             const t = renameTarget;
             setRenameTarget(null);
             if (/[#^[\]|]/.test(value)) {
-              setSaveError("Note names cannot contain # ^ [ ] |");
+              setSaveError(`${t.attachment ? "File" : "Note"} names cannot contain # ^ [ ] |`);
               return;
             }
-            void handleRenameNote(t.path, value).then(() =>
+            const rename = t.attachment ? handleRenameAttachment : handleRenameNote;
+            void rename(t.path, value).then(() =>
               requestAnimationFrame(() => {
                 // The row the menu came from was replaced; focus its new one.
                 if (document.activeElement && document.activeElement !== document.body) return;
