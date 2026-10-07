@@ -108,6 +108,7 @@ import { transcludeBlocks } from "./transcludeBlocks";
 import { pasteLink } from "./pasteLink";
 import { pasteHtml } from "./pasteHtml";
 import { deleteMarkupOnly } from "./markupBackspace";
+import { renumberLists } from "./listRenumber";
 import { pluginEditorExtensions } from "../lib/plugins";
 import type { LinkFormat } from "../lib/rename";
 
@@ -311,6 +312,7 @@ export function createEditorState(
     wrapSelectionOnType,
     pasteLink,
     pasteHtml,
+    renumberLists,
     // Native autocorrect/-capitalize (static); spellcheck is in a compartment
     // so it can be toggled live.
     EditorView.contentAttributes.of({ autocorrect: "on", autocapitalize: "on" }),

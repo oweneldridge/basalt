@@ -3,9 +3,10 @@ import { EditorSelection, EditorState, type Transaction } from "@codemirror/stat
 import { indentUnit } from "@codemirror/language";
 import type { EditorView } from "@codemirror/view";
 import { indentListItem, outdentListItem } from "./listIndent";
+import { renumberLists } from "./listRenumber";
 
 const run = (cmd: (v: EditorView) => boolean, doc: string, line: number): string => {
-  let state = EditorState.create({ doc, extensions: [indentUnit.of("\t")] });
+  let state = EditorState.create({ doc, extensions: [indentUnit.of("\t"), renumberLists] });
   state = state.update({ selection: EditorSelection.cursor(state.doc.line(line).to) }).state;
   const view = { state, dispatch(tr: Transaction) { this.state = tr.state; } };
   cmd(view as unknown as EditorView);
