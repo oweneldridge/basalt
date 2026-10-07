@@ -1447,3 +1447,21 @@ test.describe("a table in Live Preview", () => {
     await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Ideas");
   });
 });
+
+test.describe("callout colours", () => {
+  test.use({ vaultFiles: { "Co.md": "> [!warning]\n> careful\n\n> [!tip] Hint\n> body\n\n> [!my-type2]\n> x\n\nEND\n" } });
+
+  test("follow the type, the same in both views", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Co");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const pane = page.locator(".pane:not(.dock)");
+    const lpColor = (i: number) => pane.locator(".cm-callout-title").nth(i).evaluate((e) => getComputedStyle(e).color);
+    const lp = [await lpColor(0), await lpColor(1), await lpColor(2)];
+    expect(new Set(lp).size).toBe(3);
+    await expect(pane.locator(".cm-callout-title")).toHaveCount(3);
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    const rv = await pane.locator(".reading-view .md-callout-title").evaluateAll((els) => els.map((e) => getComputedStyle(e).color));
+    expect(rv).toEqual(lp);
+  });
+});

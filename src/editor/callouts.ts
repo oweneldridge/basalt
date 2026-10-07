@@ -9,7 +9,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { treeChanged } from "./regions";
-import { calloutIcon } from "../lib/callouticons";
+import { calloutColor, calloutIcon } from "../lib/callouticons";
 
 /** The callout type's icon, rendered where the `[!type]` token was, with the
  * type as the title when the header has none ("> [!warning]" shows "Warning",
@@ -38,18 +38,7 @@ class IconWidget extends WidgetType {
   }
 }
 
-const CALLOUT_RE = /^\s*>\s*\[!(\w+)\]([+-]?)/;
-
-// Map the ~25 built-in callout types to a small set of color groups.
-function calloutGroup(type: string): string {
-  const t = type.toLowerCase();
-  if (["tip", "success", "check", "done", "hint", "important"].includes(t)) return "green";
-  if (["warning", "caution", "attention", "todo"].includes(t)) return "orange";
-  if (["danger", "error", "bug", "failure", "fail", "missing"].includes(t)) return "red";
-  if (["question", "help", "faq"].includes(t)) return "purple";
-  if (["quote", "cite", "example"].includes(t)) return "gray";
-  return "blue"; // note/info/abstract/summary/tldr and unknown types
-}
+const CALLOUT_RE = /^\s*>\s*\[!([\w-]+)\]([+-]?)/;
 
 
 function build(view: EditorView): DecorationSet {
@@ -66,7 +55,7 @@ function build(view: EditorView): DecorationSet {
       const startLine = doc.lineAt(node.from).number;
       const endLine = doc.lineAt(Math.min(node.to, doc.length)).number;
       const head = CALLOUT_RE.exec(doc.line(startLine).text);
-      const group = head ? calloutGroup(head[1]) : null;
+      const group = head ? calloutColor(head[1]) : null;
 
       for (let n = startLine; n <= endLine; n++) {
         const line = doc.line(n);
@@ -77,7 +66,7 @@ function build(view: EditorView): DecorationSet {
         // later offset — added in order so the RangeSetBuilder stays sorted.
         builder.add(line.from, line.from, Decoration.line({ class: cls }));
         if (group && n === startLine && !lineTouched(line.from, line.to)) {
-          const m = /\[!(\w+)\][+-]?\s?/.exec(line.text);
+          const m = /\[!([\w-]+)\][+-]?\s?/.exec(line.text);
           if (m) {
             const cFrom = line.from + m.index;
             // Replace the `[!type]` token with the type's icon (Obsidian shows one).

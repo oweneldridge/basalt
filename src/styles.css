@@ -1,4 +1,12 @@
 :root {
+  /* Callout colours, by Obsidian's groups (titles keep 4.5:1 on their tint). */
+  --callout-blue: #7aa2f7;
+  --callout-cyan: #7dcfff;
+  --callout-green: #9ece6a;
+  --callout-orange: #e0af68;
+  --callout-red: #f7768e;
+  --callout-purple: #bb9af7;
+  --callout-gray: #9a9ca0;
   --bg: #1e1e1e;
   --bg-editor: #1e1e1e;
   --bg-sidebar: #252525;
@@ -34,6 +42,13 @@
    Applied by data-theme="light" on <html> (lib/theme.ts + the index.html
    no-flash script). */
 :root[data-theme="light"] {
+  --callout-blue: #1f5fbf;
+  --callout-cyan: #0a6f80;
+  --callout-green: #2e7a32;
+  --callout-orange: #a84d00;
+  --callout-red: #c0273a;
+  --callout-purple: #6c45c4;
+  --callout-gray: #5c6066;
   --bg: #ffffff;
   --bg-editor: #ffffff;
   --bg-sidebar: #f4f5f7;
@@ -637,13 +652,22 @@ button.primary:hover {
 .reading-view table.md-table th { background: var(--bg-elev); font-weight: 700; }
 .reading-view table.md-properties th { color: var(--text-muted); font-weight: 600; }
 .reading-view .md-callout {
-  border-left: 3px solid var(--accent);
-  background: var(--accent-soft);
+  border-left: 3px solid var(--cg, var(--accent));
+  background: var(--cgbg, var(--accent-soft));
   border-radius: 4px;
   padding: 6px 12px;
   margin: 0.6em 0;
 }
-.reading-view .md-callout-title { font-weight: 700; color: var(--accent); }
+.reading-view .md-callout-title { font-weight: 700; color: var(--cg, var(--accent)); }
+/* A callout's colour group, in both views. */
+.cm-callout, .md-callout { --cgbg: color-mix(in srgb, var(--cg) 8%, transparent); }
+.cm-callout-blue, .md-callout-color-blue { --cg: var(--callout-blue); }
+.cm-callout-cyan, .md-callout-color-cyan { --cg: var(--callout-cyan); }
+.cm-callout-green, .md-callout-color-green { --cg: var(--callout-green); }
+.cm-callout-orange, .md-callout-color-orange { --cg: var(--callout-orange); }
+.cm-callout-red, .md-callout-color-red { --cg: var(--callout-red); }
+.cm-callout-purple, .md-callout-color-purple { --cg: var(--callout-purple); }
+.cm-callout-gray, .md-callout-color-gray { --cg: var(--callout-gray); }
 .reading-view .md-mermaid { text-align: center; margin: 12px 0; }
 .reading-view .md-mermaid svg { max-width: 100%; height: auto; }
 .reading-view .md-mermaid-error {

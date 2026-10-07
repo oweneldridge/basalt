@@ -15,7 +15,7 @@ import type { DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { isInExcludedRegion } from "./regions";
 
-const CALLOUT_HEAD = /^(\s*>\s*)\[!(\w+)\]([+-]?)/;
+const CALLOUT_HEAD = /^(\s*>\s*)\[!([\w-]+)\]([+-]?)/;
 
 /** Toggle the fold override for the callout whose title line starts at `pos`. */
 const toggleFold = StateEffect.define<number>();

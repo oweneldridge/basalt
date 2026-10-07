@@ -113,13 +113,9 @@ const themeSpec = {
       paddingBottom: "1px",
       paddingLeft: "12px",
     },
+    // Colour groups (--cg) are theme variables in styles.css, shared with
+    // Reading view.
     ".cm-callout-title": { fontWeight: "700", color: "var(--cg)" },
-    ".cm-callout-blue": { "--cg": "#7aa2f7", "--cgbg": "rgba(122,162,247,0.08)" },
-    ".cm-callout-green": { "--cg": "#9ece6a", "--cgbg": "rgba(158,206,106,0.08)" },
-    ".cm-callout-orange": { "--cg": "#e0af68", "--cgbg": "rgba(224,175,104,0.08)" },
-    ".cm-callout-red": { "--cg": "#f7768e", "--cgbg": "rgba(247,118,142,0.08)" },
-    ".cm-callout-purple": { "--cg": "#bb9af7", "--cgbg": "rgba(187,154,247,0.08)" },
-    ".cm-callout-gray": { "--cg": "#8a8c90", "--cgbg": "rgba(138,140,144,0.07)" },
     // Images + embeds
     ".cm-md-image": {
       display: "block",

@@ -18,7 +18,7 @@ import { mdImageTarget, proseMask, TAG_BEFORE, TAG_NAME, wikilinkLabel } from ".
 
 const TAG_AT = new RegExp(`^#(${TAG_NAME})`, "u");
 import { parseFm } from "./frontmatter";
-import { calloutIcon } from "./callouticons";
+import { calloutColor, calloutIcon } from "./callouticons";
 import { ObsidianTasks } from "./mdTasks";
 import { ObsidianTables } from "./mdTables";
 
@@ -784,7 +784,7 @@ class Blocks {
     const body = bodyMd.trim()
       ? `<div class="md-callout-body">${renderDoc(bodyMd, map.slice(1), this.ctx, this.depth + 1)}</div>`
       : "";
-    const cls = `md-callout md-callout-${escapeHtml(type)}`;
+    const cls = `md-callout md-callout-${escapeHtml(type)} md-callout-color-${calloutColor(type)}`;
     if (fold)
       return `<details class="${cls} md-callout-foldable"${fold === "-" ? "" : " open"}><summary class="md-callout-title">${icon}${title}</summary>${body}</details>`;
     return `<div class="${cls}"><div class="md-callout-title">${icon}${title}</div>${body}</div>`;

@@ -109,7 +109,7 @@ describe("blocks", () => {
   it("blockquote and callout", () => {
     expect(renderMarkdown("> quoted")).toBe("<blockquote><p>quoted</p></blockquote>");
     const c = renderMarkdown("> [!warning] Heads up\n> body text");
-    expect(c).toContain('<div class="md-callout md-callout-warning">');
+    expect(c).toContain('<div class="md-callout md-callout-warning md-callout-color-orange">');
     expect(c).toContain('<div class="md-callout-title"><span class="md-callout-icon">⚠️</span>Heads up</div>');
     expect(c).toContain("body text");
   });
@@ -276,7 +276,7 @@ describe("foldable callouts", () => {
   });
   it("a plain callout (no +/-) stays a non-foldable div", () => {
     const out = renderMarkdown("> [!info] Note\n> body");
-    expect(out).toContain('class="md-callout md-callout-info"');
+    expect(out).toContain('class="md-callout md-callout-info md-callout-color-blue"');
     expect(out).not.toContain("<details");
   });
 });
