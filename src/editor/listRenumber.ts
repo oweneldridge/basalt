@@ -6,9 +6,9 @@
 // Unlike Obsidian, lists are read as the parser reads them, so a numbered line
 // in code, math, a comment, frontmatter or a paragraph is left as typed, and
 // a list's items are the ones it renders, however they're indented.
-import { EditorState, MapMode, Transaction, type ChangeSpec, type Text } from "@codemirror/state";
-import { ensureSyntaxTree, foldedRanges, language } from "@codemirror/language";
-import type { Input, SyntaxNode, Tree } from "@lezer/common";
+import { ChangeSet, EditorState, MapMode, Transaction, type ChangeSpec, type Text } from "@codemirror/state";
+import { DocInput, ensureSyntaxTree, foldedRanges, language } from "@codemirror/language";
+import type { SyntaxNode, Tree } from "@lezer/common";
 
 const NUMBERED = /^[>\s]*\d+[.)] /;
 // A list marker with any task box after it.
@@ -18,6 +18,10 @@ const MAX_NUMBER = 999999999;
 // How far past the edit the parse is waited for, and for how long.
 const LOOKAHEAD = 100000;
 const PARSE_MS = 50;
+// How far from the edit the lines parsed afresh may stop partway through a list.
+const CUT = 20000;
+// A list item at the top level, quoted or not, and the quote marks before it.
+const TOP_ITEM = /^((?:>[ \t]?)*)(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
 
 /** A numbered list item: its list marker and where it sits. */
 interface Item {
@@ -32,6 +36,26 @@ interface Item {
 // even when a fence's language (```markdown) parses it as one.
 const LITERAL = new Set(["FencedCode", "CodeBlock", "CodeText", "InlineCode", "HTMLBlock", "CommentBlock", "Comment"]);
 
+function literal(node: SyntaxNode): boolean {
+  for (let p: SyntaxNode | null = node; p; p = p.parent) if (LITERAL.has(p.name)) return true;
+  return false;
+}
+
+/** How many lists the ListItem `node` is nested in. */
+function depth(node: SyntaxNode): number {
+  let level = -1;
+  for (let p: SyntaxNode | null = node; p; p = p.parent) if (p.name === "ListItem") level++;
+  return level;
+}
+
+/** Lines of a note parsed afresh. `cut` says it starts or ends at a list
+ * item partway through a list, which may go on past it. */
+interface Window {
+  from: number;
+  to: number;
+  cut: { start: boolean; end: boolean };
+}
+
 /** The numbered list items of one version of a note, as the parser reads it. */
 class Items {
   private hidden: { frontmatter: number; spans: [number, number][] } | null = null;
@@ -41,6 +65,7 @@ class Items {
     private offset: number, // where `tree` starts in the note
     private full: Tree, // the editor's tree, as far as `limit`
     private limit: number,
+    readonly cut: Window["cut"],
   ) {}
 
   /** The numbered item whose marker starts line `n`, if there is one. */
@@ -50,7 +75,7 @@ class Items {
     const pos = line.from + /^[>\s]*/.exec(line.text)![0].length;
     const mark = this.tree.resolveInner(pos - this.offset, 1);
     if (mark.name !== "ListMark" || mark.from + this.offset !== pos || mark.parent?.parent?.name !== "OrderedList") return null;
-    if (this.literal(mark) || this.isHidden(n, pos)) return null;
+    if (literal(mark) || this.isHidden(n, pos)) return null;
     return this.item(mark.parent);
   }
 
@@ -70,15 +95,26 @@ class Items {
     if (mark?.name !== "ListMark") return null;
     const from = mark.from + this.offset;
     const m = MARKER.exec(this.state.sliceDoc(from, mark.to + this.offset + 4));
-    if (!m) return null;
-    let level = -1;
-    for (let p: SyntaxNode | null = node; p; p = p.parent) if (p.name === "ListItem") level++;
-    return { node, from, num: m[1], marker: m[0], level };
+    return m && { node, from, num: m[1], marker: m[0], level: depth(node) };
   }
 
-  private literal(node: SyntaxNode): boolean {
-    for (let p: SyntaxNode | null = node; p; p = p.parent) if (LITERAL.has(p.name)) return true;
-    return false;
+  /** Whether `node` runs on to the end of the lines parsed. */
+  ends(node: SyntaxNode): boolean {
+    return /^[\s>]*$/.test(this.state.sliceDoc(node.to + this.offset, this.offset + this.tree.length));
+  }
+
+  /** The number the list `item` is in starts at, if it's known. */
+  start(item: Item): number | null {
+    let first = item;
+    for (let p = this.sibling(item.node, "prevSibling"); p; p = this.sibling(p.node, "prevSibling")) first = p;
+    if (!this.cut.start || this.state.doc.lineAt(first.from).from !== this.offset) return parseInt(first.num, 10);
+    // The list goes on above the lines parsed afresh, so its start is read
+    // from the editor's tree.
+    let node = this.full.resolveInner(first.from, 1).parent;
+    for (let p = node?.prevSibling; p; p = p.prevSibling) if (p.name === "ListItem") node = p;
+    const mark = node?.firstChild;
+    const m = mark?.name === "ListMark" ? MARKER.exec(this.state.sliceDoc(mark.from, mark.to + 4)) : null;
+    return m ? parseInt(m[1], 10) : null;
   }
 
   /** Whether `pos` on line `n` is in frontmatter, `$$` math or a `%%`
@@ -109,7 +145,7 @@ class Items {
       let open = -1;
       const found: [number, number][] = [];
       for (let i = text.indexOf(mark); i >= 0; i = text.indexOf(mark, i + 2)) {
-        if (inside(i) || this.literal(this.full.resolveInner(i, 1))) continue;
+        if (inside(i) || literal(this.full.resolveInner(i, 1))) continue;
         if (open < 0) open = i;
         else (found.push([open, i + 2]), (open = -1));
       }
@@ -119,19 +155,27 @@ class Items {
     return out;
   }
 
-  /** The items of `state` around `from` to `upto`. */
-  static of(state: EditorState, from: number, upto: number): Items | null {
-    const limit = Math.min(state.doc.length, upto + LOOKAHEAD);
-    const full = ensureSyntaxTree(state, limit, PARSE_MS);
-    const lang = state.facet(language);
-    if (!full || !lang) return null;
-    // The editor's tree is updated a piece at a time and can split a quoted
-    // list after an edit, so the blocks around the edit are parsed afresh.
-    const range = around(state.doc, full, from, upto, limit);
-    if (!range) return null;
-    // A tree parsed from a range counts its positions from the range's start.
-    const tree = lang.parser.parse(input(state.doc), [], [range]);
-    return new Items(state, tree, range.from, full, limit === state.doc.length ? Infinity : limit);
+  /** Whether every line `changes` renumbers still reads as a list item:
+   * a list that starts past 1 can't break into a paragraph, and the parser
+   * can misread a quote whose first line is blank. */
+  keeps(changes: ChangeSet): boolean {
+    const doc = changes.apply(this.state.doc);
+    const range = { from: this.offset, to: changes.mapPos(this.offset + this.tree.length) };
+    const tree = this.state.facet(language)!.parser.parse(new DocInput(doc), [], [range]);
+    let ok = true;
+    changes.iterChangedRanges((_fromA, _toA, from) => {
+      const mark = tree.resolveInner(from - this.offset, 1);
+      if (mark.name !== "ListMark" || mark.parent?.parent?.name !== "OrderedList") ok = false;
+    });
+    return ok;
+  }
+
+  /** The items of `state` in `range`. The editor's tree is updated a piece
+   * at a time and can split a quoted list after an edit, so they're parsed
+   * afresh, and a tree parsed from a range counts from the range's start. */
+  static parse(state: EditorState, full: Tree, range: Window, limit: number): Items {
+    const tree = state.facet(language)!.parser.parse(new DocInput(state.doc), [], [range]);
+    return new Items(state, tree, range.from, full, limit === state.doc.length ? Infinity : limit, range.cut);
   }
 }
 
@@ -141,40 +185,72 @@ function startsBlock(doc: Text, full: Tree, n: number): boolean {
   const line = doc.line(n);
   if (n === 1) return true;
   if (doc.line(n - 1).text !== "" || !/^[^\s>]/.test(line.text) || /^([-*+]|\d{1,9}[.)])(\s|$)/.test(line.text)) return false;
-  for (let p: SyntaxNode | null = full.resolveInner(line.from, 1); p; p = p.parent) if (LITERAL.has(p.name)) return false;
-  return true;
+  return !literal(full.resolveInner(line.from, 1));
 }
 
-/** The stretch of the note around `from` to `upto` that parses on its own:
- * from the block start before it to the next one after, as far as `limit`. */
-function around(doc: Text, full: Tree, from: number, upto: number, limit: number): { from: number; to: number } | null {
-  let n = doc.lineAt(from).number;
-  while (!startsBlock(doc, full, n)) {
-    if (from - doc.line(--n).from > LOOKAHEAD) return null;
-  }
-  const start = doc.line(n).from;
-  let end = limit;
-  for (let k = doc.lineAt(upto).number + 1; k <= doc.lines && doc.line(k).from < limit; k++) {
-    if (startsBlock(doc, full, k)) {
-      end = doc.line(k).from;
-      break;
-    }
-  }
-  return { from: start, to: Math.max(end, start) };
+/** A line holding a list item at the top level: the lines from there on
+ * parse as they do in the whole note, but for the items above it. */
+function topItem(doc: Text, full: Tree, n: number): boolean {
+  const line = doc.line(n);
+  const m = TOP_ITEM.exec(line.text);
+  if (!m) return false;
+  const mark = full.resolveInner(line.from + m[1].length, 1);
+  return mark.name === "ListMark" && mark.from === line.from + m[1].length && depth(mark.parent!) === 0 && !literal(mark);
 }
 
-/** The note as a parser reads it, without copying it into one string. */
-const input = (doc: Text): Input => ({
-  length: doc.length,
-  lineChunks: false,
-  chunk: (from) => doc.sliceString(from, Math.min(doc.length, from + 4096)),
-  read: (from, to) => doc.sliceString(from, to),
-});
+/** Where the lines parsed afresh start: the first line above the one at
+ * `from` that starts a block, or once far enough up, holds a top-level item. */
+function windowStart(doc: Text, full: Tree, from: number): { at: number; cut: boolean } | null {
+  for (let n = doc.lineAt(from).number - 1; n >= 1; n--) {
+    const at = doc.line(n).from;
+    if (from - at > LOOKAHEAD) return null;
+    if (startsBlock(doc, full, n)) return { at, cut: false };
+    if (from - at > CUT && topItem(doc, full, n)) return { at, cut: true };
+  }
+  return { at: 0, cut: false };
+}
+
+/** Where they end: the first line from `n` on that starts a block, or holds a
+ * top-level item once `far` past `to`, or else at `limit`. */
+function windowEnd(doc: Text, full: Tree, n: number, to: number, far: number, limit: number): { at: number; cut: boolean } {
+  for (; n <= doc.lines && doc.line(n).from < limit; n++) {
+    const at = doc.line(n).from;
+    if (startsBlock(doc, full, n)) return { at, cut: false };
+    if (at - to >= far && topItem(doc, full, n)) return { at, cut: true };
+  }
+  return { at: limit, cut: false };
+}
+
+/** The items around the changes from `first` to `near`, after the edit and
+ * before it. Above the edit the two versions are the same, so they start at
+ * the same line, and the lines before reach as far as the lines after. */
+function lists(tr: Transaction, first: number, near: number, far: number): [Items, Items] | null {
+  const doc = tr.newDoc;
+  const before = tr.startState.doc;
+  const back = tr.changes.invertedDesc;
+  const limit = Math.min(doc.length, near + LOOKAHEAD);
+  const full = ensureSyntaxTree(tr.state, limit, PARSE_MS);
+  if (!full || !tr.state.facet(language)) return null;
+  const start = windowStart(doc, full, first);
+  if (!start) return null;
+  const end = windowEnd(doc, full, doc.lineAt(near).number + 1, near, far, limit);
+  const upto = back.mapPos(end.at, 1);
+  const wasLimit = Math.min(before.length, Math.max(upto, back.mapPos(near) + LOOKAHEAD));
+  const wasFull = ensureSyntaxTree(tr.startState, wasLimit, PARSE_MS);
+  if (!wasFull) return null;
+  const line = before.lineAt(upto);
+  const wasEnd = windowEnd(before, wasFull, line.number + (line.from === upto ? 0 : 1), upto, 0, wasLimit);
+  return [
+    Items.parse(tr.state, full, { from: start.at, to: end.at, cut: { start: start.cut, end: end.cut } }, limit),
+    Items.parse(tr.startState, wasFull, { from: back.mapPos(start.at, -1), to: wasEnd.at, cut: { start: start.cut, end: wasEnd.cut } }, wasLimit),
+  ];
+}
 
 /** `num` written as `was` is: zero-padded to its width when it was. */
 const written = (num: number, was: string) => (was.length > 1 && was[0] === "0" ? String(num).padStart(was.length, "0") : String(num));
 
-function renumber(tr: Transaction, now: Items, was: Items): ChangeSpec[] {
+/** The renumbering `tr` needs, or null if the count ran past the lines parsed. */
+function renumber(tr: Transaction, now: Items, was: Items): ChangeSpec[] | null {
   const doc = tr.newDoc;
   const before = tr.startState.doc;
   const changed: { from: number; to: number }[] = [];
@@ -221,15 +297,16 @@ function renumber(tr: Transaction, now: Items, was: Items): ChangeSpec[] {
     else if (split(old)) continue;
     else {
       // The number the list started at before the edit.
-      let first = old;
-      for (let p = was.sibling(old.node, "prevSibling"); p; p = was.sibling(p.node, "prevSibling")) first = p;
-      num = parseInt(first.num, 10);
+      const start = was.start(old);
+      if (start === null) continue;
+      num = start;
     }
     if (num > MAX_NUMBER) continue;
     set(item, num);
     // The items after it count on, up to one that's already right.
-    for (let next = now.sibling(item.node, "nextSibling"); next && num < MAX_NUMBER; next = now.sibling(next.node, "nextSibling")) {
-      if (numbers.has(next.from) || (!wasItem(next.from) && !isTouched(next.from))) break;
+    for (let last = item, next = now.sibling(item.node, "nextSibling"); num < MAX_NUMBER; last = next, next = now.sibling(next.node, "nextSibling")) {
+      if (!next && now.cut.end && now.ends(last.node)) return null;
+      if (!next || numbers.has(next.from) || (!wasItem(next.from) && !isTouched(next.from))) break;
       num++;
       if (num === parseInt(next.num, 10)) {
         numbers.set(next.from, num);
@@ -254,18 +331,22 @@ export const renumberLists = EditorState.transactionFilter.of((tr) => {
       if (NUMBERED.test(doc.line(n).text)) near = Math.max(near, doc.line(n).to);
   });
   if (near < 0) return tr;
-  let changes: ChangeSpec[];
+  let changes: ChangeSpec[] | null = null;
   try {
-    const now = Items.of(tr.state, first, near);
-    const was = Items.of(tr.startState, tr.changes.invertedDesc.mapPos(first), tr.changes.invertedDesc.mapPos(near));
-    if (!now || !was) return tr;
-    changes = renumber(tr, now, was);
+    // A long list is parsed only near the edit, unless the count runs on past that.
+    for (const far of [CUT, Infinity]) {
+      const both = lists(tr, first, near, far);
+      if (!both) return tr;
+      changes = renumber(tr, ...both);
+      if (changes?.length && !both[0].keeps(ChangeSet.of(changes, tr.newDoc.length))) return tr;
+      if (changes) break;
+    }
   } catch (e) {
     // The user's own edit always goes through, renumbered or not.
     console.error("[basalt] list renumber failed", e);
     return tr;
   }
-  if (!changes.length) return tr;
+  if (!changes?.length) return tr;
   // A number hidden in a closed fold is left as it is, so nothing changes unseen.
   let hidden = false;
   const folds = foldedRanges(tr.state);

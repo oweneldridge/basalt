@@ -4,7 +4,7 @@ import { foldEffect } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { ensureSyntaxTree } from "@codemirror/language";
 import { GFM } from "@lezer/markdown";
-import { moveLineUp } from "@codemirror/commands";
+import { moveLineDown, moveLineUp } from "@codemirror/commands";
 import { renumberLists } from "./listRenumber";
 import { headingFold, headingSectionAt } from "./headingFold";
 
@@ -115,5 +115,55 @@ describe("only real list items are renumbered", () => {
     const base = EditorState.create({ doc, extensions: [renumberLists, md, headingFold] });
     const folded = base.update({ effects: foldEffect.of(headingSectionAt(base, 0)!) }).state;
     expect(folded.update({ changes: { from: 3, insert: "x" }, userEvent: "input.type" }).state.doc.toString()).toBe("# Hx\n1. a\n1. b\n1. c\n");
+  });
+});
+
+describe("the lines around an edit", () => {
+  const list = (n: number) => Array.from({ length: n }, (_, i) => `${i + 1}. item ${i + 1} with a few words`);
+  // A note as the editor holds it, parsed before the edit.
+  const parsed = (doc: string) => {
+    const state = EditorState.create({ doc, extensions: [renumberLists, md] });
+    ensureSyntaxTree(state, doc.length, 5000);
+    return state;
+  };
+  const lineDown = (doc: string, line: number) => {
+    let state = parsed(doc);
+    state = state.update({ selection: { anchor: state.doc.line(line).from } }).state;
+    moveLineDown({ state, dispatch: (tr) => (state = tr.state) });
+    return state.doc.toString();
+  };
+  const deleteLine = (doc: string, n: number) => {
+    const state = parsed(doc);
+    const line = state.doc.line(n);
+    return state.update({ changes: { from: line.from, to: line.to + 1 }, userEvent: "delete.line" }).state.doc.toString();
+  };
+  it("keep the numbers of a loose list a paste splits at an item", () => {
+    const doc = "Steps:\n\n1. one\n\n2. two\n\n3. three\n\n4. four\n";
+    expect(edit(doc, { from: doc.indexOf("3."), insert: "Note\n\n" }, "input.paste")).toBe(
+      "Steps:\n\n1. one\n\n2. two\n\nNote\n\n3. three\n\n4. four\n",
+    );
+  });
+  it("count on into a list a deleted blank line joins", () => {
+    expect(edit("1. one\n2. two\n\nNotes:\n1. d\n2. e\n", { from: 13, to: 14 }, "delete.backward")).toBe("1. one\n2. two\nNotes:\n3. d\n4. e\n");
+  });
+  it("leave a number that would stop its line being a list item", () => {
+    expect(edit("Text\n\n0. a\n1. b\n2. c\n", { from: 5, to: 11 }, "delete.backward")).toBe("Text\n1. b\n2. c\n");
+  });
+  it("leave a quoted list the parser ends early", () => {
+    expect(lineDown("Intro\n\n> 0. g\n>\n> 1. h\n> 2. i\n", 3)).toBe("Intro\n\n>\n> 0. g\n> 1. h\n> 2. i\n");
+  });
+  it("renumber deep into a long list, and all the way down it", () => {
+    const items = list(5000);
+    const after = items.filter((_, i) => i !== 3999).map((t, i) => t.replace(/^\d+/, String(i + 1)));
+    expect(deleteLine(items.join("\n") + "\n", 4000)).toBe(after.join("\n") + "\n");
+    const short = list(2000);
+    expect(deleteLine(short.join("\n") + "\n", 1)).toBe(short.slice(1).map((t, i) => t.replace(/^\d+/, String(i + 1))).join("\n") + "\n");
+  });
+  it("start a list cut from a long one at the number the long one started at", () => {
+    const items = list(2000);
+    const doc = items.join("\n") + "\n";
+    const from = doc.indexOf("1500. ");
+    const out = parsed(doc).update({ changes: { from, to: doc.indexOf("1501. "), insert: "\nNote\n\n" }, userEvent: "input.paste" }).state.doc.toString();
+    expect(out.split("\n").slice(1499, 1504)).toEqual(["", "Note", "", "1. item 1501 with a few words", "2. item 1502 with a few words"]);
   });
 });
