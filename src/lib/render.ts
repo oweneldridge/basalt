@@ -998,6 +998,23 @@ export function toggleTaskLine(doc: string, line: number): string | null {
   return lines.join("\n");
 }
 
+/** A property value, its links live as in Obsidian: `[[Note]]`s anywhere in
+ * it, and a value that is a URL or a Markdown link. Everything else is text. */
+function propertyValue(v: string): string {
+  const md = /^\[([^\]]*)\]\(([^)\s]+)\)$/.exec(v.trim());
+  if (md) return `<a class="md-link" data-href="${escapeHtml(md[2])}">${escapeHtml(md[1] || md[2])}</a>`;
+  if (/^https?:\/\/\S+$/.test(v.trim())) return `<a class="md-link" data-href="${escapeHtml(v.trim())}">${escapeHtml(v.trim())}</a>`;
+  let out = "";
+  let last = 0;
+  for (const m of v.matchAll(/\[\[([^[\]|\n]+)(?:\|([^[\]\n]+))?\]\]/g)) {
+    const target = m[1].trim();
+    out += escapeHtml(v.slice(last, m.index));
+    out += `<a class="md-wikilink" data-target="${escapeHtml(target)}">${escapeHtml(m[2]?.trim() ?? wikilinkLabel(target))}</a>`;
+    last = m.index! + m[0].length;
+  }
+  return out + escapeHtml(v.slice(last));
+}
+
 /** Render a full Markdown document to an HTML string. With `lines`, each block
  * carries the source line it starts on as `data-line`, for Reading view. */
 export function renderMarkdown(src: string, opts: { lines?: boolean } = {}): string {
@@ -1011,7 +1028,7 @@ export function renderMarkdown(src: string, opts: { lines?: boolean } = {}): str
     const fm = parseFm(md);
     if (fm) {
       const rows = fm.props
-        .map((p) => `<tr><th>${escapeHtml(p.key)}</th><td>${p.values.map((v) => escapeHtml(v)).join(", ")}</td></tr>`)
+        .map((p) => `<tr><th>${escapeHtml(p.key)}</th><td>${p.values.map(propertyValue).join(", ")}</td></tr>`)
         .join("");
       if (rows) parts.push(`<table class="md-properties"><tbody>${rows}</tbody></table>`);
       let end = 1;

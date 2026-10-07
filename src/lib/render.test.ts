@@ -509,3 +509,13 @@ describe("table rows wider than the header", () => {
     expect(html).toContain("<td>1</td><td>2</td><td>3</td>");
   });
 });
+
+describe("property values", () => {
+  it("make their links live", () => {
+    const html = renderMarkdown('---\nup: "[[Ideas]]"\nsee: "x [[A|the a]] y"\nurl: https://example.com\nplain: <b>\n---\nbody\n');
+    expect(html).toContain('<a class="md-wikilink" data-target="Ideas">Ideas</a>');
+    expect(html).toContain('x <a class="md-wikilink" data-target="A">the a</a> y');
+    expect(html).toContain('<a class="md-link" data-href="https://example.com">https://example.com</a>');
+    expect(html).toContain("&lt;b&gt;");
+  });
+});

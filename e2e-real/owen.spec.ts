@@ -1596,3 +1596,15 @@ test.describe("a table row wider than its header", () => {
     await expect(page.locator(".pane:not(.dock) .reading-view td", { hasText: "extra words" })).toHaveCount(1);
   });
 });
+
+test.describe("a link in a property", () => {
+  test.use({ vaultFiles: { "Pl.md": '---\nup: "[[Ideas]]"\n---\nbody\n' } });
+
+  test("opens from Reading view", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Pl");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await page.locator(".pane:not(.dock) .reading-view .md-properties .md-wikilink", { hasText: "Ideas" }).click();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Ideas");
+  });
+});
