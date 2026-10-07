@@ -42,8 +42,60 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `.unisonbak.*`, `.DS_Store`) are hidden from the file tree, search, the quick
   switcher and the index, as in Obsidian. "Show hidden files" in Settings shows
   them again.
+- Code blocks are coloured, the same in Live Preview and Reading view. The
+  colours use Obsidian's `--code-*` variables, so themes and snippets apply.
+- Empty folders show in the file tree, and New folder makes a folder instead
+  of a starter note.
+
+### Changed
+
+- In Live Preview, `%%comments%%` show dimmed, as Obsidian shows them, instead
+  of being hidden. Reading view and export still leave them out.
+- Tags follow Obsidian's rule: letters of any script, digits, emoji, `-`, `_`
+  and `/`, with the `#` at the start, after a space or after a formatting mark.
+  A link to `#heading` and an escaped `\#` are no longer tags, and a number on
+  its own (`#42`) never is.
+- Callouts take Obsidian's colour for their type in both views, with titles
+  that keep 4.5:1 contrast in the light theme. In Live Preview, quotes and
+  callouts sit on the text column in plain type, as do embeds, queries and
+  HTML blocks.
 
 ### Fixed
+
+- Links in Reading view go where they point. `[[Note#Heading]]` and block links
+  scroll to their target, `[[#Heading]]` and `[text](#Heading)` scroll within
+  the note, and a footnote number jumps to its footnote. Markdown links without
+  `.md`, or to a PDF, open like wikilinks, in the editor too. The same link
+  clicked again scrolls again.
+- Text selected in Reading view stays selected when something else in the app
+  updates.
+- Links to files that don't exist show faded with a dotted underline, as in
+  Obsidian, though a little less faded so they keep their contrast.
+- The hover preview shows the section a link points to, with its embeds and
+  media, and closes when the link is clicked.
+- Turning "Show hidden files" off hides them at once, even in a large vault.
+- The status bar counts words as Obsidian does: the frontmatter is left out,
+  a selection is counted on its own, and nothing shows for a canvas or once
+  the note is closed.
+- Cmd-B and Cmd-I with nothing selected format the word at the caret, and step
+  out of the markers when the caret sits right before them. Spaces at the ends
+  of a selection stay outside the markers.
+- A link's text reads as Obsidian shows it, folder included:
+  `[[Folder/Note#Heading]]` reads "Folder/Note > Heading".
+- In Live Preview, escape backslashes hide until the caret reaches them, bold
+  and italics show inside a link's text, inline HTML such as `<b>` and
+  `<font color>` renders, and inline footnotes show small and raised.
+- A table ends at the first line without a `|`, as in Obsidian, so a sentence
+  right under a table is no longer swallowed into it. A row wider than the
+  header keeps its extra cells.
+- Tables in Live Preview follow their column alignment, break lines at `<br>`,
+  and their links open.
+- A property value being typed is kept when you press Cmd-E or close the tab.
+- Templater Lite never overwrites text typed into a new note while its template
+  runs, and leaves copies made in the templates folder alone. Plugins get
+  Obsidian's `vault.process`.
+- Tab and Shift-Tab keep a loose numbered list's numbers.
+- Text after an HTML comment on the same line shows in Reading view.
 
 - Ticking a task in Reading view keeps your place instead of jumping back to
   the top of the note.
@@ -319,7 +371,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Visible focus rings for keyboard focus; reduced-motion and forced-colors
   settings are respected.
 
-## [0.1.0] — first public alpha
+## [0.1.0]: first public alpha
 
 The first tagged release: a local-first Markdown editor that reads and writes
 the **same plain-Markdown vault** as Obsidian (a folder of `.md` + YAML +
@@ -374,7 +426,7 @@ data-safety review.
 ### Theming & platform
 
 - Light / dark / system themes; readable line length toggle.
-- macOS, Windows, Linux (Tauri 2 — Rust core + system WebView).
+- macOS, Windows, Linux (Tauri 2: Rust core + system WebView).
 
 ### Not included (by design)
 

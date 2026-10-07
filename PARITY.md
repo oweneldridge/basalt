@@ -41,6 +41,29 @@ Obsidian features since 1.9 and where Basalt stands:
 | 1.14 (early access) | Colour highlights (`==🔴text==`) | Missing |
 | 1.12 | Obsidian CLI | Partial (Basalt's own CLI, seven commands, works without the app) |
 
+### Second pass on real notes (2026-10-07)
+
+Notes from a copy of Owen's vault were checked in Basalt. Obsidian itself
+wasn't run; where its behaviour was unclear, its own bundled code (1.14.4
+`app.js` and `app.css`, read only) settled it. Brought in line:
+
+- Word count: frontmatter left out, Obsidian's word pattern, the selection
+  counted on its own, hidden for anything but a note.
+- Cmd-B and Cmd-I: a bare caret formats its word, steps out of closing markers,
+  and spaces stay outside the markers.
+- Link text: the whole link with `#` read as " > ", folder included.
+- Live Preview shows `%%comments%%` dimmed and hides escape backslashes until
+  the caret reaches them.
+- Tags: Obsidian's character set and its rule for what may come before `#`.
+- Tables end at the first line without a `|` and keep cells past the header.
+- Callout colours by type, from Obsidian's colour groups.
+- Reading view links to headings, blocks and footnotes scroll there; hover
+  previews show the linked section.
+
+Still different: a table whose header and delimiter rows have different cell
+counts isn't read as a table (Obsidian draws one), and Basalt's link colours
+fade less than Obsidian's for unresolved links, to keep their contrast.
+
 ## Fixed since this audit (2026-07-07)
 
 The four **HIGH**-severity items — the data-safety/interop holes and the one
