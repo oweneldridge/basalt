@@ -14,9 +14,10 @@ export function wikilinkRegex(): RegExp {
 
 /**
  * Per-line "is this prose?" mask: false for YAML frontmatter lines and fenced
- * code-block lines, in a quote or callout too (CommonMark rules: fence closes
- * only on the same marker char, at least the same run length, nothing else on
- * the line, or where its quote ends). Shared by
+ * code-block lines, in a quote or callout too (CommonMark rules: no backtick
+ * after a backtick fence's opening run, and a fence closes only on the same
+ * marker char, at least the same run length, nothing else on the line, or
+ * where its quote ends). Shared by
  * link extraction and unlinked-mention scanning so they can never disagree.
  */
 export function proseMask(lines: string[]): boolean[] {
@@ -47,7 +48,7 @@ export function proseMask(lines: string[]): boolean[] {
       ) {
         fence = null; // closing fence (itself non-prose)
       }
-    } else if (m) {
+    } else if (m && !(m[1][0] === "`" && m[2].includes("`"))) {
       mask[i] = false;
       fence = { char: m[1][0], len: m[1].length, depth };
     }

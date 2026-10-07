@@ -24,6 +24,12 @@ describe("htmlBlockRanges", () => {
     expect(htmlBlockRanges(src)).toEqual([]);
   });
 
+  it("finds a block after a line that starts with inline code", () => {
+    const src = "```ls``` lists files\n\n<div>\nhello\n</div>\n";
+    expect(htmlBlockRanges(src)).toEqual([{ fromLine: 2, toLine: 4 }]);
+    expect(readingBlocks(src)).toBe(1);
+  });
+
   it("skips leading frontmatter and finds a block after it", () => {
     const src = "---\ntitle: x\n---\n\n<center>Hi</center>\n";
     expect(htmlBlockRanges(src)).toEqual([{ fromLine: 4, toLine: 4 }]);

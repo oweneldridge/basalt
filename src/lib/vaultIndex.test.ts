@@ -69,6 +69,20 @@ describe("proseMask", () => {
     ];
     expect(proseMask(lines)).toEqual([true, false, false, false, false, true, false, false, true, true, false, false, true, true]);
   });
+  it("doesn't open a fence on backticks with a backtick after them", () => {
+    const lines = [
+      "> [!tip] Shell", // 0
+      "> ```ls -la``` lists files", // 1 inline code, not a fence
+      "> See [[Old]]", // 2
+      "```ls``` too", // 3
+      "after", // 4
+      "~~~ a`b", // 5 a tilde fence may have backticks after it
+      "inside", // 6
+      "~~~", // 7
+      "end", // 8
+    ];
+    expect(proseMask(lines)).toEqual([true, true, true, true, true, false, false, false, true]);
+  });
   it("treats an unterminated frontmatter fence as prose-ish (no infinite mask)", () => {
     const mask = proseMask(["---", "a: b"]);
     // No closing --- : not frontmatter; first line also isn't a code fence.
