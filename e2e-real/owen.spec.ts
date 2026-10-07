@@ -1367,3 +1367,20 @@ test.describe("a link with formatting in its text", () => {
     await expect(link.locator("em")).toHaveText("it");
   });
 });
+
+test.describe("inline HTML in Live Preview", () => {
+  test.use({
+    vaultFiles: { "Html.md": 'a <span style="color:red">red</span> <b>bold</b> <font color="green">grn</font> <i>it</i> z\n\nEND\n' },
+  });
+
+  test("renders the tags Reading view renders, with no raw markup", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Html");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const line = page.locator(".pane:not(.dock) .cm-line").first();
+    await expect(line).toHaveText("a red bold grn it z");
+    await expect(line.locator(".cm-html-b")).toHaveCSS("font-weight", "700");
+    await expect(line.locator(".cm-html-i")).toHaveCSS("font-style", "italic");
+    await expect(line.locator(".cm-html-font")).toHaveCSS("color", "rgb(0, 128, 0)");
+  });
+});

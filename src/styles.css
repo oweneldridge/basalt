@@ -2290,7 +2290,13 @@ button.primary:hover {
 .cm-html-u, .cm-html-ins { text-decoration: underline; }
 .cm-html-s, .cm-html-del { text-decoration: line-through; }
 .cm-html-small { font-size: 0.85em; }
-.cm-html-abbr, .cm-html-cite { font-style: italic; }
+.cm-html-abbr, .cm-html-cite, .cm-html-i, .cm-html-em, .cm-html-dfn, .cm-html-var { font-style: italic; }
+.cm-html-b, .cm-html-strong { font-weight: 700; }
+.cm-html-code, .cm-html-samp { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.9em; }
+.cm-html-strike { text-decoration: line-through; }
+.cm-html-big { font-size: 1.2em; }
+.cm-html-q::before { content: "\201C"; }
+.cm-html-q::after { content: "\201D"; }
 
 /* ------- Local graph depth control ------- */
 .graph-depth { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); margin-left: 8px; }
