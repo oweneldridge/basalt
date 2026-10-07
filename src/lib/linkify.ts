@@ -22,13 +22,18 @@ const HTML_TAG_RE =
 const AUTOLINK_RE = /<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>|<[\w.+-]+@[\w-]+(?:\.[\w-]+)+>/g;
 // A link reference definition.
 const REF_DEF_RE = /^ {0,3}\[[^\]\n]+\]:\s*\S.*$/g;
+// A reference link or image, `[text][label]`, `![alt][label]` or `[label][]`.
+const REF_LINK_RE = /!?\[[^\]\n]*\]\[[^\]\n]*\]/g;
+// A link's address, `](address)`, whatever brackets its text holds.
+const LINK_DEST_RE = /\]\((?:<[^>\n]*>[^)\n]*|[^)\n]*)\)/g;
 // A callout's type, a footnote reference and an email address. Run after the
 // links and URLs are masked, so a linked image's `[![` isn't read as a callout.
 const OTHER_RE = /\[![^\]\n]*\]|\[\^[^\]\n]+\]|[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 
 /** `line` with what can't hold a linkable mention (inline code and math, HTML
- * tags, autolinks, links, URLs, tags, callout types, footnotes, references,
- * emails) blanked to spaces, same length, so offsets still match the line. */
+ * tags, autolinks, links and reference links, URLs, tags, callout types,
+ * footnotes, references, emails) blanked to spaces, same length, so offsets
+ * still match the line. */
 export function maskForMentions(line: string): string {
   return line
     .replace(REF_DEF_RE, (m) => " ".repeat(m.length))
@@ -38,6 +43,8 @@ export function maskForMentions(line: string): string {
     .replace(HTML_TAG_RE, (m) => " ".repeat(m.length))
     .replace(wikilinkRegex(), (m) => " ".repeat(m.length))
     .replace(mdLinkRegexGlobal(), (m) => " ".repeat(m.length))
+    .replace(REF_LINK_RE, (m) => " ".repeat(m.length))
+    .replace(LINK_DEST_RE, (m) => " ".repeat(m.length))
     .replace(URL_RE, (m) => " ".repeat(m.length))
     .replace(OTHER_RE, (m) => " ".repeat(m.length))
     .replace(tagRegex(), (m) => " ".repeat(m.length));

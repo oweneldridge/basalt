@@ -71,3 +71,17 @@ describe("mentionLines pairs $$ outside code and comments", () => {
     expect(mentionLines(comment)[1].trimEnd().endsWith("Zqword")).toBe(true);
   });
 });
+
+describe("Link all leaves code in quotes and every kind of link alone", () => {
+  it("skips fenced code inside a callout", () => {
+    const lines = mentionLines("> [!tip] Run\n> ```bash\n> ~/.Qref7/lib/x.sh\n> ```\n> Qref7 here\n");
+    expect(lines[2].trim()).toBe("");
+    expect(lines[4]).toContain("Qref7");
+  });
+  it("skips reference links and images and a link's address after nested brackets", () => {
+    expect(linkifyMention("see ![][Qref7] and [text][Qref7] and [Qref7][]", "Qref7")).toBeNull();
+    expect(linkifyMention("[a [b [c]] d](Zqn.md)", "Zqn")).toBeNull();
+    expect(linkifyMention("[a [b [c]] d](<Zqn file.md>)", "Zqn")).toBeNull();
+    expect(linkifyMention("Zqn and [Zqn][ref]", "Zqn")).toBe("[[Zqn]] and [Zqn][ref]");
+  });
+});

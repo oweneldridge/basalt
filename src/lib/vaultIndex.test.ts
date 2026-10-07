@@ -50,6 +50,25 @@ describe("proseMask", () => {
       false, false, false, true, false, false, false, true, false, false, false, true,
     ]);
   });
+  it("masks fenced code inside a quote or callout, which ends with the quote", () => {
+    const lines = [
+      "> [!example] Run", // 0
+      "> ```bash", // 1 opens inside the quote
+      "> ~/.cfg/x.sh [[Note]]", // 2 inside
+      ">", // 3 inside
+      "> ```", // 4 closes
+      "> after", // 5
+      "> > ```", // 6 opens two quotes deep
+      "> > code", // 7 inside
+      "> back to one", // 8 the inner quote ended, and the code with it
+      "plain", // 9
+      "> ```", // 10 opens
+      "> code", // 11 inside
+      "", // 12 the quote ended, so the code did
+      "text", // 13
+    ];
+    expect(proseMask(lines)).toEqual([true, false, false, false, false, true, false, false, true, true, false, false, true, true]);
+  });
   it("treats an unterminated frontmatter fence as prose-ish (no infinite mask)", () => {
     const mask = proseMask(["---", "a: b"]);
     // No closing --- : not frontmatter; first line also isn't a code fence.

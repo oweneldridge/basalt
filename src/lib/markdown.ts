@@ -14,8 +14,9 @@ export function wikilinkRegex(): RegExp {
 
 /**
  * Per-line "is this prose?" mask: false for YAML frontmatter lines and fenced
- * code-block lines (CommonMark rules: fence closes only on the same marker
- * char, at least the same run length, nothing else on the line). Shared by
+ * code-block lines, in a quote or callout too (CommonMark rules: fence closes
+ * only on the same marker char, at least the same run length, nothing else on
+ * the line, or where its quote ends). Shared by
  * link extraction and unlinked-mention scanning so they can never disagree.
  */
 export function proseMask(lines: string[]): boolean[] {
@@ -28,9 +29,14 @@ export function proseMask(lines: string[]): boolean[] {
     for (let j = 1; j <= end; j++) mask[j] = false;
     i = end + 1;
   }
-  let fence: { char: string; len: number } | null = null;
+  // A fence may sit inside a quote or callout (`> ```), and its code ends
+  // with that quote.
+  let fence: { char: string; len: number; depth: number } | null = null;
   for (; i < lines.length; i++) {
-    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[i]);
+    const quote = QUOTE_PREFIX.exec(lines[i])![0];
+    const depth = (quote.match(/>/g) ?? []).length;
+    if (fence && depth < fence.depth) fence = null;
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(fence ? unquote(lines[i], fence.depth) : lines[i].slice(quote.length));
     if (fence) {
       mask[i] = false;
       if (
@@ -43,10 +49,20 @@ export function proseMask(lines: string[]): boolean[] {
       }
     } else if (m) {
       mask[i] = false;
-      fence = { char: m[1][0], len: m[1].length };
+      fence = { char: m[1][0], len: m[1].length, depth };
     }
   }
   return mask;
+}
+
+// The `>` markers a line starts with, however deep.
+const QUOTE_PREFIX = /^(?: {0,3}>[ \t]?)*/;
+
+/** `line` without its first `depth` quote markers. */
+function unquote(line: string, depth: number): string {
+  let rest = line;
+  for (let k = 0; k < depth; k++) rest = rest.replace(/^ {0,3}>[ \t]?/, "");
+  return rest;
 }
 
 /** Index of the line closing a leading `---` frontmatter block, or -1. */
