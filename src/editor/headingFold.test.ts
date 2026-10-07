@@ -104,6 +104,29 @@ describe("deleting next to a folded section", () => {
     expect(after.doc.toString()).toBe(doc);
     expect(foldedRanges(after).size).toBe(0);
   });
+  it("deletes a selection the user made, hidden text and all", () => {
+    const { state } = folded();
+    const all = state.update({ selection: { anchor: 0, head: state.doc.length } }).state;
+    for (const userEvent of ["delete.backward", "delete.cut"]) {
+      const after = all.update({ changes: { from: 0, to: all.doc.length }, userEvent }).state;
+      expect(after.doc.toString()).toBe("");
+    }
+  });
+  it("lets Shift-Tab take indentation from a folded section's lines", () => {
+    const list = "- a\n\t- b\n\t\t- c";
+    const base = EditorState.create({ doc: list, extensions: [markdown({ base: markdownLanguage, extensions: GFM }), headingFold] });
+    ensureSyntaxTree(base, list.length, 5000);
+    const range = listItemSectionAt(base, base.doc.line(2).from)!;
+    const state = base.update({ effects: foldEffect.of(range), selection: { anchor: base.doc.line(2).to } }).state;
+    const after = state.update({ changes: [{ from: base.doc.line(2).from, to: base.doc.line(2).from + 1 }, { from: base.doc.line(3).from, to: base.doc.line(3).from + 1 }], userEvent: "delete.dedent" }).state;
+    expect(after.doc.toString()).toBe("- a\n- b\n\t- c");
+  });
+  it("still opens a section a cursor's cut would take", () => {
+    const { state, range } = folded();
+    const after = state.update({ changes: { from: 0, to: range.to + 1 }, userEvent: "delete.cut" }).state;
+    expect(after.doc.toString()).toBe(doc);
+    expect(foldedRanges(after).size).toBe(0);
+  });
   it("still deletes the heading's own text", () => {
     const { state, range } = folded();
     const after = del(state, range.from - 1, range.from);

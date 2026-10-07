@@ -1677,6 +1677,18 @@ test.describe("a folded heading", () => {
     await settle(page, 900);
     expect(vault.read("Fold.md")).toBe("# A\nhidden one\nhidden two\n# B\nafter!\n");
   });
+
+  test("lets a selection the user made be deleted, hidden text and all", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Fold");
+    const pane = page.locator(".pane:not(.dock)");
+    await pane.locator(".cm-line", { hasText: "after" }).click();
+    await pane.locator(".cm-fold-marker").first().click({ force: true });
+    await expect(pane.locator(".cm-line", { hasText: "hidden one" })).toHaveCount(0);
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("Backspace");
+    await expect.poll(() => vault.read("Fold.md")).toBe("");
+  });
 });
 
 test.describe("pasting HTML", () => {

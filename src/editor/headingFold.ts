@@ -129,12 +129,16 @@ const headingFoldGutter = gutter({
 });
 
 /** Backspace or Delete that would change a folded section's hidden text (or
- * join a line onto it) opens the section instead, so nothing changes unseen. */
+ * join a line onto it) opens the section instead, so nothing changes unseen.
+ * Text the user selected is theirs to delete, and Shift-Tab only takes
+ * indentation. */
 const openBeforeDeleting = EditorState.transactionFilter.of((tr) => {
-  if (!tr.docChanged || !tr.isUserEvent("delete")) return tr;
+  if (!tr.docChanged || !tr.isUserEvent("delete") || tr.isUserEvent("delete.dedent")) return tr;
+  const selected = tr.startState.selection.ranges.filter((r) => !r.empty);
   const open: { from: number; to: number }[] = [];
   foldedRanges(tr.startState).between(0, tr.startState.doc.length, (from, to) => {
     tr.changes.iterChangedRanges((fromA, toA) => {
+      if (selected.some((r) => r.from <= fromA && toA <= r.to)) return;
       if ((fromA < to && toA > from) || fromA === to) open.push({ from, to });
     });
   });
