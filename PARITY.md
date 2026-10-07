@@ -59,10 +59,22 @@ wasn't run; where its behaviour was unclear, its own bundled code (1.14.4
 - Callout colours by type, from Obsidian's colour groups.
 - Reading view links to headings, blocks and footnotes scroll there; hover
   previews show the linked section.
+- Pasting HTML follows Obsidian's converter settings: no escaping, `==` for
+  highlights, `|` and line breaks in cells written as `\|` and `<br>`, list
+  numbers from `start`. Basalt still writes italics with `*` where Obsidian
+  writes `_`, and keeps code copied from an editor as plain text where
+  Obsidian converts it and loses the indentation.
+- Attachments, canvases and bases rename and move with their links, and the
+  tree tags their extension.
+- Backlink and mention counts are per match; `resolvedLinks` and
+  `unresolvedLinks` count every link, attachments included.
 
 Still different: a table whose header and delimiter rows have different cell
 counts isn't read as a table (Obsidian draws one), and Basalt's link colours
-fade less than Obsidian's for unresolved links, to keep their contrast.
+fade less than Obsidian's for unresolved links, to keep their contrast. A
+large pasted `data:` image is left out, where Obsidian saves it as an
+attachment. Bases show 300 rows with a button for the rest; Obsidian scrolls
+through all of them.
 
 ## Fixed since this audit (2026-07-07)
 

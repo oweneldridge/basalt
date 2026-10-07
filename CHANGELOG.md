@@ -54,6 +54,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Dataview JS pages have `file.inlinks`, `file.outlinks` and `file.aliases`.
 - Basalt follows the vault's "Show line number", "Confirm file deletion" and
   "Readable line length" settings (the last until it's switched in Basalt).
+- Images, PDFs, audio, video, canvases and bases can be renamed (right-click,
+  Rename…) or dragged onto a folder. Every link, embed and canvas card that
+  shows the file follows it, including a rename that only changes case.
+- Search knows `task:`, `task-todo:`, `task-done:`, `section:`, `[property]`,
+  `[property:value]`, `match-case:`, `ignore-case:` and `(a OR b)` groups, and
+  says how many results it found.
+- Plugins get Obsidian's `metadataCache.unresolvedLinks`, and `resolvedLinks`
+  counts links to attachments too.
 
 ### Changed
 
@@ -67,6 +75,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that keep 4.5:1 contrast in the light theme. In Live Preview, quotes and
   callouts sit on the text column in plain type, as do embeds, queries and
   HTML blocks.
+- The file tree lists a file that isn't a note by its name, with its extension
+  as a small tag, as Obsidian does.
+- Backlinks count every link and every mention, as Obsidian counts matches, and
+  a line with several is listed once. Link all links each mention, not only the
+  first on a line.
+- Dataview JS `file.outlinks` include attachments and links to notes that
+  don't exist yet.
+- Pasted text is no longer escaped (Obsidian doesn't escape it), so a pasted
+  `[[link]]`, `snake_case` or `C:\path` stays as it was.
 
 ### Fixed
 
@@ -345,6 +362,26 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   an error.
 - Audio, video and PDF embeds load under the release build's content policy.
 - Obsidian's CSS snippets follow the enabled list in its `appearance.json`.
+- An image in an HTML block shows the vault's file.
+- Moving or renaming a note no longer rewrites notes whose links come out the
+  same, so a move leaves those files, and their dates, alone.
+- Pasting HTML keeps what it held: a nested list in the shape Chromium writes,
+  code and quotes inside list items, inline code holding backticks, a code
+  block holding a fence, tables inside cells, captions, merged cells,
+  highlights, links with parentheses and lists starting at 0. Google Docs bold
+  and italics come across, and code copied from an editor stays plain text.
+- With a section folded, a selection over it deletes (Cmd-A then Backspace,
+  Cut), Shift-Tab dedents it, and typing after its placeholder opens it so the
+  text shows where it went.
+- HTML blocks in Live Preview update when the line after one, or the first
+  line of the note, changes.
+- Links inside an embed in Live Preview open.
+- Backspace after a quote marker inside a list item (`- > q`) removes the
+  marker.
+- Back and forward follow a renamed note, skip the note already showing, and
+  work while a sidebar has the focus.
+- Numbered lists renumber across a line that carries on the item above it, and
+  the items left under an outdented item count from 1.
 
 ### Security
 
