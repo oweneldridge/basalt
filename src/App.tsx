@@ -187,6 +187,8 @@ interface Pane {
    * new text equals an older prop value. */
   docRev?: number;
   scrollToLine?: number;
+  /** Bumped by each navigation to a line, so the same line scrolls again. */
+  scrollRev?: number;
   /** Pinned tab paths — a pinned tab can't be closed until unpinned. */
   pinned?: string[];
   /** Linked pane: follows the note navigated in another pane (Obsidian's
@@ -1243,7 +1245,7 @@ export default function App() {
       }
       if (!mirror) focusPane(id);
       if (pane.active === path) {
-        if (line !== undefined) patchPane(id, { scrollToLine: line });
+        if (line !== undefined) patchPane(id, { scrollToLine: line, scrollRev: (pane.scrollRev ?? 0) + 1 });
         return;
       }
       if (pane.active && conflictsRef.current.has(pane.active)) {
@@ -3076,7 +3078,9 @@ export default function App() {
   // file node must NOT silently create a note in the live vault.
   const handleOpenWikilink = useCallback(
     async (target: string, allowCreate = true) => {
-      const resolved = index.current.resolve(target, activePathRef.current ?? "");
+      // `[[#Heading]]` and `[x](#Heading)` point into the note they're in.
+      const here = targetPathPart(target) === "" && target.includes("#") ? activePathRef.current : null;
+      const resolved = here ?? index.current.resolve(target, activePathRef.current ?? "");
       if (resolved) {
         // Follow a `#Heading` / `#^block` subpath: scroll to that line.
         const { subpath } = splitSubpath(target);
@@ -5092,6 +5096,8 @@ export default function App() {
               doc={docFor(pane)}
               selfRel={rel}
               dark={dark}
+              scrollToLine={pane.scrollToLine}
+              scrollRev={pane.scrollRev}
               onOpenInternal={handleOpenWikilink}
               onOpenUrl={handleOpenUrl}
               onToggleTask={(line) => {
@@ -5118,6 +5124,7 @@ export default function App() {
               doc={docFor(pane)}
               docRev={pane.docRev}
               scrollToLine={pane.scrollToLine}
+              scrollRev={pane.scrollRev}
               getNotes={getNotes}
               getLinkFormat={getLinkFormat}
               getActiveRel={() => rel || null}

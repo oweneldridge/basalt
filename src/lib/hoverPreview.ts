@@ -3,7 +3,7 @@
 // a single delegated document listener finds `[data-target]` wikilinks and the
 // nearest `[data-self-rel]` ancestor for relative-link resolution.
 import { renderMarkdown } from "./render";
-import { internalMdHref } from "./markdown";
+import { internalLinkTarget } from "./markdown";
 import { clickedLink } from "./anchors";
 import { getTranscludeHost } from "./transclude";
 import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "./remoteImages";
@@ -97,14 +97,14 @@ async function show(anchor: HTMLElement, rawTarget: string, sourceRel: string): 
 }
 
 /** The note target to preview for a hovered element: a wikilink's `data-target`,
- * or an INTERNAL markdown-style `.md-link` (`[text](Note.md#h)`). null otherwise. */
+ * or an INTERNAL markdown-style `.md-link` (`[text](Note#h)`). null otherwise. */
 function hoverTarget(t: HTMLElement | null): { anchor: HTMLElement; target: string } | null {
   const wiki = t?.closest("[data-target]") as HTMLElement | null;
   if (wiki?.dataset.target) return { anchor: wiki, target: wiki.dataset.target };
   const md = t?.closest(".md-link") as HTMLElement | null;
   if (md?.dataset.href) {
-    const internal = internalMdHref(md.dataset.href);
-    if (internal) return { anchor: md, target: internal.path + internal.fragment };
+    const internal = internalLinkTarget(md.dataset.href);
+    if (internal) return { anchor: md, target: internal };
   }
   return null;
 }

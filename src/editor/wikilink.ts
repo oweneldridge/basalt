@@ -21,7 +21,7 @@ import {
   autocompletion,
 } from "@codemirror/autocomplete";
 import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
-import { internalMdHref, mdLinkRegexGlobal, normalizeName, parseMarkdownLink, wikilinkRegex } from "../lib/markdown";
+import { internalLinkTarget, mdLinkRegexGlobal, normalizeName, parseMarkdownLink, wikilinkRegex } from "../lib/markdown";
 import { linkTargetForFormat, type LinkFormat } from "../lib/rename";
 import { isInExcludedRegion, treeChanged } from "./regions";
 
@@ -285,8 +285,8 @@ export function followLinkAtCursor(onOpen: (target: string) => void, onOpenUrl: 
           hit(mdLinkRegexGlobal(), (m) => {
             const parsed = parseMarkdownLink(m[0].replace(/^!/, ""));
             if (!parsed) return;
-            const internal = internalMdHref(parsed.href);
-            if (internal) onOpen(internal.path + internal.fragment);
+            const internal = internalLinkTarget(parsed.href);
+            if (internal !== null) onOpen(internal);
             else onOpenUrl(parsed.href);
           }) ||
           hit(/\bhttps?:\/\/[^\s<>()[\]]+/g, (m) => onOpenUrl(m[0]))

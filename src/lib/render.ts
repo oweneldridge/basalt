@@ -232,8 +232,15 @@ interface Ctx {
   refs: Map<string, FnEntry>;
   order: string[];
   inlineSeq: number;
+  lines: boolean; // mark blocks with their source line (data-line)
 }
-const newCtx = (defs = new Map<string, string>()): Ctx => ({ defs, refs: new Map(), order: [], inlineSeq: 0 });
+const newCtx = (defs = new Map<string, string>(), lines = false): Ctx => ({
+  defs,
+  refs: new Map(),
+  order: [],
+  inlineSeq: 0,
+  lines,
+});
 
 /** One parsed piece of Markdown: its text, link definitions, and the source
  * line each of its lines came from. */
@@ -626,7 +633,23 @@ class Blocks {
     return parts;
   }
 
+  /** The source line (0-based) a node starts on. */
+  private line(n: SyntaxNode): number {
+    const at = lineOf(this.doc, n.from);
+    return this.doc.map[at] ?? at;
+  }
+
+  private lineAttr(n: SyntaxNode): string {
+    return this.ctx.lines ? ` data-line="${this.line(n)}"` : "";
+  }
+
   block(n: SyntaxNode, tight = false): string {
+    const html = this.blockHtml(n, tight);
+    if (!this.ctx.lines || (tight && n.name === "Paragraph")) return html;
+    return html.replace(/^<([a-z][a-z0-9]*)(?=[\s>/])/, `<$1${this.lineAttr(n)}`);
+  }
+
+  private blockHtml(n: SyntaxNode, tight: boolean): string {
     if (this.depth > MAX_DEPTH) return `<p>${escapeHtml(this.src(n))}</p>`;
     switch (n.name) {
       case "Paragraph": {
@@ -799,13 +822,12 @@ class Blocks {
         const task = it.getChild("Task");
         const parts = inner.children(it, !loose);
         const sep = loose ? "\n" : "";
-        if (!task) return `<li>${parts.join(sep)}</li>`;
+        const attr = this.lineAttr(it);
+        if (!task) return `<li${attr}>${parts.join(sep)}</li>`;
         const marker = task.getChild("TaskMarker");
         const status = marker ? this.doc.src.charAt(marker.from + 1) : " ";
-        const at = lineOf(this.doc, task.from);
-        const line = this.doc.map[at] ?? at;
-        const box = `<input type="checkbox" class="md-task-check" data-task-line="${line}"${status !== " " ? " checked" : ""} /> `;
-        return `<li class="md-task" data-task="${escapeHtml(status)}">${box}${parts.join(sep)}</li>`;
+        const box = `<input type="checkbox" class="md-task-check" data-task-line="${this.line(task)}"${status !== " " ? " checked" : ""} /> `;
+        return `<li class="md-task" data-task="${escapeHtml(status)}"${attr}>${box}${parts.join(sep)}</li>`;
       })
       .join("");
     const startAttr = ordered && start !== 1 && Number.isFinite(start) ? ` start="${start}"` : "";
@@ -973,8 +995,9 @@ export function toggleTaskLine(doc: string, line: number): string | null {
   return lines.join("\n");
 }
 
-/** Render a full Markdown document to an HTML string. */
-export function renderMarkdown(src: string): string {
+/** Render a full Markdown document to an HTML string. With `lines`, each block
+ * carries the source line it starts on as `data-line`, for Reading view. */
+export function renderMarkdown(src: string, opts: { lines?: boolean } = {}): string {
   const { text: stripped, map } = stripCommentsMapped(src);
   let md = stripBlockIds(stripped);
   const parts: string[] = [];
@@ -996,7 +1019,7 @@ export function renderMarkdown(src: string): string {
   }
 
   const { text, defs } = extractFootnoteDefs(md);
-  const ctx = newCtx(defs);
+  const ctx = newCtx(defs, opts.lines);
   const body = renderDoc(text, map, ctx, 0);
   if (body) parts.push(body);
   return parts.join("\n") + emitFootnotes(ctx);

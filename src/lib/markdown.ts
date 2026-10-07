@@ -237,6 +237,24 @@ export function internalFileHref(href: string): { path: string; fragment: string
   return { path, fragment };
 }
 
+/** Where a markdown link's href points inside the vault, as a link target
+ * (`Note#Heading`, `paper.pdf`, or `#Heading` for this note), decoded. Obsidian
+ * reads every href that isn't a URL this way, with or without `.md`. Null for
+ * URLs and for empty or `?query` hrefs. */
+export function internalLinkTarget(href: string): string | null {
+  if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//") || href.startsWith("?")) return null;
+  const decode = (s: string) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  };
+  const hashAt = href.indexOf("#");
+  if (hashAt < 0) return decode(href);
+  return decode(href.slice(0, hashAt)) + "#" + decode(href.slice(hashAt + 1));
+}
+
 /** The file a markdown image names: a URL as written, a vault path without
  * its `#fragment` and percent-decoded (`shot%20one.png` is `shot one.png`). */
 export function mdImageTarget(href: string): string {

@@ -10,7 +10,7 @@ import type { Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
-import { mdImageTarget, parseMarkdownLink, internalMdHref } from "../lib/markdown";
+import { mdImageTarget, parseMarkdownLink, internalLinkTarget } from "../lib/markdown";
 import { frontmatterRange, treeChanged } from "./regions";
 import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "../lib/remoteImages";
 
@@ -347,10 +347,10 @@ export function livePreview(opts: LivePreviewOptions): Extension {
     mousedown: (event) => {
       const el = (event.target as HTMLElement | null)?.closest(".cm-md-link") as HTMLElement | null;
       if (el && el.dataset.href) {
-        // An internal `[text](Note.md#h)` link navigates within the vault; only
+        // An internal `[text](Note#h)` link navigates within the vault; only
         // a true external URL goes to the opener (matching ReadingView).
-        const internal = internalMdHref(el.dataset.href);
-        if (internal) opts.onOpenInternal(internal.path + internal.fragment);
+        const internal = internalLinkTarget(el.dataset.href);
+        if (internal !== null) opts.onOpenInternal(internal);
         else opts.onOpenUrl(el.dataset.href);
         event.preventDefault();
         return true;

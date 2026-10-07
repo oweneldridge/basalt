@@ -34,6 +34,8 @@ interface Props {
   onContextMenu?: (x: number, y: number) => void;
   /** 1-based line to scroll to / place the caret on (from search or backlinks). */
   scrollToLine?: number;
+  /** Changes when the same line is asked for again. */
+  scrollRev?: number;
   /** True = raw Markdown (Live Preview rendering off). */
   sourceMode: boolean;
   /** True = dark editor theme (CM6 dark flag); colors come from CSS vars. */
@@ -182,6 +184,7 @@ export function EditorPane({
   onCursor,
   onContextMenu,
   scrollToLine,
+  scrollRev,
   sourceMode,
   dark,
   spellcheck,
@@ -465,7 +468,7 @@ export function EditorPane({
       effects: EditorView.scrollIntoView(pos, { y: "center" }),
     });
     v.focus();
-  }, [scrollToLine, path]);
+  }, [scrollToLine, scrollRev, path]);
 
   // Toggle Live Preview rendering in place (no remount, caret preserved).
   useEffect(() => {

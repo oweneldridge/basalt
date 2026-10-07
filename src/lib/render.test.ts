@@ -479,3 +479,18 @@ describe("CommonMark and Obsidian fidelity (Reading view hunt)", () => {
     expect(html.match(/<td/g)).toHaveLength(3);
   });
 });
+
+describe("source lines", () => {
+  const src = "---\na: 1\n---\n# Title\n\npara\n\n- one\n- two\n\n> [!note]\n> ## Inside\n\n%% gone\nstill gone %%\n\nlast ^blk\n";
+  it("mark each block with the line it starts on when asked", () => {
+    const html = renderMarkdown(src, { lines: true });
+    expect(html).toContain('<h1 data-line="3">');
+    expect(html).toContain('<p data-line="5">para</p>');
+    expect(html).toContain('<li data-line="7">one</li><li data-line="8">two</li>');
+    expect(html).toContain('<h2 data-line="11">');
+    expect(html).toContain('<p data-line="16">last</p>');
+  });
+  it("leave the output unchanged otherwise", () => {
+    expect(renderMarkdown(src)).not.toContain("data-line");
+  });
+});

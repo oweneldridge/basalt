@@ -1003,3 +1003,75 @@ test.describe("ticking a task in Reading view", () => {
     expect(Math.abs(after - before)).toBeLessThan(40);
   });
 });
+
+test.describe("links to headings, blocks and footnotes", () => {
+  const filler = (tag: string) => Array.from({ length: 90 }, (_, i) => `${tag} line ${i}`).join("\n\n");
+  const guide =
+    "# Guide\n\n[[#Far heading]]\n\n[back](#Far%20heading)\n\nSee this[^1].\n\n" +
+    `${filler("top")}\n\n## Far heading\n\nfar text\n\n${filler("mid")}\n\nThe block line ^blk\n\n${filler("end")}\n\n[^1]: The footnote.\n`;
+  test.use({
+    vaultFiles: {
+      "Guide.md": guide,
+      "Source.md": "# Source\n\n[[Guide#Far heading]]\n\n[blockref](Guide#^blk)\n\n[plain](Target)\n",
+      "Target.md": "# Target\n\ntarget body\n",
+    },
+  });
+  const reading = (page: import("@playwright/test").Page) => page.locator(".pane:not(.dock) .reading-view");
+
+  test("open another note at the heading or block in Reading view", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Source");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await reading(page).locator(".md-wikilink", { hasText: "Far heading" }).click();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Guide");
+    await expect(reading(page).locator("h2", { hasText: "Far heading" })).toBeInViewport();
+    await page.locator(".tree-row.file", { hasText: "Source" }).first().click();
+    await reading(page).locator(".md-link", { hasText: "blockref" }).click();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Guide");
+    await expect(reading(page).locator("p", { hasText: "The block line" })).toBeInViewport();
+  });
+
+  test("scroll within the note in Reading view, again after scrolling away", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Guide");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    const far = reading(page).locator("h2", { hasText: "Far heading" });
+    await reading(page).locator(".md-wikilink", { hasText: "Far heading" }).click();
+    await expect(far).toBeInViewport();
+    await reading(page).evaluate((el) => (el.scrollTop = 0));
+    await reading(page).locator(".md-wikilink", { hasText: "Far heading" }).click();
+    await expect(far).toBeInViewport();
+    await reading(page).evaluate((el) => (el.scrollTop = 0));
+    await reading(page).locator(".md-link", { hasText: "back" }).click();
+    await expect(far).toBeInViewport();
+    await reading(page).evaluate((el) => (el.scrollTop = 0));
+    await reading(page).locator(".footnote-ref a").click();
+    await expect(reading(page).locator(".footnotes li", { hasText: "The footnote." })).toBeInViewport();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Guide");
+  });
+
+  test("a link without .md opens the note", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Source");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await reading(page).locator(".md-link", { hasText: "plain" }).click();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Target");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await openNote(page, "Source");
+    await page.locator(".pane:not(.dock) .cm-md-link", { hasText: "plain" }).click();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Target");
+    expect(vault.exists("Target.md.md")).toBe(false);
+  });
+
+  test("a same-note link scrolls the editor too", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Guide");
+    await page.locator(".pane:not(.dock) .cm-wikilink", { hasText: "Far heading" }).click();
+    // The caret lands on the heading, so its markup shows, as in Obsidian.
+    const heading = page.locator(".pane:not(.dock) .cm-line", { hasText: /^## Far heading$/ });
+    await expect(heading).toBeInViewport();
+    await page.locator(".pane:not(.dock) .cm-scroller").evaluate((el) => (el.scrollTop = 0));
+    await page.locator(".pane:not(.dock) .cm-wikilink", { hasText: "Far heading" }).click();
+    await expect(heading).toBeInViewport();
+  });
+});

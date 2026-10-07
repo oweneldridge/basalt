@@ -88,7 +88,12 @@ export function subpathToLine(content: string, subpath: string): number | null {
   }
   const want = norm(subpath);
   for (let i = 0; i < lines.length; i++) {
-    if (headingLevel(lines, mask, i) && norm(headingText(lines, i)) === want) return i + 1;
+    if (!headingLevel(lines, mask, i)) continue;
+    const text = headingText(lines, i);
+    // A heading id from a converted document (`## Appendix {#appendix}`) is
+    // what that document's own links name.
+    const id = /\{#([^}\s]+)\}\s*$/.exec(text)?.[1];
+    if (norm(text) === want || (id && norm(id) === want)) return i + 1;
   }
   return null;
 }
