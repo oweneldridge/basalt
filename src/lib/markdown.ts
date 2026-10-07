@@ -170,6 +170,17 @@ export function targetPathPart(raw: string): string {
   return raw.split("#")[0].trim();
 }
 
+/** What an unaliased wikilink shows, as Obsidian shows it: the link text with
+ * each `#` read as " > " (`Folder/Note#Heading` is "Folder/Note > Heading",
+ * `#Heading` is "Heading"). */
+export function wikilinkLabel(target: string): string {
+  return target
+    .split("#")
+    .filter(Boolean)
+    .join(" > ")
+    .trim();
+}
+
 /**
  * Reduce a raw wikilink target to the bare note name it resolves to:
  * strip a `#heading`, a `^block` ref, and any `folder/` path prefix.

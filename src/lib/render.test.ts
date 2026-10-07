@@ -46,8 +46,9 @@ describe("inline", () => {
   it("wikilinks (alias + heading) and md links", () => {
     expect(renderInline("[[Foo|bar]]")).toContain('data-target="Foo">bar</a>');
     // Raw target kept (folder + heading) so resolution matches the editor;
-    // display falls back to the bare note name.
-    expect(renderInline("[[notes/Foo#H]]")).toContain('data-target="notes/Foo#H">Foo &gt; H</a>');
+    // the text is the link text with `#` read as " > ", as Obsidian shows it.
+    expect(renderInline("[[notes/Foo#H]]")).toContain('data-target="notes/Foo#H">notes/Foo &gt; H</a>');
+    expect(renderInline("[[#H]]")).toContain('data-target="#H">H</a>');
     expect(renderInline("[text](https://a.com)")).toBe(
       '<a class="md-link" data-href="https://a.com">text</a>',
     );

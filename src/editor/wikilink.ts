@@ -21,7 +21,7 @@ import {
   autocompletion,
 } from "@codemirror/autocomplete";
 import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
-import { internalLinkTarget, mdLinkRegexGlobal, normalizeName, parseMarkdownLink, wikilinkRegex } from "../lib/markdown";
+import { internalLinkTarget, mdLinkRegexGlobal, normalizeName, parseMarkdownLink, wikilinkLabel, wikilinkRegex } from "../lib/markdown";
 import { linkTargetForFormat, type LinkFormat } from "../lib/rename";
 import { isInExcludedRegion, treeChanged } from "./regions";
 import { notePathFacet } from "./query";
@@ -100,7 +100,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       // A `[[…]]` preceded by `!` is an embed — handled by embeds.ts.
       if (view.state.doc.sliceString(start - 1, start) === "!") continue;
       const target = m[1].trim();
-      const display = (m[2] ?? m[1]).trim();
+      const display = m[2] !== undefined ? m[2].trim() : wikilinkLabel(target);
       if (touches(start, end)) {
         builder.add(start, end, Decoration.mark({ class: "cm-wikilink-source" }));
       } else {

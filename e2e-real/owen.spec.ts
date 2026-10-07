@@ -1293,3 +1293,16 @@ test.describe("Cmd-B with nothing selected", () => {
     expect(vault.read("Fmt.md")).toBe("make this **bold** now\n");
   });
 });
+
+test.describe("a link's text in Live Preview", () => {
+  test.use({ vaultFiles: { "Shown.md": "[[Projects/Alpha#Goals]] and [[#Top]] and [[Alpha|named]]\n\nEND\n" } });
+
+  test("reads as Obsidian shows it", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Shown");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    await expect(page.locator(".pane:not(.dock) .cm-wikilink")).toHaveText(["Projects/Alpha > Goals", "Top", "named"]);
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    await expect(page.locator(".pane:not(.dock) .reading-view .md-wikilink")).toHaveText(["Projects/Alpha > Goals", "Top", "named"]);
+  });
+});

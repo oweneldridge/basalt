@@ -14,7 +14,7 @@
 import { parser as baseParser, GFM } from "@lezer/markdown";
 import type { BlockContext, DelimiterType, InlineContext, Line, MarkdownConfig } from "@lezer/markdown";
 import type { SyntaxNode } from "@lezer/common";
-import { mdImageTarget, targetNoteName, proseMask } from "./markdown";
+import { mdImageTarget, proseMask, wikilinkLabel } from "./markdown";
 import { parseFm } from "./frontmatter";
 import { calloutIcon } from "./callouticons";
 import { ObsidianTasks } from "./mdTasks";
@@ -339,20 +339,6 @@ function inlineHtml(tag: string): string {
     return `<img class="md-image" data-basalt-img="${escapeHtml(mdImageTarget(attrs.src ?? ""))}" alt="${escapeHtml(attrs.alt ?? "")}"${size}${safe} />`;
   }
   return `<${name}${safe}>`;
-}
-
-/** Display text for `[[target]]`: the note name, `Note > Heading` for a
- * heading or block link, just `Heading` for one in this note. */
-function wikilinkLabel(target: string): string {
-  const hash = target.indexOf("#");
-  if (hash < 0) return targetNoteName(target);
-  const sub = target
-    .slice(hash + 1)
-    .split("#")
-    .filter(Boolean)
-    .join(" > ");
-  const note = target.slice(0, hash).trim();
-  return note ? `${targetNoteName(note)} > ${sub}` : sub;
 }
 
 /** `name|300` or `name|300x200` → the name and a size. */
