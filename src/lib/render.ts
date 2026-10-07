@@ -39,7 +39,7 @@ function inlineRe(): RegExp {
       /(==[^\n]+?==)/, // 9 highlight
       /((?<![\w/#])#[A-Za-z0-9_][\w-]*(?:\/[A-Za-z0-9_][\w-]*)*)/, // 10 tag
       /(\$\$[^\n]+?\$\$)/, // 11 inline display math $$…$$
-      /(\$(?!\s)(?:\\.|[^$\n\\])+?(?<!\s)\$)/, // 12 inline math $…$ (no leading/trailing space)
+      /(\$(?!\s)(?:\\.|[^$\n\\`])+?(?<!\s)\$(?!\d))/, // 12 inline math $…$ (no inner edge space; a digit after closes nothing: $5 and $10; code binds tighter)
       /(\^\[[^\][\n]+?\])/, // 13 inline footnote ^[text]
       /(\[\^[^\][\s]+?\])/, // 14 footnote reference [^id]
       /(<\/?(?:br|hr|sup|sub|kbd|mark|u|s|abbr|cite|small|ins|del|wbr)\s*\/?>)/i, // 15 safe inline HTML

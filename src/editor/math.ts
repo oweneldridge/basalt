@@ -16,10 +16,13 @@ interface MathSpan {
   block: boolean;
 }
 
-const MATH_RE = /\$\$([\s\S]+?)\$\$|\$(?!\s)((?:\\.|[^$\n\\])+?)(?<!\s)\$/g;
+// A `$` followed by a digit closes nothing, so `$5 and $10` stays text (Obsidian).
+const MATH_RE = /\$\$([\s\S]+?)\$\$|\$(?!\s)((?:\\.|[^$\n\\])+?)(?<!\s)\$(?!\d)/g;
 
 function findMath(text: string): MathSpan[] {
   const spans: MathSpan[] = [];
+  // A `$` inside inline code is code: blank code spans (same length) first.
+  text = text.replace(/`[^`\n]+`/g, (m) => " ".repeat(m.length));
   MATH_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = MATH_RE.exec(text))) {

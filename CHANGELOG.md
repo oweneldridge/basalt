@@ -45,6 +45,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Dollar amounts stay text: a `$` followed by a digit closes no math, as in
+  Obsidian, so "$25 and $25" no longer turns into italic math, and inline code
+  holding a `$` is never swallowed by math.
 - Closing a side panel's tab no longer fails with "path escapes vault", and
   closing every note leaves an empty editor area, as Obsidian does, instead of
   removing it, so Cmd-W never goes on to close the side panels.

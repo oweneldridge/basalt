@@ -158,6 +158,19 @@ describe("line breaks (Obsidian's Strict line breaks setting)", () => {
   });
 });
 
+describe("dollar amounts aren't math", () => {
+  it("leaves prices as text, as Obsidian does", () => {
+    expect(renderMarkdown("Copay +$25 and OOP +$25.")).not.toContain("data-math");
+    expect(renderMarkdown("was $268.18 (2026), so **$1,059.20/yr** total")).not.toContain("data-math");
+    expect(renderMarkdown("was $268.18 (2026), so **$1,059.20/yr** total")).toContain("<strong>$1,059.20/yr</strong>");
+    expect(renderMarkdown("price $5 and `$var`")).toContain("<code");
+  });
+  it("still renders real inline math", () => {
+    expect(renderMarkdown("area $x^2$ here")).toContain('data-tex="x^2"');
+    expect(renderMarkdown("$a$5")).not.toContain("data-math");
+  });
+});
+
 describe("stripComments (Obsidian %% comments)", () => {
   it("removes inline and multi-line comments but keeps code", () => {
     expect(renderMarkdown("a %%hidden%% b")).toContain("a  b");

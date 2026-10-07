@@ -857,3 +857,19 @@ test.describe("closing tabs", () => {
     await expect(page.getByRole("tab", { name: "Files" })).toHaveCount(1);
   });
 });
+
+test.describe("dollar amounts in Live Preview", () => {
+  test.use({ vaultFiles: { "Money.md": "Copay +$25 and OOP +$25.\n\nprice $5 and `$var` here\n\n| a | b |\n| - | - |\n| $10 | $20 |\n\narea $x^2$ here\n\nEND\n" } });
+
+  test("stay text, while real math renders", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Money");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    await expect(page.locator(".pane:not(.dock) .cm-line", { hasText: "Copay" })).toContainText("Copay +$25 and OOP +$25.");
+    const price = page.locator(".pane:not(.dock) .cm-line", { hasText: "price" });
+    await expect(price).toContainText("price $5 and");
+    await expect(price.locator(".cm-math")).toHaveCount(0);
+    await expect(page.locator(".pane:not(.dock) .cm-md-table")).toContainText("$10");
+    await expect(page.locator(".pane:not(.dock) .cm-math")).toHaveCount(1);
+  });
+});
