@@ -3,12 +3,12 @@
 // real DOM nodes (never innerHTML) and reuses the app's link classes, so clicks
 // inside a table are handled by the same delegated handlers as everywhere else.
 import type { EditorView } from "@codemirror/view";
-import { parseMarkdownLink, TAG_BEFORE, TAG_NAME, targetNoteName } from "../lib/markdown";
+import { parseMarkdownLink, TAG_BEFORE, TAG_NAME, wikilinkLabel } from "../lib/markdown";
 import { fillMath } from "./mathRender";
 
 // One alternation: inline code | wikilink | md-link/image | math | highlight |
-// strikethrough | bold | italic | tag. Math comes before emphasis, so `$a*b$`
-// stays math.
+// strikethrough | bold | italic | tag | <br>. Math comes before emphasis, so
+// `$a*b$` stays math.
 // The bracket classes exclude `[` so a run of `[`/`![` fails fast at the first
 // inner bracket instead of rescanning to end-of-line (would be O(n²) — ReDoS).
 // `_` emphasis requires word boundaries so snake_case isn't mangled. The md-link
@@ -25,6 +25,7 @@ const INLINE_RE = new RegExp(
     /(\*\*[^*\n]+?\*\*|(?<![A-Za-z0-9])__[^_\n]+?__(?![A-Za-z0-9]))/, // 7: bold
     /(\*[^*\n]+?\*|(?<![A-Za-z0-9])_[^_\n]+?_(?![A-Za-z0-9]))/, // 8: italic
     new RegExp(`((?<=^|${TAG_BEFORE.source})#${TAG_NAME})`), // 9: tag
+    /(<[bB][rR]\s*\/?>)/, // 10: a line break, as tables write one
   ]
     .map((r) => r.source)
     .join("|"),
@@ -55,8 +56,8 @@ export function renderInline(text: string, view?: EditorView): DocumentFragment 
       const [rawTarget, alias] = inner.split("|");
       const span = document.createElement("span");
       span.className = "cm-wikilink";
-      span.dataset.target = targetNoteName(rawTarget);
-      span.textContent = (alias ?? rawTarget).trim();
+      span.dataset.target = rawTarget.trim();
+      span.textContent = alias !== undefined ? alias.trim() : wikilinkLabel(rawTarget);
       frag.append(span);
     } else if (m[3]) {
       const parsed = parseMarkdownLink(tok);
@@ -91,6 +92,8 @@ export function renderInline(text: string, view?: EditorView): DocumentFragment 
       const em = document.createElement("em");
       em.textContent = tok.slice(1, -1);
       frag.append(em);
+    } else if (m[10]) {
+      frag.append(document.createElement("br"));
     } else if (/^#\d+$/.test(tok)) {
       frag.append(document.createTextNode(tok)); // a number isn't a tag
     } else {

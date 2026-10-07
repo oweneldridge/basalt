@@ -60,6 +60,10 @@ class TableWidget extends WidgetType {
     }
     const headerCells = splitCells(lines[0]);
     const cols = headerCells.length;
+    // Each column's alignment, from the delimiter row (`:--`, `:-:`, `--:`).
+    const aligns = splitCells(lines[1] ?? "").map((d) =>
+      d.startsWith(":") && d.endsWith(":") ? "center" : d.endsWith(":") ? "right" : d.startsWith(":") ? "left" : "",
+    );
     // Source-line index for each rendered row: header is line 0; body rows skip
     // the delimiter (line 1). Built alongside the DOM for cell-precise caret.
     const bodyLineIdx: number[] = [];
@@ -105,6 +109,7 @@ class TableWidget extends WidgetType {
     const headRow = document.createElement("tr");
     headerCells.forEach((cell, c) => {
       const th = document.createElement("th");
+      if (aligns[c]) th.style.textAlign = aligns[c];
       const content = document.createElement("span");
       content.className = "cm-table-cell";
       content.append(renderInline(cell, view));
@@ -129,6 +134,7 @@ class TableWidget extends WidgetType {
       const tr = document.createElement("tr");
       for (let c = 0; c < cols; c++) {
         const td = document.createElement("td");
+        if (aligns[c]) td.style.textAlign = aligns[c];
         const content = document.createElement("span");
         content.className = "cm-table-cell";
         content.append(renderInline(cells[c] ?? "", view));
@@ -161,8 +167,10 @@ class TableWidget extends WidgetType {
     return wrap;
   }
   // Let control buttons / cell spans handle their own events; CM ignores them.
+  // A link in a cell goes to the editor, whose link handlers open it.
   ignoreEvent(event: Event): boolean {
     const t = event.target as HTMLElement | null;
+    if (t?.closest(".cm-wikilink, .cm-md-link")) return false;
     return !!t && (!!t.closest(".cm-table-ctrl") || !!t.closest(".cm-table-cell"));
   }
 }

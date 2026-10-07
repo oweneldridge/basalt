@@ -1419,3 +1419,31 @@ test.describe("a line right under a table", () => {
     await expect(page.locator(".pane:not(.dock) .reading-view td", { hasText: "Source" })).toHaveCount(0);
   });
 });
+
+test.describe("a table in Live Preview", () => {
+  const t = [
+    "| Left | Center | Right |",
+    "|:-----|:------:|------:|",
+    "| [[Projects/Alpha#Goals]] | [ext](https://example.com) | a<br>b |",
+    "| [[Ideas\\|the ideas]] | x | y |",
+    "",
+    "END",
+  ].join("\n");
+  test.use({ vaultFiles: { "T.md": t + "\n" } });
+
+  test("aligns columns, breaks lines at <br>, and its links open", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "T");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const table = page.locator(".pane:not(.dock) .cm-md-table-wrap");
+    const align = (sel: string) => table.locator(sel).evaluateAll((els) => els.map((e) => getComputedStyle(e).textAlign));
+    expect(await align("th")).toEqual(["left", "center", "right"]);
+    expect(await align("tbody tr:first-child td")).toEqual(["left", "center", "right"]);
+    await expect(table.locator("td br")).toHaveCount(1);
+    const alpha = table.locator(".cm-wikilink").first();
+    await expect(alpha).toHaveText("Projects/Alpha > Goals");
+    await expect(alpha).toHaveAttribute("data-target", "Projects/Alpha#Goals");
+    await table.locator(".cm-wikilink", { hasText: "the ideas" }).click();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Ideas");
+  });
+});
