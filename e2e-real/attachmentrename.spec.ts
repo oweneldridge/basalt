@@ -258,3 +258,65 @@ test.describe("a rename right after another", () => {
     expect(all().split("![[qqpic3.png]]").length - 1).toBe(300);
   });
 });
+
+test.describe("canvas cards in a subfolder", () => {
+  const board = (text: string) => JSON.stringify({ nodes: [{ id: "t", type: "text", text, x: 0, y: 0, width: 300, height: 120 }], edges: [] });
+  test.use({
+    vaultFiles: {
+      "Lab/A/pic.png": png,
+      "Lab/Proj/pic.png": png,
+      "Lab/Proj/pics.canvas": board("![[pic.png]]"),
+      "Lab/Proj/pics.md": "![[pic.png]]\n",
+      "Lab/M/Qa.md": "# M\n",
+      "Lab/Proj/Qa.md": "# Proj\n",
+      "Lab/Proj/links.canvas": board("see [[Qa]] here"),
+      "Lab/Proj/links.md": "see [[Qa]] here\n",
+      "Lab/RP/b.canvas": board("go [[../Oth/X6]] and [o](../Oth/X6.md)"),
+      "Lab/RP/n.md": "go [[../Oth/X6]] and [o](../Oth/X6.md)\n",
+      "Lab/Oth/X6.md": "# X6\n",
+    },
+  });
+  const card = (vault: { read(p: string): string }, p: string) => JSON.parse(vault.read(p)).nodes[0].text as string;
+  const folder = (page: import("@playwright/test").Page, name: string) =>
+    page.locator(".tree-row.folder").filter({ has: page.locator(".tree-name", { hasText: new RegExp(`^${name}$`) }) }).first();
+  const renameFolder = async (page: import("@playwright/test").Page, name: string, to: string) => {
+    await folder(page, name).click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename folder…" }).click();
+    await page.locator(".prompt-input").fill(to);
+    await page.locator(".prompt-input").press("Enter");
+  };
+
+  test("renaming an image leaves a card that shows another image of that name", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await folder(page, "Lab").click();
+    await folder(page, "A").click();
+    await page.locator(".tree-row.file", { hasText: "pic" }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+    await expect(page.locator(".prompt-input")).toHaveValue("Lab/A/pic");
+    await page.locator(".prompt-input").fill("Lab/A/other");
+    await page.locator(".prompt-input").press("Enter");
+    await expect.poll(() => vault.exists("Lab/A/other.png")).toBe(true);
+    await settle(page, 1500);
+    expect(vault.read("Lab/Proj/pics.md")).toBe("![[pic.png]]\n");
+    expect(card(vault, "Lab/Proj/pics.canvas")).toBe("![[pic.png]]");
+  });
+
+  test("moving a folder leaves a card whose link still finds the note beside it", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await folder(page, "Lab").click();
+    await renameFolder(page, "M", "Lab/Deep/Deeper/M");
+    await expect.poll(() => vault.exists("Lab/Deep/Deeper/M/Qa.md")).toBe(true);
+    await settle(page, 1500);
+    expect(vault.read("Lab/Proj/links.md")).toBe("see [[Qa]] here\n");
+    expect(card(vault, "Lab/Proj/links.canvas")).toBe("see [[Qa]] here");
+  });
+
+  test("moving a folder fixes a relative link in its canvas as in its notes", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await folder(page, "Lab").click();
+    await renameFolder(page, "RP", "Lab/Deep/RP");
+    await expect.poll(() => vault.exists("Lab/Deep/RP/b.canvas")).toBe(true);
+    await expect.poll(() => vault.read("Lab/Deep/RP/n.md")).not.toContain("../Oth");
+    await expect.poll(() => card(vault, "Lab/Deep/RP/b.canvas")).toBe(vault.read("Lab/Deep/RP/n.md").trimEnd());
+  });
+});

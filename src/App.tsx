@@ -4819,18 +4819,21 @@ export default function App() {
       const movedNewPathByOld = new Map([...movedByOld].map(([o, n]) => [o, n.path]));
       const postByPath = new Map(postNotes.map((n) => [n.path, n]));
       const attNorm = (s: string) => normalizeName(s);
+      // Where each linking file sits, canvases included, before and after.
+      const relPre = new Map([...preNotes, ...preAtts].map((f) => [f.path, f.rel]));
+      const relPost = new Map([...postNotes, ...postAtts].map((f) => [f.path, f.rel]));
       const moveCtx = {
-        resolvePre: (raw: string, from: string) => preIndex.resolve(raw, from),
-        resolvePost: (raw: string, from: string) => postIndex.resolve(raw, from),
+        resolvePre: (raw: string, from: string) => preIndex.resolveFromRel(raw, relPre.get(from) ?? null),
+        resolvePost: (raw: string, from: string) => postIndex.resolveFromRel(raw, relPost.get(from) ?? null),
         movedNewPathByOld,
         noteAt: (path: string) => postByPath.get(path),
         nameTaken: (name: string, except: string) =>
           postNotes.some((n) => n.path !== except && normalizeName(n.name) === normalizeName(name)),
         format: fmt,
         resolveAttPre: (raw: string, from: string, literal?: boolean) =>
-          resolveAttachment(preAtts, raw, preNotes.find((n) => n.path === from)?.rel ?? null, literal)?.path ?? null,
+          resolveAttachment(preAtts, raw, relPre.get(from) ?? null, literal)?.path ?? null,
         resolveAttPost: (raw: string, from: string, literal?: boolean) =>
-          resolveAttachment(postAtts, raw, postByPath.get(from)?.rel ?? null, literal)?.path ?? null,
+          resolveAttachment(postAtts, raw, relPost.get(from) ?? null, literal)?.path ?? null,
         movedAttNewPathByOld,
         attAt: (path: string) => postAttByPath.get(path),
         attNameTaken: (name: string, except: string) =>
@@ -4954,17 +4957,20 @@ export default function App() {
       const fmt = getLinkFormat();
       const byPath = new Map(preNotes.map((n) => [n.path, n]));
       const postAttByPath = new Map(postAtts.map((a) => [a.path, a]));
+      // Where each linking file sits, canvases included, before and after.
+      const relPre = new Map([...preNotes, ...preAtts].map((f) => [f.path, f.rel]));
+      const relPost = new Map([...preNotes, ...postAtts].map((f) => [f.path, f.rel]));
       const ctx: FolderMoveCtx = {
-        resolvePre: (raw, from) => preIndex.resolve(raw, from),
-        resolvePost: (raw, from) => preIndex.resolve(raw, from),
+        resolvePre: (raw, from) => preIndex.resolveFromRel(raw, relPre.get(from) ?? null),
+        resolvePost: (raw, from) => preIndex.resolveFromRel(raw, relPost.get(from) ?? null),
         movedNewPathByOld: new Map(),
         noteAt: (p) => byPath.get(p),
         nameTaken: (name, except) => preNotes.some((n) => n.path !== except && normalizeName(n.name) === normalizeName(name)),
         format: fmt,
         resolveAttPre: (raw, from, literal) =>
-          resolveAttachment(preAtts, raw, byPath.get(from)?.rel ?? null, literal)?.path ?? null,
+          resolveAttachment(preAtts, raw, relPre.get(from) ?? null, literal)?.path ?? null,
         resolveAttPost: (raw, from, literal) =>
-          resolveAttachment(postAtts, raw, byPath.get(from)?.rel ?? null, literal)?.path ?? null,
+          resolveAttachment(postAtts, raw, relPost.get(from) ?? null, literal)?.path ?? null,
         movedAttNewPathByOld: new Map([[path, newPath]]),
         attAt: (p) => postAttByPath.get(p),
         attNameTaken: (name, except) =>
@@ -4974,20 +4980,23 @@ export default function App() {
       // note, so a case-only rename shows in the links too; the move mapper
       // catches links to other files that the new name now shadows.
       const taken = postAtts.some((a) => a.path !== newPath && normalizeName(a.name) === normalizeName(moved.name));
-      const mapperFor = (n: VaultNote): LinkMapper => {
-        const others = folderMoveMapper(ctx, n.path, n.path, n.rel);
+      // For a file linking from `from` (`to` once a renamed canvas moves).
+      const mapperFor = (from: string, to: string): LinkMapper => {
+        const was = relPre.get(from) ?? null;
+        const rel = relPost.get(to) ?? "";
+        const others = folderMoveMapper(ctx, from, to, rel);
         return (raw, literal = false) => {
-          if ((!literal && preIndex.resolve(raw, n.path)) || resolveAttachment(preAtts, raw, n.rel, literal)?.path !== path)
+          if ((!literal && preIndex.resolveFromRel(raw, was)) || resolveAttachment(preAtts, raw, was, literal)?.path !== path)
             return others(raw, literal);
-          const next = linkTargetForFormat(fmt, newRel, taken, n.rel);
+          const next = linkTargetForFormat(fmt, newRel, taken, rel);
           return next === (literal ? raw : targetPathPart(raw)) ? null : next;
         };
       };
-      const { failures } = await rewriteNoteLinks(preNotes, mapperFor);
+      const { failures } = await rewriteNoteLinks(preNotes, (n) => mapperFor(n.path, n.path));
       const canvasFails = await rewriteCanvasRefs(
         postAtts.filter((a) => /\.canvas$/i.test(a.path)).map((a) => ({ path: a.path, rel: a.rel })),
         new Map([[att.rel, newRel]]),
-        (c) => mapperFor({ path: c.path, rel: c.rel, name: c.rel, content: "" }),
+        (c) => mapperFor(c.path === newPath ? path : c.path, c.path),
       );
       const allFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
       reportLinkFixes("Renamed", allFails);
