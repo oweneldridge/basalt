@@ -749,3 +749,17 @@ test.describe("typing lists", () => {
     expect(vault.read("Ord.md")).toBe("1. a\n\t1. b\n2. c\n");
   });
 });
+
+test.describe("a note with missing images", () => {
+  const note = "before\n\n![my diagram](assets/does-not-exist.png)\n\n![[nope-missing.png]]\n\nafter\n";
+  test.use({ vaultFiles: { "Missing.md": note } });
+
+  test("is never rewritten by showing them as missing", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Missing");
+    await expect(page.locator(".pane:not(.dock) .cm-content")).toContainText("my diagram", { timeout: 10000 });
+    await page.waitForTimeout(6500); // past the one retry for a missing image
+    await settle(page, 1500);
+    expect(vault.read("Missing.md")).toBe(note);
+  });
+});

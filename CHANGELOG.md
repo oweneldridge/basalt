@@ -45,6 +45,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Opening a note whose embedded image can't be found no longer rewrites the
+  embed as "🖼 name" text on disk. Live Preview swapped the image out for that
+  label in a way the editor read as typing, and autosave saved it.
 - Lists type as in Obsidian: Enter on an empty item leaves the list (or moves
   up a level) in one press, without first making the list loose or leaving a
   line of spaces; Tab and Shift-Tab move an item with the items under it; a

@@ -48,21 +48,27 @@ export class ImgWidget extends WidgetType {
   }
   toDOM(): HTMLElement {
     if (isRemoteUrl(this.src) && !remoteImagesAllowed()) return blockedImage(this.src, this.alt);
+    // The widget's own element never changes: CodeMirror reads a swapped-out
+    // root as text typed into the line, and autosave would write the "missing"
+    // label over the embed. Only what's inside it changes.
+    const holder = document.createElement("span");
+    holder.className = "cm-md-image-holder";
     const img = document.createElement("img");
     img.className = "cm-md-image";
     img.alt = this.alt;
     if (this.width) img.style.maxWidth = `${this.width}px`;
+    holder.append(img);
     // Resolve async; retry once after the negative-cache TTL so an image
     // referenced before it exists self-heals without a reload.
     const load = (retry: boolean) => {
       this.resolve(this.src).then((url) => {
         if (url) img.src = url;
         else if (retry) window.setTimeout(() => load(false), 4500);
-        else img.replaceWith(missingImage(this.alt || this.src));
+        else holder.replaceChildren(missingImage(this.alt || this.src));
       });
     };
     load(true);
-    return img;
+    return holder;
   }
   ignoreEvent(): boolean {
     return false;
