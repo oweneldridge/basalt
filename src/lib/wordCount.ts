@@ -1,11 +1,11 @@
 // The status bar's word and character counts, counted as Obsidian counts them:
-// the frontmatter is left out; a word is a number (`1,000.50`) or a run of
-// letters, hyphens and apostrophes; and each Chinese or Japanese character is
-// a word of its own.
+// the frontmatter is left out; a word is a run of numbers (`1,000.50`), letters,
+// hyphens and apostrophes (`GPT-5` and `2026-09-11` are one word each); and
+// each Chinese or Japanese character is a word of its own.
 
 const PER_CHAR = "\\u3041-\\u3096\\u309D-\\u309F\\u30A1-\\u30FA\\u30FC-\\u30FF\\u4E00-\\u9FD5";
 const WORD = new RegExp(
-  `[0-9]+(?:[,.][0-9]+)*|(?:(?![${PER_CHAR}])[-'’\\p{L}\\p{M}])+|[${PER_CHAR}]`,
+  `(?:[0-9]+(?:[,.][0-9]+)*|(?![${PER_CHAR}])[-'’\\p{L}])+|[${PER_CHAR}]`,
   "gu",
 );
 
