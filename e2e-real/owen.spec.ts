@@ -1725,6 +1725,23 @@ test.describe("pasting HTML", () => {
     await settle(page, 1200);
     expect(vault.read("Paste.md")).toContain("code herebold\n");
   });
+
+  test("keeps every item of a list indented the way Chromium writes it, and code as it was", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Paste");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    await paste(
+      page,
+      "<ul><li>parent</li><ul><li>child one</li><li>child two</li></ul><li>after</li></ul><p><code>a`b</code></p><pre>x\n```\ny</pre>",
+      "parent\nchild one\nchild two\nafter\na`b\nx\n```\ny",
+    );
+    await settle(page, 1200);
+    expect(vault.read("Paste.md").split("END\n")[1]).toBe(
+      "- parent\n\t- child one\n\t- child two\n- after\n\n``a`b``\n\n````\nx\n```\ny\n````\n",
+    );
+  });
 });
 
 test.describe("the vault's own settings", () => {
