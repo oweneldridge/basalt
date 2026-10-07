@@ -69,17 +69,18 @@ interface Query {
   anyOf: string[][];
 }
 
-// `line:(a b)` (same-line group) or `line:word` (single term on a line).
-const LINE_RE = /line:\(([^)]*)\)|line:(\S+)/gi;
+// `line:(a b)` (same-line group), `line:"a phrase"` or `line:word` (single
+// term on a line).
+const LINE_RE = /line:(?:\(([^)]*)\)|"([^"]*)"|(\S+))/gi;
 
 /** Pull `line:(…)` clauses out of a group string into same-line term groups,
  * returning the remaining query text (they can't survive plain tokenizing —
  * the parens hold spaces). */
 function extractLineGroups(s: string, unkeep: (t: string) => string = (t) => t): { lineGroups: string[][]; rest: string } {
   const lineGroups: string[][] = [];
-  const rest = s.replace(LINE_RE, (_m, paren?: string, single?: string) => {
+  const rest = s.replace(LINE_RE, (_m, paren?: string, quoted?: string, single?: string) => {
     const body = paren !== undefined ? paren : (single ?? "");
-    const terms = body.split(/\s+/).map(unkeep).map(norm).filter(Boolean);
+    const terms = (quoted !== undefined ? [quoted] : body.split(/\s+/).map(unkeep)).map(norm).filter(Boolean);
     if (terms.length) lineGroups.push(terms);
     return " ";
   });
@@ -105,7 +106,7 @@ function extractScoped(s: string, q: Query, unkeep: (t: string) => string = (t) 
     return " ";
   });
   rest = rest.replace(PROP_RE, (_m, key: string, value?: string) => {
-    q.props.push({ key: norm(key.trim()), value: value === undefined ? null : norm(unquote(value)) });
+    q.props.push({ key: norm(key.trim()), value: value === undefined ? null : norm(unquote(unkeep(value))) });
     return " ";
   });
   // `(a OR b)`: alternatives; a group without OR is just its terms.
@@ -123,9 +124,10 @@ function extractScoped(s: string, q: Query, unkeep: (t: string) => string = (t) 
 /** Split a query on spaces, keeping "quoted phrases" intact. */
 function tokenize(q: string): string[] {
   const out: string[] = [];
-  // A quoted phrase (an operator's quoted value stays one token with it), a
-  // /regex/ that may hold spaces, or a run of non-space.
-  const re = /(-?[a-z]+:)?"([^"]*)"|(\/(?:\\.|[^/\\\n])+\/[gimsuy]*)(?=\s|$)|(\S+)/gi;
+  // A quoted phrase (an operator's quoted value, or the `-` that excludes it,
+  // stays one token with it), a /regex/ that may hold spaces, or a run of
+  // non-space.
+  const re = /(-?[a-z]+:|-)?"([^"]*)"|(\/(?:\\.|[^/\\\n])+\/[gimsuy]*)(?=\s|$)|(\S+)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(q))) out.push(m[2] !== undefined ? (m[1] ?? "") + m[2] : (m[3] ?? m[4]));
   return out;
@@ -159,17 +161,20 @@ function splitOnOr(query: string): string[] {
 }
 
 // A /regex/, a standalone "phrase" or a [[link]] holds brackets the clause
-// extractors would take apart, so each is set aside until tokenizing.
-const KEEP_RE = /(?<=^|\s)(?:\/(?:\\.|[^/\\\n])+\/[gimsuy]*|"[^"]*"|\[\[[^\]\n]*\]\])(?=\s|$)/g;
+// extractors would take apart, so each is set aside until tokenizing, a
+// group's own brackets or a `-` around it included.
+const KEEP_RE = /(?<=^|[\s(-])(?:\/(?:\\.|[^/\\\n])+\/[gimsuy]*|"[^"]*"|\[\[[^\]\n]*\]\])(?=[\s)]|$)/g;
 const KEPT_RE = /^\u0001(\d+)\u0001$/;
 
 function buildQuery(groupStr: string): Query {
   const kept: string[] = [];
   const masked = groupStr.replace(KEEP_RE, (m) => `\u0001${kept.push(m) - 1}\u0001`);
-  // A set-aside phrase inside a clause's group comes back as one term.
+  // A set-aside phrase inside a clause's group comes back as one term, and
+  // as it was typed anywhere else.
+  const restore = (t: string) => t.replace(/\u0001(\d+)\u0001/g, (_m, i: string) => kept[Number(i)]);
   const unkeep = (t: string) => {
     const k = KEPT_RE.exec(t);
-    return k ? (tokenize(kept[Number(k[1])])[0] ?? t) : t;
+    return k ? (tokenize(kept[Number(k[1])])[0] ?? t) : restore(t);
   };
   const { lineGroups, rest: afterLines } = extractLineGroups(masked, unkeep);
   const q: Query = {
@@ -179,7 +184,9 @@ function buildQuery(groupStr: string): Query {
   const rest = extractScoped(afterLines, q, unkeep);
   const tokens = tokenize(rest).flatMap((t) => {
     const k = KEPT_RE.exec(t);
-    return k ? tokenize(kept[Number(k[1])]) : [t];
+    if (k) return tokenize(kept[Number(k[1])]);
+    const typed = restore(t);
+    return typed === t ? [t] : tokenize(typed);
   });
   for (const tok of tokens) {
     if (!tok) continue;

@@ -197,6 +197,21 @@ describe("regexes, phrases and links with brackets", () => {
       expect(hit(q), q).toEqual(["/v/C.md"]);
     }
   });
+  it("stay whole against a group's brackets", () => {
+    const more = [
+      note("E.md", "the quick brown fox\n- [ ] buy oat milk\n## plan\nquick brown dog"),
+      note("F.md", "brown quick fox\n- [ ] buy milk oat"),
+    ];
+    const hit = (q: string) => [...new Set(searchVault(more, q).map((h) => h.path))];
+    for (const q of ['line:("quick brown" fox)', 'line:(fox "quick brown")', 'task:("oat milk")', 'section:("quick brown" dog)', 'line:"quick brown"', '("quick brown" OR zzz)']) {
+      expect(hit(q), q).toEqual(["/v/E.md"]);
+    }
+  });
+  it("a phrase can be excluded, and a property value keeps its brackets", () => {
+    expect(found('ticket -"call (Alice)"')).toEqual([]);
+    expect(found('ticket -"call (Bob)"')).toEqual(["/v/A.md"]);
+    expect(parseSearchQuery('[status:("a b")]').props).toEqual([{ key: "status", value: '("a b")' }]);
+  });
   it("while operators beside them still work", () => {
     expect(found('"call (Alice)" [status]')).toEqual([]);
     expect(found('/[0-9]{3}/ (foo OR zzz)')).toEqual(["/v/A.md"]);
