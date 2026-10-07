@@ -68,6 +68,20 @@ test.describe("hidden files", () => {
     expect(vault.exists(".unisonbak.0.Ideas.md")).toBe(true);
     expect(vault.exists("Projects/.unisonbak.1.Alpha.md")).toBe(true);
   });
+
+  test("show and hide as soon as the setting changes", async ({ page, vault }) => {
+    await openApp(page, vault);
+    const row = page.locator(".tree-row", { hasText: ".unisonbak.0.Ideas" });
+    const setting = page.getByLabel("Show hidden files (names starting with a dot)");
+    await page.getByRole("button", { name: "Settings" }).click();
+    await setting.check();
+    await expect(row).toHaveCount(1, { timeout: 1500 });
+    // Hiding drops them from what's loaded, without reading a big vault again.
+    await vault.stop();
+    await setting.uncheck();
+    await expect(row).toHaveCount(0, { timeout: 1500 });
+    await vault.start();
+  });
 });
 
 test("the word count stays when a side panel is focused", async ({ page, vault }) => {

@@ -2233,13 +2233,26 @@ export default function App() {
     if (pending.current.size > 0) void flushAllRef.current();
   }, [loadVault, addConflict, patchPane, rememberSelfWrite, setBigBase, bumpIndex]);
 
-  // Showing or hiding dot files changes what the vault lists: read it again.
+  // Showing dot files reads the vault again to find them. Hiding them drops
+  // them from what's loaded, at once, however long a big vault takes to read.
   const appliedShowHidden = useRef(showHidden);
   useEffect(() => {
     if (appliedShowHidden.current === showHidden) return;
     appliedShowHidden.current = showHidden;
-    if (vaultRef.current) void handleRescan();
-  }, [showHidden, handleRescan]);
+    if (!vaultRef.current) return;
+    if (showHidden) {
+      void handleRescan();
+      return;
+    }
+    const hidden = notesRef.current.filter((n) => isHiddenRel(n.rel));
+    for (const n of hidden) index.current.removeNote(n.path);
+    if (hidden.length) {
+      notesRef.current = notesRef.current.filter((n) => !isHiddenRel(n.rel));
+      setNotes(notesRef.current);
+    }
+    setAttachmentsList((prev) => prev.filter((a) => !isHiddenRel(a.rel)));
+    bumpStructure();
+  }, [showHidden, handleRescan, bumpStructure]);
 
   // Listen for on-disk changes; debounce; then apply.
   useEffect(() => {
