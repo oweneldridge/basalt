@@ -8,7 +8,7 @@ import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { isInExcludedRegion } from "./regions";
 import { renderEmbedSource, getTranscludeHost } from "../lib/transclude";
-import { mediaKind, buildMediaElement, type MediaKind } from "../lib/media";
+import { mediaKind, mediaPath, buildMediaElement, type MediaKind } from "../lib/media";
 import { targetPathPart } from "../lib/markdown";
 import { notePathFacet } from "./query";
 import { blockEdges } from "./blockEdges";
@@ -32,9 +32,9 @@ class MediaWidget extends WidgetType {
     wrap.className = "cm-embed cm-media";
     const host = getTranscludeHost();
     if (!host) return wrap;
-    void host.resolveImage(this.rawTarget, this.notePath).then((url) => {
+    void host.resolveImage(mediaPath(this.rawTarget), this.notePath).then((url) => {
       if (!wrap.isConnected) return;
-      if (url) wrap.append(buildMediaElement(this.kind, url));
+      if (url) wrap.append(buildMediaElement(this.kind, url, this.rawTarget));
       else {
         wrap.textContent = `🎬 ${this.rawTarget} (not found)`;
         wrap.classList.add("md-media-missing");

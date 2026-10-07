@@ -1608,3 +1608,22 @@ test.describe("a link in a property", () => {
     await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Ideas");
   });
 });
+
+test.describe("a PDF embed with a page", () => {
+  const pdf = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n";
+  test.use({ vaultFiles: { "Paper notes.md": "![[doc.pdf#page=3]]\n\n![[doc.pdf#height=250]]\n\nEND\n", "doc.pdf": pdf } });
+
+  test("opens at that page, in both views", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Paper notes");
+    await page.locator(".pane:not(.dock) .cm-line", { hasText: /^END$/ }).click();
+    const lp = page.locator(".pane:not(.dock) .cm-content embed.md-media-pdf");
+    await expect(lp).toHaveCount(2);
+    expect(await lp.first().getAttribute("src")).toMatch(/#page=3$/);
+    await expect(lp.nth(1)).toHaveCSS("height", "250px");
+    await page.locator('button[title^="Toggle Reading view"]').click();
+    const rv = page.locator(".pane:not(.dock) .reading-view embed.md-media-pdf");
+    await expect(rv).toHaveCount(2);
+    expect(await rv.first().getAttribute("src")).toMatch(/#page=3$/);
+  });
+});
