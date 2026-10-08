@@ -93,4 +93,29 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
     expect(linkifyMention("[see [Qsh8 [v2]] notes](x.md) then Qsh8", "Qsh8")).toBe("[see [Qsh8 [v2]] notes](x.md) then [[Qsh8]]");
     expect(linkifyMention("link text](Qsh8.md) and](<Qsh8 b.md>)", "Qsh8")).toBeNull();
   });
+  it("takes a label only from a real definition", () => {
+    const link = (note: string, n: number) => linkifyMention(note.split("\n")[n], "Foo", undefined, mentionLines(note)[n]);
+    expect(link("%%\n[Foo]: x.md\n%%\n\nUse [Foo] here", 4)).toBe("Use [[[Foo]]] here");
+    expect(link("<!--\n[Foo]: x.md\n-->\n\nUse [Foo] here", 4)).toBe("Use [[[Foo]]] here");
+    expect(link("Para line\n[Foo]: x.md\n\nUse [Foo] here", 3)).toBe("Use [[[Foo]]] here");
+    expect(link("- item\n[Foo]: x.md\n\nUse [Foo] here", 3)).toBe("Use [[[Foo]]] here");
+    expect(link("# Heading\n[Foo]: x.md\n\nUse [Foo] here", 3)).toBeNull();
+    expect(link("> [12:54 PM]: Foo might exist\n", 0)).toBe("> [12:54 PM]: [[Foo]] might exist");
+    expect(link("- [Foo]: x.md\n\nUse [Foo] here", 2)).toBeNull();
+    expect(link("- [Foo]: x.md\n\nUse [Foo] here", 0)).toBeNull();
+  });
+  it("skips a link whose text, address or title runs onto the next line", () => {
+    const lines = (note: string) => mentionLines(note).map((l) => l.includes("Foo"));
+    expect(lines("[text spanning\nFoo line](x.md \"t\nFoo\") more")).toEqual([false, false, false]);
+    expect(lines("[a](\nFoo.md) end")).toEqual([false, false]);
+    expect(lines("> [see the\n> Foo docs](x.md) and Foo")).toEqual([false, true]);
+    expect(lines("Not [a link\n\nFoo here and Foo")).toEqual([false, false, true]);
+  });
+  it("masks a line of many links quickly", () => {
+    const line = "[a](b.md) ".repeat(32000) + "Foo";
+    const t0 = performance.now();
+    expect(linkifyMention(line, "Foo")).toBe("[a](b.md) ".repeat(32000) + "[[Foo]]");
+    expect(performance.now() - t0).toBeLessThan(500);
+  });
 });
+
