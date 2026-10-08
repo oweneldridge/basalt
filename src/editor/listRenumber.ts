@@ -6,7 +6,7 @@
 // Unlike Obsidian, lists are read as the parser reads them, so a numbered line
 // in code, math, a comment, frontmatter or a paragraph is left as typed, and
 // a list's items are the ones it renders, however they're indented.
-import { ChangeSet, EditorState, MapMode, Transaction, type ChangeSpec, type Text } from "@codemirror/state";
+import { ChangeSet, EditorState, MapMode, Transaction, type Text } from "@codemirror/state";
 import { DocInput, ensureSyntaxTree, foldedRanges, language } from "@codemirror/language";
 import type { SyntaxNode, Tree } from "@lezer/common";
 
@@ -22,6 +22,9 @@ const PARSE_MS = 50;
 const CUT = 20000;
 // A list item at the top level, quoted or not, and the quote marks before it.
 const TOP_ITEM = /^((?:>[ \t]?)*)(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+
+/** A new number for an item. */
+type Renumbering = { from: number; to: number; insert: string };
 
 /** A numbered list item: its list marker and where it sits. */
 interface Item {
@@ -109,9 +112,14 @@ class Items {
     for (let p = this.sibling(item.node, "prevSibling"); p; p = this.sibling(p.node, "prevSibling")) first = p;
     if (!this.cut.start || this.state.doc.lineAt(first.from).from !== this.offset) return parseInt(first.num, 10);
     // The list goes on above the lines parsed afresh, so its start is read
-    // from the editor's tree.
+    // from the editor's tree, as far up as its items show.
     let node = this.full.resolveInner(first.from, 1).parent;
-    for (let p = node?.prevSibling; p; p = p.prevSibling) if (p.name === "ListItem") node = p;
+    for (let p = node?.prevSibling; p; p = p.prevSibling) {
+      if (p.name !== "ListItem") continue;
+      const at = p.firstChild?.from ?? p.from;
+      if (this.isHidden(this.state.doc.lineAt(at).number, at)) break;
+      node = p;
+    }
     const mark = node?.firstChild;
     const m = mark?.name === "ListMark" ? MARKER.exec(this.state.sliceDoc(mark.from, mark.to + 4)) : null;
     return m ? parseInt(m[1], 10) : null;
@@ -155,19 +163,21 @@ class Items {
     return out;
   }
 
-  /** Whether every line `changes` renumbers still reads as a list item:
-   * a list that starts past 1 can't break into a paragraph, and the parser
-   * can misread a quote whose first line is blank. */
-  keeps(changes: ChangeSet): boolean {
-    const doc = changes.apply(this.state.doc);
-    const range = { from: this.offset, to: changes.mapPos(this.offset + this.tree.length) };
-    const tree = this.state.facet(language)!.parser.parse(new DocInput(doc), [], [range]);
-    let ok = true;
-    changes.iterChangedRanges((_fromA, _toA, from) => {
-      const mark = tree.resolveInner(from - this.offset, 1);
-      if (mark.name !== "ListMark" || mark.parent?.parent?.name !== "OrderedList") ok = false;
-    });
-    return ok;
+  /** `changes` without those for a list where a renumbered line would stop
+   * reading as a list item: a list that starts past 1 can't break into a
+   * paragraph, and the parser can misread a quote whose first line is blank. */
+  keep(changes: Renumbering[]): Renumbering[] {
+    const set = ChangeSet.of(changes, this.state.doc.length);
+    const range = { from: this.offset, to: set.mapPos(this.offset + this.tree.length) };
+    const tree = this.state.facet(language)!.parser.parse(new DocInput(set.apply(this.state.doc)), [], [range]);
+    const lost: SyntaxNode[] = [];
+    for (const c of changes) {
+      const mark = tree.resolveInner(set.mapPos(c.from, -1) - this.offset, 1);
+      const list = this.tree.resolveInner(c.from - this.offset, 1).parent?.parent;
+      if ((mark.name !== "ListMark" || mark.parent?.parent?.name !== "OrderedList") && list) lost.push(list);
+    }
+    const inLost = (pos: number) => lost.some((l) => pos >= l.from + this.offset && pos < l.to + this.offset);
+    return changes.filter((c) => !inLost(c.from));
   }
 
   /** The items of `state` in `range`. The editor's tree is updated a piece
@@ -250,7 +260,7 @@ function lists(tr: Transaction, first: number, near: number, far: number): [Item
 const written = (num: number, was: string) => (was.length > 1 && was[0] === "0" ? String(num).padStart(was.length, "0") : String(num));
 
 /** The renumbering `tr` needs, or null if the count ran past the lines parsed. */
-function renumber(tr: Transaction, now: Items, was: Items): ChangeSpec[] | null {
+function renumber(tr: Transaction, now: Items, was: Items): Renumbering[] | null {
   const doc = tr.newDoc;
   const before = tr.startState.doc;
   const changed: { from: number; to: number }[] = [];
@@ -276,7 +286,7 @@ function renumber(tr: Transaction, now: Items, was: Items): ChangeSpec[] | null 
     return still?.from === at && still.level === prev.level;
   };
   const numbers = new Map<number, number>();
-  const out: ChangeSpec[] = [];
+  const out: Renumbering[] = [];
   const set = (item: Item, num: number) => {
     numbers.set(item.from, num);
     if (num !== parseInt(item.num, 10)) out.push({ from: item.from, to: item.from + item.num.length, insert: written(num, item.num) });
@@ -331,14 +341,19 @@ export const renumberLists = EditorState.transactionFilter.of((tr) => {
       if (NUMBERED.test(doc.line(n).text)) near = Math.max(near, doc.line(n).to);
   });
   if (near < 0) return tr;
-  let changes: ChangeSpec[] | null = null;
+  let changes: Renumbering[] | null = null;
   try {
     // A long list is parsed only near the edit, unless the count runs on past that.
     for (const far of [CUT, Infinity]) {
       const both = lists(tr, first, near, far);
       if (!both) return tr;
       changes = renumber(tr, ...both);
-      if (changes?.length && !both[0].keeps(ChangeSet.of(changes, tr.newDoc.length))) return tr;
+      // Leaving one list as it was can change how the next one reads.
+      while (changes?.length) {
+        const kept = both[0].keep(changes);
+        if (kept.length === changes.length) break;
+        changes = kept;
+      }
       if (changes) break;
     }
   } catch (e) {
@@ -350,7 +365,7 @@ export const renumberLists = EditorState.transactionFilter.of((tr) => {
   // A number hidden in a closed fold is left as it is, so nothing changes unseen.
   let hidden = false;
   const folds = foldedRanges(tr.state);
-  for (const c of changes as { from: number; to: number }[])
+  for (const c of changes)
     folds.between(c.from, c.to, (from, to) => {
       if (c.from < to && c.to > from) hidden = true;
     });

@@ -166,4 +166,21 @@ describe("the lines around an edit", () => {
     const out = parsed(doc).update({ changes: { from, to: doc.indexOf("1501. "), insert: "\nNote\n\n" }, userEvent: "input.paste" }).state.doc.toString();
     expect(out.split("\n").slice(1499, 1504)).toEqual(["", "Note", "", "1. item 1501 with a few words", "2. item 1502 with a few words"]);
   });
+  it("start a list cut from a long one at its first item that shows", () => {
+    const items = Array.from({ length: 1000 }, (_, i) => `${i + 3}. step ${i + 3} with a few words`);
+    const doc = "# Plan\n\n%%\n1. old step\n2. old step\n%%\n" + items.join("\n") + "\n";
+    const state = parsed(doc);
+    const line = state.doc.line(908);
+    expect(line.text).toBe("904. step 904 with a few words");
+    const out = state.update({ changes: { from: line.from, to: line.to, insert: "#" }, userEvent: "input.type" }).state.doc;
+    expect(out.line(909).text).toBe("3. step 905 with a few words");
+  });
+  it("renumber a list an edit changes, though it leaves another list as it was", () => {
+    const doc = "Text\n\n0. a\n1. b\n2. c\n\nmid\n\n1. x\n2. y\n3. z\n";
+    const at = doc.indexOf("1. x") + 4;
+    expect(edit(doc, [{ from: 5, to: 11 }, { from: at, insert: "\n1. new" }], "input.paste")).toBe(
+      "Text\n1. b\n2. c\n\nmid\n\n1. x\n2. new\n3. y\n4. z\n",
+    );
+  });
 });
+
