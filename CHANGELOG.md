@@ -419,11 +419,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   change a folded section's hidden text either, and a triple-click on a folded
   heading no longer counts as selecting what it hides.
 - Link all also leaves callout types, footnote references, link reference
-  definitions (in quotes too), reference links (`![][label]`, and `[label]`
-  when the note defines it), email addresses and autolinks (`<key:value>`)
-  alone, never writes into a linked image, a URL holding an `@` or a link's
-  address (one in angle brackets, or with brackets nested in the link's text
-  or parentheses in the address), and no longer skips prose that holds a `<`
+  definitions (in quotes and list items too), reference links (`![][label]`,
+  and `[label]` when the note defines it), email addresses and autolinks
+  (`<key:value>`) alone, never writes into a linked image, a URL holding an
+  `@`, a link's address (one in angle brackets, or with brackets nested in the
+  link's text or parentheses in the address) or a link whose text, address or
+  title runs onto the next line, and no longer skips prose that holds a `<`
   (`null<Date`), or text after a `$$` written in code or a comment.
 - Code fenced inside a quote or callout is code: Link all and renames leave
   its text alone, and its links aren't counted. A line that opens with inline
