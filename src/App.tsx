@@ -3929,11 +3929,17 @@ export default function App() {
   // changes — not on every debounced save — to keep typing smooth.
   const unlinked = useMemo(() => {
     if (!lastNoteName || !lastNotePath) return [];
-    return index.current.unlinkedMentionsFor(
-      [lastNoteName, ...index.current.aliasesOf(lastNotePath)],
-      notesRef.current,
-      lastNotePath,
-    );
+    try {
+      return index.current.unlinkedMentionsFor(
+        [lastNoteName, ...index.current.aliasesOf(lastNotePath)],
+        notesRef.current,
+        lastNotePath,
+      );
+    } catch (e) {
+      // A note the mention scan can't read never takes the app down with it.
+      console.error("[basalt] unlinked mentions failed", e);
+      return [];
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastNoteName, lastNotePath]);
 
