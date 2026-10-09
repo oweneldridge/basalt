@@ -439,6 +439,9 @@ export default function App() {
   // save, so the backlinks memo keys off this cheaper counter.
   const [indexVersion, setIndexVersion] = useState(0);
   const [structureVersion, setStructureVersion] = useState(0);
+  // Bumped once a Link or Link all has run, so the unlinked mentions list
+  // shows what's left.
+  const [mentionsLinked, setMentionsLinked] = useState(0);
   // Paths with an unresolved on-disk conflict (per note, since panes may each
   // hold a different dirty note). The badge shows for the focused note.
   const [conflicts, setConflicts] = useState<Set<string>>(() => new Set());
@@ -4033,7 +4036,8 @@ export default function App() {
   }, [lastNotePath, indexVersion, structureVersion]);
 
   // Expensive (full vault text scan). Recompute only when the tracked note
-  // changes — not on every debounced save — to keep typing smooth.
+  // changes or a Link action has run, not on every debounced save, to keep
+  // typing smooth.
   const unlinked = useMemo(() => {
     if (!lastNoteName || !lastNotePath) return [];
     try {
@@ -4048,7 +4052,7 @@ export default function App() {
       return [];
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastNoteName, lastNotePath]);
+  }, [lastNoteName, lastNotePath, mentionsLinked]);
 
   // Vault-wide tags for the tag pane — from the incremental index, so this only
   // recomputes when content (indexVersion) or structure (structureVersion) changes.
@@ -4673,7 +4677,7 @@ export default function App() {
     (m: { path: string; line: number }) => {
       // The note the Backlinks panel shows, which a click there has unfocused.
       const target = notesRef.current.find((n) => n.path === lastNotePathRef.current);
-      if (target) void linkifyInNote(m.path, m.line, target);
+      if (target) void linkifyInNote(m.path, m.line, target).then(() => setMentionsLinked((x) => x + 1));
     },
     [linkifyInNote],
   );
@@ -4691,6 +4695,7 @@ export default function App() {
       }
       // A mention its neighbour's link made linkable (`*Foo*Foo`) is linked too.
       for (const m of again) for (let k = 0; k < 3 && (await linkifyInNote(m.path, m.line, target)) !== null; k++);
+      setMentionsLinked((x) => x + 1);
     },
     [linkifyInNote],
   );

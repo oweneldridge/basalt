@@ -124,7 +124,7 @@ test.describe("a note that ends inside a link's address", () => {
 test.describe("Link all", () => {
   const body =
     'Ideas in prose\nmath $Ideas^2$ here\n%% Ideas\nstill Ideas %%\n\n    Ideas in code\n\n<span title="Ideas">x</span>\n<!-- Ideas -->\n' +
-    "Run `echo $$` now\n\n$$\nIdeas + x\n$$\n\n> [!ideas] T\n\nnote[^Ideas] and ideas@x.com\n\n[Ideas]: https://x.com/a\n";
+    "Run `echo $$` now\n\n$$\nIdeas + x\n$$\n\n> [!ideas] T\n\nnote[^Ideas] and ideas@x.com\n\n[Ideas]: https://x.com/a\n\n<div>\nIdeas in a div\n</div>\n";
   test.use({ vaultFiles: { "Odd.md": body } });
 
   test("links only mentions in the text, not in math, comments, code or HTML", async ({ page, vault }) => {
@@ -135,6 +135,8 @@ test.describe("Link all", () => {
     await expect(unlinked.locator(".ref-group", { hasText: "Odd" }).locator(".ref-child")).toHaveCount(1);
     await unlinked.locator(".link-all-btn").click();
     await expect.poll(() => vault.read("Odd.md")).toBe(body.replace("Ideas in prose", "[[Ideas]] in prose"));
+    // and the list shows what's left
+    await expect(unlinked.locator(".ref-group", { hasText: "Odd" })).toHaveCount(0);
   });
 });
 
@@ -155,6 +157,7 @@ test.describe("backlink counts", () => {
     await expect(unlinked.locator(".ref-group", { hasText: "Mentions" }).locator(".ref-child")).toHaveCount(1);
     await unlinked.locator(".link-all-btn").click();
     await expect.poll(() => vault.read("Mentions.md")).toBe("[[Ideas]], then [[ideas]] again, and #ideas\n");
+    await expect(unlinked.locator(".ref-group", { hasText: "Mentions" })).toHaveCount(0);
   });
 });
 
