@@ -68,6 +68,7 @@ wasn't run; where its behaviour was unclear, its own bundled code (1.14.4
   tree tags their extension.
 - Backlink and mention counts are per match; `resolvedLinks` and
   `unresolvedLinks` count every link, attachments included.
+- "Default file to open: Daily note" opens today's daily note with the vault.
 - Numbered lists renumber after every edit, as in Obsidian, but by the list
   as it renders. Obsidian renumbers any line that starts with a number, so a
   keystroke can change numbered lines in code, math, comments, frontmatter and

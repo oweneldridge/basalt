@@ -59,6 +59,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   own `app`.
 - Basalt follows the vault's "Show line number", "Confirm file deletion" and
   "Readable line length" settings (the last until it's switched in Basalt).
+- A vault whose "Default file to open" is "Daily note" opens today's daily
+  note with the vault, made from its template if it's missing, as Obsidian
+  does.
 - Images, PDFs, audio, video, canvases and bases can be renamed (right-click,
   Rename…) or dragged onto a folder. Every link, embed and canvas card that
   shows the file follows it, including a rename that only changes case.
