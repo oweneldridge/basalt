@@ -426,9 +426,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `[label]` when the note defines it), email addresses and autolinks
   (`<key:value>`) alone, never writes into a linked image, a URL holding an
   `@`, a link's address (one in angle brackets, or with brackets nested in the
-  link's text or parentheses in the address) or a link whose text, address or
-  title runs onto the next line, and no longer skips prose that holds a `<`
-  (`null<Date`), or text after a `$$` written in code or a comment.
+  link's text or parentheses in the address), a link whose text, address or
+  title runs onto the next line, a reference split over two lines or a
+  definition's title on the line after it, and no longer skips prose that
+  holds a `<` (`null<Date`), or text after a `$$` written in code or a
+  comment.
 - Code fenced inside a quote or callout is code: Link all and renames leave
   its text alone, and its links aren't counted. A line that opens with inline
   code in triple backticks doesn't start a code block, so the links, tags and
