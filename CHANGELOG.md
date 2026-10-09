@@ -60,8 +60,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Basalt follows the vault's "Show line number", "Confirm file deletion" and
   "Readable line length" settings (the last until it's switched in Basalt).
 - A vault whose "Default file to open" is "Daily note" opens today's daily
-  note with the vault, made from its template if it's missing, as Obsidian
-  does.
+  note with the vault, once a session, made from its template if it's
+  missing, as Obsidian does. A template with Templater tags is only used
+  where Templater Lite is on to fill them; otherwise a notice says why the
+  note wasn't made. A missing template or a date format Basalt can't write
+  is noticed too.
 - Images, PDFs, audio, video, canvases and bases can be renamed (right-click,
   Rename…) or dragged onto a folder. Every link, embed and canvas card that
   shows the file follows it, including a rename that only changes case.
@@ -422,15 +425,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   change a folded section's hidden text either, and a triple-click on a folded
   heading no longer counts as selecting what it hides.
 - Link all also leaves callout types, footnote references, link reference
-  definitions (in quotes and list items too), reference links (`![][label]`,
-  and `[label]` when the note defines it), email addresses and autolinks
-  (`<key:value>`) alone, never writes into a linked image, a URL holding an
-  `@`, a link's address (one in angle brackets, or with brackets nested in the
-  link's text or parentheses in the address), a link whose text, address or
-  title runs onto the next line, a reference split over two lines or a
-  definition's title on the line after it, and no longer skips prose that
-  holds a `<` (`null<Date`), or text after a `$$` written in code or a
-  comment.
+  definitions (in quotes and list items too), reference links (`![][label]`, and
+  `[label]` when the note defines it), email addresses and autolinks
+  (`<key:value>`) alone, never writes into a linked image, a URL holding an `@`,
+  a link's address (one in angle brackets, or with brackets nested in the link's
+  text or parentheses in the address), a link whose text, address or title runs
+  onto the next line, a reference split over two lines or a definition's address
+  or title on the line after it, and no longer skips prose that holds a `<`
+  (`null<Date`), or text after a `$$` written in code or a comment.
 - Code fenced inside a quote or callout is code: Link all and renames leave
   its text alone, and its links aren't counted. A line that opens with inline
   code in triple backticks doesn't start a code block, so the links, tags and
