@@ -369,20 +369,20 @@ fn dispatch(root: &Path, cmd: &str, a: &Value) -> Result<Value, String> {
         "rename_attachment" => basalt_core::rename_attachment(root, s("path")?, s("newName")?).map(|x| json!(x)),
         "delete_folder" => basalt_core::delete_folder(root, s("rel")?).map(|_| Value::Null),
         "remove_empty_folder" => basalt_core::remove_empty_folder(root, s("rel")?).map(|_| Value::Null),
-        "list_foreign_files" => basalt_core::list_foreign_files(root, s("rel")?).and_then(|v| to_val(v)),
-        "list_subfolders" => basalt_core::list_subfolders(root, s("rel")?).and_then(|v| to_val(v)),
+        "list_foreign_files" => basalt_core::list_foreign_files(root, s("rel")?).and_then(to_val),
+        "list_subfolders" => basalt_core::list_subfolders(root, s("rel")?).and_then(to_val),
         "create_folder" => basalt_core::create_folder(root, s("rel")?).map(|_| Value::Null),
         "rename_folder" => basalt_core::rename_folder(root, s("fromRel")?, s("toRel")?).map(|x| json!(x)),
         "write_attachment" => {
-            basalt_core::write_attachment(root, s("name")?, s("dataB64")?, s("sourceRel")?).and_then(|v| to_val(v))
+            basalt_core::write_attachment(root, s("name")?, s("dataB64")?, s("sourceRel")?).and_then(to_val)
         }
-        "read_obsidian_config" => basalt_core::read_obsidian_config(root).and_then(|v| to_val(v)),
-        "read_obsidian_import" => basalt_core::read_obsidian_import(root).and_then(|v| to_val(v)),
-        "read_obsidian_bookmarks" => basalt_core::read_obsidian_bookmarks(root).and_then(|v| to_val(v)),
+        "read_obsidian_config" => basalt_core::read_obsidian_config(root).and_then(to_val),
+        "read_obsidian_import" => basalt_core::read_obsidian_import(root).and_then(to_val),
+        "read_obsidian_bookmarks" => basalt_core::read_obsidian_bookmarks(root).and_then(to_val),
         "toggle_file_bookmark" => basalt_core::toggle_file_bookmark(root, s("path")?).map(|b| json!(b)),
         "read_image" => basalt_core::read_image(root, s("target")?, s("sourceRel")?).map(|x| json!(x)),
-        "list_css_snippets" => basalt_core::list_css_snippets(root).and_then(|v| to_val(v)),
-        "list_plugins" => basalt_core::list_plugins(root).and_then(|v| to_val(v)),
+        "list_css_snippets" => basalt_core::list_css_snippets(root).and_then(to_val),
+        "list_plugins" => basalt_core::list_plugins(root).and_then(to_val),
         "write_plugin_data" => basalt_core::write_plugin_data(root, s("id")?, s("data")?).map(|_| Value::Null),
         // The watcher already runs from boot, so this is a no-op success.
         "start_watching" => Ok(Value::Null),

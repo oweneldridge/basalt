@@ -66,11 +66,8 @@ jobs:
         with:
           components: clippy
       - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
+      # The whole workspace: the core and the web server as well as the app.
       - name: Clippy (deny warnings)
-        working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Cargo test
-        working-directory: src-tauri
-        run: cargo test
+        run: cargo test --workspace
