@@ -61,10 +61,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   "Readable line length" settings (the last until it's switched in Basalt).
 - A vault whose "Default file to open" is "Daily note" opens today's daily
   note with the vault, once a session, made from its template if it's
-  missing, as Obsidian does. A template with Templater tags is only used
-  where Templater Lite is on to fill them; otherwise a notice says why the
-  note wasn't made. A missing template or a date format Basalt can't write
-  is noticed too.
+  missing, as Obsidian does. A template with Templater tags waits for the
+  plugins to load and is only used where Templater Lite will fill it;
+  otherwise a notice says why (Templater Lite off, the vault's "Trigger
+  Templater on new file creation" off, or an old copy of Templater Lite), once
+  a session, and a reload tries again. It never takes you off a note you
+  opened while it waited. A missing template or a date format Basalt can't
+  write is noticed too.
 - Images, PDFs, audio, video, canvases and bases can be renamed (right-click,
   Rename…) or dragged onto a folder. Every link, embed and canvas card that
   shows the file follows it, including a rename that only changes case.
@@ -451,6 +454,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   list item (a list that starts past 1 can't break into a paragraph).
 - A misspelled Dataview query type (`TABLEX`) is reported instead of running as
   a table of every note.
+- Link all also leaves raw HTML alone (an HTML block, or a tag over several
+  lines), and code as Reading view shows it: a code span that runs over lines
+  or opens before a link, and an indented code block in a quote, in a list
+  item or after a tab. It leaves a tag right after a quote's marks or starting
+  a table cell, a definition inside nested lists and quotes or with its label
+  over two lines, and a mention its link would break: one right after `[`
+  (`[[[Foo]]]` links to "[Foo"), one after a `[[` that nothing on its line
+  closes, and one whose brackets would undo or start bold, italics or a
+  highlight around it. Backlinks lists only the mentions Link all can link,
+  drops them once a Link or Link all has run, and reads a vault quicker.
+- `[[[Note]]]` links to "[Note", as Obsidian reads it, in the index, Live
+  Preview and renames as well as Reading view, and an escaped `\[[` is no
+  link anywhere. A tag right after a quote's marks (`>#tag`) counts in the
+  Tags pane and search, as it shows in Reading view.
+- Reading view leaves a quote's marks and a list's indent out of inline code
+  that runs over lines, reads a tag written over a quote's lines as a tag, and
+  keeps the line breaks in text that only looks like a tag.
 
 ### Security
 

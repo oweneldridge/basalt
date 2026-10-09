@@ -69,6 +69,12 @@ wasn't run; where its behaviour was unclear, its own bundled code (1.14.4
 - Backlink and mention counts are per match; `resolvedLinks` and
   `unresolvedLinks` count every link, attachments included.
 - "Default file to open: Daily note" opens today's daily note with the vault.
+  From a Templater template it waits for the plugins and is made only where
+  Templater Lite will fill it; Obsidian makes it either way, with the tags
+  unfilled if Templater isn't set to run.
+- `[[[Note]]]` links to "[Note", as in Obsidian, in the index, Live Preview,
+  renames and Reading view alike, and a tag right after a quote's marks
+  (`>#tag`) counts.
 - Numbered lists renumber after every edit, as in Obsidian, but by the list
   as it renders. Obsidian renumbers any line that starts with a number, so a
   keystroke can change numbered lines in code, math, comments, frontmatter and
@@ -84,12 +90,25 @@ wasn't run; where its behaviour was unclear, its own bundled code (1.14.4
   item.
 - Links in canvas text cards follow renames.
 
-Still different: a table whose header and delimiter rows have different cell
-counts isn't read as a table (Obsidian draws one), and Basalt's link colours
-fade less than Obsidian's for unresolved links, to keep their contrast. A
-large pasted `data:` image is left out, where Obsidian saves it as an
-attachment. Bases show 300 rows with a button for the rest; Obsidian scrolls
-through all of them.
+Still different: Backlinks leaves out a mention Link all can't link without
+breaking it or changing the page, where Obsidian lists it and its Link does
+both: one in raw HTML, right after `[` (Obsidian writes `[[[Foo]]]`, a link to
+"[Foo"), after a `[[` nothing on its line closes, or whose brackets would undo
+or start bold, italics or a highlight around it. A `[[` inside a link's target
+(`[[a [[b]]`) links to "a [[b" in Reading view but to "b" in the index and
+Live Preview; which one Obsidian reads hasn't been checked. Where the editor's
+parser and CommonMark disagree on a `#` and a tab or a backtick after an
+escaped one, Link all leaves alone what either reads as code. Two rare gaps
+are left: under an empty list item or quote line, the editor's parser keeps
+unindented lines in one paragraph where CommonMark doesn't, and Link all reads
+them the CommonMark way; and after a link whose address holds a backtick
+(`[](a`b)`), Link all can still write into a code span that follows. A table
+whose header and delimiter rows have different cell counts isn't read as a
+table (Obsidian draws one), and Basalt's link colours fade less than
+Obsidian's for unresolved links, to keep their contrast. A large pasted
+`data:` image is left out, where Obsidian saves it as an attachment. Bases
+show 300 rows with a button for the rest; Obsidian scrolls through all of
+them.
 
 ## Fixed since this audit (2026-07-07)
 
