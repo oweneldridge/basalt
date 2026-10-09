@@ -3045,7 +3045,7 @@ export default function App() {
     if (tplSetting) {
       const tplKey = normRelKey(tplSetting);
       const tpl = notesRef.current.find((n) => normRelKey(n.rel) === tplKey);
-      // Read fresh from disk — the index blanks oversized notes' content.
+      // Read fresh from disk: the index blanks oversized notes' content.
       const read = tpl ? await readNote(tpl.path).catch(() => null) : null;
       if (read === null) said.push(`Daily note template "${tplSetting}" ${tpl ? "couldn't be read" : "wasn't found"}, so the note starts empty`);
       else tplContent = read;
@@ -3741,7 +3741,7 @@ export default function App() {
       }
       await unloadAll();
       for (const info of run) {
-        if (vaultRef.current !== v) break; // vault switched mid-load — stop
+        if (vaultRef.current !== v) break; // the vault switched mid-load: stop
         try {
           await loadPlugin(info);
         } catch (e) {
