@@ -6,6 +6,7 @@
 // transient read error, recovers), the cache is size-bounded, and it's cleared
 // on vault switch.
 import { invoke } from "./platform";
+import { isRemoteUrl, remoteImagesAllowed } from "./remoteImages";
 
 interface Entry {
   url: string | null;
@@ -24,7 +25,8 @@ export async function resolveImage(
   target: string,
   sourceRel: string,
 ): Promise<string | null> {
-  if (/^(https?:|data:)/i.test(target)) return target;
+  if (isRemoteUrl(target)) return remoteImagesAllowed() ? target : null;
+  if (/^data:/i.test(target)) return target;
   const key = `${sourceRel} ${target}`;
   const hit = cache.get(key);
   if (hit) {

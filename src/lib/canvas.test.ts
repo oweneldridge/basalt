@@ -201,6 +201,12 @@ describe("canvasBounds / canvasColor", () => {
 });
 
 describe("rewriteCanvasFileRefs", () => {
+  it("fixes links in text cards too, when given a fixer", () => {
+    const canvas = JSON.stringify({ nodes: [{ id: "t", type: "text", text: "see [[Old]]", x: 0, y: 0, width: 1, height: 1 }], edges: [] });
+    const fix = (t: string) => (t.includes("[[Old]]") ? t.replace("[[Old]]", "[[New]]") : null);
+    expect(JSON.parse(rewriteCanvasFileRefs(canvas, new Map([["Old.md", "New.md"]]), fix)!).nodes[0].text).toBe("see [[New]]");
+    expect(rewriteCanvasFileRefs(canvas, new Map([["Old.md", "New.md"]]))).toBeNull();
+  });
   const canvas = JSON.stringify({
     nodes: [
       { id: "a", type: "file", file: "Notes/Old.md", x: 0, y: 0, width: 200, height: 100 },
@@ -246,5 +252,14 @@ describe("rewriteCanvasFileRefs — minimal, non-destructive", () => {
     expect(o.nodes[0].height).toBe(100.1);
     expect(o.nodes[0].styleAttributes).toEqual({ z: 1 }); // unmodeled field kept
     expect(o.metadata).toEqual({ custom: true }); // top-level unmodeled key kept
+  });
+});
+
+describe("empty text cards", () => {
+  it("keep their required text key, so they reload as cards", () => {
+    const data = parseCanvas(JSON.stringify({ nodes: [{ id: "a", type: "text", text: "", x: 0, y: 0, width: 100, height: 50 }], edges: [] }))!;
+    const out = serializeCanvas(data);
+    expect(JSON.parse(out).nodes[0]).toHaveProperty("text", "");
+    expect(parseCanvas(out)!.nodes.map((n) => n.id)).toEqual(["a"]);
   });
 });

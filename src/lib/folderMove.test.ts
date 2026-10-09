@@ -79,6 +79,20 @@ describe("folder-move link rewrite (shortest format)", () => {
     expect(idx.resolve("proj/b", "/v/top.md")).toBe("/v/archive/proj/b.md");
   });
 
+  it("rewrites a folder-qualified link whose folder name was renamed, even if a string suffix still matches", () => {
+    // `newproj/b.md` ends with `proj/b.md`, so Obsidian's resolver still finds
+    // it, but the link names a folder that no longer exists.
+    const notes = [note("top.md", "see [[proj/b]]"), note("proj/b.md")];
+    expect(moveAndRewrite(notes, "proj", "newproj", "top.md")).toBe("see [[b]]");
+  });
+
+  it("leaves a link to a note that didn't move alone, even one resolved by a string suffix", () => {
+    // `her/X` reaches Other/X.md through Obsidian's plain suffix match; moving an
+    // unrelated folder must not touch it.
+    const notes = [note("Work/Y.md", "see [[her/X]]"), note("Other/X.md"), note("Moving/Z.md")];
+    expect(moveAndRewrite(notes, "Moving", "Moved", "Work/Y.md")).toBe("see [[her/X]]");
+  });
+
   it("rewrites a ROOT-ANCHORED link that breaks (exact rel, not suffix)", () => {
     const notes = [note("top.md", "see [[/proj/b]]"), note("proj/b.md")];
     const out = moveAndRewrite(notes, "proj", "archive/proj", "top.md");
@@ -154,8 +168,10 @@ function moveWithAtts(
     noteAt: () => undefined,
     nameTaken: () => false,
     format: "shortest",
-    resolveAttPre: (raw) => resolveAttachment(preAtts, raw)?.path ?? null,
-    resolveAttPost: (raw) => resolveAttachment(postAtts, raw)?.path ?? null,
+    resolveAttPre: (raw, f, lit) =>
+      resolveAttachment(preAtts, raw, preNotes.find((n) => n.path === f)?.rel ?? null, lit)?.path ?? null,
+    resolveAttPost: (raw, f, lit) =>
+      resolveAttachment(postAtts, raw, postNotes.find((n) => n.path === f)?.rel ?? null, lit)?.path ?? null,
     movedAttNewPathByOld,
     attAt: (p) => postAttByPath.get(p),
     attNameTaken: (name, except) =>
@@ -191,5 +207,35 @@ describe("folder-move attachment link rewrite", () => {
       "top.md",
     );
     expect(out).toBe("![[proj/pic.png]]");
+  });
+
+  const pic = [{ rel: "proj/pic.png" }];
+  it("rewrites a markdown link to an attachment with # in its name", () => {
+    const hashed = [{ rel: "proj/a#b.png" }];
+    expect(moveWithAtts([note("top.md", "![](proj/a%23b.png)")], hashed, "proj", "newproj", "top.md")).toBe("![](a%23b.png)");
+    expect(moveWithAtts([note("top.md", "[x](proj/a%23b.png#page=2)")], hashed, "proj", "newproj", "top.md")).toBe("[x](a%23b.png#page=2)");
+    // A note named like the part before the # is not the link's target.
+    const withNote = [note("top.md", "![](proj/a%23b.png)"), note("proj/a.md")];
+    expect(moveWithAtts(withNote, hashed, "proj", "newproj", "top.md")).toBe("![](a%23b.png)");
+  });
+
+  it("rewrites a markdown image link on a folder rename", () => {
+    const out = moveWithAtts([note("top.md", "![](proj/pic.png)")], pic, "proj", "newproj", "top.md");
+    expect(out).toBe("![](pic.png)");
+  });
+
+  it("keeps the encoding, link text and a PDF fragment", () => {
+    const atts = [{ rel: "proj/my pic.png" }, { rel: "proj/paper.pdf" }];
+    const src = "![a photo](proj/my%20pic.png) and [p3](proj/paper.pdf#page=3)";
+    const out = moveWithAtts([note("top.md", src)], atts, "proj", "newproj", "top.md");
+    expect(out).toBe("![a photo](my%20pic.png) and [p3](paper.pdf#page=3)");
+  });
+
+  it("leaves markdown links that still resolve, URLs and extensionless hrefs alone", () => {
+    const src = "![](pic.png) ![](https://x.test/proj/pic.png) [r](proj/readme)";
+    expect(moveWithAtts([note("top.md", src)], pic, "proj", "newproj", "top.md")).toBe(src);
+    expect(moveWithAtts([note("top.md", "![](proj/pic.png)")], pic, "proj", "archive/proj", "top.md")).toBe(
+      "![](proj/pic.png)",
+    );
   });
 });

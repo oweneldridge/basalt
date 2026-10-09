@@ -8,9 +8,11 @@ import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { isInExcludedRegion } from "./regions";
 import { renderEmbedSource, getTranscludeHost } from "../lib/transclude";
-import { mediaKind, buildMediaElement, type MediaKind } from "../lib/media";
-import { targetPathPart } from "../lib/markdown";
+import { mediaKind, mediaPath, buildMediaElement, type MediaKind } from "../lib/media";
+import { internalLinkTarget, targetPathPart } from "../lib/markdown";
+import { clickedLink } from "../lib/anchors";
 import { notePathFacet } from "./query";
+import { blockEdges } from "./blockEdges";
 
 const EMBED_RE = /!\[\[([^\]\[\n|]+?)(?:\|([^\]\[\n]+))?\]\]/g;
 const IMAGE_EXT = /\.(png|jpe?g|gif|svg|webp|bmp|avif|ico)$/i;
@@ -31,9 +33,9 @@ class MediaWidget extends WidgetType {
     wrap.className = "cm-embed cm-media";
     const host = getTranscludeHost();
     if (!host) return wrap;
-    void host.resolveImage(this.rawTarget, this.notePath).then((url) => {
+    void host.resolveImage(mediaPath(this.rawTarget), this.notePath).then((url) => {
       if (!wrap.isConnected) return;
-      if (url) wrap.append(buildMediaElement(this.kind, url));
+      if (url) wrap.append(buildMediaElement(this.kind, url, this.rawTarget));
       else {
         wrap.textContent = `🎬 ${this.rawTarget} (not found)`;
         wrap.classList.add("md-media-missing");
@@ -103,12 +105,31 @@ const transcludeField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-// Click the embed (but not its title link / a nested link) to place the caret
-// inside for editing.
-const transcludeClick = EditorView.domEventHandlers({
+interface LinkOpeners {
+  onOpenInternal: (target: string) => void;
+  onOpenUrl: (url: string) => void;
+}
+
+// A link inside an embed opens as it would in the embedded note (Obsidian
+// does the same); a click anywhere else on the embed (but not its title)
+// places the caret inside for editing.
+const transcludeClick = (open: LinkOpeners) => EditorView.domEventHandlers({
   mousedown: (event, view) => {
     const t = event.target as HTMLElement | null;
-    if (!t || t.closest(".embed-title, a, button, input")) return false;
+    if (!t) return false;
+    const link = event.button === 0 && t.closest(".cm-embed") ? t.closest<HTMLElement>("a, area") : null;
+    if (link) {
+      event.preventDefault();
+      if (link.classList.contains("md-wikilink")) open.onOpenInternal(link.dataset.target ?? "");
+      else {
+        const href = link.dataset.href ?? clickedLink(link)?.href ?? "";
+        const internal = internalLinkTarget(href);
+        if (internal !== null) open.onOpenInternal(internal);
+        else if (href) open.onOpenUrl(href);
+      }
+      return true;
+    }
+    if (t.closest(".embed-title, a, button, input")) return false;
     const el = t.closest(".cm-embed") as HTMLElement | null;
     if (!el) return false;
     const pos = view.posAtDOM(el);
@@ -119,4 +140,16 @@ const transcludeClick = EditorView.domEventHandlers({
   },
 });
 
-export const transcludeBlocks: Extension = [transcludeField, transcludeClick];
+// The click that follows a link's mousedown must not navigate the window.
+const keepWindow = EditorView.domEventHandlers({
+  click: (event) => {
+    const t = event.target as HTMLElement | null;
+    if (!t?.closest(".cm-embed") || !clickedLink(t)) return false;
+    event.preventDefault();
+    return true;
+  },
+});
+
+export function transcludeBlocks(open: LinkOpeners): Extension {
+  return [transcludeField, transcludeClick(open), keepWindow, blockEdges(transcludeField)];
+}

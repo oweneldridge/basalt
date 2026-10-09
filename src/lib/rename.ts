@@ -3,11 +3,15 @@
 // filesystem rename, then read-modify-write each affected source FROM DISK.
 import {
   encodeMdPath,
-  internalMdHref,
+  internalFileHref,
   mdLinkRegexGlobal,
   proseMask,
   targetPathPart,
   wikilinkRegex,
+  yamlEscape,
+  yamlLinkAt,
+  yamlValueLines,
+  yamlUnescape,
 } from "./markdown";
 
 const INLINE_CODE_RE = /`[^`\n]*`/g;
@@ -19,11 +23,17 @@ const INLINE_CODE_RE = /`[^`\n]*`/g;
 const MD_PARTS =
   /^(!?\[(?:[^\][\n]|\[[^\][\n]*\])*\]\(\s*)(<[^>]+>|(?:[^()\s]|\([^()\s]*\))+)((?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\))$/;
 
+/** Maps a link target to its new path part, or null to leave it. `literal`
+ * means `raw` is a whole file path whose `#` is part of the name (a markdown
+ * link to `a%23b.png`), not a heading. */
+export type LinkMapper = (raw: string, literal?: boolean) => string | null;
+
 /** Rewrite internal markdown-style links on a single (code-masked) line. */
 function rewriteMdLine(
   original: string,
   masked: string,
-  mapTarget: (rawTarget: string) => string | null,
+  mapTarget: LinkMapper,
+  yaml = false,
 ): string | null {
   const re = mdLinkRegexGlobal();
   let m: RegExpExecArray | null;
@@ -33,19 +43,28 @@ function rewriteMdLine(
   while ((m = re.exec(masked))) {
     const parts = MD_PARTS.exec(m[0]);
     if (!parts) continue;
-    let urlToken = parts[2];
+    const ctx = yaml ? yamlLinkAt(original, m.index, m[0].length) : null;
+    if (ctx && !ctx.ok) continue;
+    let urlToken = yamlUnescape(parts[2], ctx?.quote ?? null);
     const angled = urlToken.startsWith("<") && urlToken.endsWith(">");
     const href = angled ? urlToken.slice(1, -1) : urlToken;
-    const internal = internalMdHref(href);
+    const internal = internalFileHref(href);
     if (!internal) continue;
-    const newPathPart = mapTarget(internal.path + internal.fragment);
+    // A file name with # can only be a markdown link's (as %23); no note can
+    // be linked by such a name.
+    const literal = internal.path.includes("#");
+    if (literal && /\.md$/i.test(internal.path)) continue;
+    const newPathPart = literal ? mapTarget(internal.path, true) : mapTarget(internal.path + internal.fragment);
     if (newPathPart === null) continue;
+    // Note targets come back without `.md`; attachment targets keep their extension.
+    const newPath = /\.md$/i.test(internal.path) ? `${newPathPart}.md` : newPathPart;
     // A raw fragment with whitespace/parens is only valid inside <…>; keep the
     // angle form there (raw path, the way angled hrefs are authored).
     urlToken =
       angled && /[\s()]/.test(internal.fragment)
-        ? `<${newPathPart}.md${internal.fragment}>`
-        : encodeMdPath(`${newPathPart}.md`) + internal.fragment;
+        ? `<${newPath}${internal.fragment}>`
+        : encodeMdPath(newPath) + internal.fragment;
+    urlToken = yamlEscape(urlToken, ctx?.quote ?? null);
     // `parts` matched the code-MASKED copy: splice the prefix (link text) and
     // tail (title + close) from `original` BY OFFSET — the mask is
     // length-preserving — so inline code inside them survives on disk.
@@ -64,35 +83,43 @@ function rewriteMdLine(
 /**
  * Rewrite every wikilink/embed in `content` whose target `mapTarget` maps to a
  * new path part. The `#heading`/`^block` suffix and `|alias` are preserved.
- * Skipped — exactly matching how links are EXTRACTED, so a rewrite can never
- * touch text the backlinks pane didn't show: fenced code blocks, frontmatter,
+ * Skipped, exactly matching how links are EXTRACTED so a rewrite can never
+ * touch text the backlinks pane didn't show: fenced code blocks, YAML comments
  * and inline code spans (matches are found against a code-masked copy of the
- * line and spliced back into the original). Returns null when nothing changed.
+ * line and spliced back into the original). Frontmatter property values are
+ * rewritten with their YAML quoting kept valid. Returns null when unchanged.
  */
-export function rewriteLinks(
-  content: string,
-  mapTarget: (rawTarget: string) => string | null,
-): string | null {
+export function rewriteLinks(content: string, mapTarget: LinkMapper): string | null {
   const lines = content.split("\n");
   const prose = proseMask(lines);
+  const yamlLines = yamlValueLines(lines);
   let changed = false;
   for (let i = 0; i < lines.length; i++) {
-    if (!prose[i]) continue;
+    // Property values hold links too (Obsidian rewrites them on rename).
+    const yaml = yamlLines[i];
+    if (!prose[i] && !yaml) continue;
     const original = lines[i];
     // Mask inline code with same-length blanks; offsets stay identical, so
     // matches found in the masked copy splice cleanly into the original.
-    const masked = original.replace(INLINE_CODE_RE, (m) => " ".repeat(m.length));
+    const masked = yaml ? original : original.replace(INLINE_CODE_RE, (m) => " ".repeat(m.length));
     const re = wikilinkRegex();
     let m: RegExpExecArray | null;
     let out = "";
     let last = 0;
     while ((m = re.exec(masked))) {
-      const raw = m[1].trim();
+      const ctx = yaml ? yamlLinkAt(original, m.index, m[0].length) : null;
+      if (ctx && !ctx.ok) continue;
+      const quote = ctx?.quote ?? null;
       const alias = m[2];
+      // `[[Note\|alias]]` in a table: the backslash escapes the pipe, it isn't
+      // part of the name. It stays in the suffix sliced from the original below.
+      let raw = m[1].trim();
+      if (alias !== undefined && raw.endsWith("\\")) raw = raw.slice(0, -1).trimEnd();
       const pathPart = targetPathPart(raw);
       if (!pathPart) continue; // [[#heading]] self-ref
-      const newPathPart = mapTarget(raw);
-      if (newPathPart === null) continue;
+      const mapped = mapTarget(yamlUnescape(raw, quote));
+      if (mapped === null) continue;
+      const newPathPart = yamlEscape(mapped, quote);
       // m matched the code-MASKED copy; the suffix (#heading / ^block) and
       // alias are re-emitted, so slice them from `original` BY OFFSET (the
       // mask is length-preserving) — else inline code in them would be
@@ -119,14 +146,16 @@ export function rewriteLinks(
     if (last > 0) lines[i] = out + original.slice(last);
     // Second pass: markdown-style internal links on the (possibly updated) line.
     const current = lines[i];
-    const maskedNow = current.replace(INLINE_CODE_RE, (mm) => " ".repeat(mm.length));
-    const mdRewritten = rewriteMdLine(current, maskedNow, mapTarget);
+    const maskedNow = yaml ? current : current.replace(INLINE_CODE_RE, (mm) => " ".repeat(mm.length));
+    const mdRewritten = rewriteMdLine(current, maskedNow, mapTarget, yaml);
     if (mdRewritten !== null) {
       lines[i] = mdRewritten;
       changed = true;
     }
   }
-  return changed ? lines.join("\n") : null;
+  // A link written back as it was isn't a change: the note stays untouched.
+  const out = lines.join("\n");
+  return changed && out !== content ? out : null;
 }
 
 /**
@@ -189,8 +218,8 @@ export interface FolderMoveCtx {
   nameTaken: (name: string, exceptPath: string) => boolean;
   format: LinkFormat;
   // --- attachments (optional) ---
-  resolveAttPre?: (raw: string) => string | null;
-  resolveAttPost?: (raw: string) => string | null;
+  resolveAttPre?: (raw: string, fromPath: string, literal?: boolean) => string | null;
+  resolveAttPost?: (raw: string, fromPath: string, literal?: boolean) => string | null;
   movedAttNewPathByOld?: Map<string, string>;
   attAt?: (path: string) => { rel: string; name: string } | undefined;
   attNameTaken?: (name: string, exceptPath: string) => boolean;
@@ -202,17 +231,30 @@ export interface FolderMoveCtx {
  * resolves to its intended note, e.g. an intra-folder relative link or a bare
  * shortest link, is left untouched). `sourceOldPath`/`sourcePostPath` are the
  * source note's pre/post paths; `sourcePostRel` seeds the relative format. */
+/** A folder-qualified link names its target's real folders, not just a string
+ * suffix of them: Obsidian's resolver lets `proj/x` reach `newproj/x`, but a
+ * folder rename should still rewrite that link (Obsidian's updater does). */
+function namesFolders(raw: string, destRel: string, ext: string, literal = false): boolean {
+  const p = (literal ? raw.trim() : targetPathPart(raw)).replace(/\\/g, "/").normalize("NFC").toLowerCase();
+  if (!p.includes("/") || p.startsWith(".") || p.startsWith("/")) return true;
+  const want = p.endsWith(ext) ? p : p + ext;
+  const rel = destRel.normalize("NFC").toLowerCase();
+  return rel === want || rel.endsWith(`/${want}`);
+}
+
 export function folderMoveMapper(
   ctx: FolderMoveCtx,
   sourceOldPath: string,
   sourcePostPath: string,
   sourcePostRel: string,
-): (raw: string) => string | null {
-  return (raw: string): string | null => {
-    const destOld = ctx.resolvePre(raw, sourceOldPath);
+): LinkMapper {
+  return (raw, literal = false) => {
+    const destOld = literal ? null : ctx.resolvePre(raw, sourceOldPath);
     if (destOld) {
       const destPost = ctx.movedNewPathByOld.get(destOld) ?? destOld;
-      if (ctx.resolvePost(raw, sourcePostPath) === destPost) return null; // still resolves
+      const destRel = ctx.noteAt(destPost)?.rel ?? "";
+      const moved = ctx.movedNewPathByOld.has(destOld);
+      if (ctx.resolvePost(raw, sourcePostPath) === destPost && (!moved || namesFolders(raw, destRel, ".md"))) return null; // still resolves
       const dest = ctx.noteAt(destPost);
       if (!dest) return null;
       return linkTargetForFormat(
@@ -224,10 +266,16 @@ export function folderMoveMapper(
     }
     // Not a note target — maybe an attachment (image/PDF/audio/video) that moved.
     if (ctx.resolveAttPre && ctx.resolveAttPost && ctx.movedAttNewPathByOld && ctx.attAt && ctx.attNameTaken) {
-      const attOld = ctx.resolveAttPre(raw);
+      const attOld = ctx.resolveAttPre(raw, sourceOldPath, literal);
       if (!attOld) return null;
       const attPost = ctx.movedAttNewPathByOld.get(attOld) ?? attOld;
-      if (ctx.resolveAttPost(raw) === attPost) return null; // still resolves
+      const attRel = ctx.attAt(attPost)?.rel ?? "";
+      const attMoved = ctx.movedAttNewPathByOld.has(attOld);
+      if (
+        ctx.resolveAttPost(raw, sourcePostPath, literal) === attPost &&
+        (!attMoved || namesFolders(raw, attRel, "", literal))
+      )
+        return null; // still resolves
       const att = ctx.attAt(attPost);
       if (!att) return null;
       // Attachments keep their extension — pass the full rel as the "toRel".

@@ -11,6 +11,7 @@ import {
   fromFlat,
   rawFilterIsFlat,
   validateExpr,
+  listOptions,
   type BaseDef,
   type BaseViewDef,
   type BaseRow,
@@ -39,6 +40,8 @@ interface Props {
   structureVersion: number;
   tagsOf: (path: string) => string[];
   linkKeysOf: (path: string) => string[];
+  backlinksOf?: (path: string) => string[];
+  embedsOf?: (path: string) => string[];
   /** Open a vault file from a cell link (no-create, like the canvas). Receives
    * an exact vault-relative path. */
   onOpenFile: (rel: string) => void;
@@ -47,6 +50,11 @@ interface Props {
   /** When provided, the base is EDITABLE: view/column/sort/filter edits are
    * serialized to YAML and passed here (autosaved by the parent). */
   onChange?: (yaml: string) => void;
+  /** View to show first, by name (`![[x.base#View]]`). */
+  initialView?: string;
+  /** Vault path of the file `this` refers to (the embedding note); defaults to
+   * the base file itself, as when it's opened directly. */
+  thisRel?: string;
 }
 
 /** Async cell image: resolves a vault target to a data URL like embeds do. */
@@ -101,7 +109,7 @@ function Cell({
   );
 }
 
-/** Read-only Obsidian Bases viewer: tabs per view, table (or cards) over the
+/** Read-only Obsidian Bases viewer: tabs per view, table, cards or list over the
  * vault's files. Everything is computed from props — no writes anywhere.
  * Memoized so unrelated App re-renders (autosave ticks, theme, focus) don't
  * re-run the whole view; parent passes stable callbacks. */
@@ -113,12 +121,19 @@ export const BaseView = memo(function BaseView({
   structureVersion,
   tagsOf,
   linkKeysOf,
+  backlinksOf,
+  embedsOf,
   onOpenFile,
   resolveImageRel,
   onChange,
+  initialView,
+  thisRel,
 }: Props) {
   const def = useMemo(() => parseBase(doc), [doc]);
-  const [viewIdx, setViewIdx] = useState(0);
+  const [viewIdx, setViewIdx] = useState(() => {
+    const i = initialView ? (def?.views.findIndex((v) => v.name.toLowerCase() === initialView.toLowerCase()) ?? -1) : -1;
+    return Math.max(0, i);
+  });
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
 
@@ -129,10 +144,10 @@ export const BaseView = memo(function BaseView({
   );
 
   const rows = useMemo(() => {
-    const out: BaseRow[] = notes.map((n) => noteRow(n, structureVersion, tagsOf, linkKeysOf));
+    const out: BaseRow[] = notes.map((n) => noteRow(n, structureVersion, tagsOf, linkKeysOf, { backlinksOf, embedsOf }));
     for (const a of attachments) out.push(attachmentRow(a, structureVersion));
     return out;
-  }, [notes, attachments, structureVersion, tagsOf, linkKeysOf]);
+  }, [notes, attachments, structureVersion, tagsOf, linkKeysOf, backlinksOf, embedsOf]);
 
   const lookupFile = useMemo(() => {
     const byKey = new Map<string, BaseRow>();
@@ -144,11 +159,14 @@ export const BaseView = memo(function BaseView({
     return (target: string) => byKey.get(target.replace(/\.md$/i, "").toLowerCase()) ?? byKey.get(target.toLowerCase()) ?? null;
   }, [rows]);
 
+  const thisPath = thisRel ?? sourceRel;
+  const thisRow = useMemo(() => rows.find((r) => r.path === thisPath) ?? null, [rows, thisPath]);
+
   const result: ViewResult | null = useMemo(() => {
     if (!def) return null;
     const idx = Math.min(viewIdx, def.views.length - 1);
-    return runView(def, def.views[idx], rows, { lookupFile });
-  }, [def, viewIdx, rows, lookupFile]);
+    return runView(def, def.views[idx], rows, { lookupFile, thisRow });
+  }, [def, viewIdx, rows, lookupFile, thisRow]);
 
   // Reset the expand toggle whenever the shown view or data changes.
   useEffect(() => setExpanded(false), [viewIdx, doc]);
@@ -257,6 +275,8 @@ export const BaseView = memo(function BaseView({
       )}
       {isCards ? (
         <Cards result={result} cap={cap} onOpenFile={onOpenFile} resolveImage={resolveImage} />
+      ) : result.view.type === "list" ? (
+        <List result={result} cap={cap} onOpenFile={onOpenFile} resolveImage={resolveImage} />
       ) : (
         <Table result={result} cap={cap} onOpenFile={onOpenFile} resolveImage={resolveImage} />
       )}
@@ -298,6 +318,15 @@ function BaseEditor({
   // entire vault. Re-sync when the underlying view changes (e.g. tab switch).
   const [nameDraft, setNameDraft] = useState(view.name);
   useEffect(() => setNameDraft(view.name), [view.name]);
+  const list = listOptions(view);
+  const [sepDraft, setSepDraft] = useState(list.separator);
+  useEffect(() => setSepDraft(list.separator), [list.separator]);
+  const patchRaw = (key: string, value: unknown) => {
+    const raw = { ...view.raw };
+    if (value === undefined) delete raw[key];
+    else raw[key] = value;
+    onPatchView({ raw });
+  };
   // Filter builder: a flat and/or list of string conditions (a deeper/`not`
   // tree — or one whose raw had an unmodeled element — stays read-only, so an
   // edit can't silently drop what parse couldn't represent). Local draft,
@@ -366,6 +395,7 @@ function BaseEditor({
           <select value={view.type} onChange={(e) => onPatchView({ type: e.target.value })}>
             <option value="table">Table</option>
             <option value="cards">Cards</option>
+            <option value="list">List</option>
           </select>
         </label>
         <label>
@@ -383,20 +413,52 @@ function BaseEditor({
         </label>
       </div>
 
+      {view.type === "list" && (
+        <div className="base-editor-row">
+          <label>
+            Markers
+            <select value={list.markers} onChange={(e) => patchRaw("markers", e.target.value)}>
+              <option value="bullet">Bullets</option>
+              <option value="number">Numbers</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+          <label>
+            <input type="checkbox" checked={list.indent} onChange={(e) => patchRaw("indentProperties", e.target.checked)} />
+            Indent properties
+          </label>
+          {!list.indent && (
+            <label>
+              Separator
+              <input
+                type="text"
+                value={sepDraft}
+                onChange={(e) => setSepDraft(e.target.value)}
+                onBlur={() => {
+                  if (sepDraft !== list.separator) patchRaw("separator", sepDraft || undefined);
+                  if (!sepDraft) setSepDraft(list.separator);
+                }}
+                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              />
+            </label>
+          )}
+        </div>
+      )}
+
       <div className="base-editor-section">
         <div className="base-editor-title">Columns</div>
         <ul className="base-col-list">
           {order.map((k, i) => (
             <li key={k}>
               <span className="base-col-key" title={k}>{def.display[k] ?? k}</span>
-              <button title="Move up" disabled={i === 0} onClick={() => moveCol(i, -1)}>↑</button>
-              <button title="Move down" disabled={i === order.length - 1} onClick={() => moveCol(i, 1)}>↓</button>
-              <button title="Remove column" onClick={() => onPatchView({ order: order.filter((c) => c !== k) })}>✕</button>
+              <button title="Move up" aria-label="Move up" disabled={i === 0} onClick={() => moveCol(i, -1)}>↑</button>
+              <button title="Move down" aria-label="Move down" disabled={i === order.length - 1} onClick={() => moveCol(i, 1)}>↓</button>
+              <button title="Remove column" aria-label="Remove column" onClick={() => onPatchView({ order: order.filter((c) => c !== k) })}>✕</button>
             </li>
           ))}
         </ul>
         {unused.length > 0 && (
-          <select className="base-add-col" value="" onChange={(e) => addCol(e.target.value)}>
+          <select className="base-add-col" aria-label="Add a column" value="" onChange={(e) => addCol(e.target.value)}>
             <option value="">+ Add column…</option>
             {unused.map((k) => (
               <option key={k} value={k}>{def.display[k] ?? k}</option>
@@ -413,6 +475,7 @@ function BaseEditor({
               <label className="base-filter-combinator">
                 Match
                 <select
+                  aria-label="Match all or any condition"
                   value={combinator}
                   onChange={(e) => {
                     const c = e.target.value as "and" | "or";
@@ -439,7 +502,7 @@ function BaseEditor({
                   {validateExpr(c) && <div className="expr-error">⚠ {validateExpr(c)}</div>}
                 </div>
                 <button
-                  title="Remove condition"
+                  title="Remove condition" aria-label="Remove condition"
                   onClick={() => {
                     const next = conds.filter((_, j) => j !== i);
                     setConds(next);
@@ -463,6 +526,7 @@ function BaseEditor({
         <div className="base-editor-title">Group by</div>
         <div className="base-editor-row">
           <select
+            aria-label="Group by"
             value={view.groupBy?.property ?? ""}
             onChange={(e) => {
               const property = e.target.value;
@@ -516,7 +580,7 @@ function BaseEditor({
                 {validateExpr(row.expr) && <div className="expr-error">⚠ {validateExpr(row.expr)}</div>}
               </div>
               <button
-                title="Remove formula"
+                title="Remove formula" aria-label="Remove formula"
                 onClick={() => {
                   const next = fRows.filter((_, j) => j !== i);
                   setFRows(next);
@@ -665,6 +729,79 @@ function Cards({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** Obsidian's list layout: one line per file showing the view's non-empty
+ * properties, joined by the separator or (indentProperties) nested under the
+ * first. A row with nothing to show is left out and not numbered. */
+function List({
+  result,
+  cap,
+  onOpenFile,
+  resolveImage,
+}: {
+  result: ViewResult;
+  cap: number;
+  onOpenFile: (t: string) => void;
+  resolveImage: (target: string) => Promise<string | null>;
+}) {
+  const { markers, indent, separator } = listOptions(result.view);
+  const item = (r: ViewResult["rows"][number], i: number) => {
+    const parts = r.cells.map(cellParts);
+    const shown = parts.filter((p) => p.length > 0);
+    if (shown.length === 0 || (indent && parts[0].length === 0)) return null;
+    const cell = (p: CellPart[], j: number) => (
+      <span key={j} className="base-list-prop">
+        <Cell parts={p} onOpenFile={onOpenFile} resolveImage={resolveImage} />
+      </span>
+    );
+    return (
+      <li key={`${r.row.path}:${i}`}>
+        {indent ? (
+          <>
+            {cell(shown[0], 0)}
+            {shown.length > 1 && <ul className="base-list-nested">{shown.slice(1).map((p, j) => <li key={j}>{cell(p, j)}</li>)}</ul>}
+          </>
+        ) : (
+          shown.map((p, j) => (
+            <span key={j}>
+              {j > 0 && <span className="base-list-sep">{separator}</span>}
+              {cell(p, j)}
+            </span>
+          ))
+        )}
+      </li>
+    );
+  };
+  const list = (rows: ViewResult["rows"], label?: string) => {
+    const items = rows.map(item);
+    const cls = `base-list base-list-${markers}`;
+    return markers === "number" ? (
+      <ol className={cls} aria-label={label}>{items}</ol>
+    ) : (
+      <ul className={cls} role={markers === "none" ? "list" : undefined} aria-label={label}>{items}</ul>
+    );
+  };
+
+  let budget = cap;
+  return (
+    <div className="base-scroll base-list-scroll">
+      {result.groups
+        ? result.groups.map((g) => {
+            if (budget <= 0) return null;
+            const slice = g.rows.slice(0, budget);
+            budget -= slice.length;
+            const label = g.label === "" ? "(none)" : g.label;
+            return (
+              <div key={g.label} className="base-list-group">
+                <div className="base-list-group-label">{label}</div>
+                {list(slice, label)}
+              </div>
+            );
+          })
+        : list(result.rows.slice(0, cap))}
     </div>
   );
 }

@@ -12,7 +12,7 @@ test("a view can be opened as a tab, renders, and survives reload", async ({ pag
   await expect(page.locator(".cm-editor")).toBeVisible();
 
   // Open the Outline as a movable view tab.
-  await page.keyboard.press("Meta+p");
+  await page.keyboard.press("ControlOrMeta+p");
   await page.locator(".palette-input").first().fill("Open outline in a new tab");
   await page.keyboard.press("Enter");
 
@@ -50,7 +50,7 @@ test("a fresh vault has a right dock of view leaves that tracks the active note"
   await page.locator(".pane.dock-right .tab.view-tab", { hasText: "Outline" }).click();
   await expect(page.locator(".pane.dock-right .leaf-view")).toContainText("Welcome");
   // Toggling the right sidebar removes the dock pane.
-  await page.keyboard.press("Meta+p");
+  await page.keyboard.press("ControlOrMeta+p");
   await page.locator(".palette-input").first().fill("Toggle right sidebar");
   await page.keyboard.press("Enter");
   await expect(page.locator(".pane.dock-right")).toHaveCount(0);
@@ -156,7 +156,7 @@ test("Open in new window keeps the note open here; Reset restores the default la
   // Reset to default layout: close the left dock, then reset → both docks back, note kept.
   await page.locator('[title^="Toggle sidebar"]').click();
   await expect(page.locator(".pane.dock-left")).toHaveCount(0);
-  await page.keyboard.press("Meta+p");
+  await page.keyboard.press("ControlOrMeta+p");
   await page.locator(".palette-input").first().fill("Reset to default layout");
   await page.keyboard.press("Enter");
   await expect(page.locator(".pane.dock-left")).toHaveCount(1);

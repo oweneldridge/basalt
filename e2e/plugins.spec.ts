@@ -13,7 +13,7 @@ test("a plugin can register a settings tab that renders in Settings", async ({ p
   await page.reload();
   await page.waitForSelector(".sidebar");
   // Open settings via the command palette (portable across OSes).
-  await page.keyboard.press("Meta+p");
+  await page.keyboard.press("ControlOrMeta+p");
   await page.locator(".palette-input").first().fill("Open settings");
   await page.keyboard.press("Enter");
   await expect(page.locator(".settings")).toBeVisible();
@@ -33,7 +33,7 @@ test("a plugin can register a settings tab that renders in Settings", async ({ p
   await page.locator(".ribbon-plugin-btn").click();
   expect(await page.evaluate(() => (window as unknown as { __demoRibbon: number }).__demoRibbon)).toBe(1);
   // metadataCache.getFileCache returns parsed tags/headings for a real note.
-  await page.keyboard.press("Meta+p");
+  await page.keyboard.press("ControlOrMeta+p");
   await page.locator(".palette-input").first().fill("Dump Ideas metadata");
   await page.keyboard.press("Enter");
   const meta = await page.evaluate(() => (window as unknown as { __ideasMeta: { tags: string[]; headings: { heading: string }[] } }).__ideasMeta);
@@ -43,7 +43,7 @@ test("a plugin can register a settings tab that renders in Settings", async ({ p
   await page.locator(".pane.dock .tab.view-tab", { hasText: "Demo View" }).click();
   await expect(page.locator(".pane.dock .plugin-view-mount")).toHaveText("demo-view-content");
   // vault.rename mutates the vault through the host.
-  await page.keyboard.press("Meta+p");
+  await page.keyboard.press("ControlOrMeta+p");
   await page.locator(".palette-input").first().fill("Vault rename Ideas");
   await page.keyboard.press("Enter");
   await expect(page.locator(".tree-row.file", { hasText: "IdeasViaPlugin" })).toHaveCount(1);

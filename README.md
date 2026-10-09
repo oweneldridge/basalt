@@ -22,7 +22,7 @@ Obsidian is excellent, free, and stores your data in open plain text. But it is 
 
 - ✅ Reads/writes your existing Obsidian vault losslessly (plain files, no import step).
 - ✅ Aims for **core parity**: Live Preview editing, wikilinks + backlinks, graph view, search, YAML properties, Canvas.
-- ✅ Ships its **own** clean, documented plugin API (TypeScript), and will reimplement the handful of must-have community workflows (Dataview-style queries, templating, tasks).
+- ✅ Ships its **own** clean, documented plugin API (TypeScript), and will reimplement the handful of must-have community workflows (Dataview-style queries, templating, tasks). Plugins run in development builds only for now; the plan for release builds is in [DESIGN-plugin-loading.md](./DESIGN-plugin-loading.md).
 - ❌ Does **not** run Obsidian's ~4,500 community plugins. They are TypeScript bound to Obsidian's *private, closed Electron runtime*; bug-for-bug compatibility is an unwinnable maintenance war and the antithesis of a small, sustainable codebase. See [ARCHITECTURE.md → The plugin question](./ARCHITECTURE.md#the-plugin-question).
 
 ## Stack
@@ -44,6 +44,13 @@ Builds are currently **unsigned**, so the OS may warn on first launch:
 - macOS: right-click the app → **Open** (once), or `xattr -dr com.apple.quarantine /Applications/Basalt.app`.
 - Windows: **More info → Run anyway** on the SmartScreen prompt.
 
+## Web version
+
+The same app also runs in a browser, served by `basalt-server` from a vault on
+your own machine or server. It uses the same engine as the desktop app, with
+HTTP Basic auth, and ships as a Docker image. It's meant for a private network
+such as a tailnet: see [basalt-server/DEPLOY.md](./basalt-server/DEPLOY.md).
+
 ## Develop
 
 Prerequisites: [Rust](https://rustup.rs), Node 20+, and your platform's [Tauri prerequisites](https://tauri.app/start/prerequisites/).
@@ -53,6 +60,8 @@ npm install
 npm run tauri dev      # launch the desktop app (first Rust build takes a few minutes)
 npm run typecheck      # tsc --noEmit
 npm test               # vitest unit tests
+npm run test:e2e       # end-to-end tests against a mock backend
+npm run test:e2e:real  # end-to-end tests against basalt-server and a temp vault
 npm run build          # typecheck + build the frontend
 npm run tauri build    # produce a distributable bundle in src-tauri/target/release/bundle/
 ```

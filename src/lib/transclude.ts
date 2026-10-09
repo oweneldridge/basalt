@@ -8,7 +8,8 @@
 // Both the Live Preview widget and the Reading view use the same renderer.
 
 import { renderMarkdown } from "./render";
-import { proseMask } from "./markdown";
+import { proseMask, targetPathPart } from "./markdown";
+import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "./remoteImages";
 
 /** Split a raw wikilink target into the note part and the subpath (after #). */
 export function splitSubpath(raw: string): { target: string; subpath: string } {
@@ -87,7 +88,12 @@ export function subpathToLine(content: string, subpath: string): number | null {
   }
   const want = norm(subpath);
   for (let i = 0; i < lines.length; i++) {
-    if (headingLevel(lines, mask, i) && norm(headingText(lines, i)) === want) return i + 1;
+    if (!headingLevel(lines, mask, i)) continue;
+    const text = headingText(lines, i);
+    // A heading id from a converted document (`## Appendix {#appendix}`) is
+    // what that document's own links name.
+    const id = /\{#([^}\s]+)\}\s*$/.exec(text)?.[1];
+    if (norm(text) === want || (id && norm(id) === want)) return i + 1;
   }
   return null;
 }
@@ -211,6 +217,9 @@ export interface TranscludeHost {
   onOpen: (rawTarget: string) => void;
   /** Resolve an image target relative to `rel` to a displayable URL. */
   resolveImage: (target: string, rel: string) => Promise<string | null>;
+  /** Whether a link from `sourceRel` names a file in the vault, a note or an
+   * attachment. */
+  exists?: (rawTarget: string, sourceRel: string) => boolean;
 }
 
 let host: TranscludeHost | null = null;
@@ -219,6 +228,13 @@ export function setTranscludeHost(h: TranscludeHost | null): void {
 }
 export function getTranscludeHost(): TranscludeHost | null {
   return host;
+}
+
+/** False when a link's file isn't in the vault (it shows faded, as in
+ * Obsidian). A `#Heading` link is to its own note. */
+export function linkResolves(rawTarget: string, sourceRel: string): boolean {
+  if (!host?.exists || targetPathPart(rawTarget) === "") return true;
+  return host.exists(rawTarget, sourceRel);
 }
 
 /** Render an embed using the installed host; a placeholder if none is set. */
@@ -262,6 +278,14 @@ export function renderEmbedElement(
     return wrap;
   }
 
+  // A base renders its table here instead (`#View` picks the view); `this`
+  // inside it is the note doing the embedding.
+  if (/\.base$/i.test(splitSubpath(rawTarget).target.trim())) {
+    wrap.classList.add("embed-base");
+    void import("./baseEmbed").then((m) => m.mountBaseEmbed(wrap, { target: rawTarget }, sourceRel));
+    return wrap;
+  }
+
   const resolved = host.resolve(rawTarget, sourceRel);
   const { subpath } = splitSubpath(rawTarget);
   if (!resolved) {
@@ -281,27 +305,56 @@ export function renderEmbedElement(
   title.className = "embed-title";
   title.textContent = resolved.name + (subpath ? ` › ${subpath.replace(/^\^/, "^")}` : "");
   title.addEventListener("click", () => host.onOpen(rawTarget));
-  wrap.append(title);
+  wrap.append(title, embedBody(resolved, subpath, host, chain, budget));
+  return wrap;
+}
 
+/** The rendered content of a resolved note's section (`subpath`), or of the
+ * whole note, as an embed shows it: images and media resolved from that note,
+ * math, raw HTML and nested embeds filled in, and its tasks read-only. With
+ * `limit`, only that many characters of it render (the hover preview). */
+export function embedBody(
+  resolved: { path: string; rel: string; name: string },
+  subpath: string,
+  host: TranscludeHost,
+  chain: string[] = [],
+  budget: { n: number } = { n: 0 },
+  limit = Infinity,
+): HTMLElement {
   const body = document.createElement("div");
   body.className = "embed-body";
-  wrap.append(body);
 
   const fill = (content: string) => {
-    const slice = extractSection(content, subpath);
+    const slice = extractSection(content, subpath).slice(0, limit);
     if (!slice) {
       body.append(box("embed-missing", subpath ? `"${subpath}" not found in ${resolved.name}` : "(empty note)"));
       return;
     }
     // renderMarkdown escapes all text and emits only known tags → innerHTML-safe.
     body.innerHTML = renderMarkdown(slice);
+    // A link to a heading in this note means the embedded note's heading.
+    const self = resolved.rel.replace(/\.md$/i, "");
+    body.querySelectorAll<HTMLElement>('a.md-wikilink[data-target^="#"]').forEach((a) => {
+      a.dataset.target = self + a.dataset.target;
+    });
+    body.querySelectorAll<HTMLElement>('a.md-link[data-href^="#"]').forEach((a) => {
+      a.dataset.href = encodeURI(self) + a.dataset.href;
+    });
+    // Task lines here belong to the embedded note, not the host the reading
+    // view would toggle, so show them read-only.
+    body.querySelectorAll<HTMLInputElement>("input.md-task-check").forEach((cb) => {
+      cb.classList.remove("md-task-check");
+      cb.removeAttribute("data-task-line");
+      cb.disabled = true;
+    });
     const nextChain = [...chain, resolved.path];
-    // Resolve images relative to the EMBEDDED note.
-    body.querySelectorAll<HTMLImageElement>("img[data-basalt-img]").forEach((img) => {
+    // Resolve images relative to the EMBEDDED note (again once raw HTML is in).
+    const images = () => body.querySelectorAll<HTMLImageElement>("img[data-basalt-img]").forEach((img) => {
       const target = img.dataset.basaltImg ?? "";
       img.removeAttribute("data-basalt-img");
       if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//")) {
-        img.src = target;
+        if (isRemoteUrl(target) && !remoteImagesAllowed()) img.replaceWith(blockedImage(target, img.alt));
+        else img.src = target;
         return;
       }
       void host.resolveImage(target, resolved.rel).then((url) => {
@@ -311,7 +364,16 @@ export function renderEmbedElement(
     });
     // Render math + sanitize raw HTML inside the embed (lazy, like the reader).
     if (body.querySelector("[data-math]")) void import("./math").then((m) => m.fillMath(body));
-    if (body.querySelector("[data-basalt-html]")) void import("./sanitize").then((m) => m.fillRawHtml(body));
+    images();
+    if (body.querySelector("[data-basalt-html]")) {
+      void import("./sanitize").then((m) => {
+        m.fillRawHtml(body);
+        images();
+      });
+    }
+    if (body.querySelector("[data-basalt-media]")) {
+      void import("./media").then((m) => m.fillMedia(body, (t) => host.resolveImage(t, resolved.rel)));
+    }
     // Recurse into nested embeds (breadth-capped via the shared budget).
     body.querySelectorAll<HTMLElement>("[data-basalt-embed]").forEach((marker) => {
       if (budget.n > MAX_TOTAL_EMBEDS) {
@@ -339,5 +401,5 @@ export function renderEmbedElement(
         body.append(box("embed-error", `Could not read ${resolved.name}`));
       });
   }
-  return wrap;
+  return body;
 }

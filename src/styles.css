@@ -1,4 +1,21 @@
 :root {
+  /* Code colours, under Obsidian's names (4.5:1 or more on --bg-elev). */
+  --code-keyword: #f472b6;
+  --code-string: #9ece6a;
+  --code-function: #e0af68;
+  --code-value: #bb9af7;
+  --code-property: #7dcfff;
+  --code-tag: #f7768e;
+  --code-comment: #9a9ca0;
+  --code-punctuation: #b4b6ba;
+  /* Callout colours, by Obsidian's groups (titles keep 4.5:1 on their tint). */
+  --callout-blue: #7aa2f7;
+  --callout-cyan: #7dcfff;
+  --callout-green: #9ece6a;
+  --callout-orange: #e0af68;
+  --callout-red: #f7768e;
+  --callout-purple: #bb9af7;
+  --callout-gray: #9a9ca0;
   --bg: #1e1e1e;
   --bg-editor: #1e1e1e;
   --bg-sidebar: #252525;
@@ -9,9 +26,11 @@
   --bg-secondary: var(--bg-elev);
   --hover: rgba(127, 127, 127, 0.12); /* neutral hover-row background */
   --border: #383838;
+  /* Edges of inputs and selects: 3:1 against the panels they sit on. */
+  --control-border: #7a7a7a;
   --text: #dcddde;
   --text-muted: #999a9c;
-  --text-faint: #6b6c6e;
+  --text-faint: #939495;
   --code: #e0a472;
   --accent: #a98be0;
   --selection: rgba(169, 139, 224, 0.28);
@@ -32,20 +51,36 @@
    Applied by data-theme="light" on <html> (lib/theme.ts + the index.html
    no-flash script). */
 :root[data-theme="light"] {
+  --code-keyword: #a3196e;
+  --code-string: #2c6a1c;
+  --code-function: #7c5600;
+  --code-value: #6236b0;
+  --code-property: #0a6475;
+  --code-tag: #b0221a;
+  --code-comment: #5c6066;
+  --code-punctuation: #45494f;
+  --callout-blue: #1f5fbf;
+  --callout-cyan: #0a6f80;
+  --callout-green: #2e7a32;
+  --callout-orange: #a84d00;
+  --callout-red: #c0273a;
+  --callout-purple: #6c45c4;
+  --callout-gray: #5c6066;
   --bg: #ffffff;
   --bg-editor: #ffffff;
   --bg-sidebar: #f4f5f7;
   --bg-elev: #e9ebee;
   --border: #d8dade;
+  --control-border: #767676;
   --text: #1f2125;
-  --text-muted: #686b73;
-  --text-faint: #9a9da6;
-  --code: #b15c00;
-  --accent: #7c5cd0;
-  --selection: rgba(124, 92, 208, 0.22);
+  --text-muted: #62656d;
+  --text-faint: #64676e;
+  --code: #9c5000;
+  --accent: #6a4db5;
+  --selection: rgba(106, 77, 181, 0.22);
   --highlight: rgba(255, 206, 84, 0.5);
   --accent-text: #ffffff;
-  --accent-soft: rgba(124, 92, 208, 0.13);
+  --accent-soft: rgba(106, 77, 181, 0.13);
   --danger: #c0392b;
   --overlay: rgba(0, 0, 0, 0.32);
   --shadow: rgba(0, 0, 0, 0.18);
@@ -216,7 +251,7 @@ button.primary:hover {
 .filter {
   margin: 0 12px 8px;
   background: var(--bg-elev);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   color: var(--text);
   border-radius: 6px;
   padding: 6px 8px;
@@ -289,11 +324,18 @@ button.primary:hover {
   background: var(--bg-elev);
   color: var(--text);
 }
-.tree-row.attachment {
+.file-tag {
+  flex: none;
+  margin-left: auto;
+  padding: 0 4px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   color: var(--text-faint);
-  font-style: italic;
 }
-.tree-row.attachment:hover {
+.tree-row:hover .file-tag,
+.tree-row.active .file-tag {
   color: var(--text-muted);
 }
 .chevron {
@@ -308,6 +350,7 @@ button.primary:hover {
   transform: rotate(90deg);
 }
 .tree-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -336,6 +379,8 @@ button.primary:hover {
   cursor: pointer;
   padding: 4px 6px;
   border-radius: 6px;
+  min-width: 24px;
+  min-height: 24px;
 }
 .link-btn:hover {
   color: var(--text);
@@ -381,6 +426,9 @@ button.primary:hover {
 }
 
 /* Tab bar */
+.tab-strip {
+  display: contents;
+}
 .tab-bar {
   display: flex;
   align-items: stretch;
@@ -428,9 +476,16 @@ button.primary:hover {
   border-radius: 4px;
   padding: 1px 4px;
   opacity: 0;
+  /* WCAG 2.2 minimum pointer target. */
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .tab:hover .tab-close,
-.tab.active .tab-close {
+.tab.active .tab-close,
+.tab-close:focus-visible {
   opacity: 1;
 }
 .tab-close:hover {
@@ -562,7 +617,6 @@ button.primary:hover {
   border-left: 3px solid var(--border);
   margin: 0.6em 0;
   padding: 0 0 0 12px;
-  color: var(--text-muted);
 }
 .reading-view hr { border: none; border-top: 1px solid var(--border); margin: 1.2em 0; }
 .md-code-inline {
@@ -585,6 +639,14 @@ button.primary:hover {
   color: var(--text);
 }
 .md-wikilink { color: var(--accent); }
+/* Less faded than Obsidian's 0.7, so the text keeps 4.5:1 contrast; the
+   dotted underline marks it without relying on colour. */
+.md-wikilink.is-unresolved,
+.md-link.is-unresolved {
+  opacity: var(--link-unresolved-opacity, 0.85);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
 .md-tag {
   color: var(--accent);
   background: var(--accent-soft);
@@ -614,13 +676,31 @@ button.primary:hover {
 .reading-view table.md-table th { background: var(--bg-elev); font-weight: 700; }
 .reading-view table.md-properties th { color: var(--text-muted); font-weight: 600; }
 .reading-view .md-callout {
-  border-left: 3px solid var(--accent);
-  background: var(--accent-soft);
+  border-left: 3px solid var(--cg, var(--accent));
+  background: var(--cgbg, var(--accent-soft));
   border-radius: 4px;
   padding: 6px 12px;
   margin: 0.6em 0;
 }
-.reading-view .md-callout-title { font-weight: 700; color: var(--accent); }
+.reading-view .md-callout-title { font-weight: 700; color: var(--cg, var(--accent)); }
+/* A callout's colour group, in both views. */
+.cm-callout, .md-callout { --cgbg: color-mix(in srgb, var(--cg) 8%, transparent); }
+.cm-callout-blue, .md-callout-color-blue { --cg: var(--callout-blue); }
+.cm-callout-cyan, .md-callout-color-cyan { --cg: var(--callout-cyan); }
+.cm-callout-green, .md-callout-color-green { --cg: var(--callout-green); }
+.cm-callout-orange, .md-callout-color-orange { --cg: var(--callout-orange); }
+.cm-callout-red, .md-callout-color-red { --cg: var(--callout-red); }
+.cm-callout-purple, .md-callout-color-purple { --cg: var(--callout-purple); }
+.cm-callout-gray, .md-callout-color-gray { --cg: var(--callout-gray); }
+/* A callout inside another (Live Preview): its own colour as --cg2. */
+.cm-callout-inner { --cg2bg: color-mix(in srgb, var(--cg2) 8%, transparent); }
+.cm-callout-inner-blue { --cg2: var(--callout-blue); }
+.cm-callout-inner-cyan { --cg2: var(--callout-cyan); }
+.cm-callout-inner-green { --cg2: var(--callout-green); }
+.cm-callout-inner-orange { --cg2: var(--callout-orange); }
+.cm-callout-inner-red { --cg2: var(--callout-red); }
+.cm-callout-inner-purple { --cg2: var(--callout-purple); }
+.cm-callout-inner-gray { --cg2: var(--callout-gray); }
 .reading-view .md-mermaid { text-align: center; margin: 12px 0; }
 .reading-view .md-mermaid svg { max-width: 100%; height: auto; }
 .reading-view .md-mermaid-error {
@@ -1160,7 +1240,7 @@ button.primary:hover {
 }
 .prompt-input {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 6px;
   color: var(--text);
   font-size: 0.95rem;
@@ -1447,6 +1527,50 @@ button.primary:hover {
   min-width: 60px;
 }
 
+.base-list-scroll {
+  padding: 8px 12px;
+}
+.base-list {
+  margin: 0;
+  padding-left: 1.6em;
+  color: var(--text);
+  line-height: 1.6;
+}
+.base-list-none {
+  list-style: none;
+  padding-left: 0;
+}
+.base-list-nested {
+  margin: 0;
+  padding-left: 1.4em;
+  border-left: 1px solid var(--border);
+}
+.base-list-sep {
+  color: var(--text-muted);
+  white-space: pre;
+}
+.base-list-group + .base-list-group {
+  margin-top: 10px;
+}
+.base-list-group-label {
+  font-weight: 600;
+  padding: 4px 0;
+}
+.base-list .base-cell-img {
+  display: inline-block;
+  max-height: 1.6em;
+  vertical-align: middle;
+}
+
+.md-image-blocked {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
 .base-showmore {
   flex: none;
   margin: 8px auto;
@@ -1584,8 +1708,12 @@ button.primary:hover {
 }
 
 /* ------- Query blocks (```dataview / ```query) ------- */
+/* Padding, not margin, on block widgets: CodeMirror measures a widget without
+   its margins, so lines below would sit out of step with clicks. */
+/* Block widgets start on the text column (lines are inset 48px), not out in
+   the left gutter. */
 .cm-query {
-  margin: 4px 0;
+  padding: 4px 2px 4px 48px;
 }
 .query-block {
   font-size: 0.95em;
@@ -1723,7 +1851,9 @@ button.primary:hover {
   font-size: 12px;
   margin-top: 4px;
 }
-.cm-plugin-block,
+.cm-plugin-block {
+  padding: 4px 2px 4px 48px;
+}
 .md-plugin-block {
   margin: 4px 0;
 }
@@ -1773,7 +1903,7 @@ button.primary:hover {
 }
 
 /* ------- Transclusion / embeds ------- */
-.cm-embed { margin: 4px 0; }
+.cm-embed { padding: 4px 2px 4px 48px; }
 .embed {
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
@@ -1901,7 +2031,7 @@ button.primary:hover {
 .base-editor label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-muted); }
 .base-editor input, .base-editor select {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 5px;
   padding: 4px 8px;
   color: var(--text);
@@ -1996,6 +2126,8 @@ button.primary:hover {
 
 /* ------- Math (KaTeX) ------- */
 .math-block, .cm-math-block { display: block; text-align: center; margin: 8px 0; overflow-x: auto; }
+/* An editor widget takes no vertical margin: CodeMirror measures it without one. */
+.cm-math-block { margin: 0; padding: 8px 2px 8px 48px; }
 .math-inline, .cm-math { }
 .math-error { color: var(--danger); font-family: var(--font-mono, monospace); font-size: 0.9em; }
 .cm-math { cursor: default; }
@@ -2051,6 +2183,12 @@ button.primary:hover {
   font-weight: 500;
 }
 .hover-preview-body > :first-child { margin-top: 0; }
+/* It borrows Reading view's type, not its page padding or scrolling. */
+.hover-preview-body.reading-view {
+  padding: 0;
+  max-width: none;
+  overflow: visible;
+}
 
 /* ------- File-tree drag-drop ------- */
 .tree-row.folder.drop-target {
@@ -2135,6 +2273,12 @@ button.primary:hover {
   cursor: default;
   padding: 0 1px;
 }
+.cm-footnote-inline {
+  color: var(--text-muted);
+  font-size: 0.75em;
+  vertical-align: super;
+  line-height: 0;
+}
 
 /* ------- Tab drag & drop ------- */
 .tab[draggable="true"] { cursor: grab; }
@@ -2171,7 +2315,7 @@ button.primary:hover {
 .ribbon-btn:hover { background: var(--hover, rgba(127,127,127,0.15)); color: var(--text); }
 
 /* ------- %% comments (Live Preview) ------- */
-.cm-comment { color: var(--text-faint, var(--text-muted)); opacity: 0.6; }
+.cm-comment { color: var(--text-faint, var(--text-muted)); }
 
 /* ------- Callout icons ------- */
 .cm-callout-icon, .md-callout-icon { margin-right: 6px; }
@@ -2194,7 +2338,7 @@ button.primary:hover {
 /* ------- File sort control ------- */
 .sidebar-controls { display: flex; gap: 4px; align-items: center; padding: 0 6px; }
 .sidebar-controls .filter { flex: 1; }
-.file-sort { font-size: 11px; background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); border-radius: 5px; padding: 2px; max-width: 90px; }
+.file-sort { font-size: 11px; background: var(--bg); color: var(--text-muted); border: 1px solid var(--control-border); border-radius: 5px; padding: 2px; max-width: 90px; }
 
 /* ------- Unlinked mention Link buttons ------- */
 .ref-child-row { display: flex; align-items: center; }
@@ -2206,12 +2350,18 @@ button.primary:hover {
 /* ------- Inline raw HTML (Live Preview) ------- */
 .cm-html-sup { vertical-align: super; font-size: 0.78em; }
 .cm-html-sub { vertical-align: sub; font-size: 0.78em; }
-.cm-html-mark { background: var(--highlight, #fef08a); color: #1f2125; border-radius: 2px; padding: 0 1px; }
+.cm-html-mark { background: var(--highlight, #fef08a); color: inherit; border-radius: 2px; padding: 0 1px; }
 .cm-html-kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.85em; }
 .cm-html-u, .cm-html-ins { text-decoration: underline; }
 .cm-html-s, .cm-html-del { text-decoration: line-through; }
 .cm-html-small { font-size: 0.85em; }
-.cm-html-abbr, .cm-html-cite { font-style: italic; }
+.cm-html-abbr, .cm-html-cite, .cm-html-i, .cm-html-em, .cm-html-dfn, .cm-html-var { font-style: italic; }
+.cm-html-b, .cm-html-strong { font-weight: 700; }
+.cm-html-code, .cm-html-samp { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.9em; }
+.cm-html-strike { text-decoration: line-through; }
+.cm-html-big { font-size: 1.2em; }
+.cm-html-q::before { content: "\201C"; }
+.cm-html-q::after { content: "\201D"; }
 
 /* ------- Local graph depth control ------- */
 .graph-depth { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); margin-left: 8px; }
@@ -2219,7 +2369,7 @@ button.primary:hover {
 .graph-depth-val { min-width: 10px; text-align: center; }
 
 /* ------- Graph filters ------- */
-.graph-search { font-size: 12px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); max-width: 160px; margin-left: 8px; }
+.graph-search { font-size: 12px; padding: 3px 8px; border: 1px solid var(--control-border); border-radius: 6px; background: var(--bg); color: var(--text); max-width: 160px; margin-left: 8px; }
 .graph-orphans { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); margin-left: 8px; }
 
 /* ------- Workspaces modal ------- */
@@ -2370,7 +2520,7 @@ button.primary:hover {
 
 /* ------- Bases expression input (CM6) ------- */
 .base-formula-exprwrap { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.expr-input { border: 1px solid var(--border); border-radius: 5px; background: var(--bg); overflow: hidden; }
+.expr-input { border: 1px solid var(--control-border); border-radius: 5px; background: var(--bg); overflow: hidden; }
 .expr-input:focus-within { border-color: var(--accent); }
 .expr-input .cm-editor { font-family: var(--font-mono, monospace); font-size: 0.85em; }
 .expr-input .cm-content { padding: 4px 8px; }
@@ -2409,7 +2559,7 @@ button.primary:hover {
 .properties { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
 .prop-row { display: flex; align-items: center; gap: 6px; }
 .prop-key { flex: 0 0 34%; font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.prop-value { flex: 1; min-width: 0; background: var(--bg-elev); border: 1px solid var(--border); color: var(--text); border-radius: 5px; padding: 3px 6px; font-size: 12px; }
+.prop-value { flex: 1; min-width: 0; background: var(--bg-elev); border: 1px solid var(--control-border); color: var(--text); border-radius: 5px; padding: 3px 6px; font-size: 12px; }
 .prop-value:focus { border-color: var(--accent); outline: none; }
 .prop-complex { flex: 1; font-size: 12px; color: var(--text-faint); font-style: italic; }
 .prop-del { background: none; border: none; color: var(--text-faint); cursor: pointer; padding: 0 4px; }
@@ -2492,7 +2642,7 @@ button.primary:hover {
   color: var(--text);
 }
 .tp-modal-input {
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   background: var(--bg);
   color: var(--text);
   font-size: 1rem;
@@ -2749,6 +2899,10 @@ textarea.tp-modal-input {
 .cal-day {
   position: relative;
   aspect-ratio: 1 / 1;
+  border: none;
+  background: none;
+  font: inherit;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2798,10 +2952,95 @@ textarea.tp-modal-input {
 
 /* Live Preview raw-HTML block widget (renders sanitized HTML; click to edit). */
 .cm-html-block {
-  padding: 2px 0;
+  padding: 2px 2px 2px 48px;
   cursor: text;
 }
 .cm-html-block :where(center) {
   display: block;
   text-align: center;
 }
+/* Inline SVG drawings keep their aspect and fit a narrow screen. */
+.cm-html-block svg,
+.raw-html svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Accessibility */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.notices:empty {
+  display: none;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.tab-close:focus-visible,
+.cm-prop-del:focus-visible,
+.kanban-card-del:focus-visible,
+.tab:focus-within .tab-close {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+@media (forced-colors: active) {
+  .active,
+  .tab.active,
+  .tree-row.active,
+  .palette-item.active {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+.cm-content:focus-visible {
+  outline: none;
+}
+
+/* Modals are native <dialog>s acting as their own full-screen overlay. */
+dialog.modal {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  color: inherit;
+}
+dialog.modal:not([open]) {
+  display: none;
+}
+dialog.modal::backdrop {
+  background: transparent;
+}
+
+/* ------- Code colours (both views; see lib/codeHighlight.ts) ------- */
+.code-keyword { color: var(--code-keyword); }
+.code-string { color: var(--code-string); }
+.code-function { color: var(--code-function); }
+.code-value { color: var(--code-value); }
+.code-property { color: var(--code-property); }
+.code-tag { color: var(--code-tag); }
+.code-punctuation { color: var(--code-punctuation); }
+.code-comment { color: var(--code-comment); font-style: italic; }
+
+/* ------- A palette's summary line (search totals) ------- */
+.palette-summary { padding: 4px 12px; font-size: 12px; color: var(--text-muted); }

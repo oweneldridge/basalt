@@ -6,56 +6,190 @@
  * optional alias. A new instance avoids shared `lastIndex` bugs between callers.
  * Matches `[[Target]]` and `[[Target|Alias]]`; target/alias forbid `[ ] |` and
  * NEWLINES — a multiline match would emit a line-break-replacing decoration
- * from a ViewPlugin, which is a CM6 RangeError crash.
+ * from a ViewPlugin, which is a CM6 RangeError crash. Brackets right after the
+ * `[[` are the target's, as in Obsidian: `[[[Foo]]]` links to "[Foo". An
+ * escaped `\[[` (an odd run of backslashes before it) opens no link.
  */
 export function wikilinkRegex(): RegExp {
-  return /\[\[([^[\]|\n]+)(?:\|([^[\]\n]+))?\]\]/g;
+  return /(?<!(?:^|[^\\])\\(?:\\\\)*)\[\[(\[*[^[\]|\n]+)(?:\|([^[\]\n]+))?\]\]/g;
 }
 
 /**
  * Per-line "is this prose?" mask: false for YAML frontmatter lines and fenced
- * code-block lines (CommonMark rules: fence closes only on the same marker
- * char, at least the same run length, nothing else on the line). Shared by
+ * code-block lines, in a quote or callout too (CommonMark rules: no backtick
+ * after a backtick fence's opening run, and a fence closes only on the same
+ * marker char, at least the same run length, nothing else on the line, or
+ * where its quote ends). Shared by
  * link extraction and unlinked-mention scanning so they can never disagree.
  */
 export function proseMask(lines: string[]): boolean[] {
   const mask = new Array<boolean>(lines.length).fill(true);
   let i = 0;
   // Leading frontmatter block.
-  if (lines.length > 1 && lines[0].trim() === "---") {
-    mask[0] = false;
-    let end = -1;
-    for (let j = 1; j < lines.length; j++) {
-      const t = lines[j].trim();
-      if (t === "---" || t === "...") {
-        end = j;
-        break;
-      }
-    }
-    if (end !== -1) {
-      for (let j = 1; j <= end; j++) mask[j] = false;
-      i = end + 1;
-    }
+  if (lines.length > 1 && lines[0].trim() === "---") mask[0] = false;
+  const end = frontmatterEnd(lines);
+  if (end !== -1) {
+    for (let j = 1; j <= end; j++) mask[j] = false;
+    i = end + 1;
   }
-  let fence: { char: string; len: number } | null = null;
+  // A fence may sit inside a quote or callout (`> ```) or a list item, as far
+  // in as the item's text plus three spaces, and its code ends with them.
+  let fence: { char: string; len: number; depth: number; col: number } | null = null;
+  let items: number[] = []; // open list items' text columns, innermost last
+  let listDepth = 0; // the quote depth those items are at
   for (; i < lines.length; i++) {
-    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[i]);
+    const line = lines[i];
+    const c0 = line[0];
+    const quote = c0 === ">" || c0 === " " ? QUOTE_PREFIX.exec(line)![0] : "";
+    const depth = quote ? (quote.match(/>/g) ?? []).length : 0;
+    if (fence && depth < fence.depth) fence = null;
+    const body: string = fence ? unquote(line, fence.depth) : quote ? line.slice(quote.length) : line;
+    if (depth !== listDepth) (items = []), (listDepth = depth);
+    // The indent in columns (tabs to the next stop of 4) and the char after it.
+    // Four past the innermost item's text nothing opens, closes or ends here.
+    const limit = (items.length ? items[items.length - 1] : 0) + 4;
+    let indent = 0;
+    let k = 0;
+    for (; k < body.length && indent < limit; k++) {
+      const c = body.charCodeAt(k);
+      if (c === 32) indent++;
+      else if (c === 9) indent += 4 - (indent % 4);
+      else break;
+    }
+    const first: string | undefined = indent < limit ? body[k] : "";
+    const blank = first === undefined || (/\s/.test(first) && body.trim() === "");
+    if (!blank) while (items.length && indent < items[items.length - 1]) items.pop();
+    if (fence && !blank && indent < fence.col) fence = null; // its list item ended
+    FENCE_RE.lastIndex = k;
+    const m: RegExpExecArray | null = first === "`" || first === "~" ? FENCE_RE.exec(body) : null;
     if (fence) {
       mask[i] = false;
-      if (
-        m &&
-        m[1][0] === fence.char &&
-        m[1].length >= fence.len &&
-        m[2].trim() === ""
-      ) {
+      if (m && indent - fence.col <= 3 && m[1][0] === fence.char && m[1].length >= fence.len && m[2].trim() === "") {
         fence = null; // closing fence (itself non-prose)
       }
-    } else if (m) {
+      continue;
+    }
+    const base = items.length ? items[items.length - 1] : 0;
+    if (m && indent - base <= 3 && !(m[1][0] === "`" && m[2].includes("`"))) {
       mask[i] = false;
-      fence = { char: m[1][0], len: m[1].length };
+      fence = { char: m[1][0], len: m[1].length, depth, col: base };
+      continue;
+    }
+    LIST_ITEM_RE.lastIndex = k;
+    const item = first === "-" || first === "*" || first === "+" || (first !== undefined && first >= "0" && first <= "9") ? LIST_ITEM_RE.exec(body) : null;
+    if (item) {
+      let col = indent + item[1].length;
+      const from = col;
+      for (let g = 0; g < item[2].length; g++) col += item[2][g] === "\t" ? 4 - (col % 4) : 1;
+      const gap = col - from;
+      items.push(from + (gap === 0 || gap > 4 ? 1 : gap));
     }
   }
   return mask;
+}
+
+// The `>` markers a line starts with, however deep.
+const QUOTE_PREFIX = /^(?: {0,3}>[ \t]?)*/;
+// A list item's marker, and the spaces between it and the item's text.
+const LIST_ITEM_RE = /([-*+]|\d{1,9}[.)])([ \t]+|$)/y;
+// A fence's marker run and what follows it.
+const FENCE_RE = /(`{3,}|~{3,})(.*)$/y;
+
+/** `line` without its first `depth` quote markers. */
+function unquote(line: string, depth: number): string {
+  let rest = line;
+  for (let k = 0; k < depth; k++) rest = rest.replace(/^ {0,3}>[ \t]?/, "");
+  return rest;
+}
+
+/** Index of the line closing a leading `---` frontmatter block, or -1. */
+export function frontmatterEnd(lines: string[]): number {
+  if (lines.length < 2 || lines[0].trim() !== "---") return -1;
+  for (let j = 1; j < lines.length; j++) {
+    const t = lines[j].trim();
+    if (t === "---" || t === "...") return j;
+  }
+  return -1;
+}
+
+/** Per-line mask of frontmatter lines that can hold a property link: inside
+ * the block, but not the text of a `|` or `>` block scalar, which is one
+ * multi-line string and never a link. */
+export function yamlValueLines(lines: string[]): boolean[] {
+  const mask = new Array<boolean>(lines.length).fill(false);
+  const end = frontmatterEnd(lines);
+  let block = -1; // column the block scalar's text must be indented past, or -1
+  for (let i = 1; i < end; i++) {
+    const line = lines[i];
+    const indent = line.length - line.trimStart().length;
+    if (block !== -1) {
+      if (line.trim() === "" || indent > block) continue;
+      block = -1;
+    }
+    mask[i] = true;
+    // The value part, without a trailing comment (a `#` outside quotes).
+    let cut = line.length;
+    for (let j = 0; j < line.length; j++) {
+      if (line[j] === "#" && (j === 0 || /\s/.test(line[j - 1])) && yamlContextAt(line, j).quote === null) {
+        cut = j;
+        break;
+      }
+    }
+    const value = line.slice(0, cut).trimEnd();
+    if (!/(?::|^\s*-)\s+[|>](?:[+-]?\d?|\d[+-])$/.test(value)) continue;
+    // `key: |` and `- key: |` indent past the key; a bare `- |` past its dash.
+    const lead = /^(\s*)((?:-\s+)*)/.exec(value)!;
+    const rest = value.slice(lead[0].length);
+    block = /^[|>]/.test(rest) && lead[2] ? lead[1].length + lead[2].trimEnd().lastIndexOf("-") : lead[0].length;
+  }
+  return mask;
+}
+
+/** YAML scalar context at `pos` on one frontmatter line: the quote style of the
+ * scalar it sits in, and whether it's inside a `# comment`. */
+export function yamlContextAt(line: string, pos: number): { quote: '"' | "'" | null; comment: boolean } {
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < pos && i < line.length; i++) {
+    const c = line[i];
+    if (quote === '"') {
+      if (c === "\\") i++;
+      else if (c === '"') quote = null;
+    } else if (quote === "'") {
+      if (c === "'") {
+        if (line[i + 1] === "'") i++;
+        else quote = null;
+      }
+    } else if (c === "#" && (i === 0 || /\s/.test(line[i - 1]))) {
+      return { quote: null, comment: true };
+    } else if (c === '"' || c === "'") {
+      // Quotes only open a scalar at the start of a value, not mid-word (it's).
+      const prev = line.slice(0, i).trimEnd().slice(-1);
+      if (prev === "" || prev === ":" || prev === "-" || prev === "[" || prev === "," || prev === "{") quote = c;
+    }
+  }
+  return { quote, comment: false };
+}
+
+/** Whether a link of length `len` at `pos` on a frontmatter line is a property
+ * link. Obsidian only treats a string value that is entirely one link as a
+ * link, which in YAML means the whole quoted scalar: `key: "[[x]]"` or a quoted
+ * list item. Unquoted `key: [[x]]` parses as a nested list and isn't one. */
+export function yamlLinkAt(line: string, pos: number, len: number): { ok: boolean; quote: '"' | "'" | null } {
+  const { quote, comment } = yamlContextAt(line, pos);
+  const ok = !comment && quote !== null && line[pos - 1] === quote && line[pos + len] === quote;
+  return { ok, quote };
+}
+
+export function yamlUnescape(s: string, quote: '"' | "'" | null): string {
+  if (quote === "'") return s.replace(/''/g, "'");
+  if (quote === '"') return s.replace(/\\(["\\])/g, "$1");
+  return s;
+}
+
+export function yamlEscape(s: string, quote: '"' | "'" | null): string {
+  if (quote === "'") return s.replace(/'/g, "''");
+  if (quote === '"') return s.replace(/(["\\])/g, "\\$1");
+  return s;
 }
 
 /**
@@ -72,12 +206,25 @@ export function highlightRegex(): RegExp {
   return /==([^=\n]+)==/g;
 }
 
-/** Tags `#tag` / `#nested/tag`. A zero-width lookbehind keeps `#` from matching
- * after a word char, `/`, or another `#` (so a heading `# `, mid-word `a#b`, a
- * URL `/#frag`, and `#a#b`'s second tag all behave). Group 1 = `#tag`, group 2 =
- * bare name. */
+/** A tag's name as Obsidian reads it: letters of any script, digits, emoji,
+ * `-`, `_` and `/`; anything but spaces and punctuation. */
+export const TAG_NAME = "[^\\u2000-\\u206F\\u2E00-\\u2E7F'!\"#$%&()*+,.:;<=>?@^`{|}~\\[\\]\\\\\\s]+";
+
+/** What may come right before a tag's `#`: nothing, a space, or the opening
+ * of bold, italics, highlight or strikethrough (`**#tag**` is a tag to
+ * Obsidian's index). So `a#b`, `\#escaped`, `(#x)` and a URL's `/#frag` aren't. */
+export const TAG_BEFORE = /[\s*_~=]/;
+
+// A quote's last `>` at the start of a line, after any list marks and quote
+// marks before it: the quote's text starts right after it.
+const QUOTE_START = String.raw`(?:^|\n)[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]*)*>`;
+
+/** Tags `#tag` / `#nested/tag`, as Obsidian finds them (see TAG_BEFORE), and
+ * right after a quote's marks, where the quote's text starts.
+ * Group 1 = `#tag`, group 2 = bare name; a name of digits only (`#42`) is for
+ * the caller to skip. */
 export function tagRegex(): RegExp {
-  return /(?<![\w/#])(#([A-Za-z0-9_][\w-]*(?:\/[A-Za-z0-9_][\w-]*)*))/g;
+  return new RegExp(`(?=#)(?<=^|${TAG_BEFORE.source}|${QUOTE_START})(#(${TAG_NAME}))`, "gu");
 }
 
 /**
@@ -87,6 +234,17 @@ export function tagRegex(): RegExp {
  */
 export function targetPathPart(raw: string): string {
   return raw.split("#")[0].trim();
+}
+
+/** What an unaliased wikilink shows, as Obsidian shows it: the link text with
+ * each `#` read as " > " (`Folder/Note#Heading` is "Folder/Note > Heading",
+ * `#Heading` is "Heading"). */
+export function wikilinkLabel(target: string): string {
+  return target
+    .split("#")
+    .filter(Boolean)
+    .join(" > ")
+    .trim();
 }
 
 /**
@@ -134,6 +292,13 @@ export function mdLinkRegexGlobal(): RegExp {
  * external/anchor/non-md hrefs.
  */
 export function internalMdHref(href: string): { path: string; fragment: string } | null {
+  const file = internalFileHref(href);
+  return file && /\.md$/i.test(file.path) ? file : null;
+}
+
+/** Like internalMdHref, but for any vault file with an extension: a note or an
+ * attachment such as `assets/pic.png` or `paper.pdf#page=3`. */
+export function internalFileHref(href: string): { path: string; fragment: string } | null {
   if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//") || href.startsWith("#")) {
     return null;
   }
@@ -145,8 +310,39 @@ export function internalMdHref(href: string): { path: string; fragment: string }
   } catch {
     /* malformed escapes: keep raw */
   }
-  if (!/\.md$/i.test(path)) return null;
+  if (!/\.[a-z0-9]{1,10}$/i.test(path)) return null;
   return { path, fragment };
+}
+
+/** Where a markdown link's href points inside the vault, as a link target
+ * (`Note#Heading`, `paper.pdf`, or `#Heading` for this note), decoded. Obsidian
+ * reads every href that isn't a URL this way, with or without `.md`. Null for
+ * URLs and for empty or `?query` hrefs. */
+export function internalLinkTarget(href: string): string | null {
+  if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//") || href.startsWith("?")) return null;
+  const decode = (s: string) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  };
+  const hashAt = href.indexOf("#");
+  if (hashAt < 0) return decode(href);
+  return decode(href.slice(0, hashAt)) + "#" + decode(href.slice(hashAt + 1));
+}
+
+/** The file a markdown image names: a URL as written, a vault path without
+ * its `#fragment` and percent-decoded (`shot%20one.png` is `shot one.png`). */
+export function mdImageTarget(href: string): string {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//")) return href;
+  const hashAt = href.indexOf("#");
+  const path = hashAt >= 0 ? href.slice(0, hashAt) : href;
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
 }
 
 /** Percent-encode a vault path for a markdown href the way Obsidian does:

@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{DefaultBodyLimit, Request, State},
-    http::{header, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::sse::{Event, KeepAlive, Sse},
     response::{IntoResponse, Response},
@@ -37,6 +37,7 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
 use tower_http::compression::CompressionLayer;
+use tower_http::CompressionLevel;
 use tower_http::services::{ServeDir, ServeFile};
 
 struct AppState {
@@ -47,6 +48,9 @@ struct AppState {
     /// read_vault calls can't amplify to an OOM.
     sem: Semaphore,
 }
+
+/// Largest request body accepted (a whole vault file can be written in one).
+const BODY_LIMIT: usize = 128 * 1024 * 1024;
 
 #[derive(Deserialize)]
 struct InvokeReq {
@@ -75,15 +79,16 @@ async fn main() {
     });
     let port: u16 = std::env::var("BASALT_PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(8799);
     let web_dir = PathBuf::from(std::env::var("BASALT_WEB_DIR").unwrap_or_else(|_| "dist".into()));
-    // BASALT_AUTH="user:pass" enables HTTP Basic auth. Unset = no auth (rely on
-    // the Tailscale-only network boundary — fine for a trusted tailnet). Present
-    // but malformed (no ':') is a misconfiguration — fail CLOSED (exit) rather
-    // than silently booting with auth disabled.
+    // BASALT_AUTH="user:pass" enables HTTP Basic auth. Unset or empty = none
+    // (behind an SSO proxy, or the tailnet boundary alone), and then only
+    // localhost-addressed requests are answered. Present but malformed (no
+    // ':') is a misconfiguration: fail closed (exit) rather than boot without it.
     let auth = match std::env::var("BASALT_AUTH") {
+        Ok(s) if s.is_empty() => None,
         Ok(s) => match s.split_once(':') {
-            Some((u, p)) => Some((u.to_string(), p.to_string())),
-            None => {
-                eprintln!("BASALT_AUTH must be in 'user:pass' form; refusing to start with auth misconfigured");
+            Some((u, p)) if !u.is_empty() && !p.is_empty() => Some((u.to_string(), p.to_string())),
+            _ => {
+                eprintln!("BASALT_AUTH must be 'user:pass' with both parts set; refusing to start with auth misconfigured");
                 std::process::exit(1);
             }
         },
@@ -109,10 +114,12 @@ async fn main() {
         // SPA fallback: unknown paths serve index.html so client routing works.
         .fallback_service(ServeDir::new(&web_dir).fallback(ServeFile::new(index)))
         .with_state(state)
-        .layer(CompressionLayer::new()) // gzip — the 43MB read_vault → ~9MB
+        // gzip level 3: a 48 MB read_vault comes to 11.7 MB in about 60% of
+        // the time the default level takes for 11.3 MB, so pages load sooner.
+        .layer(CompressionLayer::new().quality(CompressionLevel::Precise(3)))
         // Room for base64 attachment writes (desktop has no limit; axum's 2MB
         // default would reject routine screenshot pastes with an opaque 413).
-        .layer(DefaultBodyLimit::max(128 * 1024 * 1024));
+        .layer(DefaultBodyLimit::max(BODY_LIMIT));
     // NO CORS layer: the app is same-origin in prod (server serves dist/) and in
     // dev (vite proxies /api), so it never needs cross-origin access. Permissive
     // CORS would only let a drive-by website read/destroy the vault — the
@@ -127,8 +134,18 @@ async fn main() {
         app = app.layer(middleware::from_fn_with_state(expected, basic_auth));
         println!("[basalt-server] HTTP Basic auth: ON");
     } else {
+        // Without auth the only barrier is the Host header: a DNS-rebinding page
+        // reaches this port as its own origin and would otherwise be same-origin.
+        let mut allowed: Vec<String> = vec!["localhost".into(), "127.0.0.1".into(), "::1".into()];
+        if let Ok(extra) = std::env::var("BASALT_ALLOWED_HOSTS") {
+            allowed.extend(extra.split(',').map(|h| h.trim().to_string()).filter(|h| !h.is_empty()));
+        }
+        app = app.layer(middleware::from_fn_with_state(Arc::new(allowed), local_host_only));
         println!("[basalt-server] HTTP Basic auth: OFF (set BASALT_AUTH=user:pass to enable)");
     }
+
+    // Outermost, so 401s and every other response carry it too.
+    app = app.layer(middleware::from_fn(security_headers));
 
     // Bind host: default 127.0.0.1 (safe on bare metal — only localhost or a
     // reverse proxy like Tailscale Serve can reach it). In Docker, set
@@ -160,7 +177,9 @@ fn start_watcher(root: PathBuf, tx: broadcast::Sender<String>) -> notify::Result
             event.kind,
             notify::EventKind::Modify(notify::event::ModifyKind::Metadata(_))
         );
-        let (changed, rescan) = basalt_core::classify_change(&root_for_cb, metadata_only, &event.paths);
+        let (changed, classified_rescan) = basalt_core::classify_change(&root_for_cb, metadata_only, &event.paths);
+        // The OS queue overflowed (inotify): events were lost, so resync fully.
+        let rescan = classified_rescan || event.need_rescan();
         if !changed.is_empty() {
             if let Ok(payload) = serde_json::to_value(&changed) {
                 let _ = tx.send(frame("vault-changed", payload));
@@ -178,6 +197,24 @@ fn frame(event: &str, payload: Value) -> String {
     json!({ "event": event, "payload": payload }).to_string()
 }
 
+/// Defense in depth for the web app: scripts only from this server, nothing
+/// may frame it, and no `<base>`, form or plugin-object tricks. `'unsafe-eval'`
+/// stays only until plugins load as modules (DESIGN-plugin-loading.md); remote
+/// https images follow the app's own setting.
+const CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; \
+img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; media-src 'self' data: blob:; \
+object-src 'self' data: blob:; frame-src 'self' data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+async fn security_headers(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let h = res.headers_mut();
+    h.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(CSP));
+    h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    // Note paths in URLs never reach the hosts of remote images.
+    h.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    res
+}
+
 /// HTTP Basic auth as a small middleware we control (tower-http 0.6 dropped
 /// `ValidateRequestHeaderLayer::basic`). Compares the whole `Authorization`
 /// header to the precomputed `Basic <b64(user:pass)>`; a 401 with a
@@ -185,7 +222,9 @@ fn frame(event: &str, payload: Value) -> String {
 /// which is what lets same-origin EventSource carry them).
 async fn basic_auth(State(expected): State<Arc<String>>, req: Request, next: Next) -> Response {
     let provided = req.headers().get(header::AUTHORIZATION).and_then(|v| v.to_str().ok());
-    if provided.is_some_and(|p| ct_eq(p.as_bytes(), expected.as_bytes())) {
+    // The scheme name is case-insensitive (RFC 7235); compare the rest exactly.
+    let normalized = provided.and_then(|p| p.split_once(' ')).map(|(_, cred)| format!("Basic {}", cred.trim()));
+    if normalized.is_some_and(|p| ct_eq(p.as_bytes(), expected.as_bytes())) {
         next.run(req).await
     } else {
         (
@@ -195,6 +234,31 @@ async fn basic_auth(State(expected): State<Arc<String>>, req: Request, next: Nex
         )
             .into_response()
     }
+}
+
+/// Auth-off guard: answer only requests addressed to an allowed host name.
+async fn local_host_only(State(allowed): State<Arc<Vec<String>>>, req: Request, next: Next) -> Response {
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(String::from)
+        .or_else(|| req.uri().authority().map(|a| a.to_string()))
+        .unwrap_or_default();
+    let name = host_name(&host);
+    if allowed.iter().any(|a| a.eq_ignore_ascii_case(name)) {
+        next.run(req).await
+    } else {
+        (StatusCode::FORBIDDEN, "Host not allowed (set BASALT_ALLOWED_HOSTS)\n").into_response()
+    }
+}
+
+/// `example.com:8799` → `example.com`, `[::1]:8799` → `::1`.
+fn host_name(host: &str) -> &str {
+    if let Some(rest) = host.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or("");
+    }
+    host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host)
 }
 
 /// Length-checked, content-constant-time byte compare (no early-out on the
@@ -243,17 +307,34 @@ async fn events(State(app): State<Arc<AppState>>) -> Sse<impl Stream<Item = Resu
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-async fn invoke(State(app): State<Arc<AppState>>, Json(req): Json<InvokeReq>) -> Json<Value> {
-    // Cap concurrent command execution (read_vault is ~150MB peak); excess
-    // requests queue as backpressure instead of piling up toward an OOM.
+async fn invoke(State(app): State<Arc<AppState>>, request: Request) -> Response {
+    // Only JSON bodies: a cross-site form can't send one without a preflight,
+    // so cached Basic-auth credentials can't be used to post commands.
+    let is_json = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(';').next().unwrap_or("").trim().eq_ignore_ascii_case("application/json"));
+    if !is_json {
+        return (StatusCode::UNSUPPORTED_MEDIA_TYPE, "expected application/json").into_response();
+    }
+    // Cap concurrent commands (read_vault is ~150MB peak), and take the permit
+    // before reading the body, so queued requests don't each buffer a large one.
     let _permit = app.sem.acquire().await;
+    let req: InvokeReq = match axum::body::to_bytes(request.into_body(), BODY_LIMIT).await {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(r) => r,
+            Err(e) => return (StatusCode::BAD_REQUEST, format!("bad request: {e}")).into_response(),
+        },
+        Err(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "request too large").into_response(),
+    };
     let root = app.root.clone();
     // Every core op is blocking fs work — keep it off the async worker threads.
     let out = tokio::task::spawn_blocking(move || dispatch(&root, &req.cmd, &req.args)).await;
     match out {
-        Ok(Ok(v)) => Json(json!({ "result": v })),
-        Ok(Err(e)) => Json(json!({ "error": e })),
-        Err(e) => Json(json!({ "error": format!("task failed: {e}") })),
+        Ok(Ok(v)) => Json(json!({ "result": v })).into_response(),
+        Ok(Err(e)) => Json(json!({ "error": e })).into_response(),
+        Err(e) => Json(json!({ "error": format!("task failed: {e}") })).into_response(),
     }
 }
 
@@ -270,35 +351,38 @@ fn dispatch(root: &Path, cmd: &str, a: &Value) -> Result<Value, String> {
             .map(String::from)
             .ok_or_else(|| format!("missing string arg: {k}"))
     };
+    let opt = |k: &str| a.get(k).and_then(|v| v.as_str()).map(String::from);
     match cmd {
         // Single-vault server: open_vault returns the fixed root (the path arg is
         // ignored — the web app can only ever reach this one vault).
         "open_vault" => Ok(json!(root.to_string_lossy())),
         "read_vault" => to_val(basalt_core::read_vault(root)),
         "list_attachments" => to_val(basalt_core::list_attachments(root)),
+        "list_folders" => to_val(basalt_core::list_folders(root)),
         "read_note" => basalt_core::read_note(root, s("path")?).map(|x| json!(x)),
-        "write_note" => basalt_core::write_note(root, s("path")?, s("content")?).map(|_| Value::Null),
-        "write_canvas" => basalt_core::write_canvas(root, s("path")?, s("content")?).map(|_| Value::Null),
-        "write_base" => basalt_core::write_base(root, s("path")?, s("content")?).map(|_| Value::Null),
+        "write_note" => basalt_core::write_note(root, s("path")?, s("content")?, opt("expected")).map(|_| Value::Null),
+        "write_canvas" => basalt_core::write_canvas(root, s("path")?, s("content")?, opt("expected")).map(|_| Value::Null),
+        "write_base" => basalt_core::write_base(root, s("path")?, s("content")?, opt("expected")).map(|_| Value::Null),
         "create_note" => basalt_core::create_note(root, s("name")?).map(|x| json!(x)),
         "delete_note" => basalt_core::delete_note(root, s("path")?).map(|_| Value::Null),
         "rename_note" => basalt_core::rename_note(root, s("path")?, s("newName")?).map(|x| json!(x)),
+        "rename_attachment" => basalt_core::rename_attachment(root, s("path")?, s("newName")?).map(|x| json!(x)),
         "delete_folder" => basalt_core::delete_folder(root, s("rel")?).map(|_| Value::Null),
         "remove_empty_folder" => basalt_core::remove_empty_folder(root, s("rel")?).map(|_| Value::Null),
-        "list_foreign_files" => basalt_core::list_foreign_files(root, s("rel")?).and_then(|v| to_val(v)),
-        "list_subfolders" => basalt_core::list_subfolders(root, s("rel")?).and_then(|v| to_val(v)),
+        "list_foreign_files" => basalt_core::list_foreign_files(root, s("rel")?).and_then(to_val),
+        "list_subfolders" => basalt_core::list_subfolders(root, s("rel")?).and_then(to_val),
         "create_folder" => basalt_core::create_folder(root, s("rel")?).map(|_| Value::Null),
         "rename_folder" => basalt_core::rename_folder(root, s("fromRel")?, s("toRel")?).map(|x| json!(x)),
         "write_attachment" => {
-            basalt_core::write_attachment(root, s("name")?, s("dataB64")?, s("sourceRel")?).and_then(|v| to_val(v))
+            basalt_core::write_attachment(root, s("name")?, s("dataB64")?, s("sourceRel")?).and_then(to_val)
         }
-        "read_obsidian_config" => basalt_core::read_obsidian_config(root).and_then(|v| to_val(v)),
-        "read_obsidian_import" => basalt_core::read_obsidian_import(root).and_then(|v| to_val(v)),
-        "read_obsidian_bookmarks" => basalt_core::read_obsidian_bookmarks(root).and_then(|v| to_val(v)),
+        "read_obsidian_config" => basalt_core::read_obsidian_config(root).and_then(to_val),
+        "read_obsidian_import" => basalt_core::read_obsidian_import(root).and_then(to_val),
+        "read_obsidian_bookmarks" => basalt_core::read_obsidian_bookmarks(root).and_then(to_val),
         "toggle_file_bookmark" => basalt_core::toggle_file_bookmark(root, s("path")?).map(|b| json!(b)),
         "read_image" => basalt_core::read_image(root, s("target")?, s("sourceRel")?).map(|x| json!(x)),
-        "list_css_snippets" => basalt_core::list_css_snippets(root).and_then(|v| to_val(v)),
-        "list_plugins" => basalt_core::list_plugins(root).and_then(|v| to_val(v)),
+        "list_css_snippets" => basalt_core::list_css_snippets(root).and_then(to_val),
+        "list_plugins" => basalt_core::list_plugins(root).and_then(to_val),
         "write_plugin_data" => basalt_core::write_plugin_data(root, s("id")?, s("data")?).map(|_| Value::Null),
         // The watcher already runs from boot, so this is a no-op success.
         "start_watching" => Ok(Value::Null),

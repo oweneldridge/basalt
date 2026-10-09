@@ -22,8 +22,12 @@ export type TreeNode = TreeFile | TreeFolder;
 /** File explorer sort order (folders always come first, sorted by name). */
 export type SortOrder = "name-asc" | "name-desc" | "mtime-desc" | "ctime-desc";
 
+// Natural order (2 before 10), ignoring case, as Obsidian sorts. One collator:
+// localeCompare with options sets one up on every call, which is slow.
+const NAME_ORDER = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
 function sortFolder(folder: TreeFolder, order: SortOrder): void {
-  const byName = (a: TreeNode, b: TreeNode) => a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  const byName = (a: TreeNode, b: TreeNode) => NAME_ORDER.compare(a.name, b.name);
   folder.children.sort((a, b) => {
     if (a.type !== b.type) return a.type === "folder" ? -1 : 1; // folders first
     if (a.type === "folder") return byName(a, b); // folders always by name
@@ -48,16 +52,16 @@ export function buildTree(
   notes: VaultNote[],
   attachments: Attachment[] = [],
   order: SortOrder = "name-asc",
+  emptyFolders: string[] = [],
 ): TreeNode[] {
   const root: TreeFolder = { type: "folder", name: "", path: "", children: [] };
   const folders = new Map<string, TreeFolder>([["", root]]);
 
-  const insert = (rel: string, file: TreeFile) => {
-    const parts = rel.split(/[/\\]/);
+  /** The folder at `parts`, made along with any folders above it. */
+  const folderAt = (parts: string[]): TreeFolder => {
     let parent = root;
     let parentPath = "";
-    for (let i = 0; i < parts.length - 1; i++) {
-      const seg = parts[i];
+    for (const seg of parts) {
       const fp = parentPath ? `${parentPath}/${seg}` : seg;
       let folder = folders.get(fp);
       if (!folder) {
@@ -68,8 +72,12 @@ export function buildTree(
       parent = folder;
       parentPath = fp;
     }
-    parent.children.push(file);
+    return parent;
   };
+  const insert = (rel: string, file: TreeFile) => {
+    folderAt(rel.split(/[/\\]/).slice(0, -1)).children.push(file);
+  };
+  for (const f of emptyFolders) if (f) folderAt(f.split(/[/\\]/));
 
   for (const note of notes) {
     insert(note.rel, { type: "file", name: note.name, path: note.path, mtime: note.mtime, ctime: note.ctime });

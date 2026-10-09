@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Modal } from "./Modal";
 import { ReadingView } from "./ReadingView";
 
 /** Split a note into slides on `---` separator lines (Obsidian's slides),
@@ -54,17 +55,20 @@ export function SlidesView({ doc, selfRel, dark, onOpenInternal, onOpenUrl, reso
   }, [slides.length, onClose]);
 
   return (
-    <div className="slides-overlay">
+    <Modal label="Slides" className="slides-overlay" onClose={onClose}>
       <div className="slides-bar">
-        <span className="slides-count">
+        <span className="slides-count" aria-hidden="true">
           {idx + 1} / {slides.length}
         </span>
-        <button className="slides-close" title="Exit (Esc)" onClick={onClose}>
+        <span className="sr-only" aria-live="polite">
+          Slide {idx + 1} of {slides.length}
+        </span>
+        <button className="slides-close" title="Exit (Esc)" aria-label="Exit (Esc)" onClick={onClose}>
           ✕
         </button>
       </div>
       <div className="slides-stage">
-        <button className="slides-nav prev" title="Previous (←)" disabled={idx === 0} onClick={() => setI((n) => Math.max(n - 1, 0))}>
+        <button className="slides-nav prev" title="Previous (←)" aria-label="Previous (←)" disabled={idx === 0} onClick={() => setI((n) => Math.max(n - 1, 0))}>
           ‹
         </button>
         <div className="slides-content">
@@ -81,13 +85,13 @@ export function SlidesView({ doc, selfRel, dark, onOpenInternal, onOpenUrl, reso
         </div>
         <button
           className="slides-nav next"
-          title="Next (→)"
+          title="Next (→)" aria-label="Next (→)"
           disabled={idx === slides.length - 1}
           onClick={() => setI((n) => Math.min(n + 1, slides.length - 1))}
         >
           ›
         </button>
       </div>
-    </div>
+    </Modal>
   );
 }

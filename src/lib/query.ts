@@ -23,6 +23,7 @@ import {
   type BaseRow,
   type CellPart,
 } from "./bases";
+import { proseMask } from "./markdown";
 
 export type { Val, CellPart, BaseRow };
 export { DateVal, DurVal, LinkVal };
@@ -340,7 +341,7 @@ export function parseQuery(src: string): Query {
   try {
     const { head, clauses } = splitClauses(src);
     const headUp = head.toUpperCase();
-    if (headUp.startsWith("TABLE")) {
+    if (/^TABLE\b/.test(headUp)) {
       q.kind = "TABLE";
       let rest = head.slice(5).trim();
       if (/^WITHOUT\s+ID\b/i.test(rest)) {
@@ -348,9 +349,9 @@ export function parseQuery(src: string): Query {
         rest = rest.replace(/^WITHOUT\s+ID\b/i, "").trim();
       }
       q.columns = rest ? splitTopComma(rest).map(parseColumn) : [];
-    } else if (headUp.startsWith("TASK")) {
+    } else if (/^TASK\b/.test(headUp)) {
       q.kind = "TASK";
-    } else if (headUp.startsWith("LIST")) {
+    } else if (/^LIST\b/.test(headUp)) {
       q.kind = "LIST";
       const rest = head.slice(4).trim();
       if (rest && !/^WITHOUT\s+ID$/i.test(rest)) q.listExpr = rest;
@@ -663,7 +664,11 @@ const TASK_RE = /^(\s*)[-*+]\s+\[(.)\]\s+(.*)$/;
 export function extractTasks(content: string, path: string): Task[] {
   const out: Task[] = [];
   const lines = content.split("\n");
+  // Checkboxes inside code fences or frontmatter aren't tasks (Dataview reads
+  // list items, which never include them), and toggling one would edit code.
+  const prose = proseMask(lines);
   for (let i = 0; i < lines.length; i++) {
+    if (!prose[i]) continue;
     const m = TASK_RE.exec(lines[i].replace(/\r$/, ""));
     if (!m) continue;
     const text = m[3];

@@ -17,8 +17,26 @@ export function mediaKind(pathPart: string): MediaKind | null {
   return null;
 }
 
-/** Build the player element for a resolved media URL. */
-export function buildMediaElement(kind: MediaKind, url: string): HTMLElement {
+/** A PDF embed's options from its link, as Obsidian reads them:
+ * `![[doc.pdf#page=3]]`, `![[doc.pdf#height=400]]`. */
+export function pdfOptions(target: string): { page?: number; height?: number } {
+  const at = target.indexOf("#");
+  const params = new URLSearchParams(at < 0 ? "" : target.slice(at + 1));
+  const n = (k: string) => {
+    const v = Number(params.get(k));
+    return Number.isInteger(v) && v > 0 ? v : undefined;
+  };
+  return { page: n("page"), height: n("height") };
+}
+
+/** The file part of an embed target, which is what gets resolved. */
+export function mediaPath(target: string): string {
+  return target.split("#")[0];
+}
+
+/** Build the player element for a resolved media URL; `target` is the embed's
+ * link, for a PDF's page and height. */
+export function buildMediaElement(kind: MediaKind, url: string, target = ""): HTMLElement {
   if (kind === "audio") {
     const el = document.createElement("audio");
     el.controls = true;
@@ -37,7 +55,9 @@ export function buildMediaElement(kind: MediaKind, url: string): HTMLElement {
   }
   const el = document.createElement("embed");
   el.type = "application/pdf";
-  el.src = url;
+  const { page, height } = pdfOptions(target);
+  el.src = page ? `${url.split("#")[0]}#page=${page}` : url;
+  if (height) el.style.height = `${height}px`;
   el.className = "md-media md-media-pdf";
   return el;
 }
@@ -51,16 +71,16 @@ export function fillMedia(
   root.querySelectorAll<HTMLElement>("[data-basalt-media]").forEach((marker) => {
     const target = marker.dataset.basaltMedia ?? "";
     marker.removeAttribute("data-basalt-media");
-    const kind = mediaKind(target.split("#")[0]);
+    const kind = mediaKind(mediaPath(target));
     if (!kind) return;
-    void resolve(target).then((url) => {
+    void resolve(mediaPath(target)).then((url) => {
       if (!marker.isConnected) return;
       if (!url) {
         marker.textContent = `🎬 ${target} (not found)`;
         marker.className = "md-media-missing";
         return;
       }
-      marker.replaceWith(buildMediaElement(kind, url));
+      marker.replaceWith(buildMediaElement(kind, url, target));
     });
   });
 }

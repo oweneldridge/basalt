@@ -12,8 +12,14 @@ interface Props {
   onLinkAll: (m: Backlink[]) => void;
 }
 
+function onePerLine(refs: Backlink[]): Backlink[] {
+  const lines = new Set<number>();
+  return refs.filter((b) => !lines.has(b.line) && !!lines.add(b.line));
+}
+
 /** Backlinks grouped by source file, each under a collapsible header with its
- * mention count (Obsidian's layout). */
+ * mention count (Obsidian's layout). A line with several mentions is listed
+ * once and counted for each, as Obsidian counts matches. */
 function RefList({
   items,
   onOpen,
@@ -59,7 +65,7 @@ function RefList({
               <span className="count">{g.refs.length}</span>
             </button>
             {!isCollapsed &&
-              g.refs.map((b, i) => (
+              onePerLine(g.refs).map((b, i) => (
                 <div key={`${b.line}:${i}`} className="ref-child-row">
                   <button className="ref ref-child" onClick={() => onOpen(b.path, b.line)} title={`line ${b.line}`}>
                     <span className="ref-snippet">{b.snippet || "(empty line)"}</span>

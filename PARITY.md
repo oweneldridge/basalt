@@ -8,6 +8,108 @@ Basalt clears the bar for a credible core-app foundation but not for full core-a
 
 **Weighted parity: ~67%** ((full + 0.5·partial) / in-scope features). Of 85 in-scope features: **37 full, 38 partial, 9 missing, 1 bonus**.
 
+## October 2026 update
+
+A second audit (2026-10-03) checked Obsidian's changelog from 1.9.0 through
+1.14.4 (latest public release 1.13.7; 1.14.x is early access) against the code,
+and ran security, data-loss, write-path and accessibility reviews with a new
+real-disk end-to-end suite (`npm run test:e2e:real`).
+
+Two earlier claims here were wrong and are corrected:
+
+- **Link resolution.** Obsidian does prefer the linking note's folder. Its
+  resolver (1.13.7 `getLinkpathDest`) takes an exact or relative path first,
+  then candidates under the source note's folder, then the rest, each group by
+  shortest path. Basalt now ports that algorithm (`src/lib/linkpath.ts`).
+- **"The parity backlog is cleared."** Obsidian has shipped a lot since July;
+  see the table below.
+
+Obsidian features since 1.9 and where Basalt stands:
+
+| Obsidian | Feature | Basalt |
+|---|---|---|
+| 1.11.0 | Links in properties rewritten on rename; markdown links in properties | Done (whole quoted values, as Obsidian counts them) |
+| 1.9 to 1.10 | Embedded bases: `![[x.base#View]]`, `base` code blocks, `this` | Done, read-only (view changes aren't saved back yet) |
+| 1.10 | Bases list layout | Done: bullets, numbers or none, indented properties, custom separator, editable in the view editor |
+| 1.14 (early access) | Bases kanban layout, collapsible groups, group order | Missing (a stale `groupOrder` is dropped when the group-by changes) |
+| 1.9 to 1.10 | `file.backlinks`, `file.embeds`, `median`/`stddev` list methods | Done |
+| 1.12.0 | Canvas files count as backlinks and graph links | Missing |
+| 1.11 | `obsidian://` URI actions with `paneType` | Missing (Basalt has `basalt://open`) |
+| 1.11 to 1.12 | Files & links: default file to open, attachment cleanup on delete | Missing |
+| 1.12 to 1.13 | Image drag-resize and lightbox | Partial (reads `\|width` only) |
+| 1.13.0 | Mermaid needs a one-time opt-in per vault | Missing |
+| 1.14 (early access) | Colour highlights (`==🔴text==`) | Missing |
+| 1.12 | Obsidian CLI | Partial (Basalt's own CLI, seven commands, works without the app) |
+
+### Second pass on real notes (2026-10-07)
+
+Notes from a copy of Owen's vault were checked in Basalt. Obsidian itself
+wasn't run; where its behaviour was unclear, its own bundled code (1.14.4
+`app.js` and `app.css`, read only) settled it. Brought in line:
+
+- Word count: frontmatter left out, Obsidian's word pattern, the selection
+  counted on its own, hidden for anything but a note.
+- Cmd-B and Cmd-I: a bare caret formats its word, steps out of closing markers,
+  and spaces stay outside the markers.
+- Link text: the whole link with `#` read as " > ", folder included.
+- Live Preview shows `%%comments%%` dimmed and hides escape backslashes until
+  the caret reaches them.
+- Tags: Obsidian's character set and its rule for what may come before `#`.
+- Tables end at the first line without a `|` and keep cells past the header.
+- Callout colours by type, from Obsidian's colour groups.
+- Reading view links to headings, blocks and footnotes scroll there; hover
+  previews show the linked section.
+- Pasting HTML follows Obsidian's converter settings: no escaping, `==` for
+  highlights, `|` and line breaks in cells written as `\|` and `<br>`, list
+  numbers from `start`. Basalt still writes italics with `*` where Obsidian
+  writes `_`, and keeps code copied from an editor as plain text where
+  Obsidian converts it and loses the indentation.
+- Attachments, canvases and bases rename and move with their links, and the
+  tree tags their extension.
+- Backlink and mention counts are per match; `resolvedLinks` and
+  `unresolvedLinks` count every link, attachments included.
+- "Default file to open: Daily note" opens today's daily note with the vault.
+  From a Templater template it waits for the plugins and is made only where
+  Templater Lite will fill it; Obsidian makes it either way, with the tags
+  unfilled if Templater isn't set to run.
+- `[[[Note]]]` links to "[Note", as in Obsidian, in the index, Live Preview,
+  renames and Reading view alike, and a tag right after a quote's marks
+  (`>#tag`) counts.
+- Numbered lists renumber after every edit, as in Obsidian, but by the list
+  as it renders. Obsidian renumbers any line that starts with a number, so a
+  keystroke can change numbered lines in code, math, comments, frontmatter and
+  paragraphs, and it counts levels in tabs and 4-space runs, so items under a
+  3-space child restart. Basalt leaves those lines alone, nests by the list's
+  own indentation, keeps `01.` padded and reads a `1)` list after a `1.` list
+  as a list of its own. Over 37,000 one-key edits in a real vault, Obsidian's
+  rules made 2,629 correct numbers wrong and changed 83 lines in code or
+  paragraphs; Basalt changed neither. When an edit splits a list in two (a
+  paragraph pasted between items), both parts keep their numbers, where
+  Obsidian restarts the second part at the list's first number, and Basalt
+  leaves a number alone when the new one would stop the line being a list
+  item.
+- Links in canvas text cards follow renames.
+
+Still different: Backlinks leaves out a mention Link all can't link without
+breaking it or changing the page, where Obsidian lists it and its Link does
+both: one in raw HTML, right after `[` (Obsidian writes `[[[Foo]]]`, a link to
+"[Foo"), after a `[[` nothing on its line closes, or whose brackets would undo
+or start bold, italics or a highlight around it. A `[[` inside a link's target
+(`[[a [[b]]`) links to "a [[b" in Reading view but to "b" in the index and
+Live Preview; which one Obsidian reads hasn't been checked. Where the editor's
+parser and CommonMark disagree on a `#` and a tab or a backtick after an
+escaped one, Link all leaves alone what either reads as code. Two rare gaps
+are left: under an empty list item or quote line, the editor's parser keeps
+unindented lines in one paragraph where CommonMark doesn't, and Link all reads
+them the CommonMark way; and after a link whose address holds a backtick
+(`[](a`b)`), Link all can still write into a code span that follows. A table
+whose header and delimiter rows have different cell counts isn't read as a
+table (Obsidian draws one), and Basalt's link colours fade less than
+Obsidian's for unresolved links, to keep their contrast. A large pasted
+`data:` image is left out, where Obsidian saves it as an attachment. Bases
+show 300 rows with a button for the rest; Obsidian scrolls through all of
+them.
+
 ## Fixed since this audit (2026-07-07)
 
 The four **HIGH**-severity items — the data-safety/interop holes and the one
@@ -113,9 +215,9 @@ A follow-up pass closed ~17 more MEDIUM/LOW gaps from the list below:
   namespaces / `file.*` members / methods) and **live validation** (parse +
   unknown-function check, shown inline).
 
-**The parity backlog is cleared** — including the "nice-to-have" expression
-editor. Only the by-design exclusions remain out of scope: Sync/Publish, mobile,
-and the community-plugin/theme marketplaces.
+That cleared the July backlog. For what Obsidian has shipped since, see the
+October 2026 update above. Sync/Publish, mobile, and the community-plugin and
+theme marketplaces stay out of scope by design.
 
 ## Scored matrix
 
@@ -149,7 +251,7 @@ and the community-plugin/theme marketplaces.
 | **medium** | large | missing | Vim key bindings | No Vim mode toggle in editor settings. |
 | **medium** | medium | partial | Callout per-type icons + full type set | ~25 callout types collapse into 6 color groups (tip/success/check/hint/important all identical green) with NO per-type icons and no custom callout types. |
 | **medium** | medium | partial | List / indentation folding | Only heading-section folding exists; nested list items cannot be collapsed (Obsidian's 'Fold indent'). |
-| **medium** | medium | partial | Raw HTML in Live Preview | Block and inline HTML (<sup>/<mark>/etc.) show as literal text while editing; only Reading mode/export render it. Obsidian renders HTML inline in LP. |
+| **low** | small | partial | Raw HTML in Live Preview | Block HTML (including inline SVG) and the safe inline tags render in Live Preview and Reading view. Block detection uses a fixed tag list (`HTML_BLOCK` in render.ts), not CommonMark's full HTML-block rules. |
 | **medium** | medium | partial | Backlinks pane grouping/filter/sort/context | Renders an ungrouped, uncollapsible, unsortable, unfilterable flat list; no per-source headers, filter box, sort, or 'show more context'. |
 | **medium** | medium | partial | Unlinked mentions Link/Link all + alias search | No per-mention 'Link' or 'Link all' action (only navigates), and only the note NAME is searched — aliases (aliasesOf exists) are not surfaced. |
 | **medium** | medium | partial | Tag pane hierarchy + sort | Nested tags (#project/foo) shown as flat rows instead of a collapsible hierarchy with roll-up counts; sort fixed at count-desc (no frequency/name). |
@@ -208,7 +310,7 @@ and the community-plugin/theme marketplaces.
 | Tags #tag | ✅ Full | src/editor/tags.ts:11-32 tagRegex() marks #tag/#nested/tag with cm-tag chip class; skips pure-numeric (Obsidian rule), frontmatter YAML tags: lines, code/table regions (isInExcludedRegion), and link contexts (isInLinkContext).<br>**Gap:** Tags are style-only marks (no click-to-search in the editor yet, per the file's own comment), but tag recognition/rendering is complete. |
 | Block refs ^id and heading # link targets | ✅ Full | src/editor/wikilink.ts:116-158 completion: [[Note#^ suggests block ids via getBlockIds (id+snippet), [[Note# suggests headings via getHeadings; apply absorbs existing ]] closer; onOpen passes the full target incl. #heading/#^block (wikilink.ts:214-216, 246).<br>**Gap:** Whether opening [[Note#heading]] scrolls to the anchor is app-level navigation (not verified in editor scope); the editor correctly captures and forwards the anchored target. |
 | Transclusion / embeds ![[Note#h]] / #^block | ✅ Full | src/editor/embeds.ts:12-50 image embeds ![[img.png]] via ImgWidget (with \|width parsing); src/editor/transcludeBlocks.ts:70-98 StateField renders note/heading/block transclusions (TranscludeWidget via renderEmbedSource) and audio/video/pdf (MediaWidget via buildMediaElement); caret-inside reveals raw. |
-| Raw HTML in markdown | 🟡 Partial | src/lib/render.ts:193-338 HTML_BLOCK detects block HTML -> data-basalt-html placeholder; inline safe tags via m[15] (render.ts:172-174); src/lib/sanitize.ts DOMPurify. BUT grep shows data-basalt-html/raw-html only in src/lib (reading mode + export) — NOT in src/editor/. livePreview.ts has no HTML handling.<br>**Gap:** Raw HTML renders only in Reading mode and export, NOT in the editor Live Preview (block HTML and inline <sup>/<mark>/etc. show as literal text while editing). Obsidian renders HTML inline in Live Preview. |
+| Raw HTML in markdown | 🟡 Partial | src/lib/render.ts `HTML_BLOCK` detects block HTML (inline SVG included since 2026-10-05) for Reading view and export; src/editor/htmlBlock.ts renders the same blocks in Live Preview, and src/editor/htmlInline.ts the safe inline tags. src/lib/sanitize.ts runs DOMPurify with the HTML and SVG profiles and forbids scripts, styles, handlers, foreignObject and SVG animation; colours like `#e8710a` inside HTML aren't read as tags.<br>**Gap:** Block detection uses a fixed tag list rather than CommonMark's HTML-block rules, so an unlisted block tag stays literal. |
 | Editing keys (Mod-B/I/K, Tab indent, list continuation, auto-pair, multi-cursor) | ✅ Full | src/editor/markdownKeys.ts:101-105 Mod-b/i/k with syntax-tree-based toggle/unwrap (enclosing()); setup.ts:38-46 smartTab (indent lists, literal tab elsewhere), :239 closeBrackets, :242 allowMultipleSelections, :245 wrapSelectionOnType, :279 Tab/shift-indentLess, :282 searchKeymap (Mod-D select-next), :236 rectangularSelection (Alt-drag), list continuation via markdown() keymap (:274).<br>**Gap:** Mod-K inserts a standard [](url) link (not a wikilink), matching Obsidian's default. |
 | Spellcheck | ✅ Full | src/App.tsx:326-329 spellcheck state + localStorage('basalt-spellcheck') persistence, :2959 toggle command; src/editor/setup.ts:139-148 spellcheckCompartment reconfigures EditorView.contentAttributes({spellcheck}); initial value threaded via createEditorState (setup.ts:250-252). |
 | Vim key bindings | ❌ Missing | grep -rni 'vim' src/ returns ZERO matches; no @replit/codemirror-vim or @codemirror/vim in package.json dependencies.<br>**Gap:** No Vim mode. Obsidian offers a Vim keybindings toggle in Editor settings. |

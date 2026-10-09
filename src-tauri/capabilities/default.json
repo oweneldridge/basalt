@@ -10,7 +10,6 @@
     "core:default",
     "opener:default",
     "dialog:default",
-    "opener:allow-open-path",
     "opener:allow-reveal-item-in-dir",
     "deep-link:default"
   ]

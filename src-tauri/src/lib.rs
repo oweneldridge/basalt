@@ -135,9 +135,15 @@ fn read_note(path: String, window: tauri::Window, state: State<VaultState>) -> R
 
 /// Atomically write a note's contents, only within the vault.
 #[tauri::command]
-fn write_note(path: String, content: String, window: tauri::Window, state: State<VaultState>) -> Result<(), String> {
+fn write_note(
+    path: String,
+    content: String,
+    expected: Option<String>,
+    window: tauri::Window,
+    state: State<VaultState>,
+) -> Result<(), String> {
     let root = current_root(&state, window.label())?;
-    basalt_core::write_note(&root, path, content)
+    basalt_core::write_note(&root, path, content, expected)
 }
 
 /// Atomically write a `.canvas` file (the editable JSON Canvas), only within the
@@ -147,11 +153,12 @@ fn write_note(path: String, content: String, window: tauri::Window, state: State
 fn write_canvas(
     path: String,
     content: String,
+    expected: Option<String>,
     window: tauri::Window,
     state: State<VaultState>,
 ) -> Result<(), String> {
     let root = current_root(&state, window.label())?;
-    basalt_core::write_canvas(&root, path, content)
+    basalt_core::write_canvas(&root, path, content, expected)
 }
 
 /// Atomically write a `.base` file (the editable Bases definition YAML), only
@@ -161,11 +168,12 @@ fn write_canvas(
 fn write_base(
     path: String,
     content: String,
+    expected: Option<String>,
     window: tauri::Window,
     state: State<VaultState>,
 ) -> Result<(), String> {
     let root = current_root(&state, window.label())?;
-    basalt_core::write_base(&root, path, content)
+    basalt_core::write_base(&root, path, content, expected)
 }
 
 /// Create a new empty note, returning its canonical path. `name` may be folder-
@@ -245,6 +253,21 @@ fn rename_note(path: String, new_name: String, window: tauri::Window, state: Sta
     basalt_core::rename_note(&root, path, new_name)
 }
 
+/// Rename/move an attachment, canvas or base to a new folder-qualified name
+/// without its extension, which it keeps. Returns the canonical new path.
+#[tauri::command]
+fn rename_attachment(path: String, new_name: String, window: tauri::Window, state: State<VaultState>) -> Result<String, String> {
+    let root = current_root(&state, window.label())?;
+    basalt_core::rename_attachment(&root, path, new_name)
+}
+
+/// Every folder in the open vault, empty ones included.
+#[tauri::command]
+async fn list_folders(window: tauri::Window, state: State<'_, VaultState>) -> Result<Vec<String>, String> {
+    let root = current_root(&state, window.label())?;
+    Ok(basalt_core::list_folders(&root))
+}
+
 /// List every attachment (non-md supported file) in the open vault.
 #[tauri::command]
 async fn list_attachments(window: tauri::Window, state: State<'_, VaultState>) -> Result<Vec<basalt_core::AttachmentEntry>, String> {
@@ -265,13 +288,34 @@ async fn write_attachment(
     basalt_core::write_attachment(&root, name, data_b64, source_rel)
 }
 
-/// Write a user-chosen export file. The path comes from the OS save dialog, so
-/// it is user-authorized and may live outside the vault (no containment check).
-/// Written atomically (temp + rename) so a failed/partial export can't leave a
-/// half-written file in place of an existing one.
+/// Ask where to save an export, then write it there. The path comes from the
+/// native save dialog shown here, never from the webview, so page script can't
+/// use this to write arbitrary files. Returns the chosen path, or None if the
+/// user cancelled. Async so the blocking dialog runs off the main thread.
 #[tauri::command]
-fn export_file(path: String, content: String) -> Result<(), String> {
-    basalt_core::export_file(path, content)
+async fn export_file(app: tauri::AppHandle, default_name: String, content: String) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = app
+        .dialog()
+        .file()
+        .set_file_name(default_name)
+        .add_filter("HTML", &["html"])
+        .blocking_save_file();
+    let Some(picked) = picked else { return Ok(None) };
+    let path = picked.into_path().map_err(|e| e.to_string())?.to_string_lossy().to_string();
+    basalt_core::export_file(path.clone(), content)?;
+    Ok(Some(path))
+}
+
+/// Open a vault attachment (PDF, image, media) in the system's default app.
+/// The opener runs from Rust after the core checks the path, instead of giving
+/// the webview an unscoped open-path permission.
+#[tauri::command]
+fn open_attachment(path: String, app: tauri::AppHandle, window: tauri::Window, state: State<VaultState>) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let root = current_root(&state, window.label())?;
+    let file = basalt_core::attachment_to_open(&root, &path)?;
+    app.opener().open_path(file.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -341,7 +385,9 @@ fn start_watching(
             event.kind,
             notify::EventKind::Modify(notify::event::ModifyKind::Metadata(_))
         );
-        let (changed, rescan) = basalt_core::classify_change(&root_for_closure, metadata_only, &event.paths);
+        let (changed, classified_rescan) = basalt_core::classify_change(&root_for_closure, metadata_only, &event.paths);
+        // The OS queue overflowed (inotify): events were lost, so resync fully.
+        let rescan = classified_rescan || event.need_rescan();
         // Target ONLY the owning window — a change in one window's vault must
         // not reach another window watching a different vault.
         if !changed.is_empty() {
@@ -505,13 +551,16 @@ pub fn run() {
             create_note,
             delete_note,
             rename_note,
+            rename_attachment,
             list_attachments,
+            list_folders,
             write_attachment,
             read_obsidian_config,
             read_obsidian_import,
             read_obsidian_bookmarks,
             toggle_file_bookmark,
             export_file,
+            open_attachment,
             start_watching,
             read_image,
             list_plugins,

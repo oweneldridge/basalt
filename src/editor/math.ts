@@ -1,11 +1,12 @@
 // Live Preview for math: `$…$` (inline) and `$$…$$` (display, inline or a
 // multi-line block). Rendered with KaTeX (lazy-loaded). Caret outside → render;
 // inside → reveal the raw source, like mermaid/transclusion.
-import { RangeSetBuilder, StateField } from "@codemirror/state";
-import type { EditorState, Extension } from "@codemirror/state";
+import { EditorSelection, EditorState as State, Prec, RangeSetBuilder, StateField } from "@codemirror/state";
+import type { EditorState, Extension, Transaction } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { isInExcludedRegion } from "./regions";
+import { fillMath, hasMathLoaded, mathGeneration } from "./mathRender";
 
 interface MathSpan {
   from: number;
@@ -15,10 +16,13 @@ interface MathSpan {
   block: boolean;
 }
 
-const MATH_RE = /\$\$([\s\S]+?)\$\$|\$(?!\s)((?:\\.|[^$\n\\])+?)(?<!\s)\$/g;
+// A `$` followed by a digit closes nothing, so `$5 and $10` stays text (Obsidian).
+const MATH_RE = /\$\$([\s\S]+?)\$\$|\$(?!\s)((?:\\.|[^$\n\\])+?)(?<!\s)\$(?!\d)/g;
 
 function findMath(text: string): MathSpan[] {
   const spans: MathSpan[] = [];
+  // A `$` inside inline code is code: blank code spans (same length) first.
+  text = text.replace(/`[^`\n]+`/g, (m) => " ".repeat(m.length));
   MATH_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = MATH_RE.exec(text))) {
@@ -50,18 +54,17 @@ class MathWidget extends WidgetType {
     readonly tex: string,
     readonly display: boolean,
     readonly block: boolean,
+    readonly generation: number,
   ) {
     super();
   }
   eq(o: MathWidget): boolean {
-    return o.tex === this.tex && o.display === this.display && o.block === this.block;
+    return o.tex === this.tex && o.display === this.display && o.block === this.block && o.generation === this.generation;
   }
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const el = document.createElement(this.block ? "div" : "span");
     el.className = "cm-math" + (this.block ? " cm-math-block" : "");
-    void import("../lib/math").then((m) => {
-      el.innerHTML = m.renderMath(this.tex, this.display);
-    });
+    fillMath(el, this.tex, this.display, view);
     return el;
   }
   ignoreEvent(): boolean {
@@ -69,26 +72,92 @@ class MathWidget extends WidgetType {
   }
 }
 
-function compute(state: EditorState): DecorationSet {
+interface MathState {
+  spans: MathSpan[];
+  deco: DecorationSet;
+}
+
+function decorate(state: EditorState, spans: MathSpan[]): MathState {
   const builder = new RangeSetBuilder<Decoration>();
   const sel = state.selection;
-  for (const s of findMath(state.doc.toString())) {
-    if (s.from >= s.to) continue;
+  // A `$$` block takes its whole line, so it can start before an inline
+  // formula earlier on that line: keep them in order and never overlapping
+  // (out of order, the builder throws and the keystroke is lost).
+  let end = -1;
+  for (const s of [...spans].sort((a, b) => a.from - b.from || a.to - b.to)) {
+    if (s.from >= s.to || s.from < end) continue;
+    end = s.to;
     if (isInExcludedRegion(state, s.from)) continue; // math inside code stays raw
     if (sel.ranges.some((r) => r.from <= s.to && r.to >= s.from)) continue; // editing → raw
     builder.add(
       s.from,
       s.to,
-      Decoration.replace({ widget: new MathWidget(s.tex, s.display, s.block), block: s.block }),
+      Decoration.replace({ widget: new MathWidget(s.tex, s.display, s.block, mathGeneration()), block: s.block }),
     );
   }
-  return builder.finish();
+  return { spans, deco: builder.finish() };
 }
 
-const mathField = StateField.define<DecorationSet>({
-  create: (state) => compute(state),
-  update: (deco, tr) => (tr.docChanged || tr.selection ? compute(tr.state) : deco),
-  provide: (f) => EditorView.decorations.from(f),
+/** Whether an edit can change what's math: it adds or removes a `$`, a
+ * backtick, a fence, a backslash or a line break, edits a line with a `$` on
+ * it (a space or digit beside one counts), or edits inside a formula. Any
+ * other edit only shifts the formulas, so a long note isn't scanned again on
+ * every keystroke. */
+function changesMath(tr: Transaction, spans: MathSpan[]): boolean {
+  const start = tr.startState.doc;
+  let yes = false;
+  tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    if (yes) return;
+    yes =
+      /[$`~\\\n]/.test(start.sliceString(fromA, toA) + inserted.toString()) ||
+      start.lineAt(fromA).text.includes("$") ||
+      start.lineAt(toA).text.includes("$") ||
+      spans.some((s) => fromA <= s.to && toA >= s.from);
+  });
+  return yes;
+}
+
+/** Exported for tests: the formulas the field holds. */
+export const mathField = StateField.define<MathState>({
+  create: (state) => decorate(state, findMath(state.doc.toString())),
+  update: (value, tr) => {
+    if (tr.docChanged) {
+      if (changesMath(tr, value.spans)) return decorate(tr.state, findMath(tr.state.doc.toString()));
+      const spans = value.spans.map((s) => ({ ...s, from: tr.changes.mapPos(s.from, 1), to: tr.changes.mapPos(s.to, -1) }));
+      return decorate(tr.state, spans);
+    }
+    return tr.selection || hasMathLoaded(tr.effects) ? decorate(tr.state, value.spans) : value;
+  },
+  provide: (f) => EditorView.decorations.from(f, (v) => v.deco),
 });
 
-export const math: Extension = mathField;
+export { findMath };
+
+// A click on a rendered block's padding, or a pixel row along it, resolves to
+// the very start or end of its source. Put the caret just inside the `$$`
+// instead, so the source opens for editing and a key never breaks a delimiter.
+const edgeClick = State.transactionFilter.of((tr) => {
+  if (!tr.isUserEvent("select.pointer") || tr.docChanged || !tr.selection) return tr;
+  const deco = tr.startState.field(mathField).deco;
+  const doc = tr.startState.doc;
+  let moved = false;
+  const ranges = tr.newSelection.ranges.map((r) => {
+    if (!r.empty) return r;
+    let pos = r.head;
+    deco.between(r.head, r.head, (from, to, d) => {
+      if (!(d.spec.widget instanceof MathWidget) || !d.spec.widget.block) return;
+      const src = doc.sliceString(from, to);
+      if (r.head === from) pos = from + src.indexOf("$$") + 2;
+      // A click below the note's last block continues the note after it.
+      else if (r.head === to && to < doc.length) pos = from + src.lastIndexOf("$$");
+    });
+    if (pos === r.head) return r;
+    moved = true;
+    return EditorSelection.cursor(pos);
+  });
+  if (!moved) return tr;
+  return [tr, { selection: EditorSelection.create(ranges, tr.newSelection.mainIndex), sequential: true }];
+});
+
+// Runs after the Properties filter, which can move a click to a block's start.
+export const math: Extension = [mathField, Prec.high(edgeClick)];

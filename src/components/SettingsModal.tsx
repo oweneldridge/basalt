@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Modal } from "./Modal";
 import type { ThemeMode } from "../lib/theme";
 import { chordOf, chordLabel, type Bindings } from "../lib/hotkeys";
 import type { ObsidianImportResult } from "../lib/obsidianImport";
@@ -48,6 +49,12 @@ interface Props {
   onReadableWidth: (on: boolean) => void;
   spellcheck: boolean;
   onSpellcheck: (on: boolean) => void;
+  remoteImages: boolean;
+  /** Turned back on this session: they load after a reload. */
+  remoteImagesReload?: boolean;
+  onRemoteImages: (on: boolean) => void;
+  showHidden: boolean;
+  onShowHidden: (on: boolean) => void;
   vim: boolean;
   onVim: (on: boolean) => void;
   rtl: boolean;
@@ -99,6 +106,11 @@ export function SettingsModal({
   onReadableWidth,
   spellcheck,
   onSpellcheck,
+  remoteImages,
+  remoteImagesReload,
+  onRemoteImages,
+  showHidden,
+  onShowHidden,
   vim,
   onVim,
   rtl,
@@ -156,7 +168,7 @@ export function SettingsModal({
   const linkPath = obsConfig?.newLinkFormat ?? "shortest";
 
   return (
-    <div className="palette-overlay" onMouseDown={onClose}>
+    <Modal className="palette-overlay" label="Settings" onClose={onClose}>
       <div className="settings" onMouseDown={(e) => e.stopPropagation()}>
         <div className="settings-head">
           <h2>Settings</h2>
@@ -169,10 +181,11 @@ export function SettingsModal({
           <div className="settings-label">Appearance</div>
           <div className="settings-row">
             <span className="settings-row-label">Theme</span>
-            <div className="seg">
+            <div className="seg" role="group" aria-label="Theme">
               {THEME_OPTIONS.map((o) => (
                 <button
                   key={o.value}
+                  aria-pressed={themeMode === o.value}
                   className={themeMode === o.value ? "seg-btn active" : "seg-btn"}
                   onClick={() => onThemeMode(o.value)}
                 >
@@ -181,26 +194,36 @@ export function SettingsModal({
               ))}
             </div>
           </div>
-          <div className="settings-row">
+          <label className="settings-row">
             <span className="settings-row-label">Readable line length</span>
             <input
               type="checkbox"
               checked={readableWidth}
               onChange={(e) => onReadableWidth(e.target.checked)}
             />
-          </div>
-          <div className="settings-row">
+          </label>
+          <label className="settings-row">
             <span className="settings-row-label">Spellcheck</span>
             <input type="checkbox" checked={spellcheck} onChange={(e) => onSpellcheck(e.target.checked)} />
-          </div>
-          <div className="settings-row">
+          </label>
+          <label className="settings-row">
+            <span className="settings-row-label">
+              Load remote images{remoteImagesReload ? " (after a reload)" : ""}
+            </span>
+            <input type="checkbox" checked={remoteImages} onChange={(e) => onRemoteImages(e.target.checked)} />
+          </label>
+          <label className="settings-row">
+            <span className="settings-row-label">Show hidden files (names starting with a dot)</span>
+            <input type="checkbox" checked={showHidden} onChange={(e) => onShowHidden(e.target.checked)} />
+          </label>
+          <label className="settings-row">
             <span className="settings-row-label">Vim key bindings</span>
             <input type="checkbox" checked={vim} onChange={(e) => onVim(e.target.checked)} />
-          </div>
-          <div className="settings-row">
+          </label>
+          <label className="settings-row">
             <span className="settings-row-label">Right-to-left (RTL)</span>
             <input type="checkbox" checked={rtl} onChange={(e) => onRtl(e.target.checked)} />
-          </div>
+          </label>
           <div className="settings-row">
             <span className="settings-row-label">Font size</span>
             <span className="settings-inline">
@@ -231,7 +254,9 @@ export function SettingsModal({
             </span>
           </div>
           <p className="settings-hint">
-            “System” follows your OS appearance. Stored per app, not in the vault.
+            “System” follows your OS appearance. With remote images off, images from
+            the web show as placeholders, so opening a note never contacts another
+            server. Stored per app, not in the vault.
           </p>
         </section>
 
@@ -301,11 +326,12 @@ export function SettingsModal({
                   className={recording === c.id ? "hotkey-chord recording" : "hotkey-chord"}
                   onClick={() => setRecording(recording === c.id ? null : c.id)}
                   title={recording === c.id ? "Press a key combination (Esc to cancel)" : "Click to record a hotkey"}
+                  aria-label={`Hotkey for ${c.label}: ${hotkeys[c.id] ? chordLabel(hotkeys[c.id], isMac) : "none"}`}
                 >
                   {recording === c.id ? "Press keys…" : hotkeys[c.id] ? chordLabel(hotkeys[c.id], isMac) : "—"}
                 </button>
                 {hotkeys[c.id] && recording !== c.id && (
-                  <button className="hotkey-clear" title="Remove hotkey" onClick={() => onSetHotkey(c.id, null)}>
+                  <button className="hotkey-clear" title="Remove hotkey" aria-label="Remove hotkey" onClick={() => onSetHotkey(c.id, null)}>
                     ✕
                   </button>
                 )}
@@ -380,6 +406,6 @@ export function SettingsModal({
           </p>
         </section>
       </div>
-    </div>
+    </Modal>
   );
 }

@@ -2,13 +2,18 @@
 // the app: it edits OTHER notes' content, so every preserved detail matters.
 import { describe, expect, it } from "vitest";
 import { linkTargetFor, rewriteLinks } from "./rename";
-import { targetPathPart } from "./markdown";
+import { targetPathPart, yamlValueLines } from "./markdown";
 
-// A mapper that renames targets whose path part matches `oldName`.
+// A mapper that renames targets whose path part matches `oldName` (markdown
+// links arrive with their .md extension).
 const renameMap = (oldName: string, newName: string) => (raw: string) =>
-  targetPathPart(raw).toLowerCase() === oldName.toLowerCase() ? newName : null;
+  targetPathPart(raw).replace(/\.md$/i, "").toLowerCase() === oldName.toLowerCase() ? newName : null;
 
 describe("rewriteLinks", () => {
+  it("returns null when every link it maps comes out the same", () => {
+    const same = (raw: string) => targetPathPart(raw).replace(/\.md$/i, "");
+    expect(rewriteLinks("[[Ideas|mine]] [[Ideas#Later]] ![[Ideas]] [i](Ideas.md)\n", same)).toBeNull();
+  });
   it("rewrites a plain wikilink", () => {
     expect(rewriteLinks("see [[Old]] here", renameMap("Old", "New"))).toBe("see [[New]] here");
   });
@@ -53,6 +58,59 @@ describe("rewriteLinks", () => {
     const doc = ["---", "up: [[Old]]", "---", "```", "[[Old]]", "```", "real [[Old]]"].join("\n");
     expect(rewriteLinks(doc, renameMap("Old", "New"))).toBe(
       ["---", "up: [[Old]]", "---", "```", "[[Old]]", "```", "real [[New]]"].join("\n"),
+    );
+  });
+  it("rewrites links that are a whole quoted property value", () => {
+    const doc = [
+      "---",
+      'up: "[[Old]]"',
+      "see:",
+      '  - "[[Old#Goals|goals]]"',
+      '  - "[[Other]]"',
+      'flow: ["[[Old]]", "[[Other]]"]',
+      "note: met about [[Old]] today",
+      'mid: "see [[Old]]"',
+      "ref: '[text](Old.md)'",
+      "---",
+      "body [[Old]]",
+    ].join("\n");
+    expect(rewriteLinks(doc, renameMap("Old", "New"))).toBe(
+      [
+        "---",
+        'up: "[[New]]"',
+        "see:",
+        '  - "[[New#Goals|goals]]"',
+        '  - "[[Other]]"',
+        'flow: ["[[New]]", "[[Other]]"]',
+        "note: met about [[Old]] today",
+        'mid: "see [[Old]]"',
+        "ref: '[text](New.md)'",
+        "---",
+        "body [[New]]",
+      ].join("\n"),
+    );
+  });
+  it("keeps YAML quoting valid when the new name has a quote character", () => {
+    const doc = ["---", "a: '[[Old]]'", 'b: "[[Old]]"', "---"].join("\n");
+    expect(rewriteLinks(doc, renameMap("Old", "Owen's \"Q\""))).toBe(
+      ["---", "a: '[[Owen''s \"Q\"]]'", 'b: "[[Owen\'s \\"Q\\"]]"', "---"].join("\n"),
+    );
+  });
+  it("matches an escaped quote in a single-quoted property link", () => {
+    const doc = ["---", "a: '[[Owen''s]]'", "---"].join("\n");
+    expect(rewriteLinks(doc, renameMap("Owen's", "Mine"))).toBe(["---", "a: '[[Mine]]'", "---"].join("\n"));
+  });
+  it("leaves links in block-scalar property text alone, as Obsidian does", () => {
+    const doc = ["---", "summary: |", "  see [[Old]]", "  [[Old]] again", "next: x", "---"].join("\n");
+    expect(rewriteLinks(doc, renameMap("Old", "New"))).toBeNull();
+  });
+  it("leaves YAML comments and unquoted nested-list values alone", () => {
+    const doc = ["---", "up: [[Old]]", "- [[Old]]", "x: 1 # [[Old]]", "# [[Old]]", "---"].join("\n");
+    expect(rewriteLinks(doc, renameMap("Old", "New"))).toBeNull();
+  });
+  it("keeps the escaped pipe of a table-cell link", () => {
+    expect(rewriteLinks("| [[Old\\|x]] | [[Old#H\\|y]] |", renameMap("Old", "New"))).toBe(
+      "| [[New\\|x]] | [[New#H\\|y]] |",
     );
   });
   it("rewrites multiple links on one line independently", () => {
@@ -146,5 +204,64 @@ describe("inline code inside link parts survives rewriting", () => {
     expect(rewriteLinks("[[Old#My `code` heading]]", renameMap("Old", "New"))).toBe(
       "[[New#My `code` heading]]",
     );
+  });
+});
+
+describe("block scalars in properties", () => {
+  const note = [
+    "---",
+    "summary: |",
+    '  "[[A]]"',
+    "",
+    '  more "[[A]]"',
+    "notes:",
+    "  - >-",
+    '    "[[A]]"',
+    'up: "[[A]]"',
+    "---",
+    '"[[A]]" in the body',
+  ].join("\n");
+
+  it("marks only lines that can hold a property value", () => {
+    expect(yamlValueLines(note.split("\n"))).toEqual([false, true, false, false, false, true, true, false, true, false, false]);
+  });
+
+  it("rewrites the property link but not the block scalar text", () => {
+    const out = rewriteLinks(note, renameMap("A", "B"))!;
+    expect(out.split("\n")).toEqual([
+      "---",
+      "summary: |",
+      '  "[[A]]"',
+      "",
+      '  more "[[A]]"',
+      "notes:",
+      "  - >-",
+      '    "[[A]]"',
+      'up: "[[B]]"',
+      "---",
+      '"[[B]]" in the body',
+    ]);
+  });
+});
+
+describe("block scalar detection edge cases", () => {
+  it("a comment or a sibling key doesn't hide property links; |2- headers count", () => {
+    const lines = [
+      "---",
+      "related: # format: |",
+      '  - "[[A]]"',
+      "items:",
+      "  - note: |",
+      "      text",
+      '    up: "[[A]]"',
+      "poem: |2-",
+      '    "[[A]]"',
+      "---",
+    ];
+    expect(yamlValueLines(lines)).toEqual([false, true, true, true, true, false, true, true, false, false]);
+    const out = rewriteLinks(lines.join("\n"), renameMap("A", "B"))!;
+    expect(out).toContain('  - "[[B]]"');
+    expect(out).toContain('    up: "[[B]]"');
+    expect(out).toContain('    "[[A]]"\n---');
   });
 });

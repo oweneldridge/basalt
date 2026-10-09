@@ -51,7 +51,7 @@ test("sidebar: collapse-all hides nested files; reveal-active brings them back",
   await page.locator('.icon-btn[title="Collapse all"]').click();
   await expect(page.locator(".tree-row.file", { hasText: "Roadmap" })).toHaveCount(0);
   // Open the nested note, collapse again, then reveal it.
-  await page.keyboard.press("Meta+o");
+  await page.keyboard.press("ControlOrMeta+o");
   await page.locator(".palette-input").first().fill("Roadmap");
   await page.keyboard.press("Enter");
   await page.locator('.icon-btn[title="Collapse all"]').click();
@@ -68,6 +68,18 @@ test("inline title renames the note", async ({ page }) => {
   await page.locator(".inline-title").press("Enter");
   await expect(page.locator(".pane:not(.dock) .tab.active .tab-name")).toHaveText("IdeasRenamed");
   await expect(page.locator(".tree-row.file", { hasText: "IdeasRenamed" })).toHaveCount(1);
+});
+
+test("Escape in the inline title cancels the rename", async ({ page }) => {
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  await expect(page.locator(".inline-title")).toHaveValue("Ideas");
+  await page.locator(".inline-title").fill("Typo Name");
+  await page.locator(".inline-title").press("Escape");
+  await expect(page.locator(".inline-title")).toHaveValue("Ideas");
+  await page.waitForTimeout(500);
+  await expect(page.locator(".pane:not(.dock) .tab.active .tab-name")).toHaveText("Ideas");
+  await expect(page.locator(".tree-row.file", { hasText: "Typo Name" })).toHaveCount(0);
+  await expect(page.locator(".cm-editor.cm-focused")).toHaveCount(1);
 });
 
 test("dragging a tree note into the editor inserts a wikilink", async ({ page }) => {
@@ -109,7 +121,7 @@ test("appearance settings change editor font size and accent color", async ({ pa
   await page.reload();
   await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
   await expect(page.locator(".cm-editor")).toBeVisible();
-  await page.keyboard.press("Meta+,");
+  await page.keyboard.press("ControlOrMeta+,");
   await expect(page.locator(".settings")).toBeVisible();
   // Font size → the editor scales.
   await page.locator('input[aria-label="Font size"]').fill("22");

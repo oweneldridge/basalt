@@ -1,6 +1,6 @@
 // Assembles the CodeMirror 6 extension stack. New editor-wide features are
 // wired in here.
-import { Annotation, Compartment, EditorSelection, EditorState } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, Prec } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import {
   EditorView,
@@ -8,6 +8,7 @@ import {
   drawSelection,
   rectangularSelection,
   highlightActiveLine,
+  lineNumbers,
 } from "@codemirror/view";
 import {
   defaultKeymap,
@@ -24,12 +25,15 @@ import {
   closeBracketsKeymap,
 } from "@codemirror/autocomplete";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { insertNewlineContinueMarkupCommand, markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { GFM } from "@lezer/markdown";
+import { ObsidianTasks } from "../lib/mdTasks";
+import { ObsidianTables } from "../lib/mdTables";
 import { vim } from "@replit/codemirror-vim";
 
 import { markdownKeys } from "./markdownKeys";
+import { indentListItem, outdentListItem } from "./listIndent";
 
 // Context-aware Tab (Obsidian-like): accept an open completion; indent list
 // items and multi-line selections; otherwise insert a literal tab at the caret
@@ -42,9 +46,11 @@ const smartTab = (view: EditorView): boolean => {
   const sel = state.selection.main;
   const line = state.doc.lineAt(sel.from);
   const multiline = !sel.empty && state.doc.lineAt(sel.to).number !== line.number;
-  if (multiline || LIST_LINE.test(line.text)) return indentMore(view);
+  if (multiline) return indentMore(view);
+  if (LIST_LINE.test(line.text)) return indentListItem(view) || indentMore(view);
   return insertTab(view);
 };
+const smartShiftTab = (view: EditorView): boolean => outdentListItem(view) || indentLess(view);
 
 // Typing an emphasis marker over a NON-EMPTY selection wraps it. (Adding these
 // chars to closeBrackets instead would also auto-pair them at an empty caret,
@@ -78,6 +84,8 @@ import { basaltThemeFor, basaltHighlight } from "./theme";
 import { livePreview } from "./livePreview";
 import { tables } from "./tables";
 import { frontmatter } from "./frontmatter";
+import { clickGuard } from "./clickGuard";
+import { remeasure } from "./remeasure";
 import { codeBlocks } from "./codeBlocks";
 import { callouts } from "./callouts";
 import { calloutFold } from "./calloutFold";
@@ -89,14 +97,18 @@ import { highlight } from "./highlight";
 import { tags } from "./tags";
 import { embeds } from "./embeds";
 import { attachments } from "./attachments";
-import { wikilinkAutocomplete, wikilinkDecorations, wikilinkModClickFollow, type NoteRef } from "./wikilink";
+import { wikilinkAutocomplete, wikilinkDecorations, wikilinkModClickFollow, followLinkAtCursor, type NoteRef } from "./wikilink";
 import { headingFold, foldKeymap } from "./headingFold";
 import { mermaid } from "./mermaid";
 import { math } from "./math";
 import { query, notePathFacet } from "./query";
+import { baseBlocks } from "./baseBlocks";
 import { pluginBlocks } from "./pluginBlocks";
 import { transcludeBlocks } from "./transcludeBlocks";
 import { pasteLink } from "./pasteLink";
+import { pasteHtml } from "./pasteHtml";
+import { deleteMarkupOnly } from "./markupBackspace";
+import { renumberLists } from "./listRenumber";
 import { pluginEditorExtensions } from "../lib/plugins";
 import type { LinkFormat } from "../lib/rename";
 
@@ -129,7 +141,9 @@ export interface EditorCallbacks {
   /** Fired (on every edit) with the full document text. */
   onChange: (doc: string) => void;
   /** Fired when the caret moves: 1-based line, 1-based column, selection length. */
-  onCursor?: (line: number, col: number, selChars: number) => void;
+  /** The caret's line and column, the selection's length, and a way to read
+   * the selected text (null with nothing selected). */
+  onCursor?: (line: number, col: number, selChars: number, selText: (() => string) | null) => void;
   /** Right-click in the editor — open the custom context menu at (x, y). */
   onContextMenu?: (x: number, y: number) => void;
 }
@@ -149,6 +163,21 @@ const spellcheckCompartment = new Compartment();
 const vimCompartment = new Compartment();
 // Right-to-left text direction (Obsidian's RTL editor setting), toggled live.
 const rtlCompartment = new Compartment();
+// Line numbers (Obsidian's "Show line number"), toggled live.
+const lineNumbersCompartment = new Compartment();
+
+/** Show or hide line numbers on a live editor. */
+export function setLineNumbers(view: EditorView, on: boolean): void {
+  view.dispatch({ effects: lineNumbersCompartment.reconfigure(on ? lineNumbers() : []) });
+}
+
+/** Tell the status bar where the caret is and what's selected. */
+export function reportCursor(state: EditorState, onCursor: EditorCallbacks["onCursor"]): void {
+  if (!onCursor) return;
+  const sel = state.selection.main;
+  const line = state.doc.lineAt(sel.head);
+  onCursor(line.number, sel.head - line.from + 1, sel.to - sel.from, sel.empty ? null : () => state.sliceDoc(sel.from, sel.to));
+}
 
 /** Toggle Vim keybindings on a live editor. */
 export function setVimMode(view: EditorView, on: boolean): void {
@@ -186,13 +215,16 @@ export function reconfigurePlugins(view: EditorView): void {
 
 function renderExtensions(cb: EditorCallbacks): Extension[] {
   return [
+    clickGuard,
+    remeasure,
     frontmatter,
     tables,
     mermaid,
     math,
     query,
+    baseBlocks,
     pluginBlocks,
-    transcludeBlocks,
+    transcludeBlocks({ onOpenInternal: cb.onOpenWikilink, onOpenUrl: cb.onOpenUrl }),
     codeBlocks,
     callouts,
     calloutFold,
@@ -250,13 +282,17 @@ export function createEditorState(
   spellcheck = true,
   vimMode = false,
   rtl = false,
+  showLineNumbers = false,
 ): EditorState {
+  const noteName = selfRel.split("/").pop()?.replace(/\.md$/i, "") ?? "";
   const extensions: Extension[] = [
     notePathFacet.of(selfRel),
+    EditorView.contentAttributes.of({ "aria-label": noteName ? `Editing ${noteName}` : "Note editor" }),
     // Vim keybindings (Obsidian's optional Vim mode) — in a compartment, placed
     // FIRST so its keymap wins in normal mode; toggled live via setVimMode().
     vimCompartment.of(vimMode ? vim() : []),
     rtlCompartment.of(EditorView.contentAttributes.of({ dir: rtl ? "rtl" : "ltr" })),
+    lineNumbersCompartment.of(showLineNumbers ? lineNumbers() : []),
     // CM6 extensions contributed by enabled plugins — in a compartment so
     // enable/disable reflects into live editors via reconfigurePlugins().
     pluginCompartment.of(pluginEditorExtensions()),
@@ -275,13 +311,23 @@ export function createEditorState(
     indentUnit.of("\t"),
     wrapSelectionOnType,
     pasteLink,
+    pasteHtml,
+    renumberLists,
     // Native autocorrect/-capitalize (static); spellcheck is in a compartment
     // so it can be toggled live.
     EditorView.contentAttributes.of({ autocorrect: "on", autocapitalize: "on" }),
     spellcheckCompartment.of(
       EditorView.contentAttributes.of({ spellcheck: spellcheck ? "true" : "false" }),
     ),
-    markdown({ base: markdownLanguage, codeLanguages: languages, extensions: GFM }),
+    markdown({ base: markdownLanguage, codeLanguages: languages, extensions: [GFM, ObsidianTasks, ObsidianTables], addKeymap: false }),
+    // Enter on an empty item leaves the list in one press, without first
+    // turning a tight list loose (Obsidian); Backspace eats list markup.
+    Prec.high(
+      keymap.of([
+        { key: "Enter", run: insertNewlineContinueMarkupCommand({ nonTightLists: false }) },
+        { key: "Backspace", run: deleteMarkupOnly },
+      ]),
+    ),
     basaltHighlight,
     themeCompartment.of(basaltThemeFor(dark)),
     // Heading folding — outside the render compartment, so it works in both
@@ -300,14 +346,14 @@ export function createEditorState(
     // Cmd/Ctrl-click follows a raw [[link]] — the only navigation affordance
     // that must survive source mode (Obsidian behaves the same).
     wikilinkModClickFollow(cb.onOpenWikilink),
+    followLinkAtCursor(cb.onOpenWikilink, cb.onOpenUrl),
     // Real key precedence (higher first): completionKeymap (Prec.highest, injected
-    // by autocompletion() in wikilink.ts) > markdownKeymap (Prec.high, injected by
-    // markdown() — Enter continues lists/quotes/tasks, Backspace eats markup) >
-    // this flat keymap.
+    // by autocompletion() in wikilink.ts) > the Enter/Backspace keymap above
+    // (Prec.high) > this flat keymap.
     keymap.of([
       ...closeBracketsKeymap,
       ...markdownKeys, // Mod-B/I/K formatting
-      { key: "Tab", run: smartTab, shift: indentLess },
+      { key: "Tab", run: smartTab, shift: smartShiftTab },
       ...defaultKeymap,
       ...historyKeymap,
       ...searchKeymap, // includes Mod-D select-next-occurrence (multi-cursor)
@@ -318,12 +364,8 @@ export function createEditorState(
       if (update.docChanged && !update.transactions.some((t) => t.annotation(externalReload))) {
         cb.onChange(update.state.doc.toString());
       }
-      // Report the caret line/column (1-based) + selection length to the status bar.
-      if (update.docChanged || update.selectionSet) {
-        const sel = update.state.selection.main;
-        const line = update.state.doc.lineAt(sel.head);
-        cb.onCursor?.(line.number, sel.head - line.from + 1, Math.abs(sel.to - sel.from));
-      }
+      // Report the caret line/column (1-based) + selection to the status bar.
+      if (update.docChanged || update.selectionSet) reportCursor(update.state, cb.onCursor);
     }),
     // Right-click → our own context menu (Cut/Copy/Paste/Bold/Italic).
     EditorView.domEventHandlers({

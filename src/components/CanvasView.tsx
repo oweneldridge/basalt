@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { clickedLink } from "../lib/anchors";
 import {
   parseCanvas,
   serializeCanvas,
@@ -10,6 +11,7 @@ import {
   type Side,
 } from "../lib/canvas";
 import { renderMarkdown } from "../lib/render";
+import { ContextMenu } from "./ContextMenu";
 
 interface Props {
   /** The .canvas file's JSON content. */
@@ -20,6 +22,8 @@ interface Props {
   /** When provided, the canvas is EDITABLE and calls this with the new JSON on
    * every committed change (move/resize/create/edit/delete/color/edge). */
   onChange?: (json: string) => void;
+  /** The file's path, marked on the canvas so the app can find it. */
+  path?: string;
 }
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|svg|webp|bmp|avif|ico)$/i;
@@ -64,7 +68,16 @@ function newId(): string {
 const SIDES: Side[] = ["top", "right", "bottom", "left"];
 
 /** JSON Canvas viewer/editor. Read-only unless `onChange` is provided. */
-export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange }: Props) {
+// A link in a card's rendered text opens like any other link, never in place
+// of the app.
+function openCardLink(e: React.MouseEvent, onOpenUrl: (url: string) => void): void {
+  const link = clickedLink(e.target);
+  if (!link) return;
+  e.preventDefault();
+  if (link.href) onOpenUrl(link.href);
+}
+
+export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange, path }: Props) {
   const editable = !!onChange;
   const parsed = useMemo(() => parseCanvas(doc) ?? { nodes: [], edges: [] }, [doc]);
   const [data, setData] = useState<CanvasData>(parsed);
@@ -299,6 +312,63 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
     [emit, selectOne],
   );
 
+  // Keyboard: Tab moves between cards, focus selects (so Delete works), Enter
+  // edits a text card or opens a note or link, arrows move the selection
+  // (Shift for bigger steps), Escape deselects.
+  const refocusAfterEdit = useRef<string | null>(null);
+  const revealNode = (n: CanvasNode) => {
+    const vp = viewport.current;
+    if (!vp) return;
+    // Focus can scroll the clipped viewport; the pan lives in the transform.
+    vp.scrollLeft = 0;
+    vp.scrollTop = 0;
+    const { x, y, k } = t.current;
+    const left = n.x * k + x;
+    const top = n.y * k + y;
+    if (left >= 0 && top >= 0 && left + n.width * k <= vp.clientWidth && top + n.height * k <= vp.clientHeight) return;
+    t.current = { k, x: vp.clientWidth / 2 - (n.x + n.width / 2) * k, y: vp.clientHeight / 2 - (n.y + n.height / 2) * k };
+    apply();
+  };
+  const nodeKeys = (n: CanvasNode): React.HTMLAttributes<HTMLDivElement> & { "data-node-id": string } => ({
+    tabIndex: 0,
+    role: "group",
+    "aria-roledescription": "card",
+    "aria-label": nodeLabel(n),
+    "data-node-id": n.id,
+    onFocus: (e) => {
+      if (e.target !== e.currentTarget) return;
+      if (!selectedRef.current.has(n.id)) selectOne(n.id);
+      revealNode(n);
+    },
+    onKeyDown: (e) => {
+      if (e.target !== e.currentTarget) return;
+      const step = e.shiftKey ? 100 : 20;
+      const moves: Record<string, [number, number]> = {
+        ArrowLeft: [-step, 0],
+        ArrowRight: [step, 0],
+        ArrowUp: [0, -step],
+        ArrowDown: [0, step],
+      };
+      if (e.key === "Enter") {
+        if (n.type === "text" && editable) setEditingId(n.id);
+        else if (n.type === "file") onOpenFile(n.file, n.subpath);
+        else if (n.type === "link") onOpenUrl(n.url);
+        else return;
+      } else if (moves[e.key] && editable) {
+        const [dx, dy] = moves[e.key];
+        const sel = selectedRef.current;
+        const d = dataRef.current;
+        emit({ ...d, nodes: d.nodes.map((m) => (sel.has(m.id) ? { ...m, x: m.x + dx, y: m.y + dy } : m)) });
+      } else if (e.key === "Escape") {
+        clearSel();
+      } else {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+    },
+  });
+
   // Delete the selection with Delete/Backspace (when not editing text).
   useEffect(() => {
     if (!editable) return;
@@ -467,7 +537,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
   const b = canvasBounds(data.nodes);
 
   if (data.nodes.length === 0 && !editable) {
-    return <div className="canvas-view canvas-empty">Empty canvas</div>;
+    return <div className="canvas-view canvas-empty" data-path={path}>Empty canvas</div>;
   }
 
   const selectedNodes = data.nodes.filter((n) => selected.has(n.id));
@@ -482,7 +552,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
   };
 
   return (
-    <div className="canvas-view" ref={viewport} onDoubleClick={onDoubleClick} onContextMenu={onEmptyContextMenu}>
+    <div className="canvas-view" data-path={path} ref={viewport} onDoubleClick={onDoubleClick} onContextMenu={onEmptyContextMenu}>
       {editable && (
         <div className="canvas-toolbar">
           <button
@@ -615,17 +685,24 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
             onStartDrag={(e) => startNodeDrag(e, n.id)}
             onStartResize={(e) => startResize(e, n.id)}
             onStartEdge={(e, side) => startEdge(e, n.id, side)}
+            a11y={nodeKeys(n)}
             onBeginEdit={() => editable && n.type === "text" && setEditingId(n.id)}
+            onEscapeEdit={() => (refocusAfterEdit.current = n.id)}
             onCommitText={(text) => {
               setEditingId(null);
               if (n.type === "text" && text !== n.text) patchNode(n.id, { text } as Partial<CanvasNode>);
+              if (refocusAfterEdit.current === n.id) {
+                refocusAfterEdit.current = null;
+                requestAnimationFrame(() =>
+                  viewport.current?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(n.id)}"]`)?.focus(),
+                );
+              }
             }}
           />
         ))}
       </div>
       {menu && (
-        <div className="ctx-overlay" onMouseDown={() => setMenu(null)} onContextMenu={(e) => e.preventDefault()}>
-          <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <ContextMenu x={menu.x} y={menu.y} label="Canvas actions" onClose={() => setMenu(null)}>
             {menu.kind === "node" ? (
               <>
                 <button className="ctx-item" onClick={() => { setMenu(null); duplicateSelection(); }}>
@@ -640,11 +717,19 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
                 Add card here
               </button>
             )}
-          </div>
-        </div>
+          </ContextMenu>
       )}
     </div>
   );
+}
+
+/** What a screen reader hears for a card. */
+function nodeLabel(n: CanvasNode): string {
+  const clip = (t: string) => (t.length > 80 ? `${t.slice(0, 80)}…` : t);
+  if (n.type === "text") return `Text: ${clip(n.text.split("\n").find((l) => l.trim())?.replace(/^#+\s*/, "").trim() ?? "empty")}`;
+  if (n.type === "file") return `${IMAGE_EXT.test(n.file) ? "Image" : "Note"}: ${n.file.split("/").pop() ?? n.file}`;
+  if (n.type === "link") return `Link: ${n.url}`;
+  return `Group${n.label ? `: ${n.label}` : ""}`;
 }
 
 function CanvasNodeView({
@@ -660,7 +745,9 @@ function CanvasNodeView({
   onStartResize,
   onStartEdge,
   onBeginEdit,
+  onEscapeEdit,
   onCommitText,
+  a11y,
 }: {
   node: CanvasNode;
   editable: boolean;
@@ -674,7 +761,9 @@ function CanvasNodeView({
   onStartResize: (e: React.PointerEvent) => void;
   onStartEdge: (e: React.PointerEvent, side: Side) => void;
   onBeginEdit: () => void;
+  onEscapeEdit: () => void;
   onCommitText: (text: string) => void;
+  a11y: React.HTMLAttributes<HTMLDivElement>;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const accent = canvasColor(node.color, node.type === "group" ? "var(--border)" : "var(--accent)");
@@ -733,7 +822,7 @@ function CanvasNodeView({
 
   if (node.type === "group") {
     return (
-      <div className="canvas-node canvas-group" style={style} {...dragProps}>
+      <div className="canvas-node canvas-group" style={style} {...dragProps} {...a11y}>
         {node.label && <div className="canvas-group-label">{node.label}</div>}
         {handles}
       </div>
@@ -742,8 +831,8 @@ function CanvasNodeView({
   if (node.type === "file") {
     if (IMAGE_EXT.test(node.file)) {
       return (
-        <div className="canvas-node canvas-file-image" style={style} {...dragProps}>
-          <div className="canvas-node-content" ref={ref} />
+        <div className="canvas-node canvas-file-image" style={style} {...dragProps} {...a11y}>
+          <div className="canvas-node-content" ref={ref} onClick={(e) => openCardLink(e, onOpenUrl)} />
           {handles}
         </div>
       );
@@ -754,6 +843,7 @@ function CanvasNodeView({
         className="canvas-node canvas-file"
         style={style}
         {...dragProps}
+        {...a11y}
         onDoubleClick={(e) => (e.stopPropagation(), onOpenFile(node.file, node.subpath))}
         title={node.file}
       >
@@ -769,6 +859,7 @@ function CanvasNodeView({
         className="canvas-node canvas-link"
         style={style}
         {...dragProps}
+        {...a11y}
         onDoubleClick={(e) => (e.stopPropagation(), onOpenUrl(node.url))}
         title={node.url}
       >
@@ -791,6 +882,7 @@ function CanvasNodeView({
           onKeyDown={(e) => {
             if (e.key === "Escape") {
               e.preventDefault();
+              onEscapeEdit();
               e.currentTarget.blur();
             }
           }}
@@ -804,9 +896,10 @@ function CanvasNodeView({
       className="canvas-node canvas-text"
       style={style}
       {...dragProps}
+      {...a11y}
       onDoubleClick={(e) => (e.stopPropagation(), onBeginEdit())}
     >
-      <div className="canvas-node-content reading-view" ref={ref} />
+      <div className="canvas-node-content reading-view" ref={ref} onClick={(e) => openCardLink(e, onOpenUrl)} />
       {handles}
     </div>
   );

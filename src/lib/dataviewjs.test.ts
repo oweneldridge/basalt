@@ -76,11 +76,18 @@ const NOTES: { path: string; ctime: number; mtime: number; content: string }[] =
   { path: "Other/Misc.md", ctime: JUL10, mtime: JUL10, content: "- [ ] stray task\n" },
 ];
 const byPath = new Map(NOTES.map((n) => [n.path, n]));
+let reads = 0;
 function fakeHost(): HostDeps {
   return {
+    cachedRead: (rel: string) => byPath.get(rel)?.content ?? null,
     getMarkdownFiles: () =>
       NOTES.map((n) => ({ path: n.path, name: n.path.split("/").pop()!.replace(/\.md$/, ""), ctime: n.ctime, mtime: n.mtime })),
-    readNote: async (rel: string) => byPath.get(rel)?.content ?? "",
+    getFiles: () => [...NOTES.map((n) => ({ path: n.path, ctime: n.ctime, mtime: n.mtime, size: n.content.length })), { path: "Other/pic.png", size: 3 }],
+    getFolders: () => ["SmithRx", "SmithRx/Daily Notes", "Other"],
+    readNote: async (rel: string) => {
+      reads++;
+      return byPath.get(rel)?.content ?? "";
+    },
     createNote: async () => {},
     modifyNote: async () => {},
     deleteNote: async () => {},
@@ -91,7 +98,9 @@ function fakeHost(): HostDeps {
     vaultName: () => "V",
     savePluginData: async () => {},
     notice: () => {},
-    getFileCache: () => ({ tags: [], links: [], headings: [], frontmatter: {} }),
+    getFileCache: (rel: string) => ({ tags: [], links: [], headings: [], frontmatter: rel === "Other/Misc.md" ? { aliases: ["Odds"] } : {} }),
+    resolvedLinks: () => ({ "SmithRx/Daily Notes/2026-07-05.md": { "Other/Misc.md": 2, "img/pic.png": 1 }, "Other/Misc.md": {} }),
+    unresolvedLinks: () => ({ "SmithRx/Daily Notes/2026-07-05.md": { "Not Yet": 1 }, "Other/Misc.md": {} }),
     onRegistryChanged: () => {},
   };
 }
@@ -105,12 +114,85 @@ async function run(source: string, notePath = "SmithRx/Daily Notes/2026-07-01.md
 }
 
 beforeEach(async () => {
+  reads = 0;
   await unloadAll();
   installHost(fakeHost());
   await loadPlugin(info());
 });
 
 describe("dataviewjs (lite)", () => {
+  it("gives each page its links both ways and its aliases", async () => {
+    const el = await run(
+      'const m = dv.page("Other/Misc"); const d = dv.page("SmithRx/Daily Notes/2026-07-05");\n' +
+        'dv.paragraph([m.file.inlinks.map(String).join(","), d.file.outlinks.map(String).join(","), m.file.aliases.join(",")].join(" | "));',
+    );
+    // Paragraphs render the links, so their names show.
+    expect(textOf(el)).toContain("2026-07-05 | Misc,pic.png,Not Yet | Odds");
+  });
+
+  it("gives blocks Obsidian's app, with every file and folder", async () => {
+    const el = await run(
+      "const all = app.vault.getAllLoadedFiles();\n" +
+        'dv.paragraph([all.length, app.vault.getFiles().map((f) => f.extension).join(","), all.find((f) => f.path === "Other").children.map((c) => c.name).join(","), app.vault.getFiles().every((f) => f.parent.children.includes(f))].join(" | "));',
+    );
+    expect(textOf(el)).toContain("9 | md,md,md,md,png | Misc.md,pic.png | true");
+  });
+
+  it("has moment's endOf, startOf and isBetween", async () => {
+    const el = await run(
+      'const m = moment("2026-07-15T10:20:00");\n' +
+        'dv.paragraph([m.clone().endOf("month").format("YYYY-MM-DD HH:mm"), m.clone().startOf("month").format("YYYY-MM-DD"), m.clone().startOf("week").format("YYYY-MM-DD"), m.clone().endOf("year").format("MM-DD"), m.clone().subtract(1, "months").endOf("month").format("MM-DD"), m.isBetween("2026-07-01", "2026-07-31"), m.isBetween("2026-07-15T10:20:00", "2026-07-31"), m.isBetween("2026-07-15T10:20:00", "2026-07-31", null, "[]"), m.isBefore("2026-08-01"), m.isAfter("2026-08-01")].join(" "));',
+    );
+    expect(textOf(el)).toContain("2026-07-31 23:59 2026-07-01 2026-07-12 12-31 06-30 true false true true false");
+  });
+
+  it("reads moment's units as moment does", async () => {
+    const el = await run(
+      'const m = () => moment("2026-07-15T10:20:30.400");\n' +
+        'dv.paragraph([m().add(1, "ms").format("ss.SSS"), m().add(1, "Q").format("MM-DD"), m().startOf("W").format("MM-DD"), m().endOf("Q").format("MM-DD HH:mm"), m().startOf("s").valueOf() % 1000, m().add(1, "Days").format("DD"), m().diff("2026-01-15", "M"), m().diff("2026-07-14T10:20:30.400", "d"), m().isBetween("2026-07-15", "2026-07-15", "day", "[]"), m().isBetween("2026-07-01", "2026-07-31", null, null), moment([2026, 6, 4]).format("YYYY-MM-DD"), m().isAfter("2026-07-15T10:00:00Z")].join(" "));',
+    );
+    expect(textOf(el)).toContain("30.401 10-15 07-13 09-30 23:59 0 16 6 1 true true 2026-07-04 true");
+  });
+
+  it("lets a block declare its own app, moment or dv", async () => {
+    const el = await run('const app = "mine"; let moment = 2; dv.paragraph(app + moment);');
+    expect(textOf(el)).toContain("mine2");
+  });
+
+  it("reads notes from memory, not once per note for every block", async () => {
+    await run(`dv.paragraph(String(dv.pages().length))`);
+    await run(`dv.paragraph(String(dv.pages().length))`);
+    expect(reads).toBe(0);
+  });
+
+  it("allows top-level await, with dv.io.load", async () => {
+    const el = await run(`const t = await dv.io.load("Other/Misc.md"); dv.paragraph(t.trim());`);
+    await flush();
+    expect(textOf(el)).toContain("- [ ] stray task");
+  });
+
+  it("passes property access through page lists (pages.file.tasks)", async () => {
+    const el = await run(`dv.taskList(dv.pages('"SmithRx/Daily Notes"').file.tasks.where(t => !t.completed));`);
+    expect(findAll(el, "li").map(textOf)).toEqual(["morning standup 📅 2026-07-03 #work", "review PR"]);
+  });
+
+  it("prints links as wikilinks and renders markdown in paragraphs", async () => {
+    const el = await run("dv.paragraph(`**Week 1** · *soon* → ${dv.current().file.link}`);");
+    expect(findAll(el, "strong").map(textOf)).toEqual(["Week 1"]);
+    expect(findAll(el, "em").map(textOf)).toEqual(["soon"]);
+    expect(findAll(el, "a").map(textOf)).toEqual(["2026-07-01"]);
+  });
+
+  it("formats and compares dates with moment like moment.js", async () => {
+    const el = await run(`
+      dv.paragraph(moment("2026-10-02T17:59:00").format("MMM DD, YYYY [at] HH:mm"));
+      dv.paragraph(String(moment("2026-10-02", "YYYY-MM-DD").isBefore(moment("2026-10-03", "YYYY-MM-DD"))));
+      dv.paragraph(moment("2026-10-02", "YYYY-MM-DD").add(1, "days").format("ddd, MMMM Do"));
+      dv.paragraph(dv.luxon.DateTime.fromFormat("2026-07-01", "yyyy-MM-dd").toISODate());
+    `);
+    expect(findAll(el, "p").map(textOf)).toEqual(["Oct 02, 2026 at 17:59", "true", "Sat, October 3rd", "2026-07-01"]);
+  });
+
   it("runs a daily-notes query sorted by file.day, formatted with Luxon", async () => {
     const el = await run(`
       const pages = dv.pages('"SmithRx/Daily Notes"')

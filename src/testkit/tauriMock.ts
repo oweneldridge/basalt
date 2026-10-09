@@ -42,6 +42,13 @@ const files = new Map<string, string>([
   [CANVAS_PATH, canvasContent],
   [BASE_PATH, baseContent],
 ]);
+// A test can add files before the app loads via page.addInitScript:
+// window.__mockExtraFiles = { "Note.md": "...", "Other.base": "..." }.
+const extra = (globalThis as { __mockExtraFiles?: Record<string, string> }).__mockExtraFiles ?? {};
+for (const [rel, content] of Object.entries(extra)) {
+  if (/\.md$/i.test(rel)) seed(rel, content);
+  else files.set(`${VAULT}/${rel}`, content);
+}
 
 export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const a = args ?? {};
@@ -57,6 +64,10 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
     case "write_canvas":
     case "write_base": {
       const path = String(a.path);
+      const current = files.get(path) ?? notes.get(path)?.content;
+      if (typeof a.expected === "string" && (current === undefined || (current !== a.expected && current !== a.content))) {
+        return Promise.reject("Changed on disk since Basalt last read it");
+      }
       if (files.has(path)) files.set(path, String(a.content));
       const n = notes.get(path);
       if (n) n.content = String(a.content);
@@ -65,11 +76,13 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
     case "create_note": {
       const name = String(a.name);
       const rel = name.endsWith(".md") ? name : `${name}.md`;
-      seed(rel, `# ${name.replace(/\.md$/i, "")}\n\n`);
+      seed(rel, ""); // empty, as the core creates it
       return ok(`${VAULT}/${rel}`);
     }
     case "rename_note":
       return ok(`${VAULT}/${String(a.newName)}.md`);
+    case "rename_attachment":
+      return ok(`${VAULT}/${String(a.newName)}${/\.[^./]+$/.exec(String(a.path))?.[0] ?? ""}`);
     case "read_obsidian_config":
       return ok(config);
     case "read_obsidian_import":
@@ -85,10 +98,12 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
       });
 
     case "list_attachments":
-      return ok([
-        { path: CANVAS_PATH, rel: "Board.canvas", name: "Board.canvas", mtime: now, ctime: now, size: canvasContent.length },
-        { path: BASE_PATH, rel: "Notes.base", name: "Notes.base", mtime: now, ctime: now, size: baseContent.length },
-      ] as Attachment[]);
+      return ok(
+        [...files].map(([path, content]) => {
+          const rel = path.slice(VAULT.length + 1);
+          return { path, rel, name: rel.split("/").pop() ?? rel, mtime: now, ctime: now, size: content.length };
+        }) as Attachment[],
+      );
     case "read_obsidian_bookmarks":
       return ok(bookmarks.slice());
     case "toggle_file_bookmark": {
@@ -129,8 +144,15 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
         },
       ]);
     case "list_css_snippets":
+      // One snippet of each kind; the CSS is a harmless custom property tests can read.
+      return ok([
+        { name: "mine", css: ":root{--probe-mine:1}", fromObsidian: false, enabledInObsidian: false },
+        { name: "obs-on", css: ":root{--probe-obs-on:1}", fromObsidian: true, enabledInObsidian: true },
+        { name: "obs-off", css: ":root{--probe-obs-off:1}", fromObsidian: true, enabledInObsidian: false },
+      ]);
     case "list_subfolders":
     case "list_foreign_files":
+    case "list_folders":
       return ok([]);
     case "read_image":
       return ok("");
@@ -156,6 +178,7 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
     case "delete_folder":
     case "remove_empty_folder":
     case "rename_folder":
+    case "open_attachment":
     case "export_file":
       return ok(undefined);
     default:

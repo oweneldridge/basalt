@@ -30,6 +30,10 @@ export interface BaseRow {
   tags: string[];
   linkKeys: string[];
   properties: Record<string, unknown>;
+  /** Vault paths (no .md) of notes linking here, computed only when used. */
+  backlinks?: () => string[];
+  /** Raw targets of this note's `![[embeds]]`, computed only when used. */
+  embeds?: () => string[];
 }
 
 /** YAML-parse a note's frontmatter into typed property values. Returns {} for
@@ -274,6 +278,10 @@ function buildViews(def: BaseDef): Record<string, unknown>[] {
     put(o, "image", v.image);
     // groupBy: { property, direction } — the documented Obsidian shape.
     put(o, "groupBy", v.groupBy ? { property: v.groupBy.property, direction: v.groupBy.direction } : undefined);
+    // Obsidian 1.14's groupOrder lists values of the grouped property; after a
+    // switch to another property (or none) it's stale, so drop it.
+    const rawGroup = (v.raw?.groupBy as { property?: unknown } | undefined)?.property;
+    if (rawGroup !== v.groupBy?.property) delete o.groupOrder;
     // filters: rewrite a simple string OR a FLAT and/or-of-strings group (the
     // shapes the editor edits); a deeper/`not` tree stays as raw verbatim
     // (re-serializing the parsed FilterNode could drop shapes filterNode()
@@ -309,6 +317,32 @@ function sameFormulas(model: Record<string, string>, raw: Record<string, unknown
   return mk.length === Object.keys(b).length && mk.every((k) => b[k] === model[k]);
 }
 
+// Replace the `views` sequence, keeping the original node (comments, layout)
+// of every view whose content didn't change; only edited views are re-emitted.
+function setViews(doc: YAML.Document, rawText: string, views: Record<string, unknown>[]): void {
+  const seq = doc.get("views", true);
+  const before = parseBase(rawText);
+  const rawViews = before?.raw?.views;
+  if (!YAML.isSeq(seq) || !before || !Array.isArray(rawViews) || seq.items.length !== rawViews.length) {
+    doc.set("views", views);
+    return;
+  }
+  // The YAML item behind each modeled view (parseBase skips non-map entries).
+  const itemOf: number[] = [];
+  rawViews.forEach((v, i) => {
+    if (asRecord(v)) itemOf.push(i);
+  });
+  const old = buildViews(before).map((v) => JSON.stringify(v));
+  const used = new Set<number>();
+  seq.items = views.map((v) => {
+    const key = JSON.stringify(v);
+    const j = old.findIndex((o, k) => o === key && !used.has(k) && itemOf[k] !== undefined);
+    if (j === -1) return doc.createNode(v);
+    used.add(j);
+    return seq.items[itemOf[j]];
+  });
+}
+
 export function serializeBase(def: BaseDef): string {
   const views = buildViews(def);
   // Only rewrite `formulas` when the user actually changed it AND the raw was
@@ -320,12 +354,13 @@ export function serializeBase(def: BaseDef): string {
     try {
       const doc = YAML.parseDocument(def.rawText);
       if (doc.errors.length === 0 && YAML.isMap(doc.contents)) {
-        doc.set("views", views);
+        setViews(doc, def.rawText, views);
         if (writeFormulas) {
           if (Object.keys(def.formulas).length) doc.set("formulas", def.formulas);
           else doc.delete("formulas");
         }
-        return doc.toString();
+        // Hand-written flow lists are almost always `[a, b]`, not `[ a, b ]`.
+        return doc.toString({ flowCollectionPadding: false });
       }
     } catch {
       /* fall through to a fresh serialize */
@@ -714,14 +749,15 @@ export const EXPR_METHODS = [
   "contains", "containsAll", "containsAny", "endsWith", "startsWith", "lower", "title", "trim",
   "repeat", "reverse", "slice", "replace", "split",
   "abs", "ceil", "floor", "round", "toFixed",
-  "join", "flat", "unique", "sort", "filter", "map", "reduce", "mean",
+  "join", "flat", "unique", "sort", "filter", "map", "reduce", "mean", "median", "stddev",
   "date", "time", "format", "relative", "asFile", "linksTo", "length",
 ];
-/** Root namespaces: `file`, `note`, `formula`. */
-export const EXPR_NAMESPACES = ["file", "note", "formula"];
+/** Root namespaces: `file`, `note`, `formula`, `this`. */
+export const EXPR_NAMESPACES = ["file", "note", "formula", "this"];
 /** `file.*` members. */
 export const EXPR_FILE_MEMBERS = [
   "name", "basename", "path", "folder", "ext", "size", "ctime", "mtime", "tags", "links", "properties",
+  "backlinks", "embeds",
 ];
 /** Date members (on `file.ctime`, `date(...)`, …). */
 export const EXPR_DATE_MEMBERS = ["year", "month", "day", "hour", "minute", "second", "millisecond"];
@@ -793,6 +829,9 @@ function cachedParse(src: string): Ast {
 export interface EvalCtx {
   row: BaseRow;
   formulas: Record<string, string>;
+  /** The file the base is shown for (`this`): the embedding note, or the base
+   * file itself when opened directly. Absent means `this` is null. */
+  thisRow?: BaseRow | null;
   /** resolve file("path") / link.asFile() against the vault */
   lookupFile?: (target: string) => BaseRow | null;
   nowMs?: number; // injectable clock for tests
@@ -1173,6 +1212,10 @@ function resolveIdent(name: string, ctx: EvalCtx): Val {
   if (vars?.has(name)) return vars.get(name)!;
   if (name === "file") return new FileVal(ctx.row);
   if (name === "note") return ctx.row.properties as Val;
+  if (name === "this") {
+    const t = ctx.thisRow;
+    return t ? ({ ...t.properties, file: new FileVal(t) } as Val) : null;
+  }
   if (name === "formula") throw new ExprError("formula must be used as formula.<name>");
   // Bare identifier = note property shorthand (`price` ≡ `note.price`).
   return fromYaml(ctx.row.properties[name]);
@@ -1226,6 +1269,10 @@ function member(base: Val | typeof FORMULA_NS, name: string, ctx: EvalCtx, objAs
         return r.tags.slice();
       case "links":
         return r.linkKeys.map((k) => new LinkVal(k));
+      case "backlinks":
+        return (r.backlinks?.() ?? []).map((k) => new LinkVal(k));
+      case "embeds":
+        return (r.embeds?.() ?? []).map((k) => new LinkVal(k));
       case "properties":
         return r.properties as Val;
     }
@@ -1653,6 +1700,10 @@ function listMethod(list: Val[], name: string, args: Ast[], ctx: EvalCtx): Val {
       const nums = list.map(coerceNumber).filter((x): x is number => x !== null);
       return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
     }
+    case "median":
+      return BUILTIN_SUMMARIES.median(list);
+    case "stddev":
+      return BUILTIN_SUMMARIES.stddev(list);
   }
   return null;
 }
@@ -1724,7 +1775,7 @@ function fileMethod(f: FileVal, name: string, args: Ast[], ctx: EvalCtx): Val {
       const [v] = vals();
       const q =
         v instanceof FileVal
-          ? [v.row.path.toLowerCase(), v.row.basename.toLowerCase()]
+          ? [stripMd(v.row.path).toLowerCase(), v.row.basename.toLowerCase()]
           : v instanceof LinkVal
             ? [stripMd(v.target).toLowerCase()]
             : [stripMd(toText(v)).toLowerCase()];
@@ -1855,6 +1906,13 @@ const BUILTIN_SUMMARIES: Record<string, (vals: Val[]) => Val> = {
     const mid = n.length >> 1;
     return n.length % 2 ? n[mid] : (n[mid - 1] + n[mid]) / 2;
   },
+  // Population standard deviation, as Obsidian computes it.
+  stddev: (v) => {
+    const n = v.map(coerceNumber).filter((x): x is number => x !== null);
+    if (!n.length) return null;
+    const mean = n.reduce((a, b) => a + b, 0) / n.length;
+    return Math.sqrt(n.reduce((a, b) => a + (b - mean) ** 2, 0) / n.length);
+  },
   earliest: (v) => {
     const ms = v.map(asDateMs).filter((x): x is number => x !== null);
     return ms.length ? new DateVal(Math.min(...ms)) : null;
@@ -1876,7 +1934,7 @@ export function runView(
   def: BaseDef,
   view: BaseViewDef,
   rows: BaseRow[],
-  opts?: { nowMs?: number; lookupFile?: (t: string) => BaseRow | null },
+  opts?: { nowMs?: number; lookupFile?: (t: string) => BaseRow | null; thisRow?: BaseRow | null },
 ): ViewResult {
   const errors: string[] = [];
   const seenErrors = new Set<string>();
@@ -1895,6 +1953,7 @@ export function runView(
   const mkCtx = (row: BaseRow): EvalCtx => ({
     row,
     formulas: def.formulas,
+    thisRow: opts?.thisRow ?? null,
     lookupFile: opts?.lookupFile,
     nowMs,
     _steps: { n: 0 },
@@ -2065,4 +2124,22 @@ export function cellParts(v: Val): CellPart[] {
     if (/^#[\w/-]+$/.test(text)) return [{ kind: "tag", text }];
   }
   return text === "" ? [] : [{ kind: "text", text }];
+}
+
+export interface ListOptions {
+  markers: "bullet" | "number" | "none";
+  indent: boolean;
+  separator: string;
+}
+
+/** A list view's options, read the way Obsidian reads them: an unknown marker
+ * falls back to bullets and an empty separator to ", ". */
+export function listOptions(view: BaseViewDef): ListOptions {
+  const raw = view.raw ?? {};
+  const m = raw.markers;
+  return {
+    markers: m === "number" || m === "none" ? m : "bullet",
+    indent: !!raw.indentProperties,
+    separator: String(raw.separator || ", "),
+  };
 }

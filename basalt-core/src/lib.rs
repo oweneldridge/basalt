@@ -113,10 +113,20 @@ fn rel_has_ignored_component(rel: &str) -> bool {
 /// symlink (a dangling symlink would otherwise let a write escape the vault).
 fn ensure_in_vault(root: &Path, path: &str) -> Result<PathBuf, String> {
     let target = PathBuf::from(path);
+    if lexically_within(root, &target) {
+        return resolve_in_vault(root, &target);
+    }
+    // Another spelling of a vault path (through a symlinked parent such as
+    // macOS's /var) still works, but every failure reads the same, so the reply
+    // never reveals what exists outside the vault.
+    resolve_in_vault(root, &target).map_err(|_| "path escapes vault".to_string())
+}
+
+fn resolve_in_vault(root: &Path, target: &Path) -> Result<PathBuf, String> {
     let resolved = if target.exists() {
-        fs::canonicalize(&target).map_err(|e| format!("path: {e}"))?
+        fs::canonicalize(target).map_err(|e| format!("path: {e}"))?
     } else {
-        let is_dangling_symlink = fs::symlink_metadata(&target)
+        let is_dangling_symlink = fs::symlink_metadata(target)
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(false);
         if is_dangling_symlink {
@@ -132,6 +142,24 @@ fn ensure_in_vault(root: &Path, path: &str) -> Result<PathBuf, String> {
     } else {
         Err("path escapes vault".into())
     }
+}
+
+/// Whether `target`, with `.` and `..` resolved as text, sits under `root`.
+fn lexically_within(root: &Path, target: &Path) -> bool {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in target.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    return false;
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out.starts_with(root)
 }
 
 /// Atomically replace `path` with `content`: write a hidden non-`.md` temp in
@@ -202,17 +230,98 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
         .unwrap_or(0);
     let n = WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
     let temp = parent.join(format!(".basalt-tmp-{nanos}-{n}.tmp"));
+    let original = fs::metadata(path).ok();
+    let mut created = false;
     let result = (|| -> Result<(), String> {
-        let mut f = fs::File::create(&temp).map_err(|e| format!("temp: {e}"))?;
+        // A fresh file only: never follow or reuse something already at the path.
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|e| format!("temp: {e}"))?;
+        created = true;
         f.write_all(content).map_err(|e| format!("write: {e}"))?;
+        // The rename replaces the file, so carry over what Obsidian and Dataview
+        // read from it: permissions and the creation time (file.ctime/cday).
+        if let Some(m) = &original {
+            keep_owner(&f, m);
+            let _ = f.set_permissions(m.permissions());
+            keep_created(&f, m);
+            keep_xattrs(path, &temp);
+        }
         f.sync_all().map_err(|e| format!("fsync: {e}"))?;
         fs::rename(&temp, path).map_err(|e| format!("rename: {e}"))
     })();
-    if result.is_err() {
+    // Clean up only a temp this call made, never a file that was already there.
+    if result.is_err() && created {
         let _ = fs::remove_file(&temp);
     }
     result
 }
+
+/// A server running as root (the Docker image) must not hand the note to root:
+/// a sync tool running as the vault's owner, like unison, could no longer read
+/// a 0600 note. Anyone else can't change owners, and doesn't need to.
+#[cfg(unix)]
+fn keep_owner(f: &fs::File, m: &fs::Metadata) {
+    use std::os::unix::fs::MetadataExt;
+    let _ = std::os::unix::fs::fchown(f, Some(m.uid()), Some(m.gid()));
+}
+
+#[cfg(not(unix))]
+fn keep_owner(_f: &fs::File, _m: &fs::Metadata) {}
+
+#[cfg(target_os = "macos")]
+fn keep_created(f: &fs::File, m: &fs::Metadata) {
+    use std::os::macos::fs::FileTimesExt;
+    if let Ok(created) = m.created() {
+        let _ = f.set_times(fs::FileTimes::new().set_created(created));
+    }
+}
+
+#[cfg(windows)]
+fn keep_created(f: &fs::File, m: &fs::Metadata) {
+    use std::os::windows::fs::FileTimesExt;
+    if let Ok(created) = m.created() {
+        let _ = f.set_times(fs::FileTimes::new().set_created(created));
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn keep_created(_f: &fs::File, _m: &fs::Metadata) {}
+
+/// Finder tags, "Open with" and other extended attributes (and any ACL) belong
+/// to the file the rename replaces, so copy them to the new one.
+#[cfg(target_os = "macos")]
+fn keep_xattrs(from: &Path, to: &Path) {
+    use std::ffi::{c_char, c_int, c_void, CString};
+    use std::os::unix::ffi::OsStrExt;
+    extern "C" {
+        fn copyfile(from: *const c_char, to: *const c_char, state: *mut c_void, flags: u32) -> c_int;
+    }
+    const COPYFILE_ACL: u32 = 1 << 0;
+    const COPYFILE_XATTR: u32 = 1 << 2;
+    const COPYFILE_NOFOLLOW_SRC: u32 = 1 << 18;
+    const COPYFILE_NOFOLLOW_DST: u32 = 1 << 19;
+    let (Ok(from), Ok(to)) = (
+        CString::new(from.as_os_str().as_bytes()),
+        CString::new(to.as_os_str().as_bytes()),
+    ) else {
+        return;
+    };
+    // SAFETY: both are NUL-terminated paths that outlive the call; a null state is allowed.
+    unsafe {
+        copyfile(
+            from.as_ptr(),
+            to.as_ptr(),
+            std::ptr::null_mut(),
+            COPYFILE_ACL | COPYFILE_XATTR | COPYFILE_NOFOLLOW_SRC | COPYFILE_NOFOLLOW_DST,
+        );
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keep_xattrs(_from: &Path, _to: &Path) {}
 
 /// Remove stale atomic-write temp files (left by a crash) under `dir`.
 fn sweep_temps(dir: &Path, depth: usize) {
@@ -298,7 +407,7 @@ fn collect_vault(dir: &Path, root: &Path, out: &mut Vec<VaultNote>) {
 /// write temps, and return the canonical root (the path form every subsequent
 /// command and event will use).
 pub fn open_vault(path: &str) -> Result<PathBuf, String> {
-    let root = fs::canonicalize(&path).map_err(|e| format!("vault: {e}"))?;
+    let root = fs::canonicalize(path).map_err(|e| format!("vault: {e}"))?;
     if !root.is_dir() {
         return Err("vault is not a directory".into());
     }
@@ -324,7 +433,7 @@ pub fn percent_encode(s: &str) -> String {
 /// the frontend link/metadata index. Async so the walk stays off the main thread.
 pub fn read_vault(root: &Path) -> Vec<VaultNote> {
     let mut out = Vec::new();
-    collect_vault(&root, &root, &mut out);
+    collect_vault(root, root, &mut out);
     out.sort_by_key(|a| a.rel.to_lowercase());
     out
 }
@@ -334,7 +443,7 @@ pub fn read_vault(root: &Path) -> Vec<VaultNote> {
 /// — a deliberate data-safety stance (Obsidian vaults are UTF-8). Surfaces a
 /// clear, actionable message for that case instead of a raw IO error.
 pub fn read_note(root: &Path, path: String) -> Result<String, String> {
-    let resolved = ensure_in_vault(&root, &path)?;
+    let resolved = ensure_in_vault(root, &path)?;
     match fs::read_to_string(&resolved) {
         // Normalize to LF for the editor; write_note re-applies the file's EOL.
         Ok(raw) => Ok(to_lf(&raw)),
@@ -349,9 +458,47 @@ pub fn read_note(root: &Path, path: String) -> Result<String, String> {
     }
 }
 
+/// Returned when the file no longer holds what the caller last read. The
+/// frontend matches this exact text and raises its "Changed on disk" conflict.
+pub const WRITE_CONFLICT: &str = "Changed on disk since Basalt last read it";
+
+/// Held across check_unchanged and the write it guards, so two concurrent
+/// writers (web clients share one server process) can't both pass the check.
+static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Compare-and-swap guard for writes: with `expected` set, refuse unless the
+/// file still holds that content (or already holds `content`). A missing file
+/// fails the check, so a save can't bring back a note renamed or deleted
+/// elsewhere. A file that isn't UTF-8 is never replaced, even unchecked: its
+/// text was only ever shown decoded lossily, so a write would corrupt it.
+fn check_unchanged(path: &Path, expected: Option<&str>, content: &str) -> Result<(), String> {
+    let current = match fs::read(path) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => to_lf(&text),
+            Err(_) => {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("This file");
+                return Err(format!(
+                    "“{name}” isn't UTF-8 encoded, so Basalt won't overwrite it. \
+                     Re-save it as UTF-8 in another editor first."
+                ));
+            }
+        },
+        Err(_) if expected.is_none() => return Ok(()),
+        // Renamed or deleted since it was read: writing would bring it back.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(WRITE_CONFLICT.into()),
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    };
+    let Some(expected) = expected else { return Ok(()) };
+    if current == to_lf(expected) || current == to_lf(content) {
+        Ok(())
+    } else {
+        Err(WRITE_CONFLICT.into())
+    }
+}
+
 /// Atomically write a note's contents, only within the vault.
-pub fn write_note(root: &Path, path: String, content: String) -> Result<(), String> {
-    let resolved = ensure_in_vault(&root, &path)?;
+pub fn write_note(root: &Path, path: String, content: String, expected: Option<String>) -> Result<(), String> {
+    let resolved = ensure_in_vault(root, &path)?;
     // Defense in depth: write_note IS the Markdown-note pipeline, so it must only
     // ever touch a `.md` file. This turns the "never write back a .canvas (or any
     // attachment) opened in a read-only viewer" rule — otherwise enforced only by
@@ -367,6 +514,8 @@ pub fn write_note(root: &Path, path: String, content: String) -> Result<(), Stri
             resolved.display()
         ));
     }
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    check_unchanged(&resolved, expected.as_deref(), &content)?;
     // Preserve the file's existing line endings: the editor works in LF, so a
     // CRLF note would otherwise be silently rewritten to LF on first save.
     atomic_write(&resolved, &preserve_eol(&resolved, &content))
@@ -375,8 +524,8 @@ pub fn write_note(root: &Path, path: String, content: String) -> Result<(), Stri
 /// Atomically write a `.canvas` file (the editable JSON Canvas), only within the
 /// vault. Extension-gated like write_note so this pipeline can only ever touch a
 /// `.canvas` — never a note or another attachment.
-pub fn write_canvas(root: &Path, path: String, content: String) -> Result<(), String> {
-    let resolved = ensure_in_vault(&root, &path)?;
+pub fn write_canvas(root: &Path, path: String, content: String, expected: Option<String>) -> Result<(), String> {
+    let resolved = ensure_in_vault(root, &path)?;
     let is_canvas = resolved
         .extension()
         .and_then(|e| e.to_str())
@@ -392,6 +541,8 @@ pub fn write_canvas(root: &Path, path: String, content: String) -> Result<(), St
     if !resolved.is_file() {
         return Err("canvas file does not exist".into());
     }
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    check_unchanged(&resolved, expected.as_deref(), &content)?;
     // Preserve the file's line endings like write_note (canvas/base are
     // normally LF, but never silently flip them).
     atomic_write(&resolved, &preserve_eol(&resolved, &content))
@@ -400,8 +551,8 @@ pub fn write_canvas(root: &Path, path: String, content: String) -> Result<(), St
 /// Atomically write a `.base` file (the editable Bases definition YAML), only
 /// within the vault. Extension-gated like write_canvas so this pipeline can only
 /// ever touch a `.base`.
-pub fn write_base(root: &Path, path: String, content: String) -> Result<(), String> {
-    let resolved = ensure_in_vault(&root, &path)?;
+pub fn write_base(root: &Path, path: String, content: String, expected: Option<String>) -> Result<(), String> {
+    let resolved = ensure_in_vault(root, &path)?;
     let is_base = resolved
         .extension()
         .and_then(|e| e.to_str())
@@ -412,6 +563,8 @@ pub fn write_base(root: &Path, path: String, content: String) -> Result<(), Stri
     if !resolved.is_file() {
         return Err("base file does not exist".into());
     }
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    check_unchanged(&resolved, expected.as_deref(), &content)?;
     // Preserve the file's line endings like write_note (canvas/base are
     // normally LF, but never silently flip them).
     atomic_write(&resolved, &preserve_eol(&resolved, &content))
@@ -420,6 +573,11 @@ pub fn write_base(root: &Path, path: String, content: String) -> Result<(), Stri
 /// Build `<root>/<name>.md` from a folder-qualified note name, sanitizing each
 /// segment and rejecting `..`/absolute/dot-leading/reserved segments.
 fn build_note_path(root: &Path, name: &str) -> Result<PathBuf, String> {
+    build_vault_path(root, name, "md")
+}
+
+/// `<root>/<name>.<ext>`, built as `build_note_path` builds a note's path.
+fn build_vault_path(root: &Path, name: &str, ext: &str) -> Result<PathBuf, String> {
     let segments: Vec<String> = name
         .split(['/', '\\'])
         .map(|s| s.trim().to_string())
@@ -451,7 +609,7 @@ fn build_note_path(root: &Path, name: &str) -> Result<PathBuf, String> {
             return Err("note name is too long".into());
         }
         if i == last {
-            path.push(format!("{safe}.md"));
+            path.push(format!("{safe}.{ext}"));
         } else {
             path.push(safe);
         }
@@ -470,7 +628,7 @@ fn occupied(path: &Path) -> bool {
 /// Create a new empty note, returning its canonical path. `name` may be folder-
 /// qualified (`sub/New`); parent folders are created.
 pub fn create_note(root: &Path, name: String) -> Result<String, String> {
-    let path = build_note_path(&root, &name)?;
+    let path = build_note_path(root, &name)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
@@ -479,7 +637,7 @@ pub fn create_note(root: &Path, name: String) -> Result<String, String> {
     }
     atomic_write(&path, b"")?;
     let canonical = fs::canonicalize(&path).map_err(|e| e.to_string())?;
-    if !canonical.starts_with(&root) {
+    if !canonical.starts_with(root) {
         let _ = fs::remove_file(&canonical);
         return Err("path escapes vault".into());
     }
@@ -489,7 +647,7 @@ pub fn create_note(root: &Path, name: String) -> Result<String, String> {
 /// Move a note to `<vault>/.trash/` (Obsidian-compatible, recoverable). A name
 /// collision in the trash gets a timestamp suffix.
 pub fn delete_note(root: &Path, path: String) -> Result<(), String> {
-    let resolved = ensure_in_vault(&root, &path)?;
+    let resolved = ensure_in_vault(root, &path)?;
     if !resolved.is_file() {
         return Err("not a file".into());
     }
@@ -506,11 +664,44 @@ pub fn delete_note(root: &Path, path: String) -> Result<(), String> {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let stem = name.strip_suffix(".md").unwrap_or(&name);
-        dest = trash.join(format!("{stem} {nanos}.md"));
+        // Keep the real extension so a trashed .canvas or image stays openable.
+        dest = match name.rfind('.') {
+            Some(i) if i > 0 => trash.join(format!("{} {nanos}{}", &name[..i], &name[i..])),
+            _ => trash.join(format!("{name} {nanos}")),
+        };
     }
     fs::rename(&resolved, &dest).map_err(|e| format!("trash move: {e}"))
 }
+
+/// Resolve a vault-relative folder to its canonical path, refusing the root,
+/// `..`/absolute forms, and anything whose real location is outside the vault
+/// or under a dot-folder (a symlink can alias `.obsidian` or point outside).
+fn contained_folder(root: &Path, rel: &str) -> Result<PathBuf, String> {
+    let r = rel.trim().trim_matches(['/', '\\']);
+    if r.is_empty() {
+        return Err("invalid folder path".into());
+    }
+    let rp = Path::new(r);
+    if rp.components().any(|c| !matches!(c, Component::Normal(_))) {
+        return Err("invalid folder path".into());
+    }
+    let canon = fs::canonicalize(root.join(rp)).map_err(|e| e.to_string())?;
+    if !canon.starts_with(root) || !canon.is_dir() {
+        return Err("not a folder in the vault".into());
+    }
+    let crel = canon.strip_prefix(root).map_err(|_| "path escapes vault")?;
+    if crel.as_os_str().is_empty()
+        || crel
+            .components()
+            .any(|c| matches!(c, Component::Normal(s) if s.to_string_lossy().starts_with('.')))
+    {
+        return Err("invalid folder path".into());
+    }
+    Ok(canon)
+}
+
+/// Deepest folder nesting the recursive walkers will descend.
+const MAX_WALK_DEPTH: usize = 64;
 
 /// Move a whole FOLDER (by vault-relative path) to the vault trash —
 /// recoverable, like note deletion. Refuses the root and dot-folders
@@ -530,11 +721,11 @@ pub fn delete_folder(root: &Path, rel: String) -> Result<(), String> {
     }
     let resolved = root.join(rp);
     let canon = fs::canonicalize(&resolved).map_err(|e| e.to_string())?;
-    if !canon.starts_with(&root) || !canon.is_dir() {
+    if !canon.starts_with(root) || !canon.is_dir() {
         return Err("not a folder in the vault".into());
     }
     // Re-validate the RESOLVED location too (a symlink could alias a dot-folder).
-    let crel = canon.strip_prefix(&root).map_err(|_| "path escapes vault")?;
+    let crel = canon.strip_prefix(root).map_err(|_| "path escapes vault")?;
     if crel.as_os_str().is_empty()
         || crel.components().any(|c| {
             matches!(c, Component::Normal(s) if s.to_string_lossy().starts_with('.'))
@@ -567,25 +758,26 @@ pub fn remove_empty_folder(root: &Path, rel: String) -> Result<(), String> {
     if rp.components().any(|c| !matches!(c, Component::Normal(_))) {
         return Err("invalid folder path".into());
     }
-    let canon = fs::canonicalize(root.join(rp)).map_err(|e| e.to_string())?;
-    if !canon.starts_with(&root) || !canon.is_dir() {
-        return Err("not a folder in the vault".into());
-    }
+    let canon = contained_folder(root, r)?;
     // Bottom-up remove_dir: each removal fails atomically with ENOTEMPTY if
     // anything appeared since we looked — no TOCTOU window can delete content.
-    fn remove_if_empty(dir: &Path) -> Result<(), String> {
+    // A symlink counts as content: never descend through one.
+    fn remove_if_empty(dir: &Path, depth: usize) -> Result<(), String> {
+        if depth > MAX_WALK_DEPTH {
+            return Err("folder is nested too deeply".into());
+        }
         let entries = fs::read_dir(dir).map_err(|e| e.to_string())?;
         for e in entries.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                remove_if_empty(&p)?;
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir {
+                remove_if_empty(&e.path(), depth + 1)?;
             } else {
                 return Err("folder is not empty".into());
             }
         }
         fs::remove_dir(dir).map_err(|e| format!("remove: {e}"))
     }
-    remove_if_empty(&canon)
+    remove_if_empty(&canon, 0)
 }
 
 /// Every file under `rel` that is NOT a Markdown note (any extension, dotfiles
@@ -600,12 +792,12 @@ pub fn list_foreign_files(root: &Path, rel: String) -> Result<Vec<String>, Strin
     if rp.components().any(|c| !matches!(c, Component::Normal(_))) {
         return Err("invalid folder path".into());
     }
-    let canon = fs::canonicalize(root.join(rp)).map_err(|e| e.to_string())?;
-    if !canon.starts_with(&root) || !canon.is_dir() {
-        return Err("not a folder in the vault".into());
-    }
+    let canon = contained_folder(root, r)?;
     let mut out = Vec::new();
-    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>, depth: usize) {
+        if depth > MAX_WALK_DEPTH {
+            return;
+        }
         let Ok(entries) = fs::read_dir(dir) else { return };
         for e in entries.flatten() {
             if out.len() >= 20 {
@@ -613,8 +805,9 @@ pub fn list_foreign_files(root: &Path, rel: String) -> Result<Vec<String>, Strin
             }
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
-            if p.is_dir() {
-                walk(&p, root, out);
+            // file_type() doesn't follow symlinks: a linked dir is listed, not walked.
+            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                walk(&p, root, out, depth + 1);
             } else if name != ".DS_Store"
                 && !p.extension().and_then(|x| x.to_str()).is_some_and(|x| x.eq_ignore_ascii_case("md"))
             {
@@ -624,7 +817,7 @@ pub fn list_foreign_files(root: &Path, rel: String) -> Result<Vec<String>, Strin
             }
         }
     }
-    walk(&canon, &root, &mut out);
+    walk(&canon, root, &mut out, 0);
     Ok(out)
 }
 
@@ -639,25 +832,54 @@ pub fn list_subfolders(root: &Path, rel: String) -> Result<Vec<String>, String> 
     if rp.components().any(|c| !matches!(c, Component::Normal(_))) {
         return Err("invalid folder path".into());
     }
-    let canon = fs::canonicalize(root.join(rp)).map_err(|e| e.to_string())?;
-    if !canon.starts_with(&root) || !canon.is_dir() {
-        return Err("not a folder in the vault".into());
-    }
+    let canon = contained_folder(root, r)?;
     let mut out = Vec::new();
-    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>, depth: usize) {
+        if depth > MAX_WALK_DEPTH {
+            return;
+        }
         let Ok(entries) = fs::read_dir(dir) else { return };
         for e in entries.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                if let Ok(rp) = p.strip_prefix(root) {
-                    out.push(rp.to_string_lossy().to_string());
-                }
-                walk(&p, root, out);
+            if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue; // files, and symlinks (never followed)
             }
+            let p = e.path();
+            if let Ok(rp) = p.strip_prefix(root) {
+                out.push(rp.to_string_lossy().to_string());
+            }
+            walk(&p, root, out, depth + 1);
         }
     }
-    walk(&canon, &root, &mut out);
+    walk(&canon, root, &mut out, 0);
     Ok(out)
+}
+
+/// Every folder in the vault, empty ones included, as the file tree lists
+/// them: dot-folders such as `.obsidian` stay out, and links aren't followed.
+pub fn list_folders(root: &Path) -> Vec<String> {
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>, depth: usize) {
+        if depth > MAX_WALK_DEPTH {
+            return;
+        }
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            if is_ignored_dir(&e.file_name().to_string_lossy()) {
+                continue;
+            }
+            let p = e.path();
+            if let Ok(rp) = p.strip_prefix(root) {
+                out.push(rp.to_string_lossy().to_string());
+            }
+            walk(&p, root, out, depth + 1);
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out, 0);
+    out.sort_by_key(|a| a.to_lowercase());
+    out
 }
 
 /// Create a folder (validated, vault-contained). Used to preserve empty
@@ -680,7 +902,7 @@ pub fn create_folder(root: &Path, rel: String) -> Result<(), String> {
     let parent = target.parent().ok_or("invalid path")?;
     fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
     let cparent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
-    if !cparent.starts_with(&root) {
+    if !cparent.starts_with(root) {
         return Err("path escapes vault".into());
     }
     fs::create_dir_all(&target).map_err(|e| format!("mkdir: {e}"))
@@ -710,15 +932,17 @@ pub fn rename_folder(root: &Path, from_rel: String, to_rel: String) -> Result<St
     // Refuse moving a folder into itself or its own descendant. Compare case-
     // insensitively too so a self-nesting rename on a case-insensitive FS gives
     // our clear error rather than the kernel's.
-    let lower = |p: &Path| p.to_string_lossy().to_lowercase();
-    if top == fromp || top.starts_with(&fromp) || lower(&top).starts_with(&lower(&fromp)) {
+    // By path components, so "Notes" can still become "Notes old".
+    let lower = |p: &Path| PathBuf::from(p.to_string_lossy().to_lowercase());
+    if top == fromp || top.starts_with(&fromp) || lower(&top).starts_with(lower(&fromp)) {
         return Err("cannot move a folder into itself".into());
     }
     let from_abs = root.join(&fromp);
-    let from_canon = fs::canonicalize(&from_abs).map_err(|e| e.to_string())?;
-    if !from_canon.starts_with(&root) || !from_canon.is_dir() {
-        return Err("not a folder in the vault".into());
+    // A symlink alias would move whatever it points at (e.g. `.obsidian`).
+    if from_abs.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+        return Err("invalid folder path".into());
     }
+    let from_canon = contained_folder(root, &from_rel)?;
     let to_abs = root.join(&top);
     // Confirm the destination's nearest EXISTING ancestor is inside the vault
     // BEFORE creating any directories — a symlinked ancestor in `to_rel` must
@@ -727,7 +951,7 @@ pub fn rename_folder(root: &Path, from_rel: String, to_rel: String) -> Result<St
     while let Some(a) = anc {
         match fs::canonicalize(a) {
             Ok(canon) => {
-                if !canon.starts_with(&root) {
+                if !canon.starts_with(root) {
                     return Err("path escapes vault".into());
                 }
                 break;
@@ -745,7 +969,7 @@ pub fn rename_folder(root: &Path, from_rel: String, to_rel: String) -> Result<St
     let parent = to_abs.parent().ok_or("invalid path")?;
     fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
     let cparent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
-    if !cparent.starts_with(&root) {
+    if !cparent.starts_with(root) {
         return Err("path escapes vault".into());
     }
     fs::rename(&from_canon, &to_abs).map_err(|e| format!("move folder: {e}"))?;
@@ -756,20 +980,35 @@ pub fn rename_folder(root: &Path, from_rel: String, to_rel: String) -> Result<St
 /// Rename/move a note to a new folder-qualified name (no `.md`), creating
 /// parent folders. Refuses to overwrite. Returns the canonical new path.
 pub fn rename_note(root: &Path, path: String, new_name: String) -> Result<String, String> {
-    let from = ensure_in_vault(&root, &path)?;
+    let from = ensure_in_vault(root, &path)?;
     if !from.is_file() {
         return Err("not a file".into());
     }
-    let to = build_note_path(&root, &new_name)?;
+    let to = build_note_path(root, &new_name)?;
+    move_file(root, from, to, "a note with that name already exists")
+}
+
+/// Rename or move an attachment (image, PDF, audio, video, canvas, base) to a
+/// folder-qualified name without its extension, which it keeps. Refuses to
+/// overwrite. Returns the canonical new path.
+pub fn rename_attachment(root: &Path, path: String, new_name: String) -> Result<String, String> {
+    let from = attachment_to_open(root, &path)?;
+    let ext = from.extension().and_then(|e| e.to_str()).ok_or("not an attachment in this vault")?.to_string();
+    let to = build_vault_path(root, &new_name, &ext)?;
+    move_file(root, from, to, "a file with that name already exists")
+}
+
+/// Move a file to `to`, creating its folders, refusing to overwrite another file.
+fn move_file(root: &Path, from: PathBuf, to: PathBuf, taken: &str) -> Result<String, String> {
     if to == from {
         return Ok(from.to_string_lossy().to_string());
     }
     if let Some(parent) = to.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         // Validate the destination BEFORE moving (a symlinked subfolder would
-        // otherwise carry the note outside the vault).
+        // otherwise carry the file outside the vault).
         let cparent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
-        if !cparent.starts_with(&root) {
+        if !cparent.starts_with(root) {
             return Err("path escapes vault".into());
         }
     }
@@ -792,12 +1031,12 @@ pub fn rename_note(root: &Path, path: String, new_name: String) -> Result<String
         fs::rename(&temp, &to).map_err(|e| format!("rename: {e}"))?;
     } else {
         if occupied(&to) {
-            return Err("a note with that name already exists".into());
+            return Err(taken.into());
         }
         fs::rename(&from, &to).map_err(|e| format!("rename: {e}"))?;
     }
     let canonical = fs::canonicalize(&to).map_err(|e| e.to_string())?;
-    if !canonical.starts_with(&root) {
+    if !canonical.starts_with(root) {
         let _ = fs::rename(&canonical, &from); // undo
         return Err("path escapes vault".into());
     }
@@ -815,6 +1054,17 @@ fn is_attachment_ext(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| ATTACHMENT_EXTS.contains(&e.to_ascii_lowercase().as_str()))
         .unwrap_or(false)
+}
+
+/// The checked path of a vault attachment to hand to the OS for opening: an
+/// existing file inside the vault with a known attachment extension, so the
+/// caller can't be used to launch an arbitrary program.
+pub fn attachment_to_open(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let resolved = ensure_in_vault(root, path)?;
+    if !resolved.is_file() || !is_attachment_ext(&resolved) {
+        return Err("not an attachment in this vault".into());
+    }
+    Ok(resolved)
 }
 
 /// A non-Markdown vault file (no content shipped; opened via the OS). Stats
@@ -869,7 +1119,7 @@ fn collect_attachments(dir: &Path, root: &Path, out: &mut Vec<AttachmentEntry>, 
 /// List every attachment (non-md supported file) in the open vault.
 pub fn list_attachments(root: &Path) -> Vec<AttachmentEntry> {
     let mut out = Vec::new();
-    collect_attachments(&root, &root, &mut out, 0);
+    collect_attachments(root, root, &mut out, 0);
     out.sort_by_key(|a| a.rel.to_lowercase());
     out
 }
@@ -959,18 +1209,18 @@ pub fn write_attachment(
     }
     let bytes = base64_decode(&data_b64)?; // decode before any filesystem effects
 
-    let dir = attachment_dir(&root, &source_rel);
+    let dir = attachment_dir(root, &source_rel);
     // Lexical containment BEFORE creating anything: no `..`, no escape, and no
     // dot-prefixed folder (every reader skips those — the file would be
     // invisible and its embed broken immediately).
     if dir
         .components()
         .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
-        || !dir.starts_with(&root)
+        || !dir.starts_with(root)
     {
         return Err("attachment folder escapes vault".into());
     }
-    if let Ok(rel_dir) = dir.strip_prefix(&root) {
+    if let Ok(rel_dir) = dir.strip_prefix(root) {
         let rel_str = rel_dir.to_string_lossy();
         if !rel_str.is_empty() && rel_has_ignored_component(&rel_str) {
             return Err(
@@ -981,7 +1231,7 @@ pub fn write_attachment(
     }
     fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
     let cdir = fs::canonicalize(&dir).map_err(|e| e.to_string())?;
-    if !cdir.starts_with(&root) {
+    if !cdir.starts_with(root) {
         return Err("attachment folder escapes vault".into());
     }
     // Uniquify by atomically RESERVING the name (create_new) — a plain
@@ -1014,7 +1264,7 @@ pub fn write_attachment(
     drop(file);
     let canonical = fs::canonicalize(&dest).map_err(|e| e.to_string())?;
     let rel = canonical
-        .strip_prefix(&root)
+        .strip_prefix(root)
         .map_err(|_| "path escapes vault")?
         .to_string_lossy()
         .to_string();
@@ -1066,6 +1316,18 @@ pub struct ObsidianConfig {
     /// "shortest" | "relative" | "absolute"
     new_link_format: Option<String>,
     use_markdown_links: Option<bool>,
+    /// Reading view: only a line ending in two spaces or a backslash breaks.
+    strict_line_breaks: Option<bool>,
+    /// Ask before deleting a file (Obsidian's default is to ask).
+    prompt_delete: Option<bool>,
+    /// Line numbers in the editor.
+    show_line_number: Option<bool>,
+    /// Text kept to a readable width.
+    readable_line_length: Option<bool>,
+    /// What to open with the vault: "daily" opens today's daily note.
+    open_behavior: Option<String>,
+    /// Templater's "Trigger on new file creation".
+    templater_on_create: Option<bool>,
     attachment_folder_path: Option<String>,
     daily_notes_folder: Option<String>,
     daily_notes_format: Option<String>,
@@ -1083,6 +1345,11 @@ pub fn read_obsidian_config(root: &Path) -> Result<ObsidianConfig, String> {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
             cfg.new_link_format = v.get("newLinkFormat").and_then(|x| x.as_str()).map(String::from);
             cfg.use_markdown_links = v.get("useMarkdownLinks").and_then(|x| x.as_bool());
+            cfg.strict_line_breaks = v.get("strictLineBreaks").and_then(|x| x.as_bool());
+            cfg.prompt_delete = v.get("promptDelete").and_then(|x| x.as_bool());
+            cfg.show_line_number = v.get("showLineNumber").and_then(|x| x.as_bool());
+            cfg.readable_line_length = v.get("readableLineLength").and_then(|x| x.as_bool());
+            cfg.open_behavior = v.get("openBehavior").and_then(|x| x.as_str()).map(String::from);
             cfg.attachment_folder_path =
                 v.get("attachmentFolderPath").and_then(|x| x.as_str()).map(String::from);
         }
@@ -1103,6 +1370,10 @@ pub fn read_obsidian_config(root: &Path) -> Result<ObsidianConfig, String> {
             .unwrap_or(false),
         _ => true,
     };
+    // With Daily notes off, Obsidian has no daily note to open.
+    if !daily_enabled && cfg.open_behavior.as_deref() == Some("daily") {
+        cfg.open_behavior = None;
+    }
     if daily_enabled {
         if let Ok(raw) = fs::read_to_string(root.join(".obsidian/daily-notes.json")) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
@@ -1115,9 +1386,12 @@ pub fn read_obsidian_config(root: &Path) -> Result<ObsidianConfig, String> {
     }
     // Templates folder: prefer Templater's setting, then the core Templates
     // plugin's. Basalt reuses whichever the vault already configured.
-    cfg.templates_folder = fs::read_to_string(root.join(".obsidian/plugins/templater-obsidian/data.json"))
+    let templater = fs::read_to_string(root.join(".obsidian/plugins/templater-obsidian/data.json"))
         .ok()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+    cfg.templater_on_create = templater.as_ref().and_then(|v| v.get("trigger_on_file_creation")).and_then(|x| x.as_bool());
+    cfg.templates_folder = templater
+        .as_ref()
         .and_then(|v| v.get("templates_folder").and_then(|x| x.as_str()).map(String::from))
         .filter(|s| !s.is_empty())
         .or_else(|| {
@@ -1252,17 +1526,14 @@ pub fn read_obsidian_bookmarks(root: &Path) -> Result<Vec<Bookmark>, String> {
 /// and the write is atomic (temp + fsync + rename) so a torn write can't corrupt
 /// the bookmarks Obsidian shares.
 pub fn toggle_file_bookmark(root: &Path, path: String) -> Result<bool, String> {
-    let resolved = ensure_in_vault(&root, &path)?;
-    let rel = rel_under(&root, &resolved)
+    let resolved = ensure_in_vault(root, &path)?;
+    let rel = rel_under(root, &resolved)
         .ok_or("path escapes vault")?
         .replace('\\', "/");
-    let title = Path::new(&rel)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(rel.as_str())
-        .to_string();
-
     let bpath = root.join(".obsidian/bookmarks.json");
+    // Read, change and write as one step: toggles from two clients at once
+    // would otherwise each drop the other's bookmark.
+    let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // An ABSENT or empty file starts fresh; a file that exists but doesn't parse
     // to a JSON object is REFUSED (never silently clobber the user's data).
     let existing: serde_json::Value = match fs::read_to_string(&bpath) {
@@ -1278,11 +1549,16 @@ pub fn toggle_file_bookmark(root: &Path, path: String) -> Result<bool, String> {
         }
     };
 
-    let (v, now_bookmarked) = toggle_bookmark_in_value(existing, &rel, &title)?;
+    let ctime = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let (v, now_bookmarked) = toggle_bookmark_in_value(existing, &rel, ctime)?;
 
     fs::create_dir_all(root.join(".obsidian")).map_err(|e| format!("create .obsidian: {e}"))?;
-    let mut out = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-    out.push('\n');
+    // Written the way Obsidian writes it (key order kept, two-space indent, no
+    // trailing newline), so a toggle changes only the bookmark it touches.
+    let out = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
     atomic_write(&bpath, out.as_bytes())?;
     Ok(now_bookmarked)
 }
@@ -1326,7 +1602,7 @@ fn remove_file_bookmark(items: &mut Vec<serde_json::Value>, rel: &str) -> bool {
 fn toggle_bookmark_in_value(
     mut v: serde_json::Value,
     rel: &str,
-    title: &str,
+    ctime: u64,
 ) -> Result<(serde_json::Value, bool), String> {
     let obj = v.as_object_mut().ok_or("bookmarks: not an object")?;
     let items = obj.entry("items").or_insert_with(|| serde_json::json!([]));
@@ -1337,7 +1613,8 @@ fn toggle_bookmark_in_value(
     let now_bookmarked = if remove_file_bookmark(arr, rel) {
         false
     } else {
-        arr.push(serde_json::json!({ "type": "file", "path": rel, "title": title }));
+        // As Obsidian adds one: no title, so the name follows the file.
+        arr.push(serde_json::json!({ "type": "file", "ctime": ctime, "path": rel }));
         true
     };
     Ok((v, now_bookmarked))
@@ -1370,9 +1647,9 @@ pub fn classify_change(root: &Path, metadata_only: bool, paths: &[PathBuf]) -> (
                 path: p.to_string_lossy().to_string(),
                 rel,
             });
-        } else if p.extension().is_none() || is_attachment_ext(p) {
-            // No extension: almost certainly a directory event (folder
-            // create/rename/delete). An attachment (.canvas/image/pdf…)
+        } else if p.extension().is_none() || is_attachment_ext(p) || p.is_dir() {
+            // No extension, or an existing directory (a folder name can contain
+            // a dot): a directory event (folder create/rename/delete). An attachment (.canvas/image/pdf…)
             // created/edited/deleted/renamed: the file tree, the attachment
             // list, and any open .canvas viewer pane must refresh. A full
             // rescan keeps the index honest and prunes panes for a file
@@ -1429,11 +1706,13 @@ fn base64_encode(data: &[u8]) -> String {
 }
 
 /// Recursively find the first file named `name` (case-insensitive) under `dir`.
-fn find_file(dir: &Path, name: &str, depth: usize) -> Option<PathBuf> {
+/// Every file under `dir` whose vault-relative path (lowercased, `/`-joined)
+/// ends with `suffix` at a path boundary, as (rel, path) pairs.
+fn files_ending_with(root: &Path, dir: &Path, suffix: &str, depth: usize, out: &mut Vec<(String, PathBuf)>) {
     if depth > 16 {
-        return None;
+        return;
     }
-    let entries = fs::read_dir(dir).ok()?;
+    let Ok(entries) = fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let Ok(ft) = entry.file_type() else { continue };
         if ft.is_symlink() {
@@ -1442,53 +1721,85 @@ fn find_file(dir: &Path, name: &str, depth: usize) -> Option<PathBuf> {
         let path = entry.path();
         if ft.is_dir() {
             if !is_ignored_dir(&entry.file_name().to_string_lossy()) {
-                if let Some(found) = find_file(&path, name, depth + 1) {
-                    return Some(found);
-                }
+                files_ending_with(root, &path, suffix, depth + 1, out);
             }
-        } else if entry.file_name().to_string_lossy().eq_ignore_ascii_case(name) {
-            return Some(path);
+            continue;
+        }
+        let Ok(rel) = path.strip_prefix(root) else { continue };
+        let rel = rel.to_string_lossy().replace('\\', "/").to_lowercase();
+        if rel == suffix || rel.ends_with(&format!("/{suffix}")) {
+            out.push((rel, path));
         }
     }
-    None
 }
 
-/// Resolve an image reference (relative to the note's folder, then the vault
-/// root, then a bare-name search) and return it as a base64 `data:` URL.
+/// Resolve an image reference the way Obsidian resolves a link path: `./` and
+/// `../` from the note's folder, then the note's folder, then the vault root
+/// (a leading `/` means only that), then any file whose path ends with the
+/// target, preferring the note's own folder and then the shortest path. Returns
+/// it as a base64 `data:` URL.
 pub fn read_image(root: &Path, target: String, source_rel: String) -> Result<String, String> {
-    let t = target.trim();
+    let t = target.trim().replace('\\', "/");
     if t.is_empty() {
         return Err("empty image target".into());
     }
-    let tp = Path::new(t);
-    if tp.is_absolute()
-        || tp
-            .components()
-            .any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
-    {
+    if Path::new(&t).components().any(|c| matches!(c, Component::Prefix(_))) {
         return Err("invalid image target".into());
     }
-
+    let folder = Path::new(&source_rel).parent().map(Path::to_path_buf).unwrap_or_default();
     let mut found: Option<PathBuf> = None;
-    if let Some(folder) = Path::new(&source_rel).parent() {
-        let c = root.join(folder).join(t);
+    if let Some(abs) = t.strip_prefix('/') {
+        let c = root.join(abs);
         if c.is_file() {
             found = Some(c);
         }
-    }
-    if found.is_none() {
-        let c = root.join(t);
+    } else if t.starts_with("./") || t.starts_with("../") {
+        // Walk the components from the note's folder; climbing above the vault fails.
+        let mut at: Vec<String> = folder.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+        let mut ok = true;
+        for c in Path::new(&t).components() {
+            match c {
+                Component::CurDir => {}
+                Component::ParentDir => ok &= at.pop().is_some(),
+                Component::Normal(n) => at.push(n.to_string_lossy().into_owned()),
+                _ => ok = false,
+            }
+        }
+        if ok {
+            let c = root.join(at.join("/"));
+            if c.is_file() {
+                found = Some(c);
+            }
+        }
+    } else {
+        if Path::new(&t).components().any(|c| matches!(c, Component::ParentDir)) {
+            return Err("invalid image target".into());
+        }
+        let c = root.join(&folder).join(&t);
         if c.is_file() {
             found = Some(c);
         }
-    }
-    if found.is_none() && !t.contains('/') && !t.contains('\\') {
-        found = find_file(&root, t, 0);
+        if found.is_none() {
+            let c = root.join(&t);
+            if c.is_file() {
+                found = Some(c);
+            }
+        }
+        if found.is_none() {
+            let mut hits = Vec::new();
+            files_ending_with(root, root, &t.to_lowercase(), 0, &mut hits);
+            let near = folder.to_string_lossy().replace('\\', "/").to_lowercase();
+            let in_folder = |rel: &str| near.is_empty() || rel.starts_with(&format!("{near}/"));
+            hits.sort_by(|a, b| {
+                (!in_folder(&a.0), a.0.len(), &a.0).cmp(&(!in_folder(&b.0), b.0.len(), &b.0))
+            });
+            found = hits.into_iter().next().map(|(_, p)| p);
+        }
     }
 
     let path = found.ok_or_else(|| format!("image not found: {t}"))?;
     let canon = fs::canonicalize(&path).map_err(|e| e.to_string())?;
-    if !canon.starts_with(&root) {
+    if !canon.starts_with(root) {
         return Err("path escapes vault".into());
     }
     let meta = fs::metadata(&canon).map_err(|e| e.to_string())?;
@@ -1528,20 +1839,32 @@ fn valid_plugin_id(id: &str) -> bool {
         && !id.starts_with('.')
 }
 
-/// A CSS snippet from `.basalt/snippets/*.css` (name = the file stem).
+/// A CSS snippet from `.basalt/snippets/*.css` or `.obsidian/snippets/*.css`
+/// (name = the file stem). Obsidian's own snippets carry whether Obsidian has
+/// them switched on, so a vault opened here looks the way it does there.
 #[derive(Serialize)]
 pub struct CssSnippet {
     name: String,
     css: String,
+    #[serde(rename = "fromObsidian")]
+    from_obsidian: bool,
+    #[serde(rename = "enabledInObsidian")]
+    enabled_in_obsidian: bool,
 }
 
 /// List the vault's CSS snippets (each capped at 1MB; non-.css files skipped).
 pub fn list_css_snippets(root: &Path) -> Result<Vec<CssSnippet>, String> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
+    let enabled_in_obsidian: std::collections::HashSet<String> = fs::read_to_string(root.join(".obsidian").join("appearance.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("enabledCssSnippets").and_then(|a| a.as_array()).cloned())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default();
     // Basalt's own snippets, plus an existing Obsidian vault's snippets so they
     // appear (and are toggleable) here too. On a name clash, .basalt wins.
-    for dir in [root.join(".basalt").join("snippets"), root.join(".obsidian").join("snippets")] {
+    for (from_obsidian, dir) in [(false, root.join(".basalt").join("snippets")), (true, root.join(".obsidian").join("snippets"))] {
         let Ok(entries) = fs::read_dir(&dir) else {
             continue; // folder may not exist
         };
@@ -1560,7 +1883,8 @@ pub fn list_css_snippets(root: &Path) -> Result<Vec<CssSnippet>, String> {
             let Ok(css) = fs::read_to_string(&path) else {
                 continue;
             };
-            out.push(CssSnippet { name, css });
+            let enabled = from_obsidian && enabled_in_obsidian.contains(&name);
+            out.push(CssSnippet { name, css, from_obsidian, enabled_in_obsidian: enabled });
         }
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -1633,7 +1957,7 @@ pub fn write_plugin_data(root: &Path, id: String, data: String) -> Result<(), St
     // Defense in depth beyond valid_plugin_id: confirm the resolved folder is
     // really inside the vault (a symlinked plugin dir can't escape it).
     let canon = fs::canonicalize(&pdir).map_err(|e| e.to_string())?;
-    if !canon.starts_with(&root) {
+    if !canon.starts_with(root) {
         return Err("plugin path escapes vault".into());
     }
     atomic_write(&canon.join("data.json"), data.as_bytes())
@@ -1657,7 +1981,7 @@ mod tests {
             "someUnknownSetting": true
         });
         // Add a new file bookmark.
-        let (v, on) = toggle_bookmark_in_value(src.clone(), "Notes/A.md", "A").unwrap();
+        let (v, on) = toggle_bookmark_in_value(src.clone(), "Notes/A.md", 1).unwrap();
         assert!(on);
         let items = v["items"].as_array().unwrap();
         assert_eq!(items.len(), 3); // group + search preserved, one appended
@@ -1666,15 +1990,39 @@ mod tests {
         assert_eq!(items[0]["items"][0]["path"], "Work/Todo.md");
         assert_eq!(items[2]["path"], "Notes/A.md");
         // Toggling the same path again removes exactly that top-level entry.
-        let (v2, off) = toggle_bookmark_in_value(v, "Notes/A.md", "A").unwrap();
+        let (v2, off) = toggle_bookmark_in_value(v, "Notes/A.md", 1).unwrap();
         assert!(!off);
         assert_eq!(v2["items"].as_array().unwrap().len(), 2);
         assert_eq!(v2["someUnknownSetting"], serde_json::json!(true));
     }
 
     #[test]
+    fn bookmark_toggle_writes_obsidians_format() {
+        let root = scratch_vault("bookmarks");
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        let file = root.join(".obsidian/bookmarks.json");
+        let before = "{\n  \"items\": [\n    {\n      \"type\": \"file\",\n      \"ctime\": 1707190166271,\n      \"path\": \"Wiki/✅ Icons.md\",\n      \"title\": \"Icons\"\n    }\n  ]\n}";
+        fs::write(&file, before).unwrap();
+        fs::write(root.join("New.md"), "x").unwrap();
+        let new_note = root.join("New.md").to_string_lossy().to_string();
+        assert!(toggle_file_bookmark(&root, new_note.clone()).unwrap());
+        let after = fs::read_to_string(&file).unwrap();
+        let head = &before[..before.len() - "\n  ]\n}".len()];
+        assert!(after.starts_with(head), "existing entry rewritten: {after}");
+        let added: serde_json::Value = serde_json::from_str(&after).unwrap();
+        let item = &added["items"][1];
+        let keys: Vec<&String> = item.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["type", "ctime", "path"]);
+        assert_eq!(item["path"], "New.md");
+        assert!(!after.ends_with('\n'));
+        assert!(!toggle_file_bookmark(&root, new_note).unwrap());
+        assert_eq!(fs::read_to_string(&file).unwrap(), before);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn bookmark_toggle_seeds_missing_items() {
-        let (v, on) = toggle_bookmark_in_value(serde_json::json!({}), "A.md", "A").unwrap();
+        let (v, on) = toggle_bookmark_in_value(serde_json::json!({}), "A.md", 1).unwrap();
         assert!(on);
         assert_eq!(v["items"][0]["path"], "A.md");
     }
@@ -1688,7 +2036,7 @@ mod tests {
                 { "type": "file", "path": "Dashboard.md", "title": "Home" }
             ]}]
         });
-        let (v, on) = toggle_bookmark_in_value(src, "Dashboard.md", "Dashboard").unwrap();
+        let (v, on) = toggle_bookmark_in_value(src, "Dashboard.md", 1).unwrap();
         assert!(!on); // now un-bookmarked
         assert_eq!(v["items"][0]["items"].as_array().unwrap().len(), 0); // removed from the group
         // No stray top-level duplicate was created.
@@ -1706,7 +2054,7 @@ mod tests {
             ]
         });
         // No whole-file bookmark exists → toggle ADDS one, leaving both subpath entries.
-        let (v, on) = toggle_bookmark_in_value(src, "Note.md", "Note").unwrap();
+        let (v, on) = toggle_bookmark_in_value(src, "Note.md", 1).unwrap();
         assert!(on);
         let items = v["items"].as_array().unwrap();
         assert_eq!(items.len(), 3); // both heading/block kept + one whole-file added
@@ -1804,6 +2152,440 @@ mod tests {
         atomic_write(&f, b"replaced").expect("overwrite failed");
         assert_eq!(fs::read_to_string(&f).unwrap(), "replaced");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn atomic_write_keeps_extended_attributes() {
+        use std::process::Command;
+        let root = scratch_vault("xattr");
+        let f = root.join("Tagged.md");
+        fs::write(&f, "one\n").unwrap();
+        let set = |k: &str, v: &str| assert!(Command::new("xattr").args(["-w", k, v]).arg(&f).status().unwrap().success());
+        let get = |k: &str| {
+            let out = Command::new("xattr").args(["-p", k]).arg(&f).output().unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        set("com.apple.metadata:_kMDItemUserTags", "Red");
+        set("com.apple.LaunchServices.OpenWith", "Typora");
+        atomic_write(&f, b"two\n").unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "two\n");
+        assert_eq!(get("com.apple.metadata:_kMDItemUserTags"), "Red");
+        assert_eq!(get("com.apple.LaunchServices.OpenWith"), "Typora");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ensure_in_vault_gives_one_answer_outside_the_vault() {
+        let root = scratch_vault("oracle");
+        let outside = std::env::temp_dir();
+        for p in [
+            outside.join("basalt-no-such-dir-x9/note.md"),
+            outside.join("basalt-no-such-file-x9.md"),
+            root.join("../escape.md"),
+            PathBuf::from("/etc/hosts"),
+        ] {
+            assert_eq!(ensure_in_vault(&root, &p.to_string_lossy()).unwrap_err(), "path escapes vault", "{p:?}");
+        }
+        fs::create_dir_all(root.join("sub")).unwrap();
+        let inside = ensure_in_vault(&root, &root.join("sub/../a.md").to_string_lossy()).unwrap();
+        assert_eq!(inside, root.join("a.md"));
+        // A path through a symlinked parent of the vault still resolves inside it.
+        #[cfg(unix)]
+        {
+            let alias = std::env::temp_dir().join(format!("basalt-alias-{}", std::process::id()));
+            let _ = fs::remove_file(&alias);
+            std::os::unix::fs::symlink(&root, &alias).unwrap();
+            assert_eq!(ensure_in_vault(&root, &alias.join("a.md").to_string_lossy()).unwrap(), root.join("a.md"));
+            let _ = fs::remove_file(&alias);
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_keeps_owner() {
+        use std::os::unix::fs::MetadataExt;
+        let root = scratch_vault("owner");
+        let note = root.join("O.md");
+        fs::write(&note, "v1\n").unwrap();
+        // As root (the Docker server), the note belongs to someone else first.
+        let as_root = fs::metadata(&note).unwrap().uid() == 0;
+        if as_root {
+            std::os::unix::fs::chown(&note, Some(1000), Some(1000)).unwrap();
+        }
+        let before = fs::metadata(&note).unwrap();
+        write_note(&root, note.to_string_lossy().into(), "v2\n".into(), None).unwrap();
+        let after = fs::metadata(&note).unwrap();
+        assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()));
+        if as_root {
+            assert_eq!(after.uid(), 1000);
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn obsidian_config_reads_strict_line_breaks() {
+        let root = scratch_vault("cfg");
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        let strict = |root: &Path| serde_json::to_value(read_obsidian_config(root).unwrap()).unwrap()["strictLineBreaks"].clone();
+        assert_eq!(strict(&root), serde_json::Value::Null);
+        fs::write(root.join(".obsidian/app.json"), r#"{"strictLineBreaks": true, "promptDelete": false, "showLineNumber": true, "readableLineLength": false}"#).unwrap();
+        assert_eq!(strict(&root), serde_json::Value::Bool(true));
+        let cfg = serde_json::to_value(read_obsidian_config(&root).unwrap()).unwrap();
+        assert_eq!(cfg["promptDelete"], serde_json::Value::Bool(false));
+        assert_eq!(cfg["showLineNumber"], serde_json::Value::Bool(true));
+        assert_eq!(cfg["readableLineLength"], serde_json::Value::Bool(false));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn obsidian_config_opens_the_daily_note_only_with_daily_notes_on() {
+        let root = scratch_vault("cfg-open");
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        let open = |root: &Path| serde_json::to_value(read_obsidian_config(root).unwrap()).unwrap()["openBehavior"].clone();
+        fs::write(root.join(".obsidian/app.json"), r#"{"openBehavior": "daily"}"#).unwrap();
+        assert_eq!(open(&root), serde_json::Value::String("daily".into()));
+        fs::write(root.join(".obsidian/core-plugins.json"), r#"{"daily-notes": false}"#).unwrap();
+        assert_eq!(open(&root), serde_json::Value::Null);
+        fs::write(root.join(".obsidian/app.json"), r#"{"openBehavior": "file"}"#).unwrap();
+        assert_eq!(open(&root), serde_json::Value::String("file".into()));
+        fs::create_dir_all(root.join(".obsidian/plugins/templater-obsidian")).unwrap();
+        fs::write(root.join(".obsidian/plugins/templater-obsidian/data.json"), r#"{"trigger_on_file_creation": true, "templates_folder": "T"}"#).unwrap();
+        let cfg = serde_json::to_value(read_obsidian_config(&root).unwrap()).unwrap();
+        assert_eq!(cfg["templaterOnCreate"], serde_json::Value::Bool(true));
+        assert_eq!(cfg["templatesFolder"], serde_json::Value::String("T".into()));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn list_folders_includes_empty_ones_but_not_dot_folders() {
+        let root = scratch_vault("folders");
+        fs::create_dir_all(root.join("Empty")).unwrap();
+        fs::create_dir_all(root.join("A/B/C")).unwrap();
+        fs::create_dir_all(root.join(".obsidian/plugins")).unwrap();
+        fs::create_dir_all(root.join("A/.hidden")).unwrap();
+        fs::write(root.join("A/note.md"), "x").unwrap();
+        assert_eq!(list_folders(&root), vec!["A", "A/B", "A/B/C", "Empty"]);
+    }
+
+    #[test]
+    fn read_image_resolves_link_paths_as_obsidian_does() {
+        let root = scratch_vault("img");
+        let png = |rel: &str| {
+            let p = root.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, b"\x89PNG").unwrap();
+        };
+        png("A/Topic/assets/pic.png");
+        png("A/up.png");
+        png("Far/x/assets/two.png");
+        png("A/Topic/deeper/assets/two.png");
+        let ok = |t: &str, from: &str| read_image(&root, t.into(), from.into()).is_ok();
+        // A note moved out of Topic/ still finds `assets/pic.png` by the end of its path.
+        assert!(ok("assets/pic.png", "A/Moved.md"));
+        assert!(ok("assets/pic.png", "A/Topic/Note.md"));
+        assert!(ok("../up.png", "A/Topic/Note.md"));
+        assert!(ok("./assets/pic.png", "A/Topic/Note.md"));
+        assert!(ok("/A/up.png", "Elsewhere/N.md"));
+        assert!(!ok("/up.png", "A/N.md")); // a leading / means the vault root only
+        assert!(!ok("../../../etc/passwd", "A/N.md"));
+        assert!(!ok("../../up.png", "A/N.md")); // climbs above the vault
+        // The note's own folder wins over a shorter path elsewhere.
+        fs::write(root.join("Far/x/assets/two.png"), b"\x89PNGfar").unwrap();
+        let near = read_image(&root, "/A/Topic/deeper/assets/two.png".into(), "".into()).unwrap();
+        assert_eq!(read_image(&root, "assets/two.png".into(), "A/Topic/N.md".into()).unwrap(), near);
+        let far = read_image(&root, "/Far/x/assets/two.png".into(), "".into()).unwrap();
+        assert_eq!(read_image(&root, "assets/two.png".into(), "B/N.md".into()).unwrap(), far);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn scratch_vault(tag: &str) -> PathBuf {
+        let n = std::time::SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("basalt-core-{tag}-{}-{n}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::canonicalize(&dir).unwrap()
+    }
+
+    #[test]
+    fn write_note_compare_and_swap() {
+        let root = scratch_vault("cas");
+        let note = root.join("N.md");
+        let p = || note.to_string_lossy().to_string();
+        fs::write(&note, "base\n").unwrap();
+
+        write_note(&root, p(), "mine\n".into(), Some("base\n".into())).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "mine\n");
+
+        // Someone else wrote after our last read: refuse, leave their text.
+        fs::write(&note, "theirs\n").unwrap();
+        let err = write_note(&root, p(), "mine again\n".into(), Some("mine\n".into())).unwrap_err();
+        assert_eq!(err, WRITE_CONFLICT);
+        assert_eq!(fs::read_to_string(&note).unwrap(), "theirs\n");
+
+        // Disk already holds what we're writing: not a conflict.
+        write_note(&root, p(), "theirs\n".into(), Some("stale\n".into())).unwrap();
+
+        // No expectation means an explicit overwrite (Keep mine).
+        write_note(&root, p(), "forced\n".into(), None).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "forced\n");
+
+        // Renamed or deleted since it was read: a save mustn't bring the old file
+        // back. The app keeps the text and asks; Keep mine writes it back.
+        fs::remove_file(&note).unwrap();
+        let err = write_note(&root, p(), "back\n".into(), Some("forced\n".into())).unwrap_err();
+        assert_eq!(err, WRITE_CONFLICT);
+        assert!(!note.exists());
+        write_note(&root, p(), "back\n".into(), None).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "back\n");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_writes_from_one_base_let_exactly_one_through() {
+        let root = scratch_vault("cas-race");
+        let note = root.join("R.md");
+        for round in 0..20 {
+            fs::write(&note, "base\n").unwrap();
+            let handles: Vec<_> = (0..8)
+                .map(|i| {
+                    let (root, path) = (root.clone(), note.to_string_lossy().to_string());
+                    std::thread::spawn(move || write_note(&root, path, format!("writer {i}\n"), Some("base\n".into())).is_ok())
+                })
+                .collect();
+            let wins = handles.into_iter().map(|h| h.join().unwrap()).filter(|ok| *ok).count();
+            assert_eq!(wins, 1, "round {round}");
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn write_note_compare_and_swap_ignores_line_endings() {
+        let root = scratch_vault("cas-crlf");
+        let note = root.join("W.md");
+        fs::write(&note, "a\r\nb\r\n").unwrap();
+        write_note(&root, note.to_string_lossy().into(), "a\nb\nc\n".into(), Some("a\nb\n".into())).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "a\r\nb\r\nc\r\n");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn write_canvas_and_base_compare_and_swap() {
+        let root = scratch_vault("cas-viewers");
+        let canvas = root.join("B.canvas");
+        let base = root.join("V.base");
+        fs::write(&canvas, "{\"nodes\":[]}").unwrap();
+        fs::write(&base, "views: []\n").unwrap();
+        let e1 = write_canvas(&root, canvas.to_string_lossy().into(), "{}".into(), Some("old".into())).unwrap_err();
+        let e2 = write_base(&root, base.to_string_lossy().into(), "x: 1\n".into(), Some("old".into())).unwrap_err();
+        assert_eq!((e1.as_str(), e2.as_str()), (WRITE_CONFLICT, WRITE_CONFLICT));
+        write_canvas(&root, canvas.to_string_lossy().into(), "{}".into(), Some("{\"nodes\":[]}".into())).unwrap();
+        assert_eq!(fs::read_to_string(&canvas).unwrap(), "{}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_folder_can_be_renamed_to_a_name_starting_with_its_own() {
+        let root = scratch_vault("folder-prefix");
+        fs::create_dir_all(root.join("Notes/sub")).unwrap();
+        fs::write(root.join("Notes/sub/a.md"), "x").unwrap();
+        rename_folder(&root, "Notes".into(), "Notes old".into()).unwrap();
+        assert!(root.join("Notes old/sub/a.md").is_file());
+        assert!(rename_folder(&root, "Notes old".into(), "Notes old/inner".into()).is_err());
+        assert!(rename_folder(&root, "Notes old".into(), "notes OLD/inner".into()).is_err());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn bookmark_toggles_at_once_keep_every_bookmark() {
+        let root = scratch_vault("bookmarks-race");
+        for i in 0..30 {
+            fs::write(root.join(format!("n{i}.md")), "x").unwrap();
+        }
+        let handles: Vec<_> = (0..30)
+            .map(|i| {
+                let root = root.clone();
+                std::thread::spawn(move || toggle_file_bookmark(&root, root.join(format!("n{i}.md")).to_string_lossy().into()))
+            })
+            .collect();
+        for h in handles {
+            assert!(h.join().unwrap().unwrap());
+        }
+        let saved: serde_json::Value = serde_json::from_str(&fs::read_to_string(root.join(".obsidian/bookmarks.json")).unwrap()).unwrap();
+        assert_eq!(saved["items"].as_array().unwrap().len(), 30);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn writes_never_replace_a_file_that_isnt_utf8() {
+        let root = scratch_vault("not-utf8");
+        let note = root.join("Lat.md");
+        let latin1 = b"# caf\xE9\n\nline\n".to_vec();
+        fs::write(&note, &latin1).unwrap();
+        let p: String = note.to_string_lossy().into();
+        let lossy = String::from_utf8_lossy(&latin1).to_string();
+        assert!(write_note(&root, p.clone(), "x".into(), Some(lossy)).is_err());
+        assert!(write_note(&root, p.clone(), "x".into(), None).is_err());
+        assert_eq!(fs::read(&note).unwrap(), latin1);
+        let canvas = root.join("C.canvas");
+        fs::write(&canvas, b"{\"t\":\"\xE9\"}").unwrap();
+        assert!(write_canvas(&root, canvas.to_string_lossy().into(), "{}".into(), None).is_err());
+        // A new note, and a UTF-8 one, still save.
+        write_note(&root, root.join("New.md").to_string_lossy().into(), "ok".into(), None).unwrap();
+        write_note(&root, root.join("New.md").to_string_lossy().into(), "ok 2".into(), Some("ok".into())).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_walkers_never_follow_symlinks() {
+        use std::os::unix::fs::symlink;
+        let root = scratch_vault("walk");
+        let outside = scratch_vault("walk-outside");
+        fs::create_dir_all(outside.join("emptyA/emptyB")).unwrap();
+        fs::write(outside.join("secret.txt"), "x").unwrap();
+        fs::create_dir_all(root.join("sub")).unwrap();
+        symlink(&outside, root.join("sub/link")).unwrap();
+        fs::create_dir_all(root.join("loop/a")).unwrap();
+        symlink(root.join("loop"), root.join("loop/a/back")).unwrap();
+
+        assert_eq!(list_subfolders(&root, "sub".into()).unwrap(), Vec::<String>::new());
+        assert_eq!(list_subfolders(&root, "loop".into()).unwrap(), vec!["loop/a".to_string()]);
+        let foreign = list_foreign_files(&root, "sub".into()).unwrap();
+        assert!(foreign.iter().all(|f| !f.contains("secret")), "{foreign:?}");
+
+        // The symlink counts as content, so nothing outside is removed.
+        assert!(remove_empty_folder(&root, "sub".into()).is_err());
+        assert!(outside.join("emptyA/emptyB").is_dir());
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_ops_refuse_a_symlink_alias_of_a_dot_folder() {
+        use std::os::unix::fs::symlink;
+        let root = scratch_vault("alias");
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::write(root.join(".obsidian/app.json"), "{}").unwrap();
+        symlink(root.join(".obsidian"), root.join("obsalias")).unwrap();
+        assert!(rename_folder(&root, "obsalias".into(), "moved".into()).is_err());
+        assert!(delete_folder(&root, "obsalias".into()).is_err());
+        assert!(list_subfolders(&root, "obsalias".into()).is_err());
+        assert!(root.join(".obsidian/app.json").is_file());
+        assert!(!root.join("moved").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn atomic_write_keeps_permissions_and_creation_time() {
+        let root = scratch_vault("meta");
+        let note = root.join("M.md");
+        fs::write(&note, "v1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&note, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let before = fs::metadata(&note).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        write_note(&root, note.to_string_lossy().into(), "v2\n".into(), None).unwrap();
+        let after = fs::metadata(&note).unwrap();
+        assert_eq!(fs::read_to_string(&note).unwrap(), "v2\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(after.permissions().mode() & 0o777, 0o600);
+        }
+        #[cfg(any(target_os = "macos", windows))]
+        assert_eq!(after.created().unwrap(), before.created().unwrap());
+        let _ = before;
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn trash_collision_keeps_the_extension() {
+        let root = scratch_vault("trash");
+        fs::create_dir_all(root.join(".trash")).unwrap();
+        fs::write(root.join(".trash/Board.canvas"), "{}").unwrap();
+        fs::write(root.join("Board.canvas"), "{\"nodes\":[]}").unwrap();
+        delete_note(&root, root.join("Board.canvas").to_string_lossy().into()).unwrap();
+        let names: Vec<String> = fs::read_dir(root.join(".trash")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into()).collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.iter().all(|n| n.ends_with(".canvas")), "{names:?}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_folder_with_a_dot_in_its_name_triggers_a_rescan() {
+        let root = scratch_vault("dotted");
+        let dir = root.join("Vol.2");
+        fs::create_dir_all(&dir).unwrap();
+        let (changed, rescan) = classify_change(&root, false, &[dir]);
+        assert!(changed.is_empty() && rescan);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn obsidian_snippets_report_whether_obsidian_enables_them() {
+        let root = scratch_vault("snips");
+        fs::create_dir_all(root.join(".obsidian/snippets")).unwrap();
+        fs::create_dir_all(root.join(".basalt/snippets")).unwrap();
+        fs::write(root.join(".obsidian/snippets/on.css"), "a{}").unwrap();
+        fs::write(root.join(".obsidian/snippets/off.css"), "b{}").unwrap();
+        fs::write(root.join(".basalt/snippets/mine.css"), "c{}").unwrap();
+        fs::write(root.join(".obsidian/appearance.json"), r#"{"enabledCssSnippets":["on"]}"#).unwrap();
+        let got: Vec<(String, bool, bool)> = list_css_snippets(&root)
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.name, s.from_obsidian, s.enabled_in_obsidian))
+            .collect();
+        assert_eq!(
+            got,
+            vec![("mine".into(), false, false), ("off".into(), true, false), ("on".into(), true, true)]
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn only_vault_attachments_can_be_opened() {
+        let root = scratch_vault("open");
+        fs::write(root.join("doc.pdf"), "x").unwrap();
+        fs::write(root.join("run.command"), "x").unwrap();
+        fs::write(root.join("note.md"), "x").unwrap();
+        let p = |n: &str| root.join(n).to_string_lossy().to_string();
+        assert!(attachment_to_open(&root, &p("doc.pdf")).is_ok());
+        assert!(attachment_to_open(&root, &p("run.command")).is_err());
+        assert!(attachment_to_open(&root, &p("note.md")).is_err());
+        assert!(attachment_to_open(&root, "/bin/sh").is_err());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn attachments_rename_keeping_their_extension() {
+        let root = scratch_vault("att-rename");
+        fs::write(root.join("pic.png"), "img").unwrap();
+        fs::write(root.join("taken.png"), "other").unwrap();
+        fs::write(root.join("note.md"), "x").unwrap();
+        let p = |n: &str| root.join(n).to_string_lossy().to_string();
+        let moved = rename_attachment(&root, p("pic.png"), "media/Photo".into()).unwrap();
+        assert!(moved.ends_with("media/Photo.png"));
+        assert_eq!(fs::read_to_string(root.join("media/Photo.png")).unwrap(), "img");
+        assert!(!root.join("pic.png").exists());
+        assert!(rename_attachment(&root, p("media/Photo.png"), "taken".into()).is_err());
+        assert_eq!(fs::read_to_string(root.join("taken.png")).unwrap(), "other");
+        assert!(rename_attachment(&root, p("media/Photo.png"), "../out".into()).is_err());
+        assert!(rename_attachment(&root, p("media/Photo.png"), ".obsidian/x".into()).is_err());
+        assert!(rename_attachment(&root, p("media/Photo.png"), "a#b".into()).is_err());
+        assert!(rename_attachment(&root, p("note.md"), "moved".into()).is_err());
+        assert!(root.join("note.md").is_file());
+        rename_attachment(&root, p("media/Photo.png"), "media/photo".into()).unwrap();
+        let names: Vec<String> = fs::read_dir(root.join("media"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["photo.png".to_string()]);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     /// Set BASALT_TEST_VAULT to a real vault path to exercise these on a

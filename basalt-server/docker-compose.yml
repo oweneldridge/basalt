@@ -7,14 +7,20 @@ services:
       context: ..
       dockerfile: basalt-server/Dockerfile
     container_name: basalt-web
+    # Run as the vault's owner, so every note it saves or creates stays theirs
+    # and a sync tool running as them (unison) can still read it.
+    user: "${BASALT_UID:-1000}:${BASALT_GID:-1000}"
     restart: unless-stopped
     volumes:
       # The vault: the same unison-synced space SilverBullet serves. Read-write.
       - /opt/arrstack/silverbullet/space:/vault
     environment:
-      # Set in a .env next to this file: BASALT_AUTH=owen:<strong-pass>
-      # (store the creds in Vaultwarden). Malformed value => the server refuses
-      # to start (fails closed). Unset => no auth (tailnet-only boundary).
+      # Optional HTTP Basic auth, for a setup with no SSO proxy in front: set
+      # BASALT_AUTH=user:<strong-pass> in a .env next to this file. Empty or
+      # unset => no Basic auth; the server then answers only requests addressed
+      # to localhost (a proxy sends that Host). A malformed value (no ':') stops
+      # the server. On Spectre the login is Authelia via Caddy instead, so its
+      # .env must not set BASALT_AUTH (see DEPLOY.md).
       - BASALT_AUTH=${BASALT_AUTH:-}
     ports:
       # Localhost only; Tailscale Serve exposes it to the tailnet. (10017 was

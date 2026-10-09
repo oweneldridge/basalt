@@ -1,13 +1,15 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { invoke, getCurrentWindow, listen, openPath, openUrl, revealItemInDir, confirm, save, isTauri } from "./lib/platform";
+import { invoke, getCurrentWindow, listen, openAttachment, openUrl, revealItemInDir, confirm, isTauri } from "./lib/platform";
 import {
   createNote,
   createFolder,
   deleteNote,
   listAttachments,
+  listFolders,
   nameFromRel,
   renameNote,
+  renameAttachment,
   writeAttachment,
   openVaultBackend,
   openNewWindow,
@@ -17,8 +19,11 @@ import {
   readVault,
   startWatching,
   writeNote,
+  isBeingWritten,
+  isWriting,
   writeCanvas,
   writeBase,
+  isWriteConflict,
   readObsidianConfig,
   readObsidianImport,
   readObsidianBookmarks,
@@ -42,7 +47,7 @@ import { setQueryHost } from "./lib/queryHost";
 import { setTranscludeHost, splitSubpath, subpathToLine, extractHeadings, extractBlockIds } from "./lib/transclude";
 import { recordSnapshot, listSnapshots, clearSnapshots, renameSnapshots, type Snapshot } from "./lib/snapshots";
 import { installHoverPreview } from "./lib/hoverPreview";
-import { linkifyMention } from "./lib/linkify";
+import { linkifyMention, mentionLinesFor, mentionRegex } from "./lib/linkify";
 import { reorderTabs, insertTab } from "./lib/tabs";
 import { loadBindings, saveBindings, matchChord, type Bindings } from "./lib/hotkeys";
 import { parseObsidianImport, type ObsidianImportResult } from "./lib/obsidianImport";
@@ -50,6 +55,7 @@ import { resolveThemePalettes, applyThemePalette, type ThemePalette } from "./li
 import { noteRow, tasksForNote } from "./lib/vaultRows";
 import { parseQuery, runQuery, type Task } from "./lib/query";
 import { applyTemplate, type TemplateCtx } from "./lib/templates";
+import { mergeTemplateProps, splitTemplate } from "./lib/frontmatter";
 import { parseProperties } from "./lib/bases";
 import {
   installHost,
@@ -58,17 +64,22 @@ import {
   unloadAll,
   pluginCommands,
   loadEnabled,
+  vetEnabledPlugins,
+  rememberPluginCode,
   saveEnabled,
   emitVaultEvent,
   emitWorkspaceEvent,
   pluginRightViews,
+  isLoaded,
+  listensFor,
   type HostDeps,
 } from "./lib/plugins";
 import { listPlugins, writePluginData, listCssSnippets, deleteFolder, renameFolder, type PluginInfo, type CssSnippet } from "./lib/vault";
-import type { EditorApi } from "./components/EditorPane";
 import type { NoteRef } from "./editor/wikilink";
 import { clearImageCache, resolveImage } from "./lib/assets";
-import { normalizeName, targetPathPart } from "./lib/markdown";
+import { remoteImagesNeedReload, setRemoteImages } from "./lib/remoteImages";
+import { isHiddenRel } from "./lib/hiddenFiles";
+import { normalizeName, targetPathPart, wikilinkRegex } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { Ribbon } from "./components/Ribbon";
 import { WorkspacesModal } from "./components/WorkspacesModal";
@@ -76,11 +87,12 @@ import { StackedTabs } from "./components/StackedTabs";
 import { SlidesView } from "./components/SlidesView";
 import { StatusBar } from "./components/StatusBar";
 import { InlineTitle } from "./components/InlineTitle";
-import { EditorPane } from "./components/EditorPane";
+import { EditorPane, editorCount, editorText, fixOpenEditors, showText, type EditorApi } from "./components/EditorPane";
 import { TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec, type BuiltinView } from "./lib/leafViews";
-import { parseBasaltUri } from "./lib/deeplink";
+import { deepLinkVaultPolicy, parseBasaltUri, parseObsidianUri } from "./lib/deeplink";
+import { setBaseEmbedHost, notifyBaseEmbeds } from "./lib/baseEmbedHost";
 import { Outline } from "./components/Outline";
 import { Backlinks } from "./components/Backlinks";
 import { Tags } from "./components/Tags";
@@ -97,7 +109,7 @@ import { VersionHistory } from "./components/VersionHistory";
 const BaseView = lazy(() =>
   import("./components/BaseView").then((m) => ({ default: m.BaseView })),
 );
-import { renderMarkdown, toggleTaskLine } from "./lib/render";
+import { renderMarkdown, setStrictLineBreaks, toggleTaskLine } from "./lib/render";
 import { renderMermaid } from "./lib/mermaid";
 import { buildHtmlDocument } from "./lib/export";
 import {
@@ -112,6 +124,7 @@ import {
 import { GraphView } from "./components/GraphView";
 import { Palette } from "./components/Palette";
 import { PromptModal } from "./components/PromptModal";
+import { ContextMenu } from "./components/ContextMenu";
 import { SettingsModal } from "./components/SettingsModal";
 import {
   applyResolvedTheme,
@@ -121,13 +134,14 @@ import {
   watchSystemTheme,
   type ThemeMode,
 } from "./lib/theme";
-import { linkTargetForFormat, rewriteLinks, folderMoveMapper } from "./lib/rename";
+import { linkTargetForFormat, rewriteLinks, folderMoveMapper, type FolderMoveCtx, type LinkMapper } from "./lib/rename";
 import { rewriteCanvasFileRefs } from "./lib/canvas";
+import { countWords, countableText } from "./lib/wordCount";
 import { looksLikeAttachment, resolveAttachment } from "./lib/attachments";
 import { fillTemplate, formatMoment, UnsupportedTokenError } from "./lib/daily";
 import type { LinkFormat } from "./lib/rename";
 import { fuzzyRank } from "./lib/fuzzy";
-import { searchVault, type SearchHit } from "./lib/search";
+import { searchVault, type SearchHit, type SearchResults } from "./lib/search";
 import "./styles.css";
 
 const LAST_VAULT_KEY = "basalt.lastVault";
@@ -144,11 +158,57 @@ const WINDOW_LABEL: string = (() => {
 
 // Mirrors a frontend diagnostic into the dev terminal (used for failures that
 // must never be silently swallowed).
+/** A property value being typed in an editor commits when it loses focus, so
+ * take the focus before the editor goes (Reading view, a closed tab). */
+function commitFieldEdit(): void {
+  const el = document.activeElement;
+  if (el instanceof HTMLElement && el.matches("input, textarea") && el.closest(".cm-editor")) el.blur();
+}
+
 function jsLog(msg: string): void {
   console.log("[basalt]", msg);
   invoke("debug_log", { msg }).catch(() => {});
 }
 const SAVE_DEBOUNCE_MS = 500;
+// Notes longer than this are word-counted after typing pauses.
+const BIG_COUNT = 200_000;
+// Readable width, once chosen in Basalt (until then the vault's setting).
+const READABLE_WIDTH_KEY = "basalt-readable-width-choice";
+// The vault's daily note is opened once a browser session, so a reload keeps your place.
+const dailyKey = (root: string) => `basalt.dailyOpened.${root}`;
+const todayStamp = () => new Date().toDateString();
+function dailyOpened(root: string): boolean {
+  try {
+    return sessionStorage.getItem(dailyKey(root)) === todayStamp();
+  } catch {
+    return false;
+  }
+}
+function markDailyOpened(root: string) {
+  try {
+    sessionStorage.setItem(dailyKey(root), todayStamp());
+  } catch {
+    /* no session storage: open it each time */
+  }
+}
+// Why it can't be made from a Templater template, said once a session too.
+const dailyNoticeKey = (root: string) => `basalt.dailyNotice.${root}`;
+function firstDailyNotice(root: string): boolean {
+  try {
+    if (sessionStorage.getItem(dailyNoticeKey(root)) === todayStamp()) return false;
+    sessionStorage.setItem(dailyNoticeKey(root), todayStamp());
+  } catch {
+    /* no session storage: say it each time */
+  }
+  return true;
+}
+/** Why Templater Lite won't fill a new note's tags here, or null if it will. */
+function templaterWontRun(cfg: ObsidianConfig | null): string | null {
+  if (!isLoaded("templater-lite")) return "Templater Lite isn't on";
+  if (!cfg?.templaterOnCreate) return "Templater's \"Trigger Templater on new file creation\" is off in this vault";
+  if (!listensFor("templater-lite", "create")) return "this copy of Templater Lite doesn't fill new notes, so update it";
+  return null;
+}
 // Bound on the self-write suppression map (rel -> last written content).
 const SELF_WRITES_MAX = 128;
 
@@ -174,7 +234,12 @@ interface Pane {
   tabs: string[]; // open note paths, in tab order
   active: string | null; // the live note path
   doc: string; // content of the active note (initial/reconciled for its editor)
+  /** Bumped on every explicit doc patch so the editor reconciles even when the
+   * new text equals an older prop value. */
+  docRev?: number;
   scrollToLine?: number;
+  /** Bumped by each navigation to a line, so the same line scrolls again. */
+  scrollRev?: number;
   /** Pinned tab paths — a pinned tab can't be closed until unpinned. */
   pinned?: string[];
   /** Linked pane: follows the note navigated in another pane (Obsidian's
@@ -201,6 +266,16 @@ function makeRightDock(id: string): Pane {
 function makeLeftDock(id: string): Pane {
   const tabs = [viewPath({ type: "filetree" })];
   return { id, tabs, active: tabs[0], doc: "", dock: "left" };
+}
+
+/** A note a rename or folder move rewrote on disk: the text it read (`base`),
+ * what it wrote (`next`), and the text Basalt knew before reading (`known`). */
+interface RewriteDone {
+  path: string;
+  base: string;
+  next: string;
+  mapper: LinkMapper;
+  known?: string;
 }
 
 type ModalKind = "switcher" | "search" | "commands" | "settings" | "vaults" | "templates" | "history" | "workspaces" | null;
@@ -271,6 +346,8 @@ const isMarkdownPath = (p: string) => /\.md$/i.test(p);
 
 /** Files that open in a pane as a READ-ONLY viewer rather than an editor. */
 const isViewerPath = (p: string) => /\.(canvas|base)$/i.test(p);
+// Notes a rename or move fixes links in at the same time.
+const REWRITES_AT_ONCE = 6;
 
 /** Find a task's CURRENT line in freshly-read content, verifying identity
  * (text + status + indent) so a toggle never flips the wrong line or
@@ -344,6 +421,11 @@ export default function App() {
   const [vault, setVault] = useState<string | null>(null);
   const [notes, setNotes] = useState<VaultNote[]>([]);
   const [attachmentsList, setAttachmentsList] = useState<Attachment[]>([]);
+  // Every folder on disk, so the tree shows empty ones too.
+  const [folders, setFolders] = useState<string[]>([]);
+  const foldersRef = useRef(folders);
+  foldersRef.current = folders;
+  const [madeFolder, setMadeFolder] = useState<string | null>(null);
   // Split-pane workspace: a layout tree of panes (by id), the panes map, and
   // which pane has focus (drives the right panel / toolbar / open targets).
   const [panes, setPanes] = useState<Record<string, Pane>>({});
@@ -357,6 +439,9 @@ export default function App() {
   // save, so the backlinks memo keys off this cheaper counter.
   const [indexVersion, setIndexVersion] = useState(0);
   const [structureVersion, setStructureVersion] = useState(0);
+  // Bumped once a Link or Link all has run, so the unlinked mentions list
+  // shows what's left.
+  const [mentionsLinked, setMentionsLinked] = useState(0);
   // Paths with an unresolved on-disk conflict (per note, since panes may each
   // hold a different dirty note). The badge shows for the focused note.
   const [conflicts, setConflicts] = useState<Set<string>>(() => new Set());
@@ -365,9 +450,24 @@ export default function App() {
   const [recentVaults, setRecentVaults] = useState<RecentVault[]>(() => loadRecentVaults());
   // Sidebar visibility + UI zoom (Obsidian parity: ⌘\ / ⌘⌥\ , ⌘+ / ⌘- / ⌘0).
   // Resizable sidebar widths (persisted). Clamped so neither can swallow the editor.
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(() => {
+    try {
+      return Number(localStorage.getItem("basalt-zoom")) || 1;
+    } catch {
+      return 1;
+    }
+  });
   useEffect(() => {
-    document.documentElement.style.fontSize = `${Math.round(16 * zoom)}px`;
+    // A percentage of the user's own default size, and nothing at 100%, so a
+    // larger browser or OS font setting still applies.
+    const root = document.documentElement.style;
+    if (zoom === 1) root.removeProperty("font-size");
+    else root.fontSize = `${Math.round(zoom * 100)}%`;
+    try {
+      localStorage.setItem("basalt-zoom", String(zoom));
+    } catch {
+      /* private mode */
+    }
   }, [zoom]);
   const zoomBy = useCallback((d: number) => setZoom((z) => Math.max(0.6, Math.min(2, Math.round((z + d) * 20) / 20))), []);
   // A pending template prompt (tp.system.prompt) awaiting user input.
@@ -386,9 +486,23 @@ export default function App() {
   const noticeSeq = useRef(0);
   const [graphOpen, setGraphOpen] = useState(false);
   const [slidesOpen, setSlidesOpen] = useState(false);
-  // Caret position for the status bar (from the focused editor).
-  const [cursor, setCursor] = useState<{ line: number; col: number; sel: number } | null>(null);
-  const handleCursor = useCallback((line: number, col: number, sel: number) => setCursor({ line, col, sel }), []);
+  // Caret position for the status bar (from the focused editor), and the
+  // selection's counts, which show in place of the note's, as in Obsidian.
+  const [cursor, setCursor] = useState<{ line: number; col: number } | null>(null);
+  const [selStats, setSelStats] = useState<{ words: number; chars: number } | null>(null);
+  const selTimer = useRef<number | undefined>(undefined);
+  const handleCursor = useCallback((line: number, col: number, _sel: number, selText: (() => string) | null) => {
+    setCursor({ line, col });
+    window.clearTimeout(selTimer.current);
+    if (!selText) {
+      setSelStats(null);
+      return;
+    }
+    selTimer.current = window.setTimeout(() => {
+      const text = selText();
+      setSelStats({ words: countWords(text), chars: text.length });
+    }, 150);
+  }, []);
   const [graphMode, setGraphMode] = useState<"global" | "local">("global");
   const [sourceMode, setSourceMode] = useState(false);
   // Reading view: a rendered, read-only HTML view (vs the editable CM6 panes).
@@ -400,12 +514,19 @@ export default function App() {
     () => document.documentElement.dataset.theme !== "light",
   );
   // Readable line length (Obsidian default ON): constrains editor/reading width.
+  // It follows the vault's setting until it's switched here.
   const [readableWidth, setReadableWidth] = useState(
-    () => localStorage.getItem("basalt-readable-width") !== "false",
+    () => localStorage.getItem(READABLE_WIDTH_KEY) !== "false",
   );
-  useEffect(() => {
-    localStorage.setItem("basalt-readable-width", String(readableWidth));
-  }, [readableWidth]);
+  const chooseReadableWidth = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
+    setReadableWidth((prev) => {
+      const next = typeof v === "function" ? v(prev) : v;
+      localStorage.setItem(READABLE_WIDTH_KEY, String(next));
+      return next;
+    });
+  }, []);
+  // The vault's "Show line number".
+  const [lineNumbers, setLineNumbers] = useState(false);
   const [vim, setVim] = useState(() => localStorage.getItem("basalt-vim") === "true");
   useEffect(() => localStorage.setItem("basalt-vim", String(vim)), [vim]);
   const [rtl, setRtl] = useState(() => localStorage.getItem("basalt-rtl") === "true");
@@ -413,7 +534,8 @@ export default function App() {
   // Appearance: base font size (px) + accent override ("" = theme default).
   const [fontSize, setFontSize] = useState(() => Number(localStorage.getItem("basalt-font-size")) || 16);
   useEffect(() => {
-    document.documentElement.style.setProperty("--font-size", `${fontSize}px`);
+    // In rem so the editor scales with zoom and the user's default font size.
+    document.documentElement.style.setProperty("--font-size", `${fontSize / 16}rem`);
     localStorage.setItem("basalt-font-size", String(fontSize));
   }, [fontSize]);
   const [accent, setAccent] = useState(() => localStorage.getItem("basalt-accent") ?? "");
@@ -466,9 +588,23 @@ export default function App() {
     applyThemePalette(importedPalette ? (dark ? importedPalette.dark : importedPalette.light) : null);
   }, [importedPalette, dark]);
   const [spellcheck, setSpellcheck] = useState(() => localStorage.getItem("basalt-spellcheck") !== "false");
+  const [remoteImages, setRemoteImagesOn] = useState(() => localStorage.getItem("basalt-remote-images") !== "false");
+  // Set during render, so the first paint already respects it.
+  setRemoteImages(remoteImages);
+  useEffect(() => {
+    localStorage.setItem("basalt-remote-images", String(remoteImages));
+  }, [remoteImages]);
   useEffect(() => {
     localStorage.setItem("basalt-spellcheck", String(spellcheck));
   }, [spellcheck]);
+  // Dot-prefixed files and folders stay out of the tree, search, the switcher
+  // and the index unless this is on (Obsidian hides them too).
+  const [showHidden, setShowHidden] = useState(() => localStorage.getItem("basalt-show-hidden") === "true");
+  const showHiddenRef = useRef(showHidden);
+  showHiddenRef.current = showHidden;
+  useEffect(() => {
+    localStorage.setItem("basalt-show-hidden", String(showHidden));
+  }, [showHidden]);
   // User-assigned command hotkeys (global preference; see lib/hotkeys.ts).
   const [hotkeys, setHotkeys] = useState<Bindings>(() => loadBindings());
   useEffect(() => saveBindings(hotkeys), [hotkeys]);
@@ -489,7 +625,7 @@ export default function App() {
   const [subfolderParent, setSubfolderParent] = useState<string | null>(null);
   // Folder rel pending a "Rename folder…" prompt.
   const [renameFolderTarget, setRenameFolderTarget] = useState<string | null>(null);
-  const [renameTarget, setRenameTarget] = useState<{ path: string; rel: string } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{ path: string; rel: string; attachment?: boolean } | null>(null);
 
   const index = useRef(new VaultIndex());
   const vaultRef = useRef<string | null>(null);
@@ -500,14 +636,32 @@ export default function App() {
   attachmentsRef.current = attachmentsList;
   // Read-only .obsidian settings (link format, daily notes, attachment folder).
   const obsConfigRef = useRef<ObsidianConfig | null>(null);
+  // showNotice, for callbacks declared above it.
+  const noticeRef = useRef<(msg: string, timeoutMs?: number) => void>(() => {});
+  // Settles once the open vault's plugins have loaded.
+  const pluginsReady = useRef<{ vault: string; promise: Promise<void>; done: () => void } | null>(null);
+  // Deleting asks first unless the vault turns that off ("Confirm file deletion").
+  const confirmDelete = useCallback(
+    (message: string, opts: Parameters<typeof confirm>[1]) =>
+      obsConfigRef.current?.promptDelete === false ? Promise.resolve(true) : confirm(message, opts),
+    [],
+  );
 
   // Workspace refs (read in callbacks/watcher without re-subscribing).
   const panesRef = useRef<Record<string, Pane>>({});
   panesRef.current = panes;
+  // path -> the text its open editor(s) hold right now. A pane's own keystrokes
+  // never reach pane.doc (patching the typing pane would re-render the App per
+  // key), so anything that seeds or derives from a pane must read through docFor.
+  const liveDocs = useRef<Map<string, string>>(new Map());
+  const docFor = (p: Pane) => (p.active ? (liveDocs.current.get(p.active) ?? p.doc) : p.doc);
   const layoutRef = useRef<LayoutNode | null>(null);
   layoutRef.current = layout;
   const focusedIdRef = useRef<string | null>(null);
   focusedIdRef.current = focusedId;
+  // The editor pane last focused, for commands run from a sidebar.
+  const lastEditorIdRef = useRef<string | null>(null);
+  if (focusedId && panes[focusedId] && !panes[focusedId].dock) lastEditorIdRef.current = focusedId;
   const paneCounter = useRef(0);
 
   // The FOCUSED pane and its active note — the "current note" for the right
@@ -515,9 +669,19 @@ export default function App() {
   const focusedPane = focusedId ? (panes[focusedId] ?? null) : null;
   const active: ActiveNote | null =
     focusedPane && focusedPane.active
-      ? { path: focusedPane.active, doc: focusedPane.doc, scrollToLine: focusedPane.scrollToLine }
+      ? { path: focusedPane.active, doc: docFor(focusedPane), scrollToLine: focusedPane.scrollToLine }
       : null;
   const changedOnDisk = !!(active && conflicts.has(active.path));
+  // Name the page after the open note, for screen readers and browser tabs.
+  const activeView = active && isViewPath(active.path) ? parseViewPath(active.path) : null;
+  const titleNote = !active
+    ? null
+    : isViewPath(active.path)
+      ? activeView && viewLabel(activeView)
+      : (notes.find((n) => n.path === active.path)?.name ?? active.path.split(/[\\/]/).pop());
+  useEffect(() => {
+    document.title = titleNote ? `${titleNote} · Basalt` : "Basalt";
+  }, [titleNote]);
   // A focused .canvas/.base is a read-only viewer, not an editable note: the
   // toolbar, outline, export/print, and reading/source toggles must not treat
   // it as one.
@@ -544,6 +708,22 @@ export default function App() {
   // panes may each have a different unsaved note, so saving is keyed by path.
   const saveTimers = useRef<Map<string, number>>(new Map());
   const pending = useRef<Map<string, string>>(new Map());
+  // Paths whose rename is in flight: their saves wait, then follow the note.
+  const renaming = useRef<Set<string>>(new Set());
+  // Renames and moves running or waiting, link passes included. A vault
+  // re-read waits for them: it would take a listing older than their writes.
+  const renameJobs = useRef(0);
+  // Old path -> new path for a rename or folder move whose repoint React hasn't
+  // committed yet. Until then an editor (a pane's or a stacked column's) can
+  // still report the old path; afterwards every editor knows the new one, so
+  // the map is cleared after each commit and a note that later takes the old
+  // path is never redirected. It's cleared in a passive effect, which React runs
+  // after the editors' own: until an editor is rebuilt for the new path, a
+  // keystroke can still reach the old one.
+  const renameWindow = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    renameWindow.current.clear();
+  }, [panes]);
   // Most-recently-opened rels (per vault) — orders the blank-query switcher.
   const recents = useRef<string[]>([]);
   // rel -> exact content Basalt last wrote there. The watcher echo of our own
@@ -553,6 +733,9 @@ export default function App() {
   // Accumulated external changes (rel -> absolute path), flushed after a debounce.
   const changedBuf = useRef<Map<string, string>>(new Map());
   const watchTimer = useRef<number | undefined>(undefined);
+  // Buffers changes and applies them after a short quiet spell (set up with
+  // the watcher's listener below).
+  const queueChanges = useRef<(changes: ChangedNote[]) => void>(() => {});
   const rescanTimer = useRef<number | undefined>(undefined);
   // Resolves once the event listeners are active, so we never start the
   // watcher before we can hear it.
@@ -566,32 +749,143 @@ export default function App() {
   }
 
   const bumpIndex = useCallback(() => setIndexVersion((v) => v + 1), []);
+  // Counts in-app structural changes, so a vault read can tell it went stale.
+  const structGen = useRef(0);
   const bumpStructure = useCallback(() => {
+    structGen.current += 1;
     setIndexVersion((v) => v + 1);
     setStructureVersion((v) => v + 1);
   }, []);
+
+  // The folder list follows every change to the vault's files and folders.
+  useEffect(() => {
+    if (!vault) {
+      setFolders([]);
+      return;
+    }
+    let stale = false;
+    listFolders()
+      .then((list) => {
+        if (!stale) setFolders(showHidden ? list : list.filter((f) => !isHiddenRel(f)));
+      })
+      .catch((e) => jsLog(`list_folders failed: ${e}`));
+    return () => {
+      stale = true;
+    };
+  }, [vault, structureVersion, showHidden]);
 
   // Stable index accessors for the Bases viewer (index is a ref, so these
   // never change identity; BaseView invalidates its rows via structureVersion
   // plus per-note object identity).
   const tagsOf = useCallback((path: string) => index.current.tagsOf(path), []);
   const linkKeysOf = useCallback((path: string) => index.current.linkKeysOf(path), []);
+  const backlinksOf = useCallback((path: string) => index.current.backlinkRels(path), []);
+  const embedsOf = useCallback((path: string) => index.current.embedsOf(path), []);
 
+  // Saves that landed while a vault read was in flight: the listing predates
+  // them, so their notes keep the saved text instead of the stale listing.
+  const saveSeq = useRef(0);
+  // A save that failed (offline, server down, a lapsed login) is tried again on
+  // a backoff, and at once when the connection or the app comes back.
+  const retryTimer = useRef<number | undefined>(undefined);
+  const retryDelay = useRef(2000);
+  const flushAllRef = useRef<() => Promise<void>>(async () => {});
+  const retryLater = useCallback(() => {
+    if (retryTimer.current !== undefined) return;
+    retryTimer.current = window.setTimeout(() => {
+      retryTimer.current = undefined;
+      retryDelay.current = Math.min(retryDelay.current * 2, 30000);
+      void flushAllRef.current();
+    }, retryDelay.current);
+  }, []);
+  const lastSave = useRef<Map<string, { seq: number; content: string }>>(new Map());
   const loadVault = useCallback(async () => {
-    const [list, atts] = await Promise.all([readVault(), listAttachments()]);
+    let startSeq = saveSeq.current;
+    let startGen = structGen.current;
+    let [read, atts] = await Promise.all([readVault(), listAttachments()]);
+    // A note created, renamed or deleted in the app during the read isn't in
+    // that listing, and taking it would drop or revive one: read again.
+    for (let retry = 0; retry < 3 && structGen.current !== startGen; retry++) {
+      startSeq = saveSeq.current;
+      startGen = structGen.current;
+      [read, atts] = await Promise.all([readVault(), listAttachments()]);
+    }
+    if (!showHiddenRef.current) {
+      read = read.filter((n) => !isHiddenRel(n.rel));
+      atts = atts.filter((a) => !isHiddenRel(a.rel));
+    }
+    const list = read.map((n) => {
+      const w = lastSave.current.get(n.path);
+      return w && w.seq > startSeq ? { ...n, content: w.content } : n;
+    });
     index.current.build(list);
+    notesRef.current = list; // the next save's baseline, before React re-renders
     setNotes(list);
     setAttachmentsList(atts);
     bumpStructure();
     return { notes: list, attachments: atts };
   }, [bumpStructure]);
 
+  // Notes over the index cap are listed without their text. While one is shown,
+  // this holds the text last seen on disk, its save baseline; the listing never
+  // touches it. `bigGen` counts changes, so a slow re-read can tell it's stale.
+  const bigBase = useRef<Map<string, string>>(new Map());
+  const bigGen = useRef<Map<string, number>>(new Map());
+  const unlisted = (path: string) => {
+    const n = notesRef.current.find((x) => x.path === path);
+    return !!n && n.content === "" && (n.size ?? 0) > 0;
+  };
+  // The text Basalt last knew a note had on disk, if any.
+  const knownText = (path: string): string | undefined => {
+    const n = notesRef.current.find((x) => x.path === path);
+    if (!n) return undefined;
+    return n.content === "" && (n.size ?? 0) > 0 ? bigBase.current.get(path) : n.content;
+  };
+  const setBigBase = useCallback((path: string, text: string) => {
+    bigBase.current.set(path, text);
+    bigGen.current.set(path, (bigGen.current.get(path) ?? 0) + 1);
+  }, []);
+  const moveBigBase = useCallback((from: string, to: string) => {
+    const text = bigBase.current.get(from);
+    if (text === undefined) return;
+    bigBase.current.delete(from);
+    setBigBase(to, text);
+  }, [setBigBase]);
+  // Opening a note: an unlisted one's first read becomes its baseline.
+  const readToOpen = useCallback(
+    async (path: string) => {
+      // A read that overlapped one of our own saves, or a change the watcher or
+      // a link fix applied meanwhile, may predate it: read again.
+      let text = "";
+      for (let tries = 0; ; tries++) {
+        const seq = lastSave.current.get(path)?.seq;
+        const writing = isWriting(path);
+        const known = knownText(path);
+        text = await readNote(path);
+        if (!writing && !isWriting(path) && lastSave.current.get(path)?.seq === seq && knownText(path) === known) break;
+        if (tries === 2) {
+          // Still changing: the newest text Basalt knows beats a read it overtook.
+          const newer = knownText(path);
+          if (newer !== undefined && newer !== known) text = newer;
+          break;
+        }
+      }
+      if (!bigBase.current.has(path) && unlisted(path)) setBigBase(path, text);
+      return text;
+    },
+    [setBigBase],
+  );
+
   const rememberSelfWrite = useCallback((rel: string, content: string) => {
     selfWrites.current.delete(rel); // re-insert so eviction order is least-recent
     selfWrites.current.set(rel, content);
     if (selfWrites.current.size > SELF_WRITES_MAX) {
-      const oldest = selfWrites.current.keys().next().value;
-      if (oldest !== undefined) selfWrites.current.delete(oldest);
+      // A canvas or base keeps its entry: it's that file's save baseline.
+      for (const k of selfWrites.current.keys()) {
+        if (isViewerPath(k)) continue;
+        selfWrites.current.delete(k);
+        break;
+      }
     }
   }, []);
 
@@ -619,23 +913,84 @@ export default function App() {
 
   // Update one pane's state (and keep panesRef in sync for same-tick reads).
   const patchPane = useCallback((id: string, patch: Partial<Pane>) => {
+    const cur = panesRef.current[id];
+    if (cur && patch.doc !== undefined) {
+      const active = patch.active !== undefined ? patch.active : cur.active;
+      if (active) {
+        liveDocs.current.set(active, patch.doc);
+        // Editors already on the note take it now, not at the next render, so a
+        // keystroke in between isn't read against the older text.
+        showText(active, patch.doc);
+      }
+      patch = { ...patch, docRev: (cur.docRev ?? 0) + 1 };
+    }
     setPanes((ps) => (ps[id] ? { ...ps, [id]: { ...ps[id], ...patch } } : ps));
     if (panesRef.current[id]) {
       panesRef.current = { ...panesRef.current, [id]: { ...panesRef.current[id], ...patch } };
     }
   }, []);
 
-  const flushSave = useCallback(
-    async (path: string, doc: string) => {
+  // What a pane opening `path` should show after reading `disk`: unsaved text or
+  // another pane's live text wins, since either may be newer than the read.
+  const freshDoc = (path: string, disk: string): string =>
+    pending.current.get(path) ??
+    editorText(path) ??
+    (Object.values(panesRef.current).some((p) => p.active === path) ? liveDocs.current.get(path) : undefined) ??
+    disk;
+
+  // Forget live text for notes no pane shows, so it can't seed a later open.
+  useEffect(() => {
+    const shown = new Set(Object.values(panes).map((p) => p.active));
+    for (const k of [...liveDocs.current.keys()]) if (!shown.has(k)) liveDocs.current.delete(k);
+    // A big note's baseline lasts while it's on screen or has unsaved text;
+    // opened again later, it starts from a fresh read.
+    for (const p of Object.values(panes)) if (p.stacked) for (const t of p.tabs) shown.add(t);
+    for (const k of [...bigBase.current.keys()]) if (!shown.has(k) && !pending.current.has(k)) bigBase.current.delete(k);
+  }, [panes]);
+
+  const writeSave = useCallback(
+    async (path: string, doc: string, force = false) => {
       setSaving(true);
       try {
-        await writeNote(path, doc);
+        const known = notesRef.current.find((n) => n.path === path);
+        if (!known && !force) {
+          // Renamed or deleted since it was opened: writing would bring it back.
+          addConflict(path);
+          if (!pending.current.has(path)) pending.current.set(path, doc);
+          return;
+        }
+        // The index's copy is the last content seen on disk; a note listed
+        // without it (over the index cap) compares against its own baseline,
+        // and without one it can't tell an outside edit from none.
+        const unknown = !known || (known.content === "" && (known.size ?? 0) > 0);
+        const expected = force ? undefined : unknown ? bigBase.current.get(path) : known.content;
+        if (!force && expected === undefined) {
+          addConflict(path);
+          if (!pending.current.has(path)) pending.current.set(path, doc);
+          return;
+        }
+        await writeNote(path, doc, expected);
+        if (unknown || bigBase.current.has(path)) setBigBase(path, doc);
         setSaveError(null);
-        const meta = notesRef.current.find((n) => n.path === path);
+        retryDelay.current = 2000;
+        let meta = notesRef.current.find((n) => n.path === path);
+        if (!meta) {
+          // Keep mine just wrote back a note deleted elsewhere: list it again so
+          // its next saves compare against what's on disk.
+          const root = vaultRef.current ?? "";
+          const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
+          const back: VaultNote = { path, rel, name: nameFromRel(rel), content: doc };
+          const byRel = (a: VaultNote, b: VaultNote) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase());
+          notesRef.current = [...notesRef.current, back].sort(byRel);
+          setNotes((prev) => (prev.some((n) => n.path === path) ? prev : [...prev, back].sort(byRel)));
+          bumpStructure();
+          meta = back;
+        }
         if (meta) {
           // Record AFTER a successful write (a failed write leaves no stale
           // suppression), keyed by the rel + content the watcher will see.
           rememberSelfWrite(meta.rel, doc);
+          lastSave.current.set(path, { seq: ++saveSeq.current, content: doc });
           // Local version-history snapshot (throttled + pruned inside).
           const vkey = vaultRef.current;
           if (vkey) void recordSnapshot(vkey, meta.rel, doc, Date.now());
@@ -649,6 +1004,8 @@ export default function App() {
           };
           index.current.setNote(updated);
           setNotes((prev) => prev.map((n) => (n.path === path ? updated : n)));
+          // The next queued save reads its baseline from here before React re-renders.
+          notesRef.current = notesRef.current.map((n) => (n.path === path ? updated : n));
           bumpIndex();
           emitVaultEvent("modify", { path: meta.rel, name: meta.name });
         }
@@ -669,6 +1026,11 @@ export default function App() {
           }
         }
       } catch (e) {
+        if (isWriteConflict(e)) {
+          addConflict(path);
+          if (!pending.current.has(path)) pending.current.set(path, doc);
+          return;
+        }
         // Keep the edit pending — but never clobber a NEWER edit typed during
         // the failed write, and never resurrect pending for a note that has
         // been deleted meanwhile (a phantom entry would block vault switches).
@@ -676,38 +1038,62 @@ export default function App() {
           pending.current.set(path, doc);
         }
         setSaveError(String(e));
+        retryLater();
       } finally {
         setSaving(false);
       }
     },
-    [bumpIndex, rememberSelfWrite],
+    [bumpIndex, bumpStructure, rememberSelfWrite, addConflict, setBigBase],
+  );
+
+  // One save in flight per note. A save queued behind another writes whatever
+  // is newest when its turn comes (or nothing), and its compare-and-swap value
+  // then reflects the write before it, so a slow link can't raise a conflict
+  // against the user's own previous save.
+  const saveChains = useRef<Map<string, Promise<void>>>(new Map());
+  const flushSave = useCallback(
+    (path: string, doc: string, force = false): Promise<void> => {
+      const prev = saveChains.current.get(path) ?? Promise.resolve();
+      const run = prev.then(() => {
+        if (renaming.current.has(path)) return; // the rename carries the edit over
+        const latest = pending.current.get(path);
+        if (latest === undefined && !force) return;
+        if (!force && conflictsRef.current.has(path)) return;
+        return writeSave(path, latest ?? doc, force);
+      });
+      saveChains.current.set(path, run);
+      void run.finally(() => {
+        if (saveChains.current.get(path) === run) saveChains.current.delete(path);
+      });
+      return run;
+    },
+    [writeSave],
   );
 
   // Flush ONE editable viewer's (.canvas / .base) pending edit. Same
   // pending/conflict discipline as flushSave, but writes via the extension-gated
   // writeCanvas/writeBase and updates the attachment (not the note index).
-  const flushViewer = useCallback(
-    async (path: string, doc: string) => {
+  const writeViewer = useCallback(
+    async (path: string, doc: string, force = false) => {
       setSaving(true);
       try {
         const att = attachmentsRef.current.find((a) => a.path === path);
         const rel = att?.rel;
         const write = /\.base$/i.test(path) ? writeBase : writeCanvas;
-        // Pre-write conflict guard (closes the race where an external edit lands
-        // during the async rescan window): if disk has diverged from the last
-        // content Basalt knew was there — and isn't already what we're writing —
-        // raise a conflict instead of clobbering the external change.
-        if (rel !== undefined) {
-          const onDisk = await readNote(path).catch(() => null);
-          const baseline = selfWrites.current.get(rel);
-          if (onDisk !== null && baseline !== undefined && onDisk !== baseline && onDisk !== doc) {
-            addConflict(path);
-            if (!pending.current.has(path)) pending.current.set(path, doc);
-            return;
-          }
+        // The baseline (seeded on open, refreshed on each save) is what Basalt
+        // last saw on disk; the core refuses the write if the file moved on.
+        const baseline = rel !== undefined && !force ? selfWrites.current.get(rel) : undefined;
+        try {
+          await write(path, doc, baseline);
+        } catch (e) {
+          if (!isWriteConflict(e)) throw e;
+          addConflict(path);
+          // "Mine" is the newest edit, not the doc of a save that lost the race.
+          if (!pending.current.has(path)) pending.current.set(path, doc);
+          return;
         }
-        await write(path, doc);
         setSaveError(null);
+        retryDelay.current = 2000;
         if (rel !== undefined) rememberSelfWrite(rel, doc); // AFTER a successful write
         if (conflictsRef.current.has(path)) {
           if (!pending.current.has(path)) pending.current.set(path, doc);
@@ -724,6 +1110,7 @@ export default function App() {
           pending.current.set(path, doc);
         }
         setSaveError(String(e));
+        retryLater();
       } finally {
         setSaving(false);
       }
@@ -731,11 +1118,33 @@ export default function App() {
     [rememberSelfWrite, addConflict],
   );
 
+  // Viewer saves share the per-path chain with note saves.
+  const flushViewer = useCallback(
+    (path: string, doc: string, force = false): Promise<void> => {
+      const prev = saveChains.current.get(path) ?? Promise.resolve();
+      const run = prev.then(() => {
+        if (renaming.current.has(path)) return;
+        const latest = pending.current.get(path);
+        if (latest === undefined && !force) return;
+        if (!force && conflictsRef.current.has(path)) return;
+        return writeViewer(path, latest ?? doc, force);
+      });
+      saveChains.current.set(path, run);
+      void run.finally(() => {
+        if (saveChains.current.get(path) === run) saveChains.current.delete(path);
+      });
+      return run;
+    },
+    [writeViewer],
+  );
+
   // An edit from an editable viewer (CanvasView / BaseView): same debounced,
   // conflict-safe, sibling-syncing path as note autosave (keyed by path).
   const handleViewerChange = useCallback(
-    (paneId: string, path: string, doc: string) => {
+    (paneId: string, viewerPath: string, doc: string) => {
+      const path = renameWindow.current.get(viewerPath) ?? viewerPath;
       pending.current.set(path, doc);
+      liveDocs.current.set(path, doc);
       patchPane(paneId, { doc }); // keep the pane's doc current (restore/rescan)
       for (const p of Object.values(panesRef.current)) {
         if (p.id !== paneId && p.active === path) patchPane(p.id, { doc });
@@ -761,12 +1170,17 @@ export default function App() {
   // pane, the OTHER panes are reconciled to this edit so they never diverge or
   // collide (shared-document semantics). `paneId` is the pane that fired.
   const handleChange = useCallback(
-    (paneId: string, path: string, doc: string) => {
-      if (!path || !isMarkdownPath(path)) return; // read-only viewers don't autosave
+    (paneId: string, editorPath: string, doc: string) => {
+      if (!editorPath || !isMarkdownPath(editorPath)) return; // read-only viewers don't autosave
+      const path = renameWindow.current.get(editorPath) ?? editorPath;
       pending.current.set(path, doc);
+      liveDocs.current.set(path, doc);
       for (const p of Object.values(panesRef.current)) {
         if (p.id !== paneId && p.active === path) patchPane(p.id, { doc });
       }
+      // Stacked columns on the note too, at once: one left on older text would
+      // have a link fix applied to that text and saved over this typing.
+      if (editorCount(path) > 1) showText(path, doc);
       const existing = saveTimers.current.get(path);
       if (existing !== undefined) window.clearTimeout(existing);
       saveTimers.current.set(
@@ -796,8 +1210,8 @@ export default function App() {
       if (conflictsRef.current.has(path) && !force) return;
       const doc = pending.current.get(path);
       if (doc === undefined) return;
-      if (isViewerPath(path)) await flushViewer(path, doc);
-      else await flushSave(path, doc); // both delete `pending` on success
+      if (isViewerPath(path)) await flushViewer(path, doc, force);
+      else await flushSave(path, doc, force); // both delete `pending` on success
     },
     [flushSave, flushViewer],
   );
@@ -810,6 +1224,21 @@ export default function App() {
     },
     [flushPath],
   );
+  flushAllRef.current = flushAll;
+
+  // After a flush, anything still pending couldn't be saved (a conflict or a
+  // failed write). Ask before an action that would drop it.
+  const okToDropUnsaved = useCallback(async (action: string): Promise<boolean> => {
+    if (pending.current.size === 0) return true;
+    const names = [...pending.current.keys()].map(
+      (p) => notesRef.current.find((n) => n.path === p)?.name ?? p.split(/[\\/]/).pop() ?? p,
+    );
+    const shown = names.slice(0, 5).join(", ") + (names.length > 5 ? ` and ${names.length - 5} more` : "");
+    return confirm(`Changes in ${shown} couldn't be saved. ${action} anyway and lose them?`, {
+      title: "Unsaved changes",
+      kind: "warning",
+    });
+  }, []);
 
   // Ensure there is a focused pane; create the first one if the workspace is
   // empty. Refs are updated synchronously so an immediate open finds the pane.
@@ -913,6 +1342,7 @@ export default function App() {
     async (id: string, path: string, line?: number, mirror = false) => {
       const pane = panesRef.current[id];
       if (!pane) return;
+      if (!mirror) commitFieldEdit(); // however the pane moves on (Ctrl-Tab too)
       // A view tab (file tree, outline, plugin view…) has no note to load: just
       // add/activate it. No readNote, recents, or workspace events.
       if (isViewPath(path)) {
@@ -931,7 +1361,7 @@ export default function App() {
       }
       if (!mirror) focusPane(id);
       if (pane.active === path) {
-        if (line !== undefined) patchPane(id, { scrollToLine: line });
+        if (line !== undefined) patchPane(id, { scrollToLine: line, scrollRev: (pane.scrollRev ?? 0) + 1 });
         return;
       }
       if (pane.active && conflictsRef.current.has(pane.active)) {
@@ -941,7 +1371,9 @@ export default function App() {
       if (pane.active) await flushPath(pane.active);
       let doc: string;
       try {
-        doc = await readNote(path);
+        // Unsaved text another pane holds wins over disk (a failed or conflicted
+        // save would otherwise be overwritten by this pane's first keystroke).
+        doc = freshDoc(path, pending.current.get(path) ?? (await readToOpen(path)));
       } catch (e) {
         setSaveError(`Couldn't open note: ${e}`);
         return;
@@ -1058,6 +1490,7 @@ export default function App() {
     async (id: string, path: string) => {
       const pane = panesRef.current[id];
       if (!pane) return;
+      commitFieldEdit();
       if (pane.pinned?.includes(path)) {
         setSaveError("Unpin the tab before closing it");
         return;
@@ -1071,7 +1504,12 @@ export default function App() {
       const idx = pane.tabs.indexOf(path);
       const tabs = pane.tabs.filter((p) => p !== path);
       if (tabs.length === 0) {
-        removePaneFromWorkspace(id);
+        // The last editor pane stays, empty (Obsidian keeps an empty tab), so
+        // closing notes never takes the editor area away or moves Cmd-W on to
+        // the side panels.
+        const lastEditor = !pane.dock && !Object.values(panesRef.current).some((p) => p.id !== id && !p.dock);
+        if (lastEditor) patchPane(id, { tabs: [], active: null, doc: "", scrollToLine: undefined });
+        else removePaneFromWorkspace(id);
         return;
       }
       if (!isActive) {
@@ -1080,14 +1518,22 @@ export default function App() {
       }
       const neighbor = tabs[idx] ?? tabs[idx - 1] ?? null;
       let doc = "";
+      let active: string | null = neighbor;
+      if (neighbor && isViewPath(neighbor)) {
+        patchPane(id, { tabs, active, doc, scrollToLine: undefined }); // a panel, not a note to read
+        return;
+      }
       if (neighbor) {
         try {
-          doc = await readNote(neighbor);
-        } catch {
-          doc = "";
+          doc = freshDoc(neighbor, pending.current.get(neighbor) ?? (await readToOpen(neighbor)));
+        } catch (e) {
+          // Never mount an editable editor on text we couldn't read: a keystroke
+          // would save it over the real note. Leave the tab for a retry.
+          active = null;
+          setSaveError(`Couldn't open note: ${e}`);
         }
       }
-      patchPane(id, { tabs, active: neighbor, doc, scrollToLine: undefined });
+      patchPane(id, { tabs, active, doc, scrollToLine: undefined });
     },
     [flushPath, patchPane, removePaneFromWorkspace],
   );
@@ -1162,7 +1608,7 @@ export default function App() {
         tabs: active ? [active] : [],
         active,
         // Carry the live (unsaved) content, not just the last-loaded doc.
-        doc: active ? (pending.current.get(active) ?? src?.doc ?? "") : "",
+        doc: active ? (pending.current.get(active) ?? (src ? docFor(src) : "")) : "",
         scrollToLine: src?.scrollToLine,
       };
       const nextLayout = splitLeaf(lay, id, newId, dir);
@@ -1223,7 +1669,7 @@ export default function App() {
         const content = await readNote(path);
         const dir = note.rel.replace(/[^/\\]+$/, "");
         const copyPath = await createNote(`${dir}${note.name} copy`);
-        await writeNote(copyPath, content);
+        await writeNote(copyPath, content, "");
         const rel = copyPath.startsWith(root) ? copyPath.slice(root.length).replace(/^[/\\]+/, "") : copyPath;
         const copy: VaultNote = { path: copyPath, rel, name: nameFromRel(rel), content };
         index.current.setNote(copy);
@@ -1295,25 +1741,34 @@ export default function App() {
       }
       const rebuilt: Record<string, Pane> = {};
       let maxN = 0;
+      let emptyEditor: string | null = null;
       for (const id of ids) {
         const saved = ws.panes[id];
         const m = /(\d+)$/.exec(id);
         if (m) maxN = Math.max(maxN, Number(m[1]));
         // View tabs (sentinels) are always valid; note tabs must exist on disk.
         const tabs = (saved?.tabs ?? []).filter((p) => isViewPath(p) || exists.has(p));
-        if (tabs.length === 0) continue; // pane will be pruned from the layout
+        if (tabs.length === 0) {
+          if (!saved?.dock) emptyEditor ??= id;
+          continue; // pane will be pruned from the layout
+        }
         const active = saved?.active && tabs.includes(saved.active) ? saved.active : tabs[0];
         let doc = "";
+        let shown: string | null = active;
         if (!isViewPath(active)) {
           try {
-            doc = await readNote(active);
+            doc = await readToOpen(active);
           } catch {
-            doc = "";
+            shown = null; // unreadable: no editor on placeholder text
           }
         }
         const pinned = (saved?.pinned ?? []).filter((p) => tabs.includes(p));
-        rebuilt[id] = { id, tabs, active, doc, pinned: pinned.length ? pinned : undefined, linked: saved?.linked, stacked: saved?.stacked, dock: saved?.dock };
+        rebuilt[id] = { id, tabs, active: shown, doc, pinned: pinned.length ? pinned : undefined, linked: saved?.linked, stacked: saved?.stacked, dock: saved?.dock };
       }
+      // An empty editor pane stays when it's the only one (closing every note
+      // keeps the editor area, as in Obsidian).
+      if (emptyEditor && !Object.values(rebuilt).some((p) => !p.dock))
+        rebuilt[emptyEditor] = { id: emptyEditor, tabs: [], active: null, doc: "" };
       // Drop layout leaves with no surviving pane.
       let lay: LayoutNode | null = ws.layout;
       for (const id of ids) if (!rebuilt[id] && lay) lay = removeLeaf(lay, id);
@@ -1343,6 +1798,7 @@ export default function App() {
   const openVault = useCallback(
     async (path: string, openNoteRel?: string) => {
       await flushAll();
+      if (!(await okToDropUnsaved("Switch vaults"))) return;
       clearImageCache();
       const root = await openVaultBackend(path); // canonical; sets managed state
       // Read the saved workspace NOW (before any state reset fires the save
@@ -1350,7 +1806,16 @@ export default function App() {
       const savedWs = localStorage.getItem(workspaceKey(root));
       recents.current = loadRecents(root);
       obsConfigRef.current = await readObsidianConfig().catch(() => null);
+      setStrictLineBreaks(obsConfigRef.current?.strictLineBreaks ?? false);
+      setLineNumbers(obsConfigRef.current?.showLineNumber ?? false);
+      if (localStorage.getItem(READABLE_WIDTH_KEY) === null) setReadableWidth(obsConfigRef.current?.readableLineLength ?? true);
       setBookmarks(await readObsidianBookmarks().catch(() => []));
+      if (vaultRef.current !== root || !pluginsReady.current) {
+        pluginsReady.current?.done(); // anything waiting on the last vault's plugins stops waiting
+        let done = () => {};
+        const promise = new Promise<void>((resolve) => (done = resolve));
+        pluginsReady.current = { vault: root, promise, done };
+      }
       const savedTab = localStorage.getItem(rightTabKey(root));
       setRightTab(
         savedTab === "outline" || savedTab === "tags" || savedTab === "bookmarks" || savedTab === "links"
@@ -1382,6 +1847,9 @@ export default function App() {
       setFocusedId(null);
       setConflicts(new Set());
       pending.current.clear();
+      liveDocs.current.clear();
+      renameWindow.current.clear();
+      movedTo.current.clear();
       saveTimers.current.forEach((t) => window.clearTimeout(t));
       saveTimers.current.clear();
       selfWrites.current.clear();
@@ -1401,6 +1869,14 @@ export default function App() {
       startWatching().catch(() => {
         /* watcher unavailable — degrade gracefully */
       });
+      // Obsidian's "Default file to open: Daily note", made from the template
+      // if missing. Once a session it opens one, so a reload keeps your place;
+      // it doesn't hold up the vault while it waits for Templater Lite.
+      if (!openNoteRel && obsConfigRef.current?.openBehavior === "daily" && !dailyOpened(root)) {
+        void dailyNoteApi.current.open(undefined, undefined, true).then((opened) => {
+          if (opened && vaultRef.current === root) markDailyOpened(root);
+        });
+      }
     },
     [flushAll, loadVault, restoreWorkspace, openInPane, ensureWorkspace],
   );
@@ -1448,7 +1924,21 @@ export default function App() {
         if (target) openInPane(ensureWorkspace(), target.path);
         return;
       }
-      openVault(parsed.vault, parsed.note).catch((e) => setSaveError(`Couldn't open link: ${e}`));
+      const policy = deepLinkVaultPolicy(parsed.vault, loadRecentVaults().map((r) => r.path));
+      if (policy === "refuse") {
+        setSaveError("A link asked Basalt to open a network folder; it was ignored");
+        return;
+      }
+      void (async () => {
+        if (policy === "confirm") {
+          const ok = await confirm(`A link asked Basalt to open "${parsed.vault}" as a vault. Open it?`, {
+            title: "Open vault from link",
+            kind: "warning",
+          });
+          if (!ok) return;
+        }
+        await openVault(parsed.vault, parsed.note);
+      })().catch((e) => setSaveError(`Couldn't open link: ${e}`));
     };
     takePendingDeepLink()
       .then((u) => {
@@ -1615,22 +2105,29 @@ export default function App() {
     setLayout(lay);
     setFocusedId(focus);
     for (const { id, neighbor } of toLoad) {
-      void readNote(neighbor)
-        .then((doc) => patchPane(id, { active: neighbor, doc, scrollToLine: undefined }))
+      void readToOpen(neighbor)
+        .then((doc) => patchPane(id, { active: neighbor, doc: freshDoc(neighbor, doc), scrollToLine: undefined }))
         .catch(() => {
           /* neighbor gone too — the next prune pass handles it */
         });
     }
-  }, [notes, attachmentsList, patchPane]);
+  }, [notes, attachmentsList, patchPane, readToOpen]);
 
   // Apply a batch of external (on-disk) changes, matched by vault-relative path.
   const processChanges = useCallback(
-    async (changes: ChangedNote[]) => {
+    async (incoming: ChangedNote[]) => {
       if (!vaultRef.current) return;
+      const changes = showHiddenRef.current ? incoming : incoming.filter((c) => !isHiddenRel(c.rel));
+      if (changes.length === 0) return;
       const byRel = new Map(notesRef.current.map((n) => [n.rel, n]));
-      const prevByRel = new Map(notesRef.current.map((n) => [n.rel, n.content]));
+      const prevByRel = new Map(notesRef.current.map((n) => [n.rel, knownText(n.path) ?? n.content]));
+      const seqOf = (path: string) => lastSave.current.get(path)?.seq;
+      const before = changes.map((c) => {
+        const path = byRel.get(c.rel)?.path ?? c.path;
+        return { seq: seqOf(path), writing: isWriting(path) };
+      });
 
-      const reads = await Promise.all(
+      const all = await Promise.all(
         changes.map(async (c) => {
           const existing = byRel.get(c.rel);
           const absPath = existing?.path ?? c.path;
@@ -1642,17 +2139,26 @@ export default function App() {
         }),
       );
 
-      // Drop echoes of our own writes: disk content equals what we last wrote.
+      // A read that overlapped one of our own saves may hold text older than
+      // that save: read it again once the save has settled.
+      const reads = all.filter((r, i) => !(before[i].writing || isWriting(r.path) || seqOf(r.path) !== before[i].seq));
+      if (reads.length < all.length) {
+        queueChanges.current(all.filter((r) => !reads.includes(r)).map((r) => ({ rel: r.rel, path: r.path })));
+      }
+
+      // Drop echoes of our own writes: disk content equals what we last wrote
+      // (or are writing now: a slow reply can trail the watcher).
       // Do NOT consume the entry on match — one save can produce several event
       // bursts (our rename + iCloud's own touches), and every echo must match.
       // The entry is replaced by the next save or evicted by the size cap.
       const results = reads.filter(
-        (r) => !(r.ok && selfWrites.current.get(r.rel) === r.content),
+        (r) => !(r.ok && (selfWrites.current.get(r.rel) === r.content || isBeingWritten(r.path, r.content))),
       );
       if (results.length === 0) return;
 
       for (const r of results) {
         if (r.ok) {
+          if (bigBase.current.has(r.path)) setBigBase(r.path, r.content);
           index.current.setNote({ path: r.path, rel: r.rel, name: nameFromRel(r.rel), content: r.content });
         } else {
           selfWrites.current.delete(r.rel); // gone from disk: suppression is stale
@@ -1696,13 +2202,14 @@ export default function App() {
           continue;
         }
         // Update content in every pane showing it (each EditorPane reconciles,
-        // preserving its caret).
+        // preserving its caret), and stacked columns at once.
         for (const p of Object.values(panesRef.current)) {
           if (p.active === r.path) patchPane(p.id, { doc: r.content });
         }
+        showText(r.path, r.content);
       }
     },
-    [bumpStructure, addConflict, patchPane],
+    [bumpStructure, addConflict, patchPane, setBigBase],
   );
 
   // Full-index rescan (folder rename/delete — the watcher can't enumerate the
@@ -1731,12 +2238,16 @@ export default function App() {
             .then((fresh) => {
               // Our OWN write echoing back through the watcher — ignore it (same
               // content-based suppression notes get via processChanges).
-              if (rel !== undefined && selfWrites.current.get(rel) === fresh) return;
+              if ((rel !== undefined && selfWrites.current.get(rel) === fresh) || isBeingWritten(path, fresh)) return;
               if (fresh === prevDoc) return;
               // An editable canvas with unsaved edits: don't clobber them —
               // raise a conflict so the user chooses Reload / Keep mine.
               if (pending.current.has(path)) addConflict(path);
-              else patchPane(id, { doc: fresh });
+              else {
+                // What's on disk now is the baseline the next save compares against.
+                if (rel !== undefined) rememberSelfWrite(rel, fresh);
+                patchPane(id, { doc: fresh });
+              }
             })
             .catch(() => {
               /* removed between listing and read — prune handles it */
@@ -1753,11 +2264,116 @@ export default function App() {
         continue;
       }
       const prev = prevByPath.get(p.active);
-      if (!dirty && prev !== undefined && still.content !== prev) {
+      // An oversized note is listed without content: that's "unknown", not empty.
+      const unknown = still.content === "" && (still.size ?? 0) > 0;
+      if (unknown || prev === undefined || still.content === prev) continue;
+      // Disk holding our own last save isn't someone else's edit.
+      const ours = selfWrites.current.get(still.rel) === still.content || isBeingWritten(still.path, still.content);
+      if (dirty && ours) continue;
+      if (dirty) addConflict(p.active); // changed on disk under unsaved edits
+      else {
         patchPane(p.id, { doc: still.content });
+        showText(p.active, still.content);
       }
     }
-  }, [loadVault, addConflict, patchPane]);
+    // Unsaved edits in a note no pane shows as active (a stacked column, a
+    // background tab) need the same check, or the next save overwrites the
+    // external change with the old baseline's blessing. A stacked column with
+    // none takes the new text at once.
+    const activeNow = new Set(Object.values(panesRef.current).map((p) => p.active));
+    for (const p of Object.values(panesRef.current)) {
+      if (!p.stacked) continue;
+      for (const path of p.tabs) {
+        if (activeNow.has(path) || pending.current.has(path)) continue;
+        const still = byPath.get(path);
+        const prev = prevByPath.get(path);
+        if (!still || (still.content === "" && (still.size ?? 0) > 0) || prev === undefined || still.content === prev) continue;
+        showText(path, still.content);
+      }
+    }
+    for (const path of pending.current.keys()) {
+      if (activeNow.has(path) || isViewerPath(path)) continue;
+      const still = byPath.get(path);
+      const prev = prevByPath.get(path);
+      if (!still) {
+        addConflict(path);
+        continue;
+      }
+      if (still.content === "" && (still.size ?? 0) > 0) continue;
+      if (prev === undefined || still.content === prev) continue;
+      if (selfWrites.current.get(still.rel) === still.content || isBeingWritten(path, still.content)) continue;
+      addConflict(path);
+    }
+    // Notes on screen that the listing gives without text (over the index cap):
+    // read them again and compare with their baseline. A read that overlapped a
+    // save, or that a newer update overtook, is dropped.
+    const shown = new Set<string>();
+    for (const p of Object.values(panesRef.current)) {
+      if (p.active) shown.add(p.active);
+      if (p.stacked) for (const t of p.tabs) shown.add(t);
+    }
+    // One the listing just stopped giving text for (it grew past the cap, or its
+    // text came from the watcher) starts from the text last seen; the read below
+    // then catches anything newer.
+    for (const path of shown) {
+      const seen = prevByPath.get(path);
+      if (seen && !bigBase.current.has(path) && unlisted(path)) setBigBase(path, seen);
+    }
+    const big = [...shown].filter((path) => bigBase.current.has(path) && unlisted(path));
+    await Promise.all(
+      big.map(async (path) => {
+        const gen = bigGen.current.get(path);
+        if (isWriting(path)) return;
+        let fresh: string;
+        try {
+          fresh = await readNote(path);
+        } catch {
+          return;
+        }
+        if (isWriting(path) || bigGen.current.get(path) !== gen || fresh === bigBase.current.get(path)) return;
+        setBigBase(path, fresh);
+        if (pending.current.has(path)) {
+          addConflict(path);
+          return;
+        }
+        for (const p of Object.values(panesRef.current)) if (p.active === path) patchPane(p.id, { doc: fresh });
+        showText(path, fresh);
+        bumpIndex(); // stacked columns take the baseline when they render
+      }),
+    );
+    // Back after a gap: anything that couldn't be saved meanwhile goes now.
+    if (pending.current.size > 0) void flushAllRef.current();
+  }, [loadVault, addConflict, patchPane, rememberSelfWrite, setBigBase, bumpIndex]);
+
+  // Showing dot files reads the vault again to find them. Hiding them drops
+  // them from what's loaded, at once, however long a big vault takes to read.
+  const appliedShowHidden = useRef(showHidden);
+  useEffect(() => {
+    if (appliedShowHidden.current === showHidden) return;
+    appliedShowHidden.current = showHidden;
+    if (!vaultRef.current) return;
+    if (showHidden) {
+      void handleRescan();
+      return;
+    }
+    void (async () => {
+      // Typing not yet saved in one of them is saved first: once a note is
+      // dropped, a late save has no note to go with. One that won't save stays.
+      for (const n of notesRef.current) {
+        if (isHiddenRel(n.rel) && pending.current.has(n.path)) await flushPath(n.path);
+      }
+      if (appliedShowHidden.current) return; // shown again meanwhile
+      const hide = (n: VaultNote) => isHiddenRel(n.rel) && !pending.current.has(n.path);
+      const hidden = notesRef.current.filter(hide);
+      for (const n of hidden) index.current.removeNote(n.path);
+      if (hidden.length) {
+        notesRef.current = notesRef.current.filter((n) => !hide(n));
+        setNotes(notesRef.current);
+      }
+      setAttachmentsList((prev) => prev.filter((a) => !isHiddenRel(a.rel)));
+      bumpStructure();
+    })();
+  }, [showHidden, handleRescan, bumpStructure, flushPath]);
 
   // Listen for on-disk changes; debounce; then apply.
   useEffect(() => {
@@ -1766,16 +2382,24 @@ export default function App() {
     let unlistenRescan: (() => void) | undefined;
     (async () => {
       try {
-        const u1 = await listen<ChangedNote[]>("vault-changed", (event) => {
-          for (const c of event.payload) changedBuf.current.set(c.rel, c.path);
+        queueChanges.current = (incoming) => {
+          for (const c of incoming) changedBuf.current.set(c.rel, c.path);
           if (changedBuf.current.size === 0) return;
           window.clearTimeout(watchTimer.current);
-          watchTimer.current = window.setTimeout(() => {
+          const flush = () => {
+            // Wait out a rename or folder move in flight: until it lands, its
+            // notes look deleted from where the open editors still have them.
+            if (renaming.current.size > 0) {
+              watchTimer.current = window.setTimeout(flush, 300);
+              return;
+            }
             const changes = Array.from(changedBuf.current, ([rel, path]) => ({ rel, path }));
             changedBuf.current.clear();
             void processChanges(changes);
-          }, 300);
-        });
+          };
+          watchTimer.current = window.setTimeout(flush, 300);
+        };
+        const u1 = await listen<ChangedNote[]>("vault-changed", (event) => queueChanges.current(event.payload));
         if (cancelled) {
           u1();
           return;
@@ -1783,9 +2407,11 @@ export default function App() {
         unlistenChanged = u1;
         const u2 = await listen("vault-rescan", () => {
           window.clearTimeout(rescanTimer.current);
-          rescanTimer.current = window.setTimeout(() => {
-            void handleRescan();
-          }, 300);
+          const run = () => {
+            if (renaming.current.size > 0 || renameJobs.current > 0) rescanTimer.current = window.setTimeout(run, 300);
+            else void handleRescan();
+          };
+          rescanTimer.current = window.setTimeout(run, 300);
         });
         if (cancelled) {
           u2();
@@ -1819,8 +2445,9 @@ export default function App() {
     // edits are pending — the browser's prompt lets the user cancel so autosave
     // can finish, preventing a silent loss the desktop close-guard would catch.
     const onVisibility = () => {
-      if (document.visibilityState === "hidden") void flushAll();
+      if (document.visibilityState === "hidden" || pending.current.size > 0) void flushAll();
     };
+    const onOnline = () => void flushAll();
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       if (pending.current.size > 0) {
         void flushAll();
@@ -1830,6 +2457,7 @@ export default function App() {
     };
     if (!isTauri) {
       document.addEventListener("visibilitychange", onVisibility);
+      window.addEventListener("online", onOnline);
       window.addEventListener("beforeunload", onBeforeUnload);
     }
 
@@ -1843,6 +2471,10 @@ export default function App() {
           closing = true;
           event.preventDefault();
           await flushAll();
+          if (!(await okToDropUnsaved("Close the window"))) {
+            closing = false;
+            return;
+          }
           void win.close();
         });
       } catch {
@@ -1853,6 +2485,7 @@ export default function App() {
       window.removeEventListener("blur", onBlur);
       if (!isTauri) {
         document.removeEventListener("visibilitychange", onVisibility);
+        window.removeEventListener("online", onOnline);
         window.removeEventListener("beforeunload", onBeforeUnload);
       }
       unlisten?.();
@@ -1883,13 +2516,14 @@ export default function App() {
         e.preventDefault();
         if (e.altKey) toggleRightDock();
         else toggleLeftDock();
-      } else if (e.key === "=" || e.key === "+") {
+      } else if (isTauri && (e.key === "=" || e.key === "+")) {
+        // In a browser the browser's own zoom is better; only the desktop shell needs ours.
         e.preventDefault();
         zoomBy(0.1);
-      } else if (e.key === "-") {
+      } else if (isTauri && e.key === "-") {
         e.preventDefault();
         zoomBy(-0.1);
-      } else if (e.key === "0") {
+      } else if (isTauri && e.key === "0") {
         e.preventDefault();
         setZoom(1);
       }
@@ -2006,7 +2640,36 @@ export default function App() {
         };
         const res = await applyTemplate(text, ctx);
         if (res.errors.length) setSaveError(res.errors[0]);
-        api.insertAtCursor(res.text, res.cursor ?? undefined);
+        // A template's properties merge into the note's own and only its body
+        // goes in at the caret, as in Obsidian. At the very top of a note with no
+        // properties the whole template goes in as it is.
+        const own = splitTemplate(api.getText());
+        // Text never goes inside or above the note's own properties block, nor
+        // onto its closing `---` when nothing follows it.
+        const noteText = api.getText();
+        const at = api.selectionFrom();
+        const inProps = own !== null && (at < own.offset || (at === own.offset && noteText[own.offset - 1] !== "\n"));
+        const insertBody = (body: string, caret: number | undefined) => {
+          if (!own || !inProps) return api.insertAtCursor(body, caret);
+          const nl = own.offset > 0 && noteText[own.offset - 1] !== "\n" ? "\n" : "";
+          api.insertAt(own.offset, nl + body, caret === undefined ? undefined : caret + nl.length);
+        };
+        const split = api.atStart() && !own ? null : splitTemplate(res.text);
+        if (!split) {
+          insertBody(res.text, res.cursor ?? undefined);
+          return;
+        }
+        let merge: (doc: string) => string;
+        try {
+          mergeTemplateProps("", split.props);
+          merge = (doc) => mergeTemplateProps(doc, split.props);
+        } catch {
+          setSaveError("This template's properties aren't valid YAML");
+          return;
+        }
+        const cursor = res.cursor !== null && res.cursor >= split.offset ? res.cursor - split.offset : undefined;
+        insertBody(split.body, cursor);
+        api.transformDoc(merge);
       } catch (e) {
         setSaveError(`Couldn't insert template: ${e}`);
       }
@@ -2029,14 +2692,26 @@ export default function App() {
     clearConflict(path);
     try {
       const doc = await readNote(path);
+      // The text just read is the new save baseline: selfWrites for a viewer,
+      // the index copy for a note (else the next save conflicts again).
+      const att = isViewerPath(path) ? attachmentsRef.current.find((a) => a.path === path) : undefined;
+      if (att) rememberSelfWrite(att.rel, doc);
+      const meta = att ? undefined : notesRef.current.find((n) => n.path === path);
+      if (meta && meta.content !== doc) {
+        const updated: VaultNote = { ...meta, content: doc };
+        index.current.setNote(updated);
+        notesRef.current = notesRef.current.map((n) => (n.path === path ? updated : n));
+        setNotes((prev) => prev.map((n) => (n.path === path ? updated : n)));
+      }
       // Sync every pane showing this note to the on-disk version.
       for (const p of Object.values(panesRef.current)) {
         if (p.active === path) patchPane(p.id, { doc, scrollToLine: undefined });
       }
+      editorApiRef.current?.focus(); // the button that had focus is gone
     } catch {
       void closeTab(id, path); // vanished — close its tab
     }
-  }, [clearConflict, patchPane, closeTab]);
+  }, [clearConflict, patchPane, closeTab, rememberSelfWrite]);
 
   // Conflict resolution (focused pane): keep local edits, overwriting disk.
   const handleKeepMine = useCallback(async () => {
@@ -2048,16 +2723,17 @@ export default function App() {
     const stillExists = isViewerPath(path)
       ? attachmentsRef.current.some((a) => a.path === path)
       : notesRef.current.some((n) => n.path === path);
-    if (!stillExists) {
-      // Vanished externally — don't recreate it at a stale path; just close it.
-      pending.current.delete(path);
-      clearConflict(path);
-      void closeTab(id, path);
+    if (!stillExists && isViewerPath(path)) {
+      // The core only rewrites existing canvases/bases, so keep the edit and the
+      // tab rather than silently dropping what the user asked to keep.
+      setSaveError(`${path.split(/[\\/]/).pop()} was deleted on disk and can't be recreated here`);
       return;
     }
+    // A deleted note is written back: the user explicitly chose their text.
     clearConflict(path);
     await flushPath(path, true); // explicit Keep-mine: write despite the conflict
-  }, [clearConflict, flushPath, closeTab]);
+    editorApiRef.current?.focus(); // the button that had focus is gone
+  }, [clearConflict, flushPath]);
 
   // The note whose history is open — captured so a restore always targets it
   // even if focus moved to another note while the modal was up.
@@ -2106,7 +2782,8 @@ export default function App() {
       // reversible (the pre-restore state stays in the history).
       const vkey = vaultRef.current;
       const rel = notesRef.current.find((n) => n.path === path)?.rel;
-      const cur = panesRef.current[id]?.doc;
+      const curPane = panesRef.current[id];
+      const cur = curPane ? docFor(curPane) : undefined;
       if (vkey && rel && cur) await recordSnapshot(vkey, rel, cur, Date.now(), true);
       patchPane(id, { doc: content }); // editor reconciles to the restored text
       handleChange(id, path, content); // mark dirty + autosave
@@ -2169,6 +2846,7 @@ export default function App() {
   }, []);
 
   const toggleReading = useCallback(() => {
+    commitFieldEdit();
     setReadingMode((on) => {
       const next = !on;
       const v = vaultRef.current;
@@ -2176,6 +2854,79 @@ export default function App() {
       return next;
     });
   }, []);
+
+  // Cmd/Ctrl-E: edit ↔ Reading view (Obsidian's default hotkey).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !vaultRef.current) return;
+      const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+      if (!mod || e.shiftKey || e.altKey || e.key.toLowerCase() !== "e") return;
+      e.preventDefault();
+      toggleReading();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleReading]);
+
+  // Back and forward through the notes each pane has shown (Obsidian's
+  // Cmd-Opt-Left/Right). Recorded from the panes' active notes, so every way
+  // of opening a note counts.
+  const navHistory = useRef(new Map<string, { back: string[]; forward: string[]; current: string | null }>());
+  const navMoving = useRef(new Map<string, string>()); // pane → the note back/forward is opening
+  useEffect(() => {
+    for (const p of Object.values(panes)) {
+      const h = navHistory.current.get(p.id) ?? { back: [], forward: [], current: null };
+      navHistory.current.set(p.id, h);
+      if (p.active === h.current) continue;
+      const moved = navMoving.current.get(p.id) === p.active;
+      navMoving.current.delete(p.id);
+      if (!moved && h.current && p.active && !isViewPath(h.current) && !isViewPath(p.active)) {
+        h.back.push(h.current);
+        if (h.back.length > 100) h.back.shift();
+        h.forward = [];
+      }
+      h.current = p.active;
+    }
+  }, [panes]);
+  const navigate = useCallback(
+    (dir: -1 | 1) => {
+      // From a sidebar, the editor last worked in goes back, as in Obsidian.
+      let id = focusedIdRef.current;
+      if (!id || panesRef.current[id]?.dock) {
+        const last = lastEditorIdRef.current;
+        id = last && panesRef.current[last] ? last : (Object.values(panesRef.current).find((p) => !p.dock)?.id ?? null);
+      }
+      const h = id ? navHistory.current.get(id) : undefined;
+      if (!id || !h || !h.current) return;
+      const from = dir < 0 ? h.back : h.forward;
+      const to = dir < 0 ? h.forward : h.back;
+      const exists = (p: string) => notesRef.current.some((n) => n.path === p) || attachmentsRef.current.some((a) => a.path === p);
+      // A renamed note is followed to its new name; a deleted one, or the
+      // note already showing, is passed over.
+      let target: string | undefined;
+      while ((target = from.pop()) !== undefined) {
+        target = currentPath(target);
+        if (target !== h.current && exists(target)) break;
+      }
+      if (target === undefined) return;
+      to.push(h.current);
+      navMoving.current.set(id, target);
+      focusPane(id);
+      void openNoteByPath(target);
+    },
+    [openNoteByPath, focusPane],
+  );
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !vaultRef.current) return;
+      const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+      if (!mod || !e.altKey || e.shiftKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+      e.preventDefault();
+      navigate(e.key === "ArrowLeft" ? -1 : 1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navigate]);
 
   // Export the focused note as a self-contained HTML file (images inlined as
   // data URLs so it stands alone).
@@ -2191,7 +2942,7 @@ export default function App() {
     const name = note?.name ?? "note";
     const rel = note?.rel ?? "";
     try {
-      const dom = new DOMParser().parseFromString(`<div>${renderMarkdown(pane.doc)}</div>`, "text/html");
+      const dom = new DOMParser().parseFromString(`<div>${renderMarkdown(docFor(pane))}</div>`, "text/html");
       // Render $…$ / $$…$$ math as MathML in-place (self-contained — browsers
       // render it with their own math fonts, no KaTeX assets to inline).
       if (dom.querySelector("[data-math]")) {
@@ -2201,7 +2952,7 @@ export default function App() {
       // Sanitize + insert raw HTML blocks.
       if (dom.querySelector("[data-basalt-html]")) {
         const sanMod = await import("./lib/sanitize");
-        sanMod.fillRawHtml(dom.body);
+        sanMod.fillRawHtml(dom.body, false); // an exported file keeps its image URLs
       }
       // Render mermaid diagrams to inline SVG.
       await Promise.all(
@@ -2236,14 +2987,8 @@ export default function App() {
         }),
       );
       const body = dom.body.firstElementChild?.innerHTML ?? "";
-      const out = await save({
-        defaultPath: `${name}.html`,
-        filters: [{ name: "HTML", extensions: ["html"] }],
-      });
-      if (out) {
-        await exportFile(out, buildHtmlDocument(name, body));
-        setSaveError(null);
-      }
+      // The save dialog runs in Rust so the write path can't come from the page.
+      if (await exportFile(`${name}.html`, buildHtmlDocument(name, body))) setSaveError(null);
     } catch (e) {
       setSaveError(`Couldn't export: ${e}`);
     }
@@ -2263,66 +3008,153 @@ export default function App() {
     requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
   }, []);
 
-  /** Open (creating if needed) today's daily note, honoring daily-notes.json. */
-  const openDailyNote = useCallback(async () => {
+  // The daily note's vault-relative path (no extension) for a date, per
+  // daily-notes.json. An unsupported format falls back to YYYY-MM-DD.
+  const dailyNoteRel = useCallback((date: Date, folderIfUnset?: string): { relNoExt: string; name: string; fallback: string | null } => {
     const cfg = obsConfigRef.current;
-    const now = new Date();
     const fmt = cfg?.dailyNotesFormat || "YYYY-MM-DD";
     let name: string;
+    let fallback: string | null = null;
     try {
-      name = formatMoment(now, fmt);
+      name = formatMoment(date, fmt);
     } catch (e) {
       // Never guess at an unsupported format — a wrong filename pollutes the
       // shared vault. Fall back and say so.
-      name = formatMoment(now, "YYYY-MM-DD");
+      name = formatMoment(date, "YYYY-MM-DD");
       if (e instanceof UnsupportedTokenError) {
-        setSaveError(
-          `Daily-note format "${fmt}" isn't fully supported (${e.message}); used YYYY-MM-DD`,
-        );
+        fallback = `Daily-note format "${fmt}" isn't fully supported (${e.message}); used YYYY-MM-DD`;
       }
     }
-    const folder = (cfg?.dailyNotesFolder ?? "").replace(/^\/+|\/+$/g, "");
+    // A folder from a plugin's own setting applies only without daily-notes.json.
+    const folder = (cfg?.dailyNotesFolder ?? folderIfUnset ?? "").replace(/^\/+|\/+$/g, "");
     // Sanitize exactly like the Rust build_note_path, so the existence lookup
     // finds the file the backend actually created (else every open after the
     // first fails with "note already exists").
-    const relNoExt = sanitizeNoteRel(folder ? `${folder}/${name}` : name);
+    return { relNoExt: sanitizeNoteRel(folder ? `${folder}/${name}` : name), name, fallback };
+  }, []);
+
+  const hasDailyNote = useCallback(
+    (date: Date, folderIfUnset?: string) => {
+      const want = normRelKey(`${dailyNoteRel(date, folderIfUnset).relNoExt}.md`);
+      return notesRef.current.some((n) => normRelKey(n.rel) === want);
+    },
+    [dailyNoteRel],
+  );
+
+  /** Open (creating if needed) the daily note for a date (default today),
+   * honoring daily-notes.json, and say whether it opened one. At startup it
+   * waits for the plugins (15 s at most) when a missing note's template has
+   * Templater tags, makes no note if nothing here would fill them, and opens
+   * nothing once you've opened something else meanwhile. */
+  const openDailyNote = useCallback(async (date: Date = new Date(), folderIfUnset?: string, atStartup = false): Promise<boolean> => {
+    const cfg = obsConfigRef.current;
+    const root = vaultRef.current ?? "";
+    const active = () => {
+      const id = focusedIdRef.current;
+      return id ? (panesRef.current[id]?.active ?? null) : null;
+    };
+    const shown = active();
+    // The vault switched, or (at startup) you or a link opened another note.
+    const stale = () => vaultRef.current !== root || (atStartup && (active() !== shown || dailyOpened(root)));
+    // The note's day with the current time, so a template's {{time}} is now.
+    const clock = new Date();
+    const now = new Date(date);
+    now.setHours(clock.getHours(), clock.getMinutes(), clock.getSeconds(), clock.getMilliseconds());
+    const { relNoExt, name, fallback } = dailyNoteRel(date, folderIfUnset);
+    // Said once the note is open: opening it clears the status line.
+    const said = fallback ? [fallback] : [];
+    const say = () => said.forEach((msg) => noticeRef.current(msg, 10000));
     const want = normRelKey(`${relNoExt}.md`);
-    const existing = notesRef.current.find((n) => normRelKey(n.rel) === want);
-    if (existing) {
-      await openNoteByPath(existing.path);
-      return;
+    const openMade = async () => {
+      const made = notesRef.current.find((n) => normRelKey(n.rel) === want);
+      if (!made) return false;
+      await openNoteByPath(made.path);
+      say();
+      return true;
+    };
+    if (await openMade()) return true;
+    let tplContent = "";
+    const tplSetting = cfg?.dailyNotesTemplate?.trim();
+    if (tplSetting) {
+      const tplKey = normRelKey(tplSetting);
+      const tpl = notesRef.current.find((n) => normRelKey(n.rel) === tplKey);
+      // Read fresh from disk: the index blanks oversized notes' content.
+      const read = tpl ? await readNote(tpl.path).catch(() => null) : null;
+      if (stale()) return false;
+      if (read === null) said.push(`Daily note template "${tplSetting}" ${tpl ? "couldn't be read" : "wasn't found"}, so the note starts empty`);
+      else tplContent = read;
+    }
+    let unfilled: string | null = null;
+    if (/<%/.test(tplContent)) {
+      if (atStartup) {
+        // Templater Lite fills it once it's in.
+        const ready = pluginsReady.current;
+        if (ready?.vault === root) await Promise.race([ready.promise, new Promise((r) => setTimeout(r, 15000))]);
+        if (stale()) return false;
+        if (await openMade()) return true; // made meanwhile (a sync, another tab)
+      }
+      unfilled = templaterWontRun(cfg);
+      if (unfilled && atStartup) {
+        if (firstDailyNotice(root))
+          noticeRef.current(`Today's daily note wasn't made: its template uses Templater, and ${unfilled}. Or make it with "Open today's daily note".`, 12000);
+        return false;
+      }
     }
     try {
-      const path = await createNote(relNoExt);
-      const root = vaultRef.current ?? "";
+      let path: string;
+      try {
+        path = await createNote(relNoExt);
+      } catch (e) {
+        // Made meanwhile (another tab, or a sync just in): open that one.
+        if (!String(e).includes("already exists")) throw e;
+        if (stale()) return false;
+        await openNoteByPath(`${root.replace(/[/\\]+$/, "")}/${relNoExt}.md`);
+        say();
+        return true;
+      }
+      if (vaultRef.current !== root) return false;
       const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
-      // Apply the configured template, if any.
-      let content = "";
-      const tplSetting = cfg?.dailyNotesTemplate?.trim();
-      if (tplSetting) {
-        const tplKey = normRelKey(tplSetting);
-        const tpl = notesRef.current.find((n) => normRelKey(n.rel) === tplKey);
-        if (tpl) {
-          // Read fresh from disk — the index blanks oversized notes' content.
-          const tplContent = await readNote(tpl.path).catch(() => "");
-          content = fillTemplate(tplContent, now, name.split("/").pop() ?? name);
-          if (content) await writeNote(path, content);
+      let content = fillTemplate(tplContent, now, name.split("/").pop() ?? name);
+      // Only into the still-empty note: if it was written meanwhile (another
+      // device, or typing in it), that text stays.
+      if (content) {
+        try {
+          await writeNote(path, content, "");
+        } catch (e) {
+          if (!isWriteConflict(e)) throw e;
+          content = await readNote(path);
         }
+        if (vaultRef.current !== root) return false;
       }
       const note: VaultNote = { path, rel, name: nameFromRel(rel), content };
       index.current.setNote(note);
       rememberSelfWrite(rel, content);
       setNotes((prev) =>
-        [...prev, note].sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
+        prev.some((n) => n.path === path)
+          ? prev.map((n) => (n.path === path ? note : n))
+          : [...prev, note].sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
       );
       bumpStructure();
+      // Plugins hear of it once its template is in (Templater processes it then).
+      emitVaultEvent("create", { path: rel, name: note.name });
+      if (unfilled) said.push(`The daily note's Templater tags were left as written: ${unfilled}`);
+      if (stale()) return false;
       await openNoteByPath(path);
+      say();
+      return true;
     } catch (e) {
       setSaveError(`Couldn't open daily note: ${e}`);
+      return false;
     }
   }, [openNoteByPath, rememberSelfWrite, bumpStructure]);
+  // The plugin host reads these through a ref, so it isn't reinstalled.
+  const dailyNoteApi = useRef({ open: openDailyNote, has: hasDailyNote });
+  dailyNoteApi.current = { open: openDailyNote, has: hasDailyNote };
 
+  // Set below, once the link resolver exists.
+  const followObsidianLink = useRef<(url: string) => boolean>(() => false);
   const handleOpenUrl = useCallback((url: string) => {
+    if (followObsidianLink.current(url)) return;
     void openUrl(url).catch(() => {
       /* opener unavailable or blocked URL — ignore */
     });
@@ -2336,7 +3168,7 @@ export default function App() {
         void openNoteByPath(path);
         return;
       }
-      void openPath(path).catch((e) => setSaveError(`Couldn't open: ${e}`));
+      void openAttachment(path).catch((e) => setSaveError(`Couldn't open: ${e}`));
     },
     [openNoteByPath],
   );
@@ -2447,11 +3279,27 @@ export default function App() {
       void (async () => {
         const holder = notesRef.current.find((n) => n.content.includes(placeholder));
         if (!holder) return; // user removed it (or it was never saved) — drop
+        // Unsaved edits in that note: replace in the editor's text and let
+        // autosave write it, rather than writing disk underneath the editor.
+        const replaceInEditor = () => {
+          const live = pending.current.get(holder.path);
+          if (live === undefined) return false;
+          if (live.includes(placeholder)) {
+            const next = live.split(placeholder).join(replacement);
+            pending.current.set(holder.path, next);
+            for (const p of Object.values(panesRef.current)) {
+              if (p.active === holder.path) patchPane(p.id, { doc: next });
+            }
+          }
+          return true;
+        };
+        if (replaceInEditor()) return;
         try {
           const disk = await readNote(holder.path);
+          if (replaceInEditor()) return;
           if (!disk.includes(placeholder)) return;
           const next = disk.split(placeholder).join(replacement);
-          await writeNote(holder.path, next);
+          await writeNote(holder.path, next, disk);
           rememberSelfWrite(holder.rel, next);
           const updated: VaultNote = { ...holder, content: next };
           index.current.setNote(updated);
@@ -2494,7 +3342,9 @@ export default function App() {
   // file node must NOT silently create a note in the live vault.
   const handleOpenWikilink = useCallback(
     async (target: string, allowCreate = true) => {
-      const resolved = index.current.resolve(target, activePathRef.current ?? "");
+      // `[[#Heading]]` and `[x](#Heading)` point into the note they're in.
+      const here = targetPathPart(target) === "" && target.includes("#") ? activePathRef.current : null;
+      const resolved = here ?? index.current.resolve(target, activePathRef.current ?? "");
       if (resolved) {
         // Follow a `#Heading` / `#^block` subpath: scroll to that line.
         const { subpath } = splitSubpath(target);
@@ -2511,10 +3361,11 @@ export default function App() {
       // An attachment target: .canvas/.base open in the in-app viewer pane;
       // everything else opens in the system viewer. Never auto-create a junk
       // "Report.pdf.md" note for one.
-      const att = resolveAttachment(attachmentsRef.current, target);
+      const fromRel = notesRef.current.find((n) => n.path === activePathRef.current)?.rel ?? null;
+      const att = resolveAttachment(attachmentsRef.current, target, fromRel);
       if (att) {
         if (isViewerPath(att.path)) void openNoteByPath(att.path);
-        else void openPath(att.path).catch((e) => setSaveError(`Couldn't open: ${e}`));
+        else void openAttachment(att.path).catch((e) => setSaveError(`Couldn't open: ${e}`));
         return;
       }
       if (looksLikeAttachment(pathPart)) return;
@@ -2533,6 +3384,32 @@ export default function App() {
     [openNoteByPath, createAndOpen],
   );
 
+  // An obsidian:// open or search link that points at this vault (by folder
+  // name, as Obsidian names vaults) is followed here; links to other vaults go
+  // to the system. Following one never creates or edits a note.
+  followObsidianLink.current = (url: string): boolean => {
+    const link = parseObsidianUri(url);
+    const root = vaultRef.current;
+    if (!link || !root) return false;
+    const name = root.split(/[\\/]/).filter(Boolean).pop() ?? "";
+    const key = (v: string) => v.normalize("NFC").toLowerCase();
+    if (link.vault !== undefined && key(link.vault) !== key(name)) return false;
+    if (link.action === "search") {
+      setSearchSeed(link.query);
+      setModal("search");
+      return true;
+    }
+    let target = link.file;
+    if (link.path !== undefined) {
+      const slash = (p: string) => p.replace(/\\/g, "/");
+      const prefix = slash(root).replace(/\/+$/, "") + "/";
+      if (!slash(link.path).startsWith(prefix)) return false;
+      target = slash(link.path).slice(prefix.length);
+    }
+    if (target) void handleOpenWikilink(target, false);
+    return true;
+  };
+
   // Stable callbacks for the read-only viewers (canvas/base). Keeping these
   // memoized lets BaseView (React.memo) skip re-render on unrelated App ticks.
   // A viewer passes an EXACT vault-relative path, so resolve it directly first
@@ -2544,7 +3421,7 @@ export default function App() {
         attachmentsRef.current.find((a) => a.rel === target);
       if (exact) {
         if (isMarkdownPath(exact.path) || isViewerPath(exact.path)) void openNoteByPath(exact.path);
-        else void openPath(exact.path).catch((e) => setSaveError(`Couldn't open: ${e}`));
+        else void openAttachment(exact.path).catch((e) => setSaveError(`Couldn't open: ${e}`));
         return;
       }
       void handleOpenWikilink(target, false); // fall back to link resolution, never create
@@ -2598,7 +3475,7 @@ export default function App() {
             (_m, a, c, b) => a + (c === " " ? "x" : " ") + b,
           );
           const next = lines.join("\n");
-          await writeNote(key, next);
+          await writeNote(key, next, disk);
           rememberSelfWrite(cur.rel, next); // AFTER a successful write (no stale suppression)
           const updated: VaultNote = {
             ...cur,
@@ -2640,6 +3517,27 @@ export default function App() {
   const handleRenameNoteRef = useRef<(oldPath: string, newName: string) => Promise<void>>(async () => {});
   const structureVersionRef = useRef(structureVersion);
   structureVersionRef.current = structureVersion;
+
+  // Install the embedded-base host (![[x.base]] and ```base blocks) and re-render
+  // mounted embeds whenever the vault changes.
+  useEffect(() => {
+    setBaseEmbedHost({
+      notes: () => notesRef.current,
+      attachments: () => attachmentsRef.current,
+      structureVersion: () => structureVersionRef.current,
+      tagsOf,
+      linkKeysOf,
+      backlinksOf,
+      embedsOf,
+      onOpenFile: (rel) => openViewerFileRef.current(rel),
+      resolveImageRel,
+      resolveBase: (target, fromRel) =>
+        resolveAttachment(attachmentsRef.current.filter((a) => /\.base$/i.test(a.path)), target, fromRel),
+      read: (path) => readNote(path),
+    });
+    return () => setBaseEmbedHost(null);
+  }, [tagsOf, linkKeysOf, backlinksOf, embedsOf, resolveImageRel]);
+  useEffect(() => notifyBaseEmbeds(), [notes, attachmentsList, structureVersion]);
   useEffect(() => {
     setQueryHost({
       run: (source, selfPath) => {
@@ -2690,6 +3588,9 @@ export default function App() {
       onOpen: (rawTarget) => openViewerFileRef.current(rawTarget),
       resolveImage: (target, rel) =>
         vaultRef.current ? resolveImage(target, rel) : Promise.resolve(null),
+      exists: (rawTarget, sourceRel) =>
+        index.current.resolveFromRel(rawTarget, sourceRel || null) !== null ||
+        resolveAttachment(attachmentsRef.current, rawTarget, sourceRel || null) !== null,
     });
     return () => setTranscludeHost(null);
   }, []);
@@ -2699,16 +3600,26 @@ export default function App() {
 
   // A transient toast (used by plugins' Notice + a few app messages). Capped so
   // a plugin spamming Notice() can't accumulate unbounded toasts.
+  noticeRef.current = (msg, timeoutMs) => showNotice(msg, timeoutMs);
   const showNotice = useCallback((msg: string, timeoutMs = 4000) => {
     const id = ++noticeSeq.current;
     setNotices((n) => [...n, { id, msg }].slice(-6));
     window.setTimeout(() => setNotices((n) => n.filter((x) => x.id !== id)), Math.max(500, timeoutMs));
   }, []);
+  // Notes and canvases a rename or move couldn't fix links in. A notice, so the
+  // next save's "Saved" doesn't replace it before it's read.
+  const reportLinkFixes = useCallback(
+    (done: string, failed: string[]) => {
+      setSaveError(null);
+      if (failed.length) showNotice(`${done}, but links weren't updated in: ${failed.join(", ")}`, 15000);
+    },
+    [showNotice],
+  );
 
   // Write a plugin-modified note through the SAME vetted path as autosave
   // (atomic + .md-only backend guard + self-write suppression + index update).
   const pluginModifyNote = useCallback(
-    async (rel: string, content: string) => {
+    async (rel: string, content: string, expected?: string) => {
       const note = notesRef.current.find((n) => n.rel === rel);
       if (!note) throw new Error(`no such note: ${rel}`);
       // Refuse to be a SECOND uncoordinated writer: if the note has an unsaved
@@ -2721,7 +3632,12 @@ export default function App() {
       if (pending.current.has(note.path)) {
         throw new Error(`"${rel}" has unsaved edits — save it before modifying via a plugin`);
       }
-      await writeNote(note.path, content);
+      // The index copy is the last content seen on disk (unknown for oversized notes).
+      const known = note.content === "" && (note.size ?? 0) > 0 ? undefined : note.content;
+      if (expected !== undefined && known !== undefined && known !== expected) {
+        throw new Error(`"${rel}" changed while a plugin was changing it`);
+      }
+      await writeNote(note.path, content, expected ?? known);
       rememberSelfWrite(rel, content); // AFTER a successful write (no stale suppression)
       const updated: VaultNote = {
         ...note,
@@ -2741,11 +3657,35 @@ export default function App() {
 
   // Install the plugin host once; its deps read live refs / stable callbacks.
   useEffect(() => {
+    let byRelFor: VaultNote[] | null = null;
+    let byRel = new Map<string, VaultNote>();
+    const noteByRel = (rel: string) => {
+      if (byRelFor !== notesRef.current) {
+        byRelFor = notesRef.current;
+        byRel = new Map(byRelFor.map((n) => [n.rel, n]));
+      }
+      return byRel.get(rel);
+    };
+    // Links reach attachments too, as in Obsidian's link counts.
+    const attachmentRel = (raw: string, fromRel: string) => resolveAttachment(attachmentsRef.current, raw, fromRel)?.rel ?? null;
     const deps: HostDeps = {
+      cachedRead: (rel) => {
+        const note = noteByRel(rel);
+        // The index blanks notes over its size cap: those need a real read.
+        return !note || (note.content === "" && (note.size ?? 0) > 0) ? null : note.content;
+      },
       getMarkdownFiles: () => notesRef.current.map((n) => ({ path: n.rel, name: n.name, ctime: n.ctime, mtime: n.mtime })),
+      getFiles: () => [
+        ...notesRef.current.map((n) => ({ path: n.rel, ctime: n.ctime, mtime: n.mtime, size: n.size })),
+        ...attachmentsRef.current.map((a) => ({ path: a.rel, ctime: a.ctime, mtime: a.mtime, size: a.size })),
+      ],
+      getFolders: () => foldersRef.current,
       readNote: (rel) => {
         const note = notesRef.current.find((n) => n.rel === rel);
-        return readNote(note ? note.path : rel);
+        // Any vault file by its vault path (a plugin's config, a script); the
+        // core still refuses anything outside the vault.
+        const root = vaultRef.current ?? "";
+        return readNote(note ? note.path : rel.startsWith(root) || !root ? rel : `${root.replace(/[/\\]+$/, "")}/${rel}`);
       },
       createNote: async (rel, content) => {
         const name = rel.replace(/\.md$/i, "");
@@ -2753,7 +3693,7 @@ export default function App() {
         const vrel = abs.startsWith(vaultRef.current ?? "")
           ? abs.slice((vaultRef.current ?? "").length).replace(/^[/\\]+/, "")
           : abs;
-        await writeNote(abs, content);
+        await writeNote(abs, content, "");
         rememberSelfWrite(vrel, content); // AFTER the content write succeeds
         const note: VaultNote = { path: abs, rel: vrel, name: nameFromRel(vrel), content };
         index.current.setNote(note);
@@ -2762,7 +3702,7 @@ export default function App() {
         );
         bumpStructure();
       },
-      modifyNote: (rel, content) => pluginModifyNote(rel, content),
+      modifyNote: (rel, content, expected) => pluginModifyNote(rel, content, expected),
       deleteNote: async (rel) => {
         const note = notesRef.current.find((n) => n.rel === rel || n.path === rel);
         if (note) await handleDeleteNoteRef.current(note.path, { skipConfirm: true });
@@ -2817,7 +3757,13 @@ export default function App() {
           frontmatter: parseProperties(note.content),
         };
       },
+      resolvedLinks: () => index.current.linkCounts(attachmentRel).resolved,
+      unresolvedLinks: () => index.current.linkCounts(attachmentRel).unresolved,
       insertAtCursor: (text, caretOffset) => editorApiRef.current?.insertAtCursor(text, caretOffset),
+      openDailyNote: async (date, folderIfUnset) => {
+        await dailyNoteApi.current.open(date, folderIfUnset);
+      },
+      hasDailyNote: (date, folderIfUnset) => dailyNoteApi.current.has(date, folderIfUnset),
       onRegistryChanged: () => setPluginVersion((v) => v + 1),
     };
     installHost(deps);
@@ -2828,26 +3774,32 @@ export default function App() {
   const refreshPlugins = useCallback(async () => {
     const v = vaultRef.current;
     if (!v) return;
-    let infos: PluginInfo[] = [];
     try {
-      infos = await listPlugins();
-    } catch {
-      /* no plugins folder */
-    }
-    if (vaultRef.current !== v) return; // vault changed during the async list
-    setInstalledPlugins(infos);
-    const enabled = new Set(loadEnabled(v));
-    await unloadAll();
-    for (const info of infos) {
-      if (vaultRef.current !== v) break; // vault switched mid-load — stop
-      if (!enabled.has(info.id)) continue;
+      let infos: PluginInfo[] = [];
       try {
-        await loadPlugin(info);
-      } catch (e) {
-        showNotice(`Plugin "${info.name}" failed to load: ${e instanceof Error ? e.message : e}`, 8000);
+        infos = await listPlugins();
+      } catch {
+        /* no plugins folder */
       }
+      if (vaultRef.current !== v) return; // vault changed during the async list
+      setInstalledPlugins(infos);
+      const { run, changed } = await vetEnabledPlugins(v, infos);
+      for (const info of changed) {
+        showNotice(`Plugin "${info.name}" changed since you enabled it, so it's off. Turn it on again in Settings to run the new version.`, 10000);
+      }
+      await unloadAll();
+      for (const info of run) {
+        if (vaultRef.current !== v) break; // the vault switched mid-load: stop
+        try {
+          await loadPlugin(info);
+        } catch (e) {
+          showNotice(`Plugin "${info.name}" failed to load: ${e instanceof Error ? e.message : e}`, 8000);
+        }
+      }
+      setPluginVersion((x) => x + 1);
+    } finally {
+      if (pluginsReady.current?.vault === v) pluginsReady.current.done();
     }
-    setPluginVersion((x) => x + 1);
   }, [showNotice]);
 
   // Enable/disable a plugin from Settings.
@@ -2859,6 +3811,7 @@ export default function App() {
       if (enabled) cur.add(info.id);
       else cur.delete(info.id);
       saveEnabled(v, [...cur]);
+      if (enabled) await rememberPluginCode(v, info);
       try {
         if (enabled) await loadPlugin(info);
         else await unloadPlugin(info.id);
@@ -2882,21 +3835,28 @@ export default function App() {
   // vault, on this device). CSS only — it can style, never execute.
   const [cssSnippets, setCssSnippets] = useState<CssSnippet[]>([]);
   const [disabledSnippets, setDisabledSnippets] = useState<Set<string>>(new Set());
-  // Reload the snippet list + disabled set when the vault changes.
+  // Obsidian snippets the user switched on here although Obsidian has them off.
+  const [enabledSnippets, setEnabledSnippets] = useState<Set<string>>(new Set());
+  // Reload the snippet list + both override sets when the vault changes.
   useEffect(() => {
     if (!vault) {
       setCssSnippets([]);
       setDisabledSnippets(new Set());
+      setEnabledSnippets(new Set());
       return;
     }
     let cancelled = false;
-    try {
-      const raw = localStorage.getItem(`basalt.disabledSnippets.${vault}`);
-      const arr = raw ? (JSON.parse(raw) as unknown) : [];
-      setDisabledSnippets(new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : []));
-    } catch {
-      setDisabledSnippets(new Set());
-    }
+    const readSet = (key: string) => {
+      try {
+        const raw = localStorage.getItem(`${key}.${vault}`);
+        const arr = raw ? (JSON.parse(raw) as unknown) : [];
+        return new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : []);
+      } catch {
+        return new Set<string>();
+      }
+    };
+    setDisabledSnippets(readSet("basalt.disabledSnippets"));
+    setEnabledSnippets(readSet("basalt.enabledSnippets"));
     void listCssSnippets()
       .then((snips) => {
         if (!cancelled) setCssSnippets(snips);
@@ -2908,12 +3868,23 @@ export default function App() {
       cancelled = true;
     };
   }, [vault]);
-  // Inject the ENABLED snippets as <style> tags; re-runs when the list or the
-  // disabled set changes. Removed wholesale on switch/close.
+  // Basalt's own snippets are on unless switched off; Obsidian's follow
+  // Obsidian's enabled list unless switched here.
+  const snippetsOff = useMemo(() => {
+    const off = new Set<string>();
+    for (const s of cssSnippets) {
+      const on = disabledSnippets.has(s.name)
+        ? false
+        : enabledSnippets.has(s.name) || !s.fromObsidian || !!s.enabledInObsidian;
+      if (!on) off.add(s.name);
+    }
+    return off;
+  }, [cssSnippets, disabledSnippets, enabledSnippets]);
+  // Inject the enabled snippets as <style> tags. Removed wholesale on switch/close.
   useEffect(() => {
     document.querySelectorAll("style[data-basalt-snippet]").forEach((el) => el.remove());
     for (const s of cssSnippets) {
-      if (disabledSnippets.has(s.name)) continue;
+      if (snippetsOff.has(s.name)) continue;
       const style = document.createElement("style");
       style.dataset.basaltSnippet = s.name;
       style.textContent = s.css;
@@ -2922,16 +3893,23 @@ export default function App() {
     return () => {
       document.querySelectorAll("style[data-basalt-snippet]").forEach((el) => el.remove());
     };
-  }, [cssSnippets, disabledSnippets]);
+  }, [cssSnippets, snippetsOff]);
   const toggleSnippet = useCallback((name: string, enabled: boolean) => {
-    setDisabledSnippets((prev) => {
-      const next = new Set(prev);
-      if (enabled) next.delete(name);
-      else next.add(name);
-      const v = vaultRef.current;
-      if (v) localStorage.setItem(`basalt.disabledSnippets.${v}`, JSON.stringify([...next]));
-      return next;
-    });
+    const v = vaultRef.current;
+    const update = (set: (f: (prev: Set<string>) => Set<string>) => void, key: string, add: boolean) =>
+      set((prev) => {
+        const next = new Set(prev);
+        if (add) next.add(name);
+        else next.delete(name);
+        try {
+          if (v) localStorage.setItem(`${key}.${v}`, JSON.stringify([...next]));
+        } catch {
+          /* private mode */
+        }
+        return next;
+      });
+    update(setDisabledSnippets, "basalt.disabledSnippets", !enabled);
+    update(setEnabledSnippets, "basalt.enabledSnippets", enabled);
   }, []);
 
   // One-shot "Import from Obsidian": map .obsidian appearance + hotkeys into
@@ -3018,13 +3996,30 @@ export default function App() {
     [notes, pluginVersion],
   );
 
-  // Word/char count for the status bar (from the saved content — updates within
-  // the autosave debounce of typing). Only for editable notes.
-  const docStats = useMemo(() => {
-    if (!active || activeIsViewer || !activeNote) return null;
-    const text = activeNote.content;
-    return { words: (text.match(/\S+/g) ?? []).length, chars: text.length };
-  }, [active, activeIsViewer, activeNote]);
+  // Word/char count for the status bar (from the saved content, so it updates
+  // within the autosave debounce of typing), without the frontmatter, as
+  // Obsidian counts. It follows the last note shown, like the Outline, so
+  // focusing a side panel doesn't zero it. Notes only.
+  // A very large note is counted once typing pauses, not on every save.
+  const docText = useMemo(() => {
+    if (!lastNote || isViewerPath(lastNote.path)) return null;
+    if (!Object.values(panes).some((p) => p.tabs.includes(lastNote.path))) return null; // closed
+    return { path: lastNote.path, text: countableText(lastNote.content) };
+  }, [lastNote, panes]);
+  const [bigCount, setBigCount] = useState<{ path: string; words: number } | null>(null);
+  const smallWords = useMemo(
+    () => (docText && docText.text.length < BIG_COUNT ? countWords(docText.text) : null),
+    [docText],
+  );
+  useEffect(() => {
+    if (!docText || docText.text.length < BIG_COUNT) return;
+    const t = window.setTimeout(() => setBigCount({ path: docText.path, words: countWords(docText.text) }), 1000);
+    return () => window.clearTimeout(t);
+  }, [docText]);
+  const docWords = smallWords ?? (bigCount && bigCount.path === docText?.path ? bigCount.words : null);
+  const docStats = docText && docWords !== null ? { words: docWords, chars: docText.text.length } : null;
+  // The caret shows while a note's editor is the focused pane.
+  const editing = !!focusedPane?.active && isMarkdownPath(focusedPane.active) && !readingMode;
 
   // Backlinks of the active note can only change when OTHER notes change, so
   // this keys off structureVersion — a local autosave doesn't re-resolve the vault.
@@ -3041,12 +4036,23 @@ export default function App() {
   }, [lastNotePath, indexVersion, structureVersion]);
 
   // Expensive (full vault text scan). Recompute only when the tracked note
-  // changes — not on every debounced save — to keep typing smooth.
+  // changes or a Link action has run, not on every debounced save, to keep
+  // typing smooth.
   const unlinked = useMemo(() => {
     if (!lastNoteName || !lastNotePath) return [];
-    return index.current.unlinkedMentionsFor(lastNoteName, notesRef.current, lastNotePath);
+    try {
+      return index.current.unlinkedMentionsFor(
+        [lastNoteName, ...index.current.aliasesOf(lastNotePath)],
+        notesRef.current,
+        lastNotePath,
+      );
+    } catch (e) {
+      // A note the mention scan can't read never takes the app down with it.
+      console.error("[basalt] unlinked mentions failed", e);
+      return [];
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastNoteName, lastNotePath]);
+  }, [lastNoteName, lastNotePath, mentionsLinked]);
 
   // Vault-wide tags for the tag pane — from the incremental index, so this only
   // recomputes when content (indexVersion) or structure (structureVersion) changes.
@@ -3068,7 +4074,7 @@ export default function App() {
   }, [rightTab]);
 
   const handleSelectTag = useCallback((tag: string) => {
-    setSearchSeed(`#${tag} `);
+    setSearchSeed(`tag:#${tag} `); // the tag itself, as Obsidian searches it
     setModal("search");
   }, []);
   const handleOpenBookmark = useCallback(
@@ -3122,7 +4128,7 @@ export default function App() {
       const note = notesRef.current.find((n) => n.path === path);
       if (!note) return;
       if (!opts?.skipConfirm) {
-        const ok = await confirm(`Move "${note.name}" to the vault trash?`, {
+        const ok = await confirmDelete(`Move "${note.name}" to the vault trash?`, {
           title: "Delete note",
           kind: "warning",
         });
@@ -3161,7 +4167,7 @@ export default function App() {
       const att = attachmentsRef.current.find((a) => a.path === path);
       if (!att) return;
       const viewer = isViewerPath(path);
-      const ok = await confirm(`Move "${att.name}" to the vault trash?`, {
+      const ok = await confirmDelete(`Move "${att.name}" to the vault trash?`, {
         title: "Delete attachment",
         kind: "warning",
       });
@@ -3209,24 +4215,60 @@ export default function App() {
   // oldRel → newRel) across `canvases` (post-move paths), then reconcile any
   // open canvas viewer so its editor isn't left showing stale refs. Reads DISK
   // (authoritative — callers flushAll first, so pending canvas edits are saved).
+  // A link pass's write joins the note's save queue: a save typed meanwhile
+  // waits for it, then compares against the rewrite rather than the old text.
+  const queueWrite = useCallback(<T,>(path: string, job: () => Promise<T>): Promise<T> => {
+    const run = (saveChains.current.get(path) ?? Promise.resolve()).then(job);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    saveChains.current.set(path, settled);
+    void settled.then(() => {
+      if (saveChains.current.get(path) === settled) saveChains.current.delete(path);
+    });
+    return run;
+  }, []);
+
   const rewriteCanvasRefs = useCallback(
-    async (canvases: { path: string; rel: string }[], relMap: Map<string, string>): Promise<string[]> => {
+    async (
+      canvases: { path: string; rel: string }[],
+      relMap: Map<string, string>,
+      textLinks?: (canvas: { path: string; rel: string }) => LinkMapper,
+    ): Promise<string[]> => {
       const failed: string[] = [];
       if (relMap.size === 0) return failed;
       for (const c of canvases) {
-        // Never overwrite a canvas with UNSAVED edits (a failed flush leaves it
-        // pending): reading disk would miss them and the write would clobber.
-        // Its refs stay dangling until the user saves — no data loss.
-        if (pending.current.has(c.path) || conflictsRef.current.has(c.path)) continue;
+        // Links in text cards are fixed as in a note at the canvas's place.
+        const mapper = textLinks?.(c);
+        const fixText = mapper ? (t: string) => rewriteLinks(t, mapper) : undefined;
         try {
-          const json = await readNote(c.path);
-          const next = rewriteCanvasFileRefs(json, relMap);
-          if (next === null) continue;
-          await writeCanvas(c.path, next);
-          rememberSelfWrite(c.rel, next);
-          for (const p of Object.values(panesRef.current)) {
-            if (p.active === c.path) patchPane(p.id, { doc: next });
-          }
+          // In the canvas's save queue, so a save made meanwhile waits for this.
+          // A canvas with unsaved edits, before or during the read, is left as
+          // it is and reported: rewriting it would drop the edits.
+          await queueWrite(c.path, async () => {
+            if (pending.current.has(c.path) || conflictsRef.current.has(c.path)) {
+              failed.push(c.rel);
+              return;
+            }
+            const json = await readNote(c.path);
+            const next = rewriteCanvasFileRefs(json, relMap, fixText);
+            if (next === null) return;
+            if (pending.current.has(c.path)) {
+              failed.push(c.rel);
+              return;
+            }
+            await writeCanvas(c.path, next, json);
+            rememberSelfWrite(c.rel, next);
+            // Edited during the write: the save queued behind this carries the
+            // edit, so give it the same fix and show that, not the fix alone.
+            const edited = pending.current.get(c.path);
+            const doc = edited === undefined ? next : (rewriteCanvasFileRefs(edited, relMap, fixText) ?? edited);
+            if (edited !== undefined) pending.current.set(c.path, doc);
+            for (const p of Object.values(panesRef.current)) {
+              if (p.active === c.path) patchPane(p.id, { doc });
+            }
+          });
         } catch (e) {
           failed.push(c.rel);
           console.error("[basalt] canvas ref rewrite failed", c.rel, e);
@@ -3234,10 +4276,106 @@ export default function App() {
       }
       return failed;
     },
-    [rememberSelfWrite, patchPane],
+    [rememberSelfWrite, patchPane, queueWrite],
   );
 
-  const handleRenameNote = useCallback(
+
+  // A link pass (note rename or folder move) writes rewritten links to disk.
+  // Each rewrite is registered at once, in React state too so a re-render can't
+  // undo it, and a save typed meanwhile compares against what's on disk.
+  const registerRewrite = useCallback((updated: VaultNote) => {
+    if (bigBase.current.has(updated.path)) setBigBase(updated.path, updated.content);
+    // Like a save: a vault read in flight keeps this text over its listing.
+    lastSave.current.set(updated.path, { seq: ++saveSeq.current, content: updated.content });
+    index.current.setNote(updated);
+    notesRef.current = notesRef.current.map((n) => (n.path === updated.path ? updated : n));
+    setNotes((prev) => prev.map((n) => (n.path === updated.path ? updated : n)));
+  }, [setBigBase]);
+
+  // After the pass, make sure each rewritten note ends up with the fix, judged
+  // from its newest text: what's typed, else what was last saved. Untouched, it
+  // gets the rewrite; typed into (and maybe saved meanwhile, over the rewrite),
+  // the same link fix is applied to that text. Whatever disk lacks is saved, so
+  // neither the typing nor the fix is lost. If the note changed elsewhere before
+  // the pass read it (`base` isn't the `known` text Basalt had), an editor still
+  // on the known text gets the rewritten disk text; one with typing gets a
+  // conflict instead of a save over the outside edit.
+  const reconcileRewrites = useCallback(
+    (done: RewriteDone[]) => {
+      for (const d of done) {
+        const saved = notesRef.current.find((n) => n.path === d.path)?.content;
+        if (saved === undefined) continue; // deleted meanwhile: nothing to fix
+        const outside = d.known !== undefined && d.known !== d.base;
+        const fix = (t: string) =>
+          t === d.base || t === d.next || (outside && t === d.known) ? d.next : (rewriteLinks(t, d.mapper) ?? t);
+        // Editors on the note take the fix as an edit of their own text, so
+        // typing in progress merges with it; their change handler saves it.
+        const shown = fixOpenEditors(d.path, fix);
+        const doc = shown ?? fix(pending.current.get(d.path) ?? liveDocs.current.get(d.path) ?? saved);
+        if (outside && doc !== d.next) addConflict(d.path);
+        if (doc !== saved && pending.current.get(d.path) !== doc) {
+          pending.current.set(d.path, doc);
+          void flushPath(d.path);
+        }
+        if (shown !== null) continue;
+        if (liveDocs.current.has(d.path) || pending.current.has(d.path)) liveDocs.current.set(d.path, doc);
+        for (const p of Object.values(panesRef.current)) if (p.active === d.path) patchPane(p.id, { doc });
+      }
+    },
+    [flushPath, patchPane, addConflict],
+  );
+
+  // Fix the links `mapperFor` changes in each note, reading DISK so a fresher
+  // outside edit is never reverted (a cheap in-memory pass picks the notes). A
+  // note with an open conflict is reported (rewriting would drop "mine"); one
+  // being typed into gets the fix in its editor, merged with the typing and
+  // saved with it. A few notes are fixed at once, each in its own save queue,
+  // so a rename's round trips overlap. Returns the notes left unfixed and how
+  // many were written.
+  const rewriteNoteLinks = useCallback(
+    async (notes: VaultNote[], mapperFor: (n: VaultNote) => LinkMapper): Promise<{ failures: string[]; written: number }> => {
+      const failures: string[] = [];
+      let written = 0;
+      const fix = async (note: VaultNote) => {
+        try {
+          const mapper = mapperFor(note);
+          if (rewriteLinks(note.content, mapper) === null) return; // unaffected
+          if (conflictsRef.current.has(note.path)) {
+            failures.push(`${note.rel} (unsaved edits)`);
+            return;
+          }
+          if (pending.current.has(note.path)) {
+            if (fixOpenEditors(note.path, (t) => rewriteLinks(t, mapper) ?? t) === null) failures.push(`${note.rel} (unsaved edits)`);
+            return;
+          }
+          await queueWrite(note.path, async () => {
+            const known = knownText(note.path);
+            const disk = await readNote(note.path);
+            const next = rewriteLinks(disk, mapper);
+            if (next === null) return;
+            rememberSelfWrite(note.rel, next); // before the write: its echo isn't an outside edit
+            await writeNote(note.path, next, disk);
+            registerRewrite({ ...note, content: next });
+            written++;
+            // Editors take the outcome now, before a save queued behind this job.
+            reconcileRewrites([{ path: note.path, base: disk, next, mapper, known }]);
+          });
+        } catch (e) {
+          failures.push(note.rel);
+          console.error("[basalt] link rewrite failed", note.rel, e);
+        }
+      };
+      let next = 0;
+      const worker = async () => {
+        while (next < notes.length) await fix(notes[next++]);
+      };
+      await Promise.all(Array.from({ length: REWRITES_AT_ONCE }, worker));
+      return { failures, written };
+    },
+    [queueWrite, rememberSelfWrite, registerRewrite, reconcileRewrites],
+  );
+
+  const renameNoteNow = useCallback(
     async (oldPath: string, newName: string) => {
       const root = vaultRef.current;
       if (!root) return;
@@ -3256,12 +4394,74 @@ export default function App() {
         preIndex.build(notesRef.current);
         const preNotes = notesRef.current;
 
-        const newPath = await renameNote(oldPath, newName);
+        // Saves typed during the rename wait for it (the file may already have
+        // moved), then go to the new path below.
+        renaming.current.add(oldPath);
+        let newPath = oldPath;
+        try {
+          newPath = await renameNote(oldPath, newName);
+        } finally {
+          renaming.current.delete(oldPath);
+          if (newPath === oldPath && pending.current.has(oldPath)) void flushPath(oldPath);
+        }
         if (newPath === oldPath) return;
+        movedTo.current.set(oldPath, newPath);
+        movedTo.current.delete(newPath);
+        moveBigBase(oldPath, newPath);
         const newRel = newPath.startsWith(root)
           ? newPath.slice(root.length).replace(/^[/\\]+/, "")
           : newPath;
         const newBase = nameFromRel(newRel);
+
+        // Point every pane at the new path before any other await, carrying the
+        // text the editor holds: from here on keystrokes are keyed to the new
+        // path, so nothing can be saved to (and recreate) the old file.
+        const typed = pending.current.get(oldPath);
+        const typedTimer = saveTimers.current.get(oldPath);
+        if (typedTimer !== undefined) window.clearTimeout(typedTimer);
+        saveTimers.current.delete(oldPath);
+        pending.current.delete(oldPath);
+        const live = typed ?? liveDocs.current.get(oldPath);
+        // Same bytes on disk as before the rename, so the old baseline still holds.
+        const moved: VaultNote = { ...oldNote, path: newPath, rel: newRel, name: newBase };
+        selfWrites.current.delete(oldNote.rel);
+        rememberSelfWrite(newRel, bigBase.current.get(newPath) ?? oldNote.content);
+        index.current.removeNote(oldPath);
+        index.current.setNote(moved);
+        notesRef.current = notesRef.current.map((n) => (n.path === oldPath ? moved : n));
+        setNotes((prev) =>
+          prev
+            .map((n) => (n.path === oldPath ? moved : n))
+            .sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
+        );
+        recents.current = recents.current.map((r) => (r === oldNote.rel ? newRel : r));
+        const repoint = (pane: Pane): Pane => {
+          if (!pane.tabs.includes(oldPath)) return pane;
+          const isActive = pane.active === oldPath;
+          return {
+            ...pane,
+            tabs: pane.tabs.map((p) => (p === oldPath ? newPath : p)),
+            active: isActive ? newPath : pane.active,
+            doc: isActive ? (live ?? pane.doc) : pane.doc,
+            docRev: isActive ? (pane.docRev ?? 0) + 1 : pane.docRev,
+            // The line it was opened at is done with; the rebuilt editor keeps the caret.
+            scrollToLine: isActive ? undefined : pane.scrollToLine,
+            pinned: pane.pinned?.map((p) => (p === oldPath ? newPath : p)),
+          };
+        };
+        renameWindow.current.set(oldPath, newPath);
+        panesRef.current = Object.fromEntries(
+          Object.entries(panesRef.current).map(([id, pane]) => [id, repoint(pane)]),
+        );
+        setPanes((ps) =>
+          Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, repoint(pane)])),
+        );
+        if (live !== undefined) liveDocs.current.set(newPath, live);
+        if (typed !== undefined) {
+          pending.current.set(newPath, typed);
+          void flushPath(newPath);
+        }
+        bumpStructure();
         // Migrate the local snapshot history so recovery follows the note.
         void renameSnapshots(root, oldNote.rel, newRel);
         emitVaultEvent("rename", { path: newRel, name: newBase }, oldNote.rel);
@@ -3280,18 +4480,14 @@ export default function App() {
           preIndex.allAliases().some((a) => a.rel !== newRel && normalizeName(a.alias) === newBaseKey);
         const newRelNoExt = newRel.replace(/\.md$/i, "");
 
-        // The renamed note's own content, from disk (authoritative), with its
-        // self-links retargeted and position-dependent ./.. links re-anchored.
-        let renamedContent: string;
-        try {
-          renamedContent = await readNote(newPath);
-        } catch {
-          renamedContent = oldNote.content; // disk read failed; best effort
-        }
+        // The renamed note's own links: self-links retargeted, and any link whose
+        // target changes with the move re-pointed at the file it meant (./ and
+        // ../ paths, and bare names Obsidian looks up in the note's folder
+        // first). Obsidian compares each link before and after the same way.
         const selfAliases = new Set(preIndex.aliasesOf(oldPath).map((a) => normalizeName(a)));
-        const ownMap = (raw: string): string | null => {
-          const dest = preIndex.resolve(raw, oldPath);
-          if (!dest) return null;
+        const atts = attachmentsRef.current;
+        const ownMap: LinkMapper = (raw, literal = false) => {
+          const dest = literal ? null : preIndex.resolve(raw, oldPath);
           if (dest === oldPath) {
             // A self-link via an alias still resolves post-rename — leave it.
             const last = normalizeName(targetPathPart(raw).split(/[/\\]/).pop() ?? "");
@@ -3299,59 +4495,47 @@ export default function App() {
               return null;
             return linkTargetForFormat(fmt, newRelNoExt, taken, newRel); // self-link
           }
-          const pathPart = targetPathPart(raw);
-          const relative = pathPart.split(/[/\\]/).some((seg) => seg === "." || seg === "..");
-          if (!relative) return null; // position-independent links still resolve
-          const destNote = preNotes.find((n) => n.path === dest);
-          if (!destNote) return null;
-          const destTaken = preNotes.some(
-            (n) => n.path !== dest && normalizeName(n.name) === normalizeName(destNote.name),
-          );
-          return linkTargetForFormat(fmt, destNote.rel.replace(/\.md$/i, ""), destTaken, newRel);
+          if (dest) {
+            // A link whose name is now this note's own may resolve to itself.
+            const last = normalizeName((targetPathPart(raw).split(/[/\\]/).pop() ?? "").replace(/\.md$/i, ""));
+            const shadowed = last === normalizeName(newBase);
+            if (!shadowed && preIndex.resolveFromRel(raw, newRel) === dest) return null;
+            const destNote = preNotes.find((n) => n.path === dest);
+            if (!destNote) return null;
+            const destTaken =
+              shadowed ||
+              preNotes.some((n) => n.path !== dest && normalizeName(n.name) === normalizeName(destNote.name));
+            return linkTargetForFormat(fmt, destNote.rel.replace(/\.md$/i, ""), destTaken, newRel);
+          }
+          const att = resolveAttachment(atts, raw, oldNote.rel, literal);
+          if (!att || resolveAttachment(atts, raw, newRel, literal)?.path === att.path) return null;
+          const attTaken = atts.some((a) => a.path !== att.path && normalizeName(a.name) === normalizeName(att.name));
+          return linkTargetForFormat(fmt, att.rel, attTaken, newRel);
         };
-        const ownRewritten = rewriteLinks(renamedContent, ownMap);
-        if (ownRewritten !== null) {
-          await writeNote(newPath, ownRewritten);
-          renamedContent = ownRewritten;
-        }
-
-        // COMMIT the renamed note before any other writes, so a watcher flush
-        // landing mid-orchestration sees consistent state.
-        selfWrites.current.delete(oldNote.rel);
-        rememberSelfWrite(newRel, renamedContent);
-        index.current.removeNote(oldPath);
-        const renamed: VaultNote = {
-          path: newPath,
-          rel: newRel,
-          name: newBase,
-          content: renamedContent,
-        };
-        index.current.setNote(renamed);
-        recents.current = recents.current.map((r) => (r === oldNote.rel ? newRel : r));
-        setNotes((prev) =>
-          prev
-            .map((n) => (n.path === oldPath ? renamed : n))
-            .sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
-        );
-        bumpStructure();
-        // Re-point the renamed note in every pane (tabs + active + doc) so the
-        // prune effect doesn't drop the now-nonexistent oldPath.
-        const repoint = (pane: Pane): Pane => {
-          if (!pane.tabs.includes(oldPath)) return pane;
-          return {
-            ...pane,
-            tabs: pane.tabs.map((p) => (p === oldPath ? newPath : p)),
-            active: pane.active === oldPath ? newPath : pane.active,
-            doc: pane.active === oldPath ? renamedContent : pane.doc,
-            pinned: pane.pinned?.map((p) => (p === oldPath ? newPath : p)),
-          };
-        };
-        panesRef.current = Object.fromEntries(
-          Object.entries(panesRef.current).map(([id, pane]) => [id, repoint(pane)]),
-        );
-        setPanes((ps) =>
-          Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, repoint(pane)])),
-        );
+        // Fix the note's own links on disk, unless it's being typed into; either
+        // way reconcileRewrites then makes sure the newest text, typed or
+        // saved, carries the fix.
+        await queueWrite(newPath, async () => {
+          const known = knownText(newPath);
+          let disk = oldNote.content;
+          try {
+            disk = await readNote(newPath);
+          } catch {
+            /* keep the last known content */
+          }
+          const next = rewriteLinks(disk, ownMap);
+          if (next !== null && !pending.current.has(newPath)) {
+            rememberSelfWrite(newRel, next); // before the write: its echo isn't an outside edit
+            try {
+              await writeNote(newPath, next, disk);
+              registerRewrite({ ...moved, content: next });
+            } catch (e) {
+              if (!isWriteConflict(e)) throw e; // changed meanwhile: reconciled below
+            }
+          }
+          // Editors take the outcome now, before a save queued behind this job.
+          if (next !== null) reconcileRewrites([{ path: newPath, base: disk, next, mapper: ownMap, known }]);
+        });
 
         // Rewrite affected sources. Candidates are found via the in-memory
         // snapshot (cheap), but each rewrite reads DISK content so a fresher
@@ -3365,38 +4549,16 @@ export default function App() {
           const last = normalizeName(targetPathPart(raw).split(/[/\\]/).pop() ?? "");
           return aliasSet.has(last) && last !== normalizeName(newBase) && last !== normalizeName(oldNote.name);
         };
-        const sourceMap = (notePath: string, noteRel: string) => (raw: string) =>
-          preIndex.resolve(raw, notePath) === oldPath && !viaAlias(raw)
+        // By the linking file's place, so a canvas's text cards resolve too.
+        const sourceMap = (_path: string, noteRel: string): LinkMapper => (raw, literal) =>
+          !literal && preIndex.resolveFromRel(raw, noteRel) === oldPath && !viaAlias(raw)
             ? linkTargetForFormat(fmt, newRelNoExt, taken, noteRel)
             : null;
-        const updates: VaultNote[] = [];
-        const failures: string[] = [];
-        for (const note of preNotes) {
-          if (note.path === oldPath) continue;
-          if (rewriteLinks(note.content, sourceMap(note.path, note.rel)) === null) continue; // unaffected
-          try {
-            const disk = await readNote(note.path);
-            const next = rewriteLinks(disk, sourceMap(note.path, note.rel));
-            if (next === null) continue;
-            await writeNote(note.path, next);
-            const updated: VaultNote = { ...note, content: next };
-            rememberSelfWrite(note.rel, next);
-            index.current.setNote(updated);
-            updates.push(updated);
-          } catch (e) {
-            failures.push(note.rel);
-            console.error("[basalt] link rewrite failed", note.rel, e);
-          }
-        }
-        if (updates.length > 0) {
-          const byPath = new Map(updates.map((u) => [u.path, u]));
-          setNotes((prev) => prev.map((n) => byPath.get(n.path) ?? n));
-          bumpStructure();
-          // Any pane showing a note whose links were rewritten reconciles in place.
-          for (const p of Object.values(panesRef.current)) {
-            if (p.active && byPath.has(p.active)) patchPane(p.id, { doc: byPath.get(p.active)!.content });
-          }
-        }
+        const { failures, written } = await rewriteNoteLinks(
+          preNotes.filter((n) => n.path !== oldPath),
+          (n) => sourceMap(n.path, n.rel),
+        );
+        if (written > 0) bumpStructure();
         // Repoint canvas file-node embeds of the renamed note (canvases aren't
         // in the note link-rewrite loop above; without this they'd dangle).
         const canvasFails = await rewriteCanvasRefs(
@@ -3404,48 +4566,96 @@ export default function App() {
             .filter((a) => /\.canvas$/i.test(a.path))
             .map((a) => ({ path: a.path, rel: a.rel })),
           new Map([[oldNote.rel, newRel]]),
+          (c) => sourceMap(c.path, c.rel),
         );
         const allFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
-        setSaveError(
-          allFails.length > 0 ? `Renamed, but link updates failed in: ${allFails.join(", ")}` : null,
-        );
+        reportLinkFixes("Renamed", allFails);
       } catch (e) {
         setSaveError(`Couldn't rename: ${e}`);
       }
     },
-    [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs, rewriteNoteLinks, registerRewrite, reconcileRewrites, queueWrite, reportLinkFixes],
+  );
+  // Renames and folder moves run one at a time: a second one waits for the
+  // first to finish rewriting links, so it never starts from stale paths.
+  const renameQueue = useRef<Promise<unknown>>(Promise.resolve());
+  // Where finished renames and moves took each file. A rename queued behind
+  // them may name a path that has since moved; it follows the file, but only
+  // when nothing is at that path now.
+  const movedTo = useRef<Map<string, string>>(new Map());
+  const currentPath = (path: string) => {
+    const there = (p: string) => notesRef.current.some((n) => n.path === p) || attachmentsRef.current.some((a) => a.path === p);
+    let p = path;
+    for (let i = 0; i < 16 && movedTo.current.has(p) && !there(p); i++) p = movedTo.current.get(p)!;
+    return p;
+  };
+  const enqueueRename = useCallback(<T,>(job: () => Promise<T>): Promise<T> => {
+    renameJobs.current++;
+    const run = renameQueue.current.then(job).finally(() => renameJobs.current--);
+    renameQueue.current = run.catch(() => {});
+    return run;
+  }, []);
+  const handleRenameNote = useCallback(
+    (oldPath: string, newName: string) => enqueueRename(() => renameNoteNow(currentPath(oldPath), newName)),
+    [enqueueRename, renameNoteNow],
   );
   handleRenameNoteRef.current = handleRenameNote;
+  // A new name in the note's folder as of when the rename runs: a folder move
+  // queued ahead of it may have moved the note since the title was edited.
+  const handleRetitleNote = useCallback(
+    (path: string, newBase: string) =>
+      enqueueRename(() => {
+        const now = currentPath(path);
+        const rel = notesRef.current.find((n) => n.path === now)?.rel ?? "";
+        return renameNoteNow(now, rel.replace(/[^/\\]+$/, "") + newBase);
+      }),
+    [enqueueRename, renameNoteNow],
+  );
 
   // Convert an unlinked mention into a `[[wikilink]]` in its SOURCE note (the
   // "Link" / "Link all" backlink actions). Reads disk (authoritative), edits
   // the one line, writes, and reconciles index/notes/panes — like a rename's
-  // link rewrite. Returns whether it changed anything.
+  // link rewrite. Returns the line it wrote, or null if it changed nothing.
   const linkifyInNote = useCallback(
-    async (sourcePath: string, line: number, targetName: string): Promise<boolean> => {
+    async (sourcePath: string, line: number, target: VaultNote): Promise<string | null> => {
       if (conflictsRef.current.has(sourcePath)) {
         setSaveError("Resolve the “Changed on disk” conflict before linking mentions");
-        return false;
+        return null;
       }
       await flushPath(sourcePath);
       let disk: string;
       try {
         disk = await readNote(sourcePath);
       } catch {
-        return false;
+        return null;
+      }
+      if (pending.current.has(sourcePath)) {
+        setSaveError("Save this note before linking mentions");
+        return null;
       }
       const lines = disk.split("\n");
       const idx = line - 1;
-      if (idx < 0 || idx >= lines.length) return false;
-      const next = linkifyMention(lines[idx], targetName);
-      if (next === null) return false;
+      if (idx < 0 || idx >= lines.length) return null;
+      // What Obsidian would write: the bare name if it resolves to the target
+      // from this note, else a path in the vault's link format.
+      const srcRel = notesRef.current.find((n) => n.path === sourcePath)?.rel ?? null;
+      const fmt = getLinkFormat();
+      const bareWorks = index.current.resolve(target.name, sourcePath) === target.path;
+      const linkText =
+        fmt === "shortest" && bareWorks
+          ? target.name
+          : linkTargetForFormat(fmt, target.rel.replace(/\.md$/i, ""), !bareWorks, srcRel);
+      const names = [target.name, ...index.current.aliasesOf(target.path)];
+      const masked = mentionLinesFor(disk, mentionRegex(names))[idx];
+      const next = linkifyMention(lines[idx], names, linkText, masked, lines, idx);
+      if (next === null) return null;
       lines[idx] = next;
       const content = lines.join("\n");
       try {
-        await writeNote(sourcePath, content);
+        await writeNote(sourcePath, content, disk);
       } catch (e) {
         setSaveError(`Couldn't link mention: ${e}`);
-        return false;
+        return null;
       }
       const note = notesRef.current.find((n) => n.path === sourcePath);
       if (note) {
@@ -3458,25 +4668,34 @@ export default function App() {
         }
       }
       bumpStructure(); // the mention is now a real link → backlinks/unlinked recompute
-      return true;
+      return next;
     },
-    [flushPath, rememberSelfWrite, patchPane, bumpStructure],
+    [flushPath, rememberSelfWrite, patchPane, bumpStructure, getLinkFormat],
   );
 
   const handleLinkMention = useCallback(
     (m: { path: string; line: number }) => {
-      const name = notesRef.current.find((n) => n.path === activePathRef.current)?.name;
-      if (name) void linkifyInNote(m.path, m.line, name);
+      // The note the Backlinks panel shows, which a click there has unfocused.
+      const target = notesRef.current.find((n) => n.path === lastNotePathRef.current);
+      if (target) void linkifyInNote(m.path, m.line, target).then(() => setMentionsLinked((x) => x + 1));
     },
     [linkifyInNote],
   );
 
   const handleLinkAllMentions = useCallback(
     async (mentions: { path: string; line: number }[]) => {
-      const name = notesRef.current.find((n) => n.path === activePathRef.current)?.name;
-      if (!name) return;
+      const target = notesRef.current.find((n) => n.path === lastNotePathRef.current);
+      if (!target) return;
       // Snapshot the list; line numbers stay valid (linkify never adds lines).
-      for (const m of [...mentions]) await linkifyInNote(m.path, m.line, name);
+      const named = mentionRegex([target.name, ...index.current.aliasesOf(target.path)]);
+      const again: { path: string; line: number }[] = [];
+      for (const m of [...mentions]) {
+        const line = await linkifyInNote(m.path, m.line, target);
+        if (line !== null && named.test(line.replace(wikilinkRegex(), ""))) again.push(m);
+      }
+      // A mention its neighbour's link made linkable (`*Foo*Foo`) is linked too.
+      for (const m of again) for (let k = 0; k < 3 && (await linkifyInNote(m.path, m.line, target)) !== null; k++);
+      setMentionsLinked((x) => x + 1);
     },
     [linkifyInNote],
   );
@@ -3491,7 +4710,7 @@ export default function App() {
       // they get the SAME flush/conflict discipline as notes.
       const viewers = attachmentsRef.current.filter((a) => a.rel.startsWith(prefix) && isViewerPath(a.path));
       const all = [...inside, ...viewers];
-      const ok = await confirm(
+      const ok = await confirmDelete(
         `Move the folder "${folderRel}" (${inside.length} ${inside.length === 1 ? "note" : "notes"} + any attachments) to the vault trash?`,
         { title: "Delete folder", kind: "warning" },
       );
@@ -3528,6 +4747,7 @@ export default function App() {
         for (const n of inside) index.current.removeNote(n.path);
         setNotes((prev) => prev.filter((n) => !n.rel.startsWith(prefix)));
         setAttachmentsList((prev) => prev.filter((a) => !a.rel.startsWith(prefix)));
+        setFolders((prev) => prev.filter((f) => f !== folderRel && !f.startsWith(prefix)));
         recents.current = recents.current.filter((r) => !r.startsWith(prefix));
         bumpStructure();
       } catch (e) {
@@ -3542,7 +4762,7 @@ export default function App() {
   // basename), then a SINGLE vault-wide link-rewrite pass fixes the links whose
   // resolution the move changed. O(vault) instead of O(notes × vault), and
   // FS-hostile basenames survive because the move never re-sanitizes them.
-  const handleRenameFolder = useCallback(
+  const renameFolderNow = useCallback(
     async (folderRel: string, newFolderRel: string) => {
       const root = vaultRef.current;
       if (!root || !newFolderRel || newFolderRel === folderRel) return;
@@ -3561,6 +4781,7 @@ export default function App() {
       // Every note/viewer under the folder must be flushed first, then the
       // WHOLE operation aborts if anything is still unsaved — a mid-move
       // pending write to a now-moved path would be lost.
+      commitCanvasTyping((p) => attachmentsRef.current.some((a) => a.path === p && a.rel.startsWith(oldPrefix)));
       await flushAll();
       const movingNotes = notesRef.current.filter((n) => n.rel.startsWith(oldPrefix));
       const movingAtts = attachmentsRef.current.filter((a) => a.rel.startsWith(oldPrefix));
@@ -3604,13 +4825,22 @@ export default function App() {
       for (const a of movingAtts) movedAttNewPathByOld.set(a.path, `${root}/${swap(a.rel)}`);
       const postAttByPath = new Map(postAtts.map((a) => [a.path, a]));
 
-      // Do the move. One syscall relocates the whole tree.
+      // Do the move. One syscall relocates the whole tree. Saves typed meanwhile
+      // wait for it, then follow their notes.
+      const movingPaths = [...movingNotes, ...movingAtts].map((f) => f.path);
+      for (const p of movingPaths) renaming.current.add(p);
       try {
         await renameFolder(folderRel, newFolderRel);
       } catch (e) {
+        for (const p of movingPaths) {
+          renaming.current.delete(p);
+          if (pending.current.has(p)) void flushPath(p);
+        }
         setSaveError(`Couldn't move folder: ${e}`);
         return;
       }
+      for (const p of movingPaths) renaming.current.delete(p);
+      setFolders((prev) => prev.map((f) => (f === folderRel || f.startsWith(oldPrefix) ? swap(f) : f)));
 
       // Migrate any pending edit / save timer keyed by a moving OLD path to its
       // new path — a keystroke landing during the renameFolder IPC would else
@@ -3619,15 +4849,17 @@ export default function App() {
       for (const [oldP, nn] of movedByOld) oldToNewPath.set(oldP, nn.path);
       for (const a of movingAtts) oldToNewPath.set(a.path, `${root}/${swap(a.rel)}`);
       for (const [oldP, newP] of oldToNewPath) {
+        moveBigBase(oldP, newP);
         const p = pending.current.get(oldP);
         if (p !== undefined) {
           pending.current.delete(oldP);
           pending.current.set(newP, p);
         }
+        // The timer still names the old path; the edit is flushed below instead.
         const t = saveTimers.current.get(oldP);
         if (t !== undefined) {
+          window.clearTimeout(t);
           saveTimers.current.delete(oldP);
-          saveTimers.current.set(newP, t);
         }
       }
 
@@ -3635,55 +4867,14 @@ export default function App() {
       const postNotes: VaultNote[] = preNotes.map((n) => movedByOld.get(n.path) ?? n);
       const postIndex = new VaultIndex();
       postIndex.build(postNotes);
-      const fmt = getLinkFormat();
 
-      // Shared context for the resolver-based link rewrite (see lib/rename.ts).
-      const movedNewPathByOld = new Map([...movedByOld].map(([o, n]) => [o, n.path]));
-      const postByPath = new Map(postNotes.map((n) => [n.path, n]));
-      const attNorm = (s: string) => normalizeName(s);
-      const moveCtx = {
-        resolvePre: (raw: string, from: string) => preIndex.resolve(raw, from),
-        resolvePost: (raw: string, from: string) => postIndex.resolve(raw, from),
-        movedNewPathByOld,
-        noteAt: (path: string) => postByPath.get(path),
-        nameTaken: (name: string, except: string) =>
-          postNotes.some((n) => n.path !== except && normalizeName(n.name) === normalizeName(name)),
-        format: fmt,
-        resolveAttPre: (raw: string) => resolveAttachment(preAtts, raw)?.path ?? null,
-        resolveAttPost: (raw: string) => resolveAttachment(postAtts, raw)?.path ?? null,
-        movedAttNewPathByOld,
-        attAt: (path: string) => postAttByPath.get(path),
-        attNameTaken: (name: string, except: string) =>
-          postAtts.some((a) => a.path !== except && attNorm(a.name) === attNorm(name)),
-      };
-      const makeMapper = (post: VaultNote) =>
-        folderMoveMapper(moveCtx, postToOld.get(post.path) ?? post.path, post.path, post.rel);
-
-      // One pass: rewrite affected notes (moved and unmoved), reading DISK so a
-      // fresher external edit is never reverted. Cheap in-memory pre-filter.
-      const updates = new Map<string, VaultNote>();
-      const failures: string[] = [];
-      for (const post of postNotes) {
-        const mapper = makeMapper(post);
-        if (rewriteLinks(post.content, mapper) === null) continue; // unaffected
-        try {
-          const disk = await readNote(post.path);
-          const next = rewriteLinks(disk, mapper);
-          if (next === null) continue;
-          await writeNote(post.path, next);
-          rememberSelfWrite(post.rel, next);
-          updates.set(post.path, { ...post, content: next });
-        } catch (e) {
-          failures.push(post.rel);
-          console.error("[basalt] folder-move link rewrite failed", post.rel, e);
-        }
-      }
-
-      // Commit index/notes/attachments/recents/snapshots/panes in bulk.
+      // Commit the move itself before any other await, as note rename does: the
+      // index and note list get the new paths, and every pane is repointed with
+      // the text its editor holds. From here on keystrokes are keyed to the new
+      // paths, so text typed during the link rewrite below can't be lost.
       for (const [oldPath, nn] of movedByOld) {
         index.current.removeNote(oldPath);
-        const finalNote = updates.get(nn.path) ?? nn;
-        index.current.setNote(finalNote);
+        index.current.setNote(nn);
         const oldRel = oldRelByPath.get(oldPath);
         if (oldRel !== undefined) {
           selfWrites.current.delete(oldRel);
@@ -3691,15 +4882,12 @@ export default function App() {
         }
         // Seed the new-rel baseline so the watcher's create-event for the moved
         // file (fs::rename fires delete+create) isn't seen as an external edit.
-        rememberSelfWrite(nn.rel, finalNote.content);
+        rememberSelfWrite(nn.rel, nn.content);
       }
-      // Unmoved notes whose links were rewritten (their path is unchanged).
-      for (const [path, u] of updates) if (!postToOld.has(path)) index.current.setNote(u);
-      setNotes(() =>
-        postNotes
-          .map((n) => updates.get(n.path) ?? n)
-          .sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
-      );
+      const byRel = (a: VaultNote, b: VaultNote) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase());
+      notesRef.current = [...postNotes].sort(byRel);
+      setNotes(() => notesRef.current);
+      attachmentsRef.current = postAtts;
       setAttachmentsList((prev) =>
         prev.map((a) =>
           a.rel.startsWith(oldPrefix)
@@ -3722,34 +4910,69 @@ export default function App() {
       } catch {
         /* quota — non-fatal */
       }
-
-      // Repoint every moved note/viewer path in every pane (tabs/active/pinned)
-      // AND reconcile the doc of any pane whose active note's links were
-      // rewritten — INCLUDING panes with no moved tab (an unmoved note whose
-      // outbound links changed), else the editor keeps stale content and the
-      // next keystroke reverts the on-disk link fix.
       const pathMap = new Map<string, string>();
       for (const [oldPath, nn] of movedByOld) pathMap.set(oldPath, nn.path);
       for (const a of movingAtts) pathMap.set(a.path, `${root}/${swap(a.rel)}`);
       const repoint = (pane: Pane): Pane => {
-        const hasMoved = pane.tabs.some((p) => pathMap.has(p));
-        const newActive = pane.active ? (pathMap.get(pane.active) ?? pane.active) : pane.active;
-        const activeUpdate = newActive ? updates.get(newActive) : undefined;
-        if (!hasMoved && !activeUpdate) return pane; // nothing to change
+        if (!pane.tabs.some((p) => pathMap.has(p))) return pane;
         const map = (p: string) => pathMap.get(p) ?? p;
+        const moved = pane.active !== null && pathMap.has(pane.active);
+        const live = moved ? liveDocs.current.get(pane.active!) : undefined;
         return {
           ...pane,
-          tabs: hasMoved ? pane.tabs.map(map) : pane.tabs,
-          active: newActive,
-          doc: activeUpdate ? activeUpdate.content : pane.doc,
-          pinned: hasMoved ? pane.pinned?.map(map) : pane.pinned,
+          tabs: pane.tabs.map(map),
+          active: pane.active ? map(pane.active) : pane.active,
+          doc: live ?? pane.doc,
+          docRev: moved ? (pane.docRev ?? 0) + 1 : pane.docRev,
+          scrollToLine: moved ? undefined : pane.scrollToLine,
+          pinned: pane.pinned?.map(map),
         };
       };
+      for (const [from, to] of pathMap) {
+        renameWindow.current.set(from, to);
+        movedTo.current.set(from, to);
+        movedTo.current.delete(to);
+        const live = liveDocs.current.get(from);
+        if (live !== undefined) liveDocs.current.set(to, live);
+      }
       panesRef.current = Object.fromEntries(
         Object.entries(panesRef.current).map(([id, pane]) => [id, repoint(pane)]),
       );
       setPanes((ps) => Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, repoint(pane)])));
       bumpStructure();
+      for (const newP of oldToNewPath.values()) if (pending.current.has(newP)) void flushPath(newP);
+
+      const fmt = getLinkFormat();
+
+      // Shared context for the resolver-based link rewrite (see lib/rename.ts).
+      const movedNewPathByOld = new Map([...movedByOld].map(([o, n]) => [o, n.path]));
+      const postByPath = new Map(postNotes.map((n) => [n.path, n]));
+      const attNorm = (s: string) => normalizeName(s);
+      // Where each linking file sits, canvases included, before and after.
+      const relPre = new Map([...preNotes, ...preAtts].map((f) => [f.path, f.rel]));
+      const relPost = new Map([...postNotes, ...postAtts].map((f) => [f.path, f.rel]));
+      const moveCtx = {
+        resolvePre: (raw: string, from: string) => preIndex.resolveFromRel(raw, relPre.get(from) ?? null),
+        resolvePost: (raw: string, from: string) => postIndex.resolveFromRel(raw, relPost.get(from) ?? null),
+        movedNewPathByOld,
+        noteAt: (path: string) => postByPath.get(path),
+        nameTaken: (name: string, except: string) =>
+          postNotes.some((n) => n.path !== except && normalizeName(n.name) === normalizeName(name)),
+        format: fmt,
+        resolveAttPre: (raw: string, from: string, literal?: boolean) =>
+          resolveAttachment(preAtts, raw, relPre.get(from) ?? null, literal)?.path ?? null,
+        resolveAttPost: (raw: string, from: string, literal?: boolean) =>
+          resolveAttachment(postAtts, raw, relPost.get(from) ?? null, literal)?.path ?? null,
+        movedAttNewPathByOld,
+        attAt: (path: string) => postAttByPath.get(path),
+        attNameTaken: (name: string, except: string) =>
+          postAtts.some((a) => a.path !== except && attNorm(a.name) === attNorm(name)),
+      };
+      const makeMapper = (post: VaultNote) =>
+        folderMoveMapper(moveCtx, postToOld.get(post.path) ?? post.path, post.path, post.rel);
+
+      // One pass over every note, moved and unmoved.
+      const { failures } = await rewriteNoteLinks(postNotes, makeMapper);
 
       // Repoint canvas file-node embeds of every moved note AND moved
       // attachment (canvas file-nodes can embed images/PDFs/nested canvases, not
@@ -3760,34 +4983,197 @@ export default function App() {
       const postCanvases = preAtts.map((a) =>
         a.rel.startsWith(oldPrefix) ? { path: `${root}/${swap(a.rel)}`, rel: swap(a.rel) } : { path: a.path, rel: a.rel },
       ).filter((a) => /\.canvas$/i.test(a.path));
-      const canvasFails = await rewriteCanvasRefs(postCanvases, moveRelMap);
+      const oldCanvasPath = new Map(preAtts.filter((a) => a.rel.startsWith(oldPrefix)).map((a) => [`${root}/${swap(a.rel)}`, a.path]));
+      const canvasFails = await rewriteCanvasRefs(postCanvases, moveRelMap, (c) =>
+        folderMoveMapper(moveCtx, oldCanvasPath.get(c.path) ?? c.path, c.path, c.rel),
+      );
 
       const folderFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
-      setSaveError(
-        folderFails.length > 0 ? `Folder moved, but link updates failed in: ${folderFails.join(", ")}` : null,
-      );
+      reportLinkFixes("Folder moved", folderFails);
     },
-    [flushAll, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs, rewriteNoteLinks, reportLinkFixes],
+  );
+  const handleRenameFolder = useCallback(
+    (folderRel: string, newFolderRel: string) => enqueueRename(() => renameFolderNow(folderRel, newFolderRel)),
+    [enqueueRename, renameFolderNow],
+  );
+
+  // A canvas card being typed into saves its text when it loses focus. A rename
+  // or move draws the canvas again, so the typing is committed first.
+  const commitCanvasTyping = (moving: (path: string) => boolean) => {
+    const el = document.activeElement;
+    const canvas = el instanceof HTMLElement ? el.closest<HTMLElement>(".canvas-view[data-path]") : null;
+    if (canvas && moving(canvas.dataset.path ?? "")) (el as HTMLElement).blur();
+  };
+
+  // Rename or move an attachment, canvas or base (`newName` is folder-qualified,
+  // without the extension), then fix the links and canvas cards that reach it.
+  // It runs like a folder move that carries one file: the same flush-or-abort
+  // first, the same state commit before any other await, the same link pass.
+  const renameAttachmentNow = useCallback(
+    async (path: string, newName: string) => {
+      const root = vaultRef.current;
+      const att = attachmentsRef.current.find((a) => a.path === path);
+      if (!root || !att) return;
+      commitCanvasTyping((p) => p === path);
+      await flushAll();
+      if (conflictsRef.current.has(path)) {
+        setSaveError(`Resolve the "Changed on disk" conflict in ${att.name} before renaming it`);
+        return;
+      }
+      if (pending.current.has(path)) {
+        setSaveError("Couldn't rename: unsaved changes failed to save");
+        return;
+      }
+      const preNotes = notesRef.current;
+      const preIndex = new VaultIndex();
+      preIndex.build(preNotes);
+      const preAtts = attachmentsRef.current;
+
+      renaming.current.add(path);
+      let newPath = path;
+      try {
+        newPath = await renameAttachment(path, newName);
+      } catch (e) {
+        setSaveError(`Couldn't rename: ${e}`);
+      } finally {
+        renaming.current.delete(path);
+        if (newPath === path && pending.current.has(path)) void flushPath(path);
+      }
+      if (newPath === path) return;
+      const newRel = newPath.startsWith(root) ? newPath.slice(root.length).replace(/^[/\\]+/, "") : newPath;
+      const moved: Attachment = { ...att, path: newPath, rel: newRel, name: newRel.split("/").pop() ?? newRel };
+      const postAtts = preAtts.map((a) => (a.path === path ? moved : a));
+      attachmentsRef.current = postAtts;
+      setAttachmentsList((prev) => prev.map((a) => (a.path === path ? moved : a)));
+      movedTo.current.set(path, newPath);
+      movedTo.current.delete(newPath);
+      moveBigBase(path, newPath);
+      // An edit made during the rename goes to the new path.
+      const typed = pending.current.get(path);
+      const timer = saveTimers.current.get(path);
+      if (timer !== undefined) window.clearTimeout(timer);
+      saveTimers.current.delete(path);
+      pending.current.delete(path);
+      const baseline = selfWrites.current.get(att.rel);
+      selfWrites.current.delete(att.rel);
+      if (baseline !== undefined) selfWrites.current.set(newRel, baseline);
+      recents.current = recents.current.map((r) => (r === att.rel ? newRel : r));
+      const live = liveDocs.current.get(path);
+      if (live !== undefined) liveDocs.current.set(newPath, live);
+      renameWindow.current.set(path, newPath);
+      const repoint = (pane: Pane): Pane => {
+        if (!pane.tabs.includes(path)) return pane;
+        const isActive = pane.active === path;
+        return {
+          ...pane,
+          tabs: pane.tabs.map((p) => (p === path ? newPath : p)),
+          active: isActive ? newPath : pane.active,
+          doc: isActive ? (typed ?? live ?? pane.doc) : pane.doc,
+          docRev: isActive ? (pane.docRev ?? 0) + 1 : pane.docRev,
+          pinned: pane.pinned?.map((p) => (p === path ? newPath : p)),
+        };
+      };
+      panesRef.current = Object.fromEntries(Object.entries(panesRef.current).map(([id, pane]) => [id, repoint(pane)]));
+      setPanes((ps) => Object.fromEntries(Object.entries(ps).map(([id, pane]) => [id, repoint(pane)])));
+      if (typed !== undefined) {
+        pending.current.set(newPath, typed);
+        void flushPath(newPath);
+      }
+      if (isViewerPath(path)) void renameSnapshots(root, att.rel, newRel);
+      bumpStructure();
+
+      const fmt = getLinkFormat();
+      const byPath = new Map(preNotes.map((n) => [n.path, n]));
+      const postAttByPath = new Map(postAtts.map((a) => [a.path, a]));
+      // Where each linking file sits, canvases included, before and after.
+      const relPre = new Map([...preNotes, ...preAtts].map((f) => [f.path, f.rel]));
+      const relPost = new Map([...preNotes, ...postAtts].map((f) => [f.path, f.rel]));
+      const ctx: FolderMoveCtx = {
+        resolvePre: (raw, from) => preIndex.resolveFromRel(raw, relPre.get(from) ?? null),
+        resolvePost: (raw, from) => preIndex.resolveFromRel(raw, relPost.get(from) ?? null),
+        movedNewPathByOld: new Map(),
+        noteAt: (p) => byPath.get(p),
+        nameTaken: (name, except) => preNotes.some((n) => n.path !== except && normalizeName(n.name) === normalizeName(name)),
+        format: fmt,
+        resolveAttPre: (raw, from, literal) =>
+          resolveAttachment(preAtts, raw, relPre.get(from) ?? null, literal)?.path ?? null,
+        resolveAttPost: (raw, from, literal) =>
+          resolveAttachment(postAtts, raw, relPost.get(from) ?? null, literal)?.path ?? null,
+        movedAttNewPathByOld: new Map([[path, newPath]]),
+        attAt: (p) => postAttByPath.get(p),
+        attNameTaken: (name, except) =>
+          postAtts.some((a) => a.path !== except && normalizeName(a.name) === normalizeName(name)),
+      };
+      // Every link that reached the file is written afresh, as for a renamed
+      // note, so a case-only rename shows in the links too; the move mapper
+      // catches links to other files that the new name now shadows.
+      const taken = postAtts.some((a) => a.path !== newPath && normalizeName(a.name) === normalizeName(moved.name));
+      // For a file linking from `from` (`to` once a renamed canvas moves).
+      const mapperFor = (from: string, to: string): LinkMapper => {
+        const was = relPre.get(from) ?? null;
+        const rel = relPost.get(to) ?? "";
+        const others = folderMoveMapper(ctx, from, to, rel);
+        return (raw, literal = false) => {
+          if ((!literal && preIndex.resolveFromRel(raw, was)) || resolveAttachment(preAtts, raw, was, literal)?.path !== path)
+            return others(raw, literal);
+          const next = linkTargetForFormat(fmt, newRel, taken, rel);
+          return next === (literal ? raw : targetPathPart(raw)) ? null : next;
+        };
+      };
+      const { failures } = await rewriteNoteLinks(preNotes, (n) => mapperFor(n.path, n.path));
+      const canvasFails = await rewriteCanvasRefs(
+        postAtts.filter((a) => /\.canvas$/i.test(a.path)).map((a) => ({ path: a.path, rel: a.rel })),
+        new Map([[att.rel, newRel]]),
+        (c) => mapperFor(c.path === newPath ? path : c.path, c.path),
+      );
+      const allFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
+      reportLinkFixes("Renamed", allFails);
+    },
+    [flushAll, flushPath, bumpStructure, moveBigBase, getLinkFormat, rewriteNoteLinks, rewriteCanvasRefs, reportLinkFixes],
+  );
+  const handleRenameAttachment = useCallback(
+    (path: string, newName: string) => enqueueRename(() => renameAttachmentNow(currentPath(path), newName)),
+    [enqueueRename, renameAttachmentNow],
   );
 
   // Move a note into a folder (rel, "" = root) by renaming — reuses the
-  // link-rewriting rename path. No-op if it's already there.
+  // link-rewriting rename path. No-op if it's already there. Attachments,
+  // canvases and bases move the same way.
   const handleMoveToFolder = useCallback(
     (notePath: string, folderRel: string) => {
+      const inFolder = (rel: string) => normalizeName(rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "") === normalizeName(folderRel);
+      const att = attachmentsRef.current.find((a) => a.path === notePath);
+      if (att) {
+        if (inFolder(att.rel)) return;
+        void enqueueRename(async () => {
+          const now = currentPath(notePath);
+          const cur = attachmentsRef.current.find((a) => a.path === now);
+          const stem = cur?.name.replace(/\.[^.]+$/, "");
+          if (cur && stem) await renameAttachmentNow(now, (folderRel ? `${folderRel}/` : "") + stem);
+        });
+        return;
+      }
       const note = notesRef.current.find((n) => n.path === notePath);
       if (!note) return;
-      const curFolder = note.rel.includes("/") ? note.rel.slice(0, note.rel.lastIndexOf("/")) : "";
-      if (normalizeName(curFolder) === normalizeName(folderRel)) return;
-      void handleRenameNote(notePath, (folderRel ? `${folderRel}/` : "") + note.name);
+      if (inFolder(note.rel)) return;
+      // The name as of when the move runs: a title rename queued ahead of it
+      // may change it.
+      void enqueueRename(async () => {
+        const now = currentPath(notePath);
+        const cur = notesRef.current.find((n) => n.path === now);
+        if (cur) await renameNoteNow(now, (folderRel ? `${folderRel}/` : "") + cur.name);
+      });
     },
-    [handleRenameNote],
+    [enqueueRename, renameNoteNow, renameAttachmentNow],
   );
 
   // Blank-query switcher shows recently opened notes first.
   const switcherItems = useCallback(
     (q: string) => {
       const all = notesRef.current;
-      if (q.trim()) return fuzzyRank(q, all, (n) => [n.name, n.rel]);
+      // Aliases find their note too, as in Obsidian.
+      if (q.trim()) return fuzzyRank(q, all, (n) => [n.name, n.rel, ...index.current.aliasesOf(n.path)]);
       const order = new Map(recents.current.map((rel, i) => [rel, i]));
       return [...all].sort((a, b) => {
         const ia = order.get(a.rel) ?? Infinity;
@@ -3812,6 +5198,8 @@ export default function App() {
       { id: "workspaces", label: "Manage workspaces…", hint: "save / switch named layouts", run: () => setModal("workspaces") },
       { id: "source-mode", label: "Toggle Source mode", hint: "raw Markdown ↔ Live Preview", run: toggleSourceMode },
       { id: "reading-mode", label: "Toggle Reading view", hint: "rendered, read-only ↔ edit", run: toggleReading },
+      { id: "navigate-back", label: "Navigate back", hint: "the note shown before", run: () => navigate(-1) },
+      { id: "navigate-forward", label: "Navigate forward", hint: "after going back", run: () => navigate(1) },
       { id: "export-html", label: "Export note as HTML…", hint: "self-contained file", run: () => void handleExportHtml() },
       { id: "print-pdf", label: "Print / Save as PDF…", hint: "prints the Reading view", run: handlePrintPdf },
       { id: "open-note", label: "Open note…", hint: "quick switcher (⌘O)", run: () => setModal("switcher") },
@@ -3848,7 +5236,7 @@ export default function App() {
       },
       { id: "settings", label: "Open settings", hint: "appearance, vault info (⌘,)", run: () => setModal("settings") },
       { id: "toggle-theme", label: "Toggle light/dark theme", hint: "switch appearance", run: toggleTheme },
-      { id: "toggle-readable-width", label: "Toggle readable line length", hint: "constrain content width", run: () => setReadableWidth((v) => !v) },
+      { id: "toggle-readable-width", label: "Toggle readable line length", hint: "constrain content width", run: () => chooseReadableWidth((v) => !v) },
       { id: "reveal-in-finder", label: "Reveal current note in file manager", hint: "show the file on disk", run: () => { const p = focusedIdRef.current ? panesRef.current[focusedIdRef.current]?.active : null; if (p) void revealItemInDir(p).catch((e) => setSaveError(`Couldn't reveal: ${e}`)); } },
       { id: "new-folder", label: "New folder…", hint: "create a folder at the vault root", run: () => setSubfolderParent("") },
       { id: "toggle-spellcheck", label: "Toggle spellcheck", hint: "native browser spellcheck in the editor", run: () => setSpellcheck((v) => !v) },
@@ -3894,7 +5282,7 @@ export default function App() {
       })),
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, moveTabToNewWindow, resetWorkspace, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf, openNoteByPath, pluginVersion],
+    [handleNewNote, handleOpenVault, openVaultSwitcher, handleOpenInNewWindow, moveTabToNewWindow, resetWorkspace, handleReloadFromDisk, handleDeleteNote, openDailyNote, toggleSourceMode, toggleReading, toggleTheme, splitFocused, handleExportHtml, handlePrintPdf, openNoteByPath, navigate, pluginVersion],
   );
   const commandsRef = useRef(commands);
   commandsRef.current = commands;
@@ -3946,6 +5334,8 @@ export default function App() {
           <Sidebar
             notes={notes}
             attachments={attachmentsList}
+            folders={folders}
+            revealFolder={madeFolder}
             activePath={lastNotePath}
             vaultName={basename(vault)}
             onOpen={(path) => openNoteByPath(path)}
@@ -4001,9 +5391,28 @@ export default function App() {
         const hostPane = lastNotePath ? Object.entries(panes).find(([, p]) => p.active === lastNotePath) : undefined;
         return (
           <Properties
-            doc={hostPane ? hostPane[1].doc : noteDoc}
-            onChange={(nextDoc) => {
-              if (!hostPane || !lastNotePath) return;
+            doc={
+              hostPane
+                ? docFor(hostPane[1])
+                : lastNotePath
+                  ? (pending.current.get(lastNotePath) ?? editorText(lastNotePath) ?? noteDoc)
+                  : noteDoc
+            }
+            onChange={(edit) => {
+              if (!lastNotePath) return;
+              if (!hostPane) {
+                // No pane has it active (its tab was closed, or it's a stacked
+                // column): edit the newest text Basalt has for it and save that.
+                const base = pending.current.get(lastNotePath) ?? editorText(lastNotePath) ?? knownText(lastNotePath);
+                if (base === undefined) return;
+                const nextDoc = edit(base);
+                showText(lastNotePath, nextDoc);
+                handleChange("", lastNotePath, nextDoc);
+                return;
+              }
+              // Apply to the text the editor holds now, not this render's copy.
+              const live = panesRef.current[hostPane[0]];
+              const nextDoc = edit(live ? docFor(live) : docFor(hostPane[1]));
               patchPane(hostPane[0], { doc: nextDoc });
               handleChange(hostPane[0], lastNotePath, nextDoc);
             }}
@@ -4038,6 +5447,7 @@ export default function App() {
       <div
         className={`pane${focused ? " focused" : ""}${pane.dock ? ` dock dock-${pane.dock}` : ""}`}
         onMouseDownCapture={() => focusPane(id)}
+        onFocusCapture={() => focusPane(id)}
       >
         {pane.tabs.length > 0 && (
           <TabBar
@@ -4068,7 +5478,8 @@ export default function App() {
           <InlineTitle
             key={`title:${path}`}
             name={nameFromRel(rel)}
-            onRename={(newBase) => void handleRenameNote(path, rel.replace(/[^/\\]+$/, "") + newBase)}
+            onRename={(newBase) => void handleRetitleNote(path, newBase)}
+            onDone={() => editorApiRef.current?.focus()}
           />
         )}
         <div className="pane-body">
@@ -4076,7 +5487,14 @@ export default function App() {
           <StackedTabs
             tabs={pane.tabs.map((p) => ({ path: p, name: tabItemsFor([p])[0]?.name ?? p, rel: notes.find((n) => n.path === p)?.rel ?? "" }))}
             activePath={pane.active}
-            readNote={readNote}
+            readNote={readToOpen}
+            liveDoc={(p) => {
+              const known = notesRef.current.find((n) => n.path === p);
+              const seen = known && !(known.content === "" && (known.size ?? 0) > 0) ? known.content : bigBase.current.get(p);
+              // Without unsaved typing, the note's last known text is newest: the
+              // watcher, rescans and link fixes update it, not this column's copy.
+              return pending.current.get(p) ?? seen ?? liveDocs.current.get(p);
+            }}
             onFocusTab={(p, colDoc) => {
               toggleStacked(id);
               // Carry the column's live (possibly edited) content so unstacking
@@ -4093,6 +5511,8 @@ export default function App() {
             renderBody={(tab, doc, onDocChange) => (
               <EditorPane
                 key={`${id}:stacked:${tab.path}`}
+                paneId={`${id}:stack`}
+                continuesFrom={[...renameWindow.current].find(([, to]) => to === tab.path)?.[0]}
                 path={tab.path}
                 selfRel={tab.rel}
                 pluginVersion={pluginVersion}
@@ -4107,6 +5527,7 @@ export default function App() {
                 spellcheck={spellcheck}
                 vim={vim}
                 rtl={rtl}
+                lineNumbers={lineNumbers}
                 onOpenWikilink={handleOpenWikilink}
                 onOpenUrl={handleOpenUrl}
                 resolveImage={(target) => (vaultRef.current ? resolveImage(target, tab.rel) : Promise.resolve(null))}
@@ -4130,6 +5551,7 @@ export default function App() {
           /\.canvas$/i.test(path) ? (
             <ErrorBoundary key={`${id}:${path}:canvas`} resetKey={path} onClose={() => void closeTab(id, path)}>
               <CanvasView
+                path={path}
                 doc={pane.doc}
                 onOpenFile={(file, subpath) => openViewerFile(file + (subpath ?? ""))}
                 onOpenUrl={handleOpenUrl}
@@ -4150,6 +5572,8 @@ export default function App() {
                   structureVersion={structureVersion}
                   tagsOf={tagsOf}
                   linkKeysOf={linkKeysOf}
+                  backlinksOf={backlinksOf}
+                  embedsOf={embedsOf}
                   onOpenFile={openViewerFile}
                   resolveImageRel={resolveImageRel}
                   onChange={(yaml) => handleViewerChange(id, path, yaml)}
@@ -4159,15 +5583,18 @@ export default function App() {
           ) : readingMode ? (
             <ReadingView
               key={`${id}:${path}:read`}
-              doc={pane.doc}
+              doc={docFor(pane)}
               selfRel={rel}
               dark={dark}
+              scrollToLine={pane.scrollToLine}
+              scrollRev={pane.scrollRev}
               onOpenInternal={handleOpenWikilink}
               onOpenUrl={handleOpenUrl}
               onToggleTask={(line) => {
                 if (!isMarkdownPath(path)) return;
-                const next = toggleTaskLine(pane.doc, line);
-                if (next === null || next === pane.doc) return;
+                const base = docFor(pane);
+                const next = toggleTaskLine(base, line);
+                if (next === null || next === base) return;
                 patchPane(id, { doc: next }); // reading view re-renders toggled
                 handleChange(id, path, next); // pending + debounced save
               }}
@@ -4178,12 +5605,16 @@ export default function App() {
           ) : (
             <EditorPane
               key={`${id}:${path}`}
+              paneId={id}
+              continuesFrom={[...renameWindow.current].find(([, to]) => to === path)?.[0]}
               path={path}
               selfRel={rel}
               pluginVersion={pluginVersion}
               apiRef={id === focusedId ? editorApiRef : undefined}
-              doc={pane.doc}
+              doc={docFor(pane)}
+              docRev={pane.docRev}
               scrollToLine={pane.scrollToLine}
+              scrollRev={pane.scrollRev}
               getNotes={getNotes}
               getLinkFormat={getLinkFormat}
               getActiveRel={() => rel || null}
@@ -4194,6 +5625,7 @@ export default function App() {
               spellcheck={spellcheck}
               vim={vim}
               rtl={rtl}
+              lineNumbers={lineNumbers}
               onOpenWikilink={handleOpenWikilink}
               onOpenUrl={handleOpenUrl}
               resolveImage={(target) =>
@@ -4271,6 +5703,7 @@ export default function App() {
             className={readingMode ? "link-btn toggled" : "link-btn"}
             onClick={toggleReading}
             title="Toggle Reading view (rendered, read-only)"
+            aria-pressed={readingMode}
             disabled={activeIsViewer}
           >
             Reading
@@ -4279,6 +5712,7 @@ export default function App() {
             className={sourceMode ? "link-btn toggled" : "link-btn"}
             onClick={toggleSourceMode}
             title="Toggle Source mode (raw Markdown)"
+            aria-pressed={sourceMode}
             disabled={readingMode || activeIsViewer}
           >
             Source
@@ -4286,20 +5720,30 @@ export default function App() {
           <button
             className="link-btn"
             onClick={toggleTheme}
-            title={`Switch to ${dark ? "light" : "dark"} theme`}
+            title={`Switch to ${dark ? "light" : "dark"} theme`} aria-label={`Switch to ${dark ? "light" : "dark"} theme`}
           >
             {dark ? "☾" : "☀"}
           </button>
           <button
             className="link-btn"
             onClick={() => splitFocused("row")}
-            title="Split right"
+            title="Split right" aria-label="Split right"
             disabled={!active}
           >
             ⊟
           </button>
+          {!changedOnDisk && [...conflicts].some((p) => p !== active?.path) && (() => {
+            // A conflict in a note that isn't focused holds its saves; say so.
+            const other = [...conflicts].find((p) => p !== active?.path)!;
+            const name = notes.find((n) => n.path === other)?.name ?? other.split(/[\\/]/).pop();
+            return (
+              <button className="badge-btn conflict-elsewhere" role="status" onClick={() => void openNoteByPath(other)}>
+                ⚠ {name} changed on disk
+              </button>
+            );
+          })()}
           {changedOnDisk && (
-            <span className="conflict">
+            <span className="conflict" role="alert">
               <span className="conflict-label">⚠ Changed on disk</span>
               <button className="badge-btn" onClick={handleReloadFromDisk}>
                 Reload
@@ -4310,6 +5754,9 @@ export default function App() {
             </span>
           )}
           <span className="spacer" />
+          <span className="sr-only" role="alert">
+            {saveError ? `Not saved: ${saveError}` : ""}
+          </span>
           <span className={saveError ? "status status-error" : "status"} title={saveError ?? ""}>
             {saveError
               ? `⚠ ${saveError}`
@@ -4317,7 +5764,7 @@ export default function App() {
                 ? "Saving…"
                 : activeIsBase
                   ? "Read-only"
-                  : active
+                  : active && !isViewPath(active.path)
                     ? "Saved"
                     : ""}
           </span>
@@ -4340,7 +5787,11 @@ export default function App() {
         )}
       </main>
       </div>
-      <StatusBar cursor={cursor} words={docStats?.words ?? 0} chars={docStats?.chars ?? 0} pluginVersion={pluginVersion} />
+      <StatusBar
+        cursor={editing ? cursor : null}
+        counts={docStats && (editing && selStats ? selStats : docStats)}
+        pluginVersion={pluginVersion}
+      />
       {modal === "switcher" && (
         <Palette<VaultNote>
           placeholder="Open or create a note…"
@@ -4375,9 +5826,14 @@ export default function App() {
       )}
       {modal === "search" && (
         <Palette<SearchHit>
-          placeholder="Search… (path: file: tag: line:(a b) -exclude OR &quot;phrase&quot; /regex/)"
+          placeholder="Search… (path: file: tag: line: section: task: [prop] match-case: -x OR (a OR b) &quot;phrase&quot; /regex/)"
           initialQuery={searchSeed}
           getItems={(q) => searchVault(notesRef.current, q, { tagsOf: (p) => index.current.tagsOf(p) })}
+          summary={(hits, shown) => {
+            const { total, notes } = hits as SearchResults;
+            const count = `${total} result${total === 1 ? "" : "s"} in ${notes} note${notes === 1 ? "" : "s"}`;
+            return shown < total ? `${count}, the first ${shown} shown` : count;
+          }}
           itemKey={(h, i) => `${h.path}:${h.line}:${i}`}
           renderItem={(h) => (
             <>
@@ -4425,9 +5881,14 @@ export default function App() {
           enabledPlugins={vault ? loadEnabled(vault) : []}
           onTogglePlugin={(info, on) => void setPluginEnabled(info, on)}
           readableWidth={readableWidth}
-          onReadableWidth={setReadableWidth}
+          onReadableWidth={chooseReadableWidth}
           spellcheck={spellcheck}
           onSpellcheck={setSpellcheck}
+          remoteImages={remoteImages}
+          remoteImagesReload={remoteImagesNeedReload()}
+          onRemoteImages={setRemoteImagesOn}
+          showHidden={showHidden}
+          onShowHidden={setShowHidden}
           vim={vim}
           onVim={setVim}
           rtl={rtl}
@@ -4437,7 +5898,7 @@ export default function App() {
           accent={accent || getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#a98be0"}
           onAccent={setAccent}
           cssSnippets={cssSnippets.map((s) => s.name)}
-          disabledSnippets={disabledSnippets}
+          disabledSnippets={snippetsOff}
           onToggleSnippet={toggleSnippet}
           commands={commands.map((c) => ({ id: c.id, label: c.label }))}
           hotkeys={hotkeys}
@@ -4527,15 +5988,13 @@ export default function App() {
           onClose={() => setModal(null)}
         />
       )}
-      {notices.length > 0 && (
-        <div className="notices">
-          {notices.map((n) => (
-            <div key={n.id} className="notice" onClick={() => setNotices((x) => x.filter((y) => y.id !== n.id))}>
-              {n.msg}
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="notices" role="status" aria-live="polite">
+        {notices.map((n) => (
+          <div key={n.id} className="notice" onClick={() => setNotices((x) => x.filter((y) => y.id !== n.id))}>
+            {n.msg}
+          </div>
+        ))}
+      </div>
       {tabMenu &&
         (() => {
           const pane = panes[tabMenu.paneId];
@@ -4548,8 +6007,7 @@ export default function App() {
             fn();
           };
           return (
-            <div className="ctx-overlay" onMouseDown={() => setTabMenu(null)} onContextMenu={(e) => e.preventDefault()}>
-              <div className="ctx-menu" style={{ left: tabMenu.x, top: tabMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+            <ContextMenu x={tabMenu.x} y={tabMenu.y} label="Tab actions" onClose={() => setTabMenu(null)}>
                 <button className="ctx-item" onClick={() => run(() => void closeTab(tabMenu.paneId, tabMenu.path))}>
                   Close
                 </button>
@@ -4575,8 +6033,7 @@ export default function App() {
                     </button>
                   </>
                 )}
-              </div>
-            </div>
+              </ContextMenu>
           );
         })()}
       {editorMenu &&
@@ -4588,8 +6045,7 @@ export default function App() {
             fn?.();
           };
           return (
-            <div className="ctx-overlay" onMouseDown={() => setEditorMenu(null)} onContextMenu={(e) => e.preventDefault()}>
-              <div className="ctx-menu" style={{ left: editorMenu.x, top: editorMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+            <ContextMenu x={editorMenu.x} y={editorMenu.y} label="Edit actions" onClose={() => setEditorMenu(null)}>
                 <button className="ctx-item" disabled={!hasSel} onClick={() => run(api?.cut)}>
                   Cut
                 </button>
@@ -4606,17 +6062,11 @@ export default function App() {
                 <button className="ctx-item" onClick={() => run(api?.italic)}>
                   Italic
                 </button>
-              </div>
-            </div>
+              </ContextMenu>
           );
         })()}
       {fileMenu && (
-        <div className="ctx-overlay" onMouseDown={() => setFileMenu(null)} onContextMenu={(e) => e.preventDefault()}>
-          <div
-            className="ctx-menu"
-            style={{ left: fileMenu.x, top: fileMenu.y }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
+        <ContextMenu x={fileMenu.x} y={fileMenu.y} label="File actions" onClose={() => setFileMenu(null)}>
             <button
               className="ctx-item"
               onClick={() => {
@@ -4704,16 +6154,20 @@ export default function App() {
             >
               Delete
             </button>
-          </div>
-        </div>
+          </ContextMenu>
       )}
       {attMenu && (
-        <div className="ctx-overlay" onMouseDown={() => setAttMenu(null)} onContextMenu={(e) => e.preventDefault()}>
-          <div
-            className="ctx-menu"
-            style={{ left: attMenu.x, top: attMenu.y }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
+        <ContextMenu x={attMenu.x} y={attMenu.y} label="Attachment actions" onClose={() => setAttMenu(null)}>
+            <button
+              className="ctx-item"
+              onClick={() => {
+                const att = attachmentsRef.current.find((a) => a.path === attMenu.path);
+                setAttMenu(null);
+                if (att) setRenameTarget({ path: att.path, rel: att.rel, attachment: true });
+              }}
+            >
+              Rename…
+            </button>
             <button
               className="ctx-item"
               onClick={() => {
@@ -4734,12 +6188,10 @@ export default function App() {
             >
               Delete
             </button>
-          </div>
-        </div>
+          </ContextMenu>
       )}
       {folderMenu && (
-        <div className="ctx-overlay" onMouseDown={() => setFolderMenu(null)} onContextMenu={(e) => e.preventDefault()}>
-          <div className="ctx-menu" style={{ left: folderMenu.x, top: folderMenu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <ContextMenu x={folderMenu.x} y={folderMenu.y} label="Folder actions" onClose={() => setFolderMenu(null)}>
             <button
               className="ctx-item"
               onClick={() => {
@@ -4780,8 +6232,7 @@ export default function App() {
             >
               Delete folder
             </button>
-          </div>
-        </div>
+          </ContextMenu>
       )}
       {renameFolderTarget !== null && (
         <PromptModal
@@ -4815,24 +6266,37 @@ export default function App() {
               return;
             }
             const full = (parent ? `${parent}/` : "") + folder;
-            void handleNewNoteIn(full); // a starter note makes the new folder appear
+            createFolder(full)
+              .then(() => {
+                setMadeFolder(full);
+                bumpStructure();
+              })
+              .catch((e) => setSaveError(`Couldn't create folder: ${e}`));
           }}
           onClose={() => setSubfolderParent(null)}
         />
       )}
       {renameTarget && (
         <PromptModal
-          title="Rename note (edit the folders to move it)"
-          defaultValue={renameTarget.rel.replace(/\.md$/i, "")}
+          title={`Rename ${renameTarget.attachment ? "file" : "note"} (edit the folders to move it)`}
+          defaultValue={renameTarget.attachment ? renameTarget.rel.replace(/\.[^./]+$/, "") : renameTarget.rel.replace(/\.md$/i, "")}
           confirmLabel="Rename"
           onConfirm={(value) => {
             const t = renameTarget;
             setRenameTarget(null);
             if (/[#^[\]|]/.test(value)) {
-              setSaveError("Note names cannot contain # ^ [ ] |");
+              setSaveError(`${t.attachment ? "File" : "Note"} names cannot contain # ^ [ ] |`);
               return;
             }
-            void handleRenameNote(t.path, value);
+            const rename = t.attachment ? handleRenameAttachment : handleRenameNote;
+            void rename(t.path, value).then(() =>
+              requestAnimationFrame(() => {
+                // The row the menu came from was replaced; focus its new one.
+                if (document.activeElement && document.activeElement !== document.body) return;
+                const now = currentPath(t.path);
+                [...document.querySelectorAll<HTMLElement>(".tree-row.file")].find((r) => r.dataset.path === now)?.focus();
+              }),
+            );
           }}
           onClose={() => setRenameTarget(null)}
         />
@@ -4855,7 +6319,7 @@ export default function App() {
           const srel = notes.find((n) => n.path === focusedPane.active)?.rel ?? "";
           return (
             <SlidesView
-              doc={focusedPane.doc}
+              doc={docFor(focusedPane)}
               selfRel={srel}
               dark={dark}
               onOpenInternal={(t) => {

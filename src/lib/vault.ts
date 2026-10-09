@@ -66,18 +66,60 @@ export function readNote(path: string): Promise<string> {
   return invoke<string>("read_note", { path });
 }
 
-export function writeNote(path: string, content: string): Promise<void> {
-  return invoke<void>("write_note", { path, content });
+/** Error text the core returns when a write's `expected` no longer matches the
+ * file on disk (basalt-core WRITE_CONFLICT; keep the two identical). */
+export const WRITE_CONFLICT = "Changed on disk since Basalt last read it";
+
+export function isWriteConflict(e: unknown): boolean {
+  return String(e).includes(WRITE_CONFLICT);
+}
+
+/** Write a note. With `expected` (what the caller last saw on disk) the core
+ * refuses with WRITE_CONFLICT if someone else changed the file in between. */
+// Text being written right now, by path. A write can land, and the watcher
+// read it, before its reply comes back; that text is Basalt's own.
+const inFlight = new Map<string, string[]>();
+
+async function tracked(path: string, content: string, write: Promise<void>): Promise<void> {
+  const list = inFlight.get(path) ?? [];
+  list.push(content);
+  inFlight.set(path, list);
+  try {
+    await write;
+  } finally {
+    // Dropped a tick later, so a read racing the caller's own bookkeeping
+    // after the reply still matches.
+    setTimeout(() => {
+      const l = inFlight.get(path);
+      if (!l) return;
+      l.splice(l.indexOf(content), 1);
+      if (l.length === 0) inFlight.delete(path);
+    }, 0);
+  }
+}
+
+/** Whether Basalt is writing to `path` right now. */
+export function isWriting(path: string): boolean {
+  return inFlight.has(path);
+}
+
+/** Whether `content` is what Basalt is writing to `path` right now. */
+export function isBeingWritten(path: string, content: string): boolean {
+  return inFlight.get(path)?.includes(content) ?? false;
+}
+
+export function writeNote(path: string, content: string, expected?: string): Promise<void> {
+  return tracked(path, content, invoke<void>("write_note", { path, content, expected: expected ?? null }));
 }
 
 /** Atomically write an existing `.canvas` file (extension-gated in Rust). */
-export function writeCanvas(path: string, content: string): Promise<void> {
-  return invoke<void>("write_canvas", { path, content });
+export function writeCanvas(path: string, content: string, expected?: string): Promise<void> {
+  return tracked(path, content, invoke<void>("write_canvas", { path, content, expected: expected ?? null }));
 }
 
 /** Atomically write an existing `.base` file (extension-gated in Rust). */
-export function writeBase(path: string, content: string): Promise<void> {
-  return invoke<void>("write_base", { path, content });
+export function writeBase(path: string, content: string, expected?: string): Promise<void> {
+  return tracked(path, content, invoke<void>("write_base", { path, content, expected: expected ?? null }));
 }
 
 export function createNote(name: string): Promise<string> {
@@ -92,6 +134,12 @@ export function deleteNote(path: string): Promise<void> {
 /** Rename/move a note to a folder-qualified name (no .md); returns the new path. */
 export function renameNote(path: string, newName: string): Promise<string> {
   return invoke<string>("rename_note", { path, newName });
+}
+
+/** Rename/move an attachment, canvas or base: `newName` is folder-qualified,
+ * without the extension, which the file keeps. Returns the new path. */
+export function renameAttachment(path: string, newName: string): Promise<string> {
+  return invoke<string>("rename_attachment", { path, newName });
 }
 
 /** Move a whole folder (vault-relative path) to the vault's .trash/. */
@@ -126,6 +174,11 @@ export function renameFolder(fromRel: string, toRel: string): Promise<string> {
   return invoke<string>("rename_folder", { fromRel, toRel });
 }
 
+/** Every folder in the open vault, empty ones included (not dot-folders). */
+export function listFolders(): Promise<string[]> {
+  return invoke<string[]>("list_folders");
+}
+
 /** List every attachment (supported non-md file) in the open vault. */
 export function listAttachments(): Promise<Attachment[]> {
   return invoke<Attachment[]>("list_attachments");
@@ -144,6 +197,14 @@ export function writeAttachment(
 export interface ObsidianConfig {
   newLinkFormat?: string | null;
   useMarkdownLinks?: boolean | null;
+  strictLineBreaks?: boolean | null;
+  promptDelete?: boolean | null;
+  showLineNumber?: boolean | null;
+  readableLineLength?: boolean | null;
+  /** "daily" opens today's daily note with the vault. */
+  openBehavior?: string | null;
+  /** Templater's "Trigger on new file creation". */
+  templaterOnCreate?: boolean | null;
   attachmentFolderPath?: string | null;
   dailyNotesFolder?: string | null;
   dailyNotesFormat?: string | null;
@@ -173,6 +234,10 @@ export function readObsidianImport(): Promise<ObsidianImportRaw> {
 export interface CssSnippet {
   name: string;
   css: string;
+  /** From `.obsidian/snippets` (else `.basalt/snippets`). */
+  fromObsidian?: boolean;
+  /** Listed in Obsidian's appearance.json `enabledCssSnippets`. */
+  enabledInObsidian?: boolean;
 }
 export function listCssSnippets(): Promise<CssSnippet[]> {
   return invoke<CssSnippet[]>("list_css_snippets");
@@ -216,9 +281,9 @@ export function toggleFileBookmark(path: string): Promise<boolean> {
   return invoke<boolean>("toggle_file_bookmark", { path });
 }
 
-/** Write an export file to a user-chosen (save-dialog) path. */
-export function exportFile(path: string, content: string): Promise<void> {
-  return invoke<void>("export_file", { path, content });
+/** Show the native save dialog and write the export there; null if cancelled. */
+export function exportFile(defaultName: string, content: string): Promise<string | null> {
+  return invoke<string | null>("export_file", { defaultName, content });
 }
 
 /** Start (or restart) watching the open vault for on-disk changes. */

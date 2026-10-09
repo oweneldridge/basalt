@@ -17,7 +17,8 @@ import {
   foldKeymap,
 } from "@codemirror/language";
 import { gutter, GutterMarker } from "@codemirror/view";
-import type { EditorState, Extension } from "@codemirror/state";
+import { EditorSelection, EditorState, Transaction } from "@codemirror/state";
+import type { Extension } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 
 const ATX = /^ATXHeading([1-6])$/;
@@ -112,6 +113,11 @@ const headingFoldGutter = gutter({
   lineMarkerChange: () => true,
   initialSpacer: () => OPEN,
   domEventHandlers: {
+    // The editor keeps its focus, so typing goes on where it was.
+    mousedown(_view, _line, event) {
+      event.preventDefault();
+      return false;
+    },
     click(view, line) {
       const range = foldableAt(view.state, line.from);
       if (!range) return false;
@@ -122,6 +128,48 @@ const headingFoldGutter = gutter({
   },
 });
 
-export const headingFold: Extension = [codeFolding(), headingFoldGutter];
+/** An edit of the user's that would change a folded section's hidden text
+ * (or join a line onto it) opens the section instead and changes nothing, so
+ * nothing changes unseen. A selection reaching visible text past the section,
+ * or the whole note, is the user's to change, hidden text and all. Tab and
+ * Shift-Tab only change indentation, and undo and redo put back what was. */
+const guardFolds = EditorState.transactionFilter.of((tr) => {
+  const event = tr.annotation(Transaction.userEvent);
+  if (!tr.docChanged || !event || /^(undo|redo|input\.indent|delete\.dedent)/.test(event)) return tr;
+  const all = tr.startState.doc.length;
+  const open: { from: number; to: number }[] = [];
+  foldedRanges(tr.startState).between(0, all, (from, to) => {
+    // Into the text of the line after it: a selection that ends at the line's
+    // end (Shift+End, a triple-click) shows only the placeholder selected.
+    const covered = tr.startState.selection.ranges.some((r) => r.from <= from && (r.to > to + 1 || (r.from === 0 && r.to === all)));
+    if (covered) return;
+    tr.changes.iterChanges((fromA, toA) => {
+      if ((fromA < to && toA > from) || (fromA === to && toA > to)) open.push({ from, to });
+    });
+  });
+  if (!open.length) return tr;
+  // A selection over the opened text shrinks to its start, so the next key
+  // doesn't replace what just came into view.
+  const sel = tr.startState.selection.main;
+  return { effects: open.map((r) => unfoldEffect.of(r)), selection: sel.empty ? undefined : EditorSelection.cursor(sel.from) };
+});
+
+/** Text typed, pasted, dropped or inserted at a folded section's hidden end
+ * (where the caret sits after its placeholder) would join its last hidden
+ * line, so the section opens to show where it went. Enter starts a line after
+ * the section as usual. */
+const openWhenTypedAtEnd = EditorState.transactionFilter.of((tr) => {
+  const event = tr.annotation(Transaction.userEvent);
+  if (!tr.docChanged || !event || /^(undo|redo|input\.indent|delete\.dedent)/.test(event)) return tr;
+  const open: { from: number; to: number }[] = [];
+  foldedRanges(tr.startState).between(0, tr.startState.doc.length, (from, to) => {
+    tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+      if (fromA === to && toA === to && !inserted.sliceString(0, 1).startsWith("\n")) open.push({ from, to });
+    });
+  });
+  return open.length ? [tr, { effects: open.map((r) => unfoldEffect.of(r)) }] : tr;
+});
+
+export const headingFold: Extension = [codeFolding(), headingFoldGutter, guardFolds, openWhenTypedAtEnd];
 
 export { foldKeymap };

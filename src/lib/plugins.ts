@@ -61,12 +61,20 @@ export interface FileCache {
 /** The concrete capabilities App wires into the host. Keeping the host UI- and
  * Tauri-agnostic makes it unit-testable and keeps the trust surface explicit. */
 export interface HostDeps {
+  /** A note's text as the app last saw it on disk, without a round trip
+   * (null when it doesn't hold it, e.g. a note over the index cap). */
+  cachedRead?: (rel: string) => string | null;
   /** Vault notes. `ctime`/`mtime` are epoch-ms (for Dataview-style file dates);
    * older callers may omit them. */
   getMarkdownFiles: () => { path: string; name: string; ctime?: number; mtime?: number }[];
+  /** Every file in the vault, notes and attachments (vault-relative paths). */
+  getFiles?: () => { path: string; ctime?: number; mtime?: number; size?: number }[];
+  /** Every folder in the vault (vault-relative paths). */
+  getFolders?: () => string[];
   readNote: (path: string) => Promise<string>;
   createNote: (path: string, content: string) => Promise<void>;
-  modifyNote: (path: string, content: string) => Promise<void>;
+  /** With `expected`, the write is refused unless the note still reads so. */
+  modifyNote: (path: string, content: string, expected?: string) => Promise<void>;
   /** Move a note (by vault-relative path) to the vault trash. */
   deleteNote: (path: string) => Promise<void>;
   /** Rename/move a note; `newPath` is a vault-relative path (with or without .md). */
@@ -80,10 +88,21 @@ export interface HostDeps {
   notice: (message: string, timeoutMs?: number) => void;
   /** Parsed metadata for a note (by vault-relative path), or null if unknown. */
   getFileCache: (path: string) => FileCache | null;
+  /** Obsidian's resolvedLinks: source note → the files it links to → count. */
+  resolvedLinks?: () => Record<string, Record<string, number>>;
+  /** Obsidian's unresolvedLinks: source note → names it links to that aren't
+   * in the vault → count. */
+  unresolvedLinks?: () => Record<string, Record<string, number>>;
   /** Insert text at the focused editor's caret (replacing any selection); place
    * the caret `caretOffset` chars into the inserted text. No-op if no editor.
    * Optional so older host wirings still satisfy the type. */
   insertAtCursor?: (text: string, caretOffset?: number) => void;
+  /** Open (creating if needed) the daily note for a date, using the vault's
+   * Daily notes settings: folder, date format and template. `folderIfUnset` is
+   * used only when the vault has no Daily notes settings. */
+  openDailyNote?: (date: Date, folderIfUnset?: string) => Promise<void>;
+  /** Whether the daily note for a date exists. */
+  hasDailyNote?: (date: Date, folderIfUnset?: string) => boolean;
   /** Re-render open editors/reading views after processors/commands change. */
   onRegistryChanged: () => void;
 }
@@ -98,7 +117,7 @@ export interface PluginCommand {
 }
 
 // Languages Basalt renders itself — a plugin can't shadow them.
-const RESERVED_LANGS = new Set(["mermaid", "dataview", "query", "basalt-query"]);
+const RESERVED_LANGS = new Set(["mermaid", "dataview", "query", "basalt-query", "base"]);
 
 const commands = new Map<string, PluginCommand>();
 const processors = new Map<string, { pluginId: string; fn: CodeBlockProcessor }>();
@@ -123,6 +142,14 @@ type Listener = (...args: unknown[]) => void;
 
 const vaultListeners = new Map<string, Set<Listener>>();
 const workspaceListeners = new Map<string, Set<Listener>>();
+// Live vault subscriptions per plugin and event ("id:event"), so the host can
+// tell whether a plugin will act on a note it makes.
+const listening = new Map<string, number>();
+
+/** Whether plugin `id` is subscribed to vault event `name` right now. */
+export function listensFor(id: string, name: VaultEventName): boolean {
+  return (listening.get(`${id}:${name}`) ?? 0) > 0;
+}
 
 function subscribe(map: Map<string, Set<Listener>>, name: string, cb: Listener): EventRef {
   let set = map.get(name);
@@ -265,15 +292,68 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     }
   }
 
+  // Files and folders shaped like Obsidian's TFile and TFolder.
+  const fileOf = (f: { path: string; ctime?: number; mtime?: number; size?: number }) => {
+    const name = f.path.split("/").pop() ?? f.path;
+    const dot = name.lastIndexOf(".");
+    return {
+      path: f.path,
+      name,
+      basename: dot > 0 ? name.slice(0, dot) : name,
+      extension: dot > 0 ? name.slice(dot + 1) : "",
+      stat: { ctime: f.ctime ?? 0, mtime: f.mtime ?? 0, size: f.size ?? 0 },
+    };
+  };
+  const allFiles = () => (host.getFiles?.() ?? host.getMarkdownFiles().map((f) => ({ ...f, path: f.path }))).map(fileOf);
+  type Folder = { path: string; name: string; children: unknown[]; parent: Folder | null };
+  const allLoaded = () => {
+    const root: Folder = { path: "/", name: "", children: [], parent: null };
+    const folders = new Map<string, Folder>([["", root]]);
+    for (const rel of [...(host.getFolders?.() ?? [])].sort()) {
+      folders.set(rel, { path: rel, name: rel.split("/").pop() ?? rel, children: [], parent: null });
+    }
+    const parentOf = (path: string) => folders.get(path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "") ?? root;
+    for (const [rel, folder] of folders) {
+      if (!rel) continue;
+      folder.parent = parentOf(rel);
+      folder.parent.children.push(folder);
+    }
+    const files = allFiles().map((f) => {
+      const parent = parentOf(f.path);
+      const file = { ...f, parent };
+      parent.children.push(file);
+      return file;
+    });
+    return [...folders.values(), ...files];
+  };
+
   const app = {
     vault: {
       getName: () => host.vaultName(),
       getMarkdownFiles: () => host.getMarkdownFiles(),
+      /** Every file, notes and attachments, as Obsidian's TFile. */
+      getFiles: () => allLoaded().filter((f) => !("children" in f)),
+      /** Every file and folder, the vault's root first, as Obsidian gives them. */
+      getAllLoadedFiles: () => allLoaded(),
       read: (file: { path: string } | string) =>
         host.readNote(typeof file === "string" ? file : file.path),
+      /** Obsidian's cachedRead: the app's copy when it has one, else a read. */
+      cachedRead: async (file: { path: string } | string) => {
+        const rel = typeof file === "string" ? file : file.path;
+        return host.cachedRead?.(rel) ?? host.readNote(rel);
+      },
       create: (path: string, content: string) => host.createNote(path, content),
       modify: (file: { path: string } | string, content: string) =>
         host.modifyNote(typeof file === "string" ? file : file.path, content),
+      /** Obsidian's process: change a note from its current text in one step;
+       * refused if the note changes between the read and the write. */
+      process: async (file: { path: string } | string, fn: (data: string) => string) => {
+        const rel = typeof file === "string" ? file : file.path;
+        const current = await host.readNote(rel);
+        const next = fn(current);
+        if (next !== current) await host.modifyNote(rel, next, current);
+        return next;
+      },
       delete: (file: { path: string } | string) =>
         host.deleteNote(typeof file === "string" ? file : file.path),
       rename: (file: { path: string } | string, newPath: string) =>
@@ -281,13 +361,41 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       createFolder: (path: string) => host.createFolder(path),
       /** Subscribe to a vault event: create/delete/modify → (file); rename →
        * (file, oldPath). Pass the returned ref to plugin.registerEvent(). */
-      on: (name: VaultEventName, cb: (...args: unknown[]) => void): EventRef =>
-        subscribe(vaultListeners, name, cb),
+      on: (name: VaultEventName, cb: (...args: unknown[]) => void): EventRef => {
+        const key = `${ctx.info.id}:${name}`;
+        const ref = subscribe(vaultListeners, name, cb);
+        listening.set(key, (listening.get(key) ?? 0) + 1);
+        let live = true;
+        return {
+          off: () => {
+            ref.off();
+            if (live) listening.set(key, (listening.get(key) ?? 1) - 1);
+            live = false;
+          },
+        };
+      },
     },
+    /** Daily notes as the vault's Daily notes settings define them. Absent on
+     * hosts that don't provide them. */
+    dailyNotes:
+      host.openDailyNote && host.hasDailyNote
+        ? {
+            open: (date: Date, folderIfUnset?: string) => host.openDailyNote!(date, folderIfUnset),
+            has: (date: Date, folderIfUnset?: string) => host.hasDailyNote!(date, folderIfUnset),
+          }
+        : undefined,
     metadataCache: {
       /** Parsed metadata for a note (accepts a `{path}` or a rel string). */
       getFileCache: (file: { path: string } | string): FileCache | null =>
         host.getFileCache(typeof file === "string" ? file : file.path),
+      /** Each note's resolved links, as Obsidian's `resolvedLinks`. */
+      get resolvedLinks(): Record<string, Record<string, number>> {
+        return host.resolvedLinks?.() ?? {};
+      },
+      /** Each note's links to files that aren't there, as Obsidian's `unresolvedLinks`. */
+      get unresolvedLinks(): Record<string, Record<string, number>> {
+        return host.unresolvedLinks?.() ?? {};
+      },
     },
     workspace: {
       getActiveFile: () => {
@@ -517,3 +625,73 @@ export function saveEnabled(vault: string, ids: string[]): void {
     /* quota — non-fatal */
   }
 }
+
+// A plugin is enabled for the code the user agreed to run: its main.js hash is
+// recorded on enable, and changed code (a sync peer replacing the file) stays
+// off until the user turns it on again.
+const hashesKey = (vault: string) => `basalt.plugins.hashes.${vault}`;
+
+export async function codeHash(code: string): Promise<string> {
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle) {
+    const buf = await subtle.digest("SHA-256", new TextEncoder().encode(code));
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  // No WebCrypto (a plain-http page): FNV-1a plus length, enough to notice edits.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < code.length; i++) h = Math.imul(h ^ code.charCodeAt(i), 0x01000193) >>> 0;
+  return `fnv-${h.toString(16)}-${code.length}`;
+}
+
+function loadHashes(vault: string): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(hashesKey(vault));
+    const v = raw ? (JSON.parse(raw) as unknown) : {};
+    return v && typeof v === "object" ? (v as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveHashes(vault: string, hashes: Record<string, string>): void {
+  try {
+    localStorage.setItem(hashesKey(vault), JSON.stringify(hashes));
+  } catch {
+    /* quota, non-fatal */
+  }
+}
+
+/** Record the code the user just enabled. */
+export async function rememberPluginCode(vault: string, info: PluginInfo): Promise<void> {
+  const hashes = loadHashes(vault);
+  hashes[info.id] = await codeHash(info.code);
+  saveHashes(vault, hashes);
+}
+
+/** Split the enabled plugins into those safe to run and those whose code
+ * changed since they were enabled (which get switched off). A plugin enabled
+ * before hashes were recorded is trusted once and recorded now. */
+export async function vetEnabledPlugins(
+  vault: string,
+  infos: PluginInfo[],
+): Promise<{ run: PluginInfo[]; changed: PluginInfo[] }> {
+  const enabled = new Set(loadEnabled(vault));
+  const hashes = loadHashes(vault);
+  const run: PluginInfo[] = [];
+  const changed: PluginInfo[] = [];
+  for (const info of infos) {
+    if (!enabled.has(info.id)) continue;
+    const h = await codeHash(info.code);
+    if (hashes[info.id] === undefined || hashes[info.id] === h) {
+      hashes[info.id] = h;
+      run.push(info);
+    } else {
+      changed.push(info);
+      enabled.delete(info.id);
+    }
+  }
+  saveHashes(vault, hashes);
+  if (changed.length) saveEnabled(vault, [...enabled]);
+  return { run, changed };
+}
+

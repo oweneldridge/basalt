@@ -10,8 +10,11 @@ import {
   isLoaded,
   loadEnabled,
   saveEnabled,
+  rememberPluginCode,
+  vetEnabledPlugins,
   emitVaultEvent,
   emitWorkspaceEvent,
+  listensFor,
   pluginSettingTabs,
   pluginRightViews,
   type HostDeps,
@@ -228,6 +231,27 @@ describe("plugin events", () => {
     expect((globalThis as any).__events).toEqual([]);
   });
 
+  it("tells which plugins listen for a vault event, until they unload or let go", async () => {
+    installHost(fakeHost().host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          this.registerEvent(this.app.vault.on("create", () => {}));
+          const once = this.app.vault.on("modify", () => {});
+          once.off();
+          once.off();
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "tpl", code }));
+    expect(listensFor("tpl", "create")).toBe(true);
+    expect(listensFor("tpl", "modify")).toBe(false); // let go, and twice counts once
+    expect(listensFor("other", "create")).toBe(false);
+    await unloadPlugin("tpl");
+    expect(listensFor("tpl", "create")).toBe(false);
+  });
+
   it("registerInterval + registerDomEvent are cleared on unload", async () => {
     const { host } = fakeHost();
     installHost(host);
@@ -329,5 +353,55 @@ describe("plugin vault mutations", () => {
     `;
     await loadPlugin(info({ id: "vmut", code }));
     expect(calls).toEqual(["delete:A.md", "rename:A.md->B.md", "mkdir:Folder"]);
+  });
+
+  it("process writes only over the text it read, and not at all when unchanged", async () => {
+    const writes: [string, string, string | undefined][] = [];
+    const { host } = fakeHost({
+      readNote: async () => "old text",
+      modifyNote: async (pth, content, expected) => { writes.push([pth, content, expected]); },
+    });
+    installHost(host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        async onload() {
+          await this.app.vault.process("A.md", (s) => s.toUpperCase());
+          await this.app.vault.process("A.md", (s) => s);
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "vproc", code }));
+    expect(writes).toEqual([["A.md", "OLD TEXT", "old text"]]);
+  });
+});
+
+describe("enabled plugins are tied to their code", () => {
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    });
+  });
+  const plugin = (code: string): PluginInfo => ({ id: "p", name: "P", version: "1", description: "", author: "", minAppVersion: "", code, data: null });
+
+  it("runs the enabled code, and switches a plugin off when its code changes", async () => {
+    store.clear();
+    saveEnabled("/v", ["p"]);
+    await rememberPluginCode("/v", plugin("v1"));
+    expect((await vetEnabledPlugins("/v", [plugin("v1")])).run.map((p) => p.id)).toEqual(["p"]);
+    const swapped = await vetEnabledPlugins("/v", [plugin("v2 from a sync peer")]);
+    expect(swapped.run).toEqual([]);
+    expect(swapped.changed.map((p) => p.id)).toEqual(["p"]);
+    expect(loadEnabled("/v")).toEqual([]);
+  });
+
+  it("trusts a plugin enabled before hashes existed, once", async () => {
+    store.clear();
+    saveEnabled("/v", ["p"]);
+    expect((await vetEnabledPlugins("/v", [plugin("old")])).run).toHaveLength(1);
+    expect((await vetEnabledPlugins("/v", [plugin("new")])).changed).toHaveLength(1);
   });
 });

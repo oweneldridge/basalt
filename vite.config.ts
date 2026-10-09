@@ -9,7 +9,7 @@ export default defineConfig(async () => ({
   plugins: [react()],
 
   // Vitest: the e2e/ Playwright specs are run by `npm run test:e2e`, not vitest.
-  test: { exclude: [...configDefaults.exclude, "e2e/**"] },
+  test: { exclude: [...configDefaults.exclude, "e2e/**", "e2e-real/**"] },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import type { Attachment, VaultNote } from "../lib/vault";
 import { ancestorFolders, buildTree, type TreeNode, type SortOrder } from "../lib/tree";
+import { menuKeyOpens } from "./ContextMenu";
 
 interface Props {
   notes: VaultNote[];
   attachments: Attachment[];
+  /** Every folder in the vault, so empty ones show too. */
+  folders?: string[];
+  /** A folder to show (its parents opened): one just made. */
+  revealFolder?: string | null;
   activePath: string | null;
   vaultName: string | null;
   onOpen: (path: string) => void;
@@ -17,7 +22,7 @@ interface Props {
   onAttachmentContextMenu: (path: string, x: number, y: number) => void;
   /** Open the folder context menu (New note here) for a folder rel path. */
   onFolderContextMenu: (folderRel: string, x: number, y: number) => void;
-  /** Move a note (by path) into a folder (rel, "" = vault root). */
+  /** Move a note or attachment (by path) into a folder (rel, "" = vault root). */
   onMoveToFolder: (notePath: string, folderRel: string) => void;
 }
 
@@ -43,7 +48,20 @@ function saveExpanded(vault: string | null, set: Set<string>): void {
 
 const DND_MIME = "application/x-basalt-note";
 
-export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onNewNote, onOpenAttachment, onContextMenu, onAttachmentContextMenu, onFolderContextMenu, onMoveToFolder }: Props) {
+/** A non-note file's name as Obsidian lists it: the name without its
+ * extension, then the extension as a small tag. */
+function FileName({ name }: { name: string }) {
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot === name.length - 1) return <span className="tree-name">{name}</span>;
+  return (
+    <>
+      <span className="tree-name">{name.slice(0, dot)}</span>
+      <span className="file-tag">{name.slice(dot + 1)}</span>
+    </>
+  );
+}
+
+export function Sidebar({ notes, attachments, folders = [], revealFolder = null, activePath, vaultName, onOpen, onNewNote, onOpenAttachment, onContextMenu, onAttachmentContextMenu, onFolderContextMenu, onMoveToFolder }: Props) {
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const noteListRef = useRef<HTMLDivElement | null>(null);
@@ -65,7 +83,15 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
   );
   useEffect(() => localStorage.setItem("basalt.fileSort", sort), [sort]);
 
-  const tree = useMemo(() => buildTree(notes, attachments, sort), [notes, attachments, sort]);
+  // The tree only needs each note's path and dates: an edit to a note's text
+  // (a link fix across hundreds of notes, say) doesn't rebuild it.
+  const shapeRef = useRef<VaultNote[]>(notes);
+  const shape = useMemo(() => {
+    const prev = shapeRef.current;
+    const same = prev.length === notes.length && prev.every((n, i) => n.path === notes[i].path && n.mtime === notes[i].mtime && n.ctime === notes[i].ctime);
+    return (shapeRef.current = same ? prev : notes);
+  }, [notes]);
+  const tree = useMemo(() => buildTree(shape, attachments, sort, folders), [shape, attachments, sort, folders]);
 
   // Load persisted expansion when the vault changes.
   useEffect(() => {
@@ -96,6 +122,12 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
       return changed ? next : prev;
     });
   }, [activePath, notes]);
+
+  useEffect(() => {
+    if (!revealFolder) return;
+    const anc = ancestorFolders(revealFolder);
+    if (anc.length) setExpanded((prev) => new Set([...prev, ...anc]));
+  }, [revealFolder]);
 
   const toggle = (path: string) =>
     setExpanded((prev) => {
@@ -133,7 +165,7 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
   }, [tree, expanded, filtered]);
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" aria-label="Files">
       <div
         className="sidebar-head"
         title="Drop a note here to move it to the vault root"
@@ -153,13 +185,13 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
         <span className="vault-name" title={vaultName ?? ""}>
           {vaultName ?? "No vault"}
         </span>
-        <button className="icon-btn" onClick={revealActive} title="Reveal active file" disabled={!activePath}>
+        <button className="icon-btn" onClick={revealActive} title="Reveal active file" aria-label="Reveal active file" disabled={!activePath}>
           ⊙
         </button>
-        <button className="icon-btn" onClick={() => setExpanded(new Set())} title="Collapse all">
+        <button className="icon-btn" onClick={() => setExpanded(new Set())} title="Collapse all" aria-label="Collapse all">
           ⇈
         </button>
-        <button className="icon-btn" onClick={onNewNote} title="New note">
+        <button className="icon-btn" onClick={onNewNote} title="New note" aria-label="New note">
           +
         </button>
       </div>
@@ -195,6 +227,10 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
                   e.preventDefault();
                   onContextMenu(n.path, e.clientX, e.clientY);
                 }}
+                onKeyDown={(e) => {
+                  const at = menuKeyOpens(e);
+                  if (at) onContextMenu(n.path, at.x, at.y);
+                }}
                 title={n.rel}
               >
                 {n.name}
@@ -209,9 +245,13 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
                   e.preventDefault();
                   onAttachmentContextMenu(a.path, e.clientX, e.clientY);
                 }}
+                onKeyDown={(e) => {
+                  const at = menuKeyOpens(e);
+                  if (at) onAttachmentContextMenu(a.path, at.x, at.y);
+                }}
                 title={a.rel}
               >
-                {a.name}
+                <FileName name={a.name} />
               </button>
             ))}
             {filtered.notes.length === 0 && filtered.attachments.length === 0 && (
@@ -229,6 +269,10 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
                 onContextMenu={(e) => {
                   e.preventDefault();
                   onFolderContextMenu(node.path, e.clientX, e.clientY);
+                }}
+                onKeyDown={(e) => {
+                  const at = menuKeyOpens(e);
+                  if (at) onFolderContextMenu(node.path, at.x, at.y);
                 }}
                 onDragOver={(e) => {
                   if (e.dataTransfer.types.includes(DND_MIME)) {
@@ -249,9 +293,10 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
             ) : (
               <button
                 key={`f:${node.path}`}
+                data-path={node.path}
                 className={`tree-row file${node.attachment ? " attachment" : ""}${node.path === activePath ? " active" : ""}`}
                 style={{ paddingLeft: 22 + depth * 14 }}
-                draggable={!node.attachment}
+                draggable
                 onDragStart={(e) => e.dataTransfer.setData(DND_MIME, node.path)}
                 onClick={() => (node.attachment ? onOpenAttachment(node.path) : onOpen(node.path))}
                 onContextMenu={(e) => {
@@ -259,9 +304,15 @@ export function Sidebar({ notes, attachments, activePath, vaultName, onOpen, onN
                   if (node.attachment) onAttachmentContextMenu(node.path, e.clientX, e.clientY);
                   else onContextMenu(node.path, e.clientX, e.clientY);
                 }}
+                onKeyDown={(e) => {
+                  const at = menuKeyOpens(e);
+                  if (!at) return;
+                  if (node.attachment) onAttachmentContextMenu(node.path, at.x, at.y);
+                  else onContextMenu(node.path, at.x, at.y);
+                }}
                 title={node.name}
               >
-                <span className="tree-name">{node.name}</span>
+                {node.attachment ? <FileName name={node.name} /> : <span className="tree-name">{node.name}</span>}
               </button>
             ),
           )

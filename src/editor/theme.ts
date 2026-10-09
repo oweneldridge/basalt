@@ -1,6 +1,7 @@
 // Editor theme + Markdown syntax highlighting. Dark, Obsidian-adjacent.
 import { EditorView } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { codeHighlighter } from "../lib/codeHighlight";
 import { tags as t } from "@lezer/highlight";
 import type { Extension } from "@codemirror/state";
 
@@ -47,7 +48,20 @@ const themeSpec = {
     ".cm-wikilink-source": { color: "var(--accent)" },
     // Markdown links
     ".cm-md-link": { color: "var(--accent)", textDecoration: "none", cursor: "pointer" },
+    // A bare URL's own highlighting (muted) gives way to the link colour.
+    ".cm-md-link span": { color: "inherit" },
     ".cm-md-link:hover": { textDecoration: "underline" },
+    // Links to files not in the vault (see .is-unresolved in styles.css).
+    ".cm-wikilink.is-unresolved": {
+      opacity: "var(--link-unresolved-opacity, 0.85)",
+      textDecoration: "underline dotted",
+      textUnderlineOffset: "3px",
+    },
+    ".cm-md-link.is-unresolved": {
+      opacity: "var(--link-unresolved-opacity, 0.85)",
+      textDecoration: "underline dotted",
+      textUnderlineOffset: "3px",
+    },
     // Inline code (in rendered widgets like table cells)
     ".cm-inline-code": {
       fontFamily: "var(--font-mono)",
@@ -89,33 +103,41 @@ const themeSpec = {
       padding: "1px 7px",
       fontSize: "0.86em",
     },
-    // Blockquotes + callouts
+    // Blockquotes + callouts: the bar on the text's left edge, the text
+    // indented after it, as in Reading view (not out in the left gutter).
     ".cm-blockquote": {
       borderLeft: "3px solid var(--border)",
+      marginLeft: "48px",
       paddingLeft: "12px",
-      color: "var(--text-muted)",
     },
     ".cm-callout": {
       borderLeft: "3px solid var(--cg)",
       background: "var(--cgbg)",
       paddingTop: "1px",
       paddingBottom: "1px",
+      marginLeft: "48px",
       paddingLeft: "12px",
     },
+    // Colour groups (--cg) are theme variables in styles.css, shared with
+    // Reading view.
     ".cm-callout-title": { fontWeight: "700", color: "var(--cg)" },
-    ".cm-callout-blue": { "--cg": "#7aa2f7", "--cgbg": "rgba(122,162,247,0.08)" },
-    ".cm-callout-green": { "--cg": "#9ece6a", "--cgbg": "rgba(158,206,106,0.08)" },
-    ".cm-callout-orange": { "--cg": "#e0af68", "--cgbg": "rgba(224,175,104,0.08)" },
-    ".cm-callout-red": { "--cg": "#f7768e", "--cgbg": "rgba(247,118,142,0.08)" },
-    ".cm-callout-purple": { "--cg": "#bb9af7", "--cgbg": "rgba(187,154,247,0.08)" },
-    ".cm-callout-gray": { "--cg": "#8a8c90", "--cgbg": "rgba(138,140,144,0.07)" },
+    // A quote or callout inside one: its own bar (and tint) inside the parent's.
+    ".cm-quote-inner": {
+      paddingLeft: "27px",
+      backgroundImage:
+        "linear-gradient(to right, transparent 12px, var(--cg2, var(--border)) 12px, var(--cg2, var(--border)) 15px, var(--cg2bg, transparent) 15px)",
+    },
+    ".cm-callout-inner-title": { fontWeight: "700", color: "var(--cg2)" },
     // Images + embeds
     ".cm-md-image": {
       display: "block",
       maxWidth: "100%",
       borderRadius: "6px",
-      margin: "6px 0",
+      padding: "6px 0",
     },
+    // The holder wraps a block image: give it the image's box, or CodeMirror
+    // sees only an empty inline span and puts a click beside it before it.
+    ".cm-md-image-holder:has(> img.cm-md-image)": { display: "block", width: "fit-content", maxWidth: "100%" },
     ".cm-md-image-missing": { color: "var(--text-faint)", fontSize: "0.9em" },
     ".cm-embed-source": { color: "var(--accent)" },
     ".cm-embed-note": {
@@ -169,7 +191,7 @@ const themeSpec = {
     ".cm-searchMatch": { background: "rgba(224, 175, 104, 0.25)" },
     ".cm-searchMatch-selected": { background: "rgba(224, 175, 104, 0.5)" },
     // Rendered tables — align with the text gutter (50px ≈ .cm-line 48 + 2 pad)
-    ".cm-md-table-wrap": { overflowX: "auto", margin: "10px 0 10px 50px", maxWidth: "820px" },
+    ".cm-md-table-wrap": { overflowX: "auto", marginLeft: "50px", maxWidth: "820px" },
     ".cm-md-table": { borderCollapse: "collapse", fontSize: "0.95em" },
     ".cm-md-table th, .cm-md-table td": {
       border: "1px solid var(--border)",
@@ -178,11 +200,22 @@ const themeSpec = {
     },
     ".cm-md-table th": { background: "var(--bg-elev)", fontWeight: "700" },
     // Frontmatter "Properties" view
+    // Block widgets never take vertical margins: CodeMirror measures a widget
+    // without them, so every line below would sit out of step with the page.
+    // A transparent border, not padding: a code block's or callout's own
+    // background and top padding stay below the gap.
+    ".cm-after-properties": { borderTop: "18px solid transparent", backgroundClip: "padding-box" },
+    // A coloured left border would slant up into the gap; an inset shadow
+    // stays inside the padding box with the background.
+    ".cm-after-properties.cm-callout": { borderLeft: "none", paddingLeft: "15px", boxShadow: "inset 3px 0 var(--cg)" },
+    ".cm-after-properties.cm-blockquote": { borderLeft: "none", paddingLeft: "15px", boxShadow: "inset 3px 0 var(--border)" },
+    // The gap shrinks the inner corners by its height; give it back.
+    ".cm-after-properties.cm-code-first": { borderRadius: "6px 6px 0 0 / 24px 24px 0 0" },
     ".cm-properties": {
       border: "1px solid var(--border)",
       borderRadius: "8px",
       padding: "4px 4px",
-      margin: "4px 0 18px 50px",
+      marginLeft: "50px",
       maxWidth: "820px",
       background: "rgba(255,255,255,0.015)",
     },
@@ -307,8 +340,10 @@ const themeSpec = {
     ".cm-mermaid": {
       display: "block",
       textAlign: "center",
-      margin: "8px 0",
-      padding: "8px 0",
+      // Padding, not margin: CodeMirror measures a block widget without its
+      // margins, so lines below would sit out of step with clicks. Inset to
+      // the text column like the lines.
+      padding: "16px 2px 16px 48px",
       color: "var(--text-muted)",
       cursor: "pointer",
     },
@@ -353,11 +388,11 @@ const highlight = HighlightStyle.define([
   { tag: t.link, color: "var(--accent)" },
   { tag: t.url, color: "var(--text-muted)" },
   { tag: t.monospace, fontFamily: "var(--font-mono)", color: "var(--code)" },
-  { tag: t.quote, color: "var(--text-muted)", fontStyle: "italic" },
+  { tag: t.quote, color: "inherit" },
   { tag: t.list, color: "var(--text)" },
   { tag: t.contentSeparator, color: "var(--text-muted)" },
   { tag: [t.meta, t.processingInstruction], color: "var(--text-faint)" },
-  { tag: t.comment, color: "var(--text-faint)", fontStyle: "italic" },
+  { tag: t.comment, color: "var(--code-comment)", fontStyle: "italic" },
 ]);
 
-export const basaltHighlight: Extension = syntaxHighlighting(highlight);
+export const basaltHighlight: Extension = [syntaxHighlighting(highlight), syntaxHighlighting(codeHighlighter)];
