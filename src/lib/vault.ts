@@ -201,6 +201,8 @@ export interface ObsidianConfig {
   promptDelete?: boolean | null;
   showLineNumber?: boolean | null;
   readableLineLength?: boolean | null;
+  /** "daily" opens today's daily note with the vault. */
+  openBehavior?: string | null;
   attachmentFolderPath?: string | null;
   dailyNotesFolder?: string | null;
   dailyNotesFormat?: string | null;

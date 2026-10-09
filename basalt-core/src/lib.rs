@@ -1324,6 +1324,8 @@ pub struct ObsidianConfig {
     show_line_number: Option<bool>,
     /// Text kept to a readable width.
     readable_line_length: Option<bool>,
+    /// What to open with the vault: "daily" opens today's daily note.
+    open_behavior: Option<String>,
     attachment_folder_path: Option<String>,
     daily_notes_folder: Option<String>,
     daily_notes_format: Option<String>,
@@ -1345,6 +1347,7 @@ pub fn read_obsidian_config(root: &Path) -> Result<ObsidianConfig, String> {
             cfg.prompt_delete = v.get("promptDelete").and_then(|x| x.as_bool());
             cfg.show_line_number = v.get("showLineNumber").and_then(|x| x.as_bool());
             cfg.readable_line_length = v.get("readableLineLength").and_then(|x| x.as_bool());
+            cfg.open_behavior = v.get("openBehavior").and_then(|x| x.as_str()).map(String::from);
             cfg.attachment_folder_path =
                 v.get("attachmentFolderPath").and_then(|x| x.as_str()).map(String::from);
         }
@@ -1365,6 +1368,10 @@ pub fn read_obsidian_config(root: &Path) -> Result<ObsidianConfig, String> {
             .unwrap_or(false),
         _ => true,
     };
+    // With Daily notes off, Obsidian has no daily note to open.
+    if !daily_enabled && cfg.open_behavior.as_deref() == Some("daily") {
+        cfg.open_behavior = None;
+    }
     if daily_enabled {
         if let Ok(raw) = fs::read_to_string(root.join(".obsidian/daily-notes.json")) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
@@ -2224,6 +2231,20 @@ mod tests {
         assert_eq!(cfg["promptDelete"], serde_json::Value::Bool(false));
         assert_eq!(cfg["showLineNumber"], serde_json::Value::Bool(true));
         assert_eq!(cfg["readableLineLength"], serde_json::Value::Bool(false));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn obsidian_config_opens_the_daily_note_only_with_daily_notes_on() {
+        let root = scratch_vault("cfg-open");
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        let open = |root: &Path| serde_json::to_value(read_obsidian_config(root).unwrap()).unwrap()["openBehavior"].clone();
+        fs::write(root.join(".obsidian/app.json"), r#"{"openBehavior": "daily"}"#).unwrap();
+        assert_eq!(open(&root), serde_json::Value::String("daily".into()));
+        fs::write(root.join(".obsidian/core-plugins.json"), r#"{"daily-notes": false}"#).unwrap();
+        assert_eq!(open(&root), serde_json::Value::Null);
+        fs::write(root.join(".obsidian/app.json"), r#"{"openBehavior": "file"}"#).unwrap();
+        assert_eq!(open(&root), serde_json::Value::String("file".into()));
         fs::remove_dir_all(&root).unwrap();
     }
 

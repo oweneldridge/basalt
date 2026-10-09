@@ -1814,6 +1814,9 @@ export default function App() {
       if (openNoteRel) {
         const target = list.find((n) => n.rel === openNoteRel);
         if (target) await openInPane(ensureWorkspace(), target.path);
+      } else if (obsConfigRef.current?.openBehavior === "daily") {
+        // Obsidian's "Default file to open: Daily note", made from the template if missing.
+        await dailyNoteApi.current.open();
       }
       await listenerReady.current?.promise; // ensure we can hear events first
       startWatching().catch(() => {
