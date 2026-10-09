@@ -106,6 +106,21 @@ test.describe("unlinked mentions", () => {
   });
 });
 
+test.describe("a note that ends inside a link's address", () => {
+  test.use({ vaultFiles: { "Src.md": "Ideas is named here. See [x](<y" } });
+
+  test("still lets the note it mentions open, after a reload too", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Ideas");
+    await page.locator(".pane.dock .tab.view-tab", { hasText: "Backlinks" }).click();
+    const unlinked = page.locator(".panel-section").nth(1);
+    await expect(unlinked.locator(".ref-group", { hasText: "Src" }).locator(".ref-child")).toHaveCount(1);
+    await page.reload();
+    await expect(page.locator(".sidebar")).toBeVisible();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Ideas");
+  });
+});
+
 test.describe("Link all", () => {
   const body =
     'Ideas in prose\nmath $Ideas^2$ here\n%% Ideas\nstill Ideas %%\n\n    Ideas in code\n\n<span title="Ideas">x</span>\n<!-- Ideas -->\n' +

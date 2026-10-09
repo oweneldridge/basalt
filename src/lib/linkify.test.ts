@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { linkifyMention, mentionLines } from "./linkify";
+import { linkifyMention, maskForMentions, mentionLines } from "./linkify";
 
 describe("linkifyMention", () => {
   it("wraps the first bare occurrence, preserving surrounding text + casing", () => {
@@ -116,6 +116,48 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
     const t0 = performance.now();
     expect(linkifyMention(line, "Foo")).toBe("[a](b.md) ".repeat(32000) + "[[Foo]]");
     expect(performance.now() - t0).toBeLessThan(500);
+  });
+  it("never throws on a note that ends inside a link's address", () => {
+    for (const note of ["Foo [x](<y", "Foo [x](<y)", "Foo [x](b\\", "Foo ](<a\\\n", "Foo [x](<y\\", "Foo [x](", "Foo [x](<", "Foo [x](\\"]) {
+      expect(() => mentionLines(note), note).not.toThrow();
+      expect(() => maskForMentions(note), note).not.toThrow();
+      expect(mentionLines(note)[0], note).toContain("Foo");
+    }
+  });
+  it("takes a definition after a break, a heading's underline or in a quote, and a title with escapes", () => {
+    const link = (note: string, n: number) => linkifyMention(note.split("\n")[n], "Foo", undefined, mentionLines(note)[n]);
+    expect(link("Text\n\n---\n[Foo]: https://e.com\n\nUse [Foo] here\n", 5)).toBeNull();
+    expect(link("Text\n\n***\n[Foo]: https://e.com\n\nUse [Foo] here\n", 5)).toBeNull();
+    expect(link("Title\n===\n[Foo]: https://e.com\n\nUse [Foo] here\n", 4)).toBeNull();
+    expect(link("Para\n> [Foo]: https://e.com\n\nUse [Foo] here\n", 3)).toBeNull();
+    expect(link('[Foo]: https://e.com "a \\" b"\n\nUse [Foo] here\n', 0)).toBeNull();
+    expect(link('[Foo]: https://e.com "a \\" b"\n\nUse [Foo] here\n', 2)).toBeNull();
+    expect(link("[r]: https://e.com\n\n[Foo][r](\ny) end", 2)).toBeNull();
+  });
+  it("ends an open bracket where its paragraph ends", () => {
+    const lines = (note: string) => mentionLines(note).map((l) => l.includes("Foo"));
+    expect(lines("# Plan [draft\nFoo is here](x.md) more")).toEqual([false, true]);
+    expect(lines("| a [ b | c |\n| --- | --- |\n| Foo | x](y.md) |")).toEqual([false, false, true]);
+    expect(lines("Text [a \\\n\nFoo](x.md)")).toEqual([false, false, true]);
+    expect(lines("Text [a\r\n\r\nFoo](x.md)")).toEqual([false, false, true]);
+    expect(lines("Para [a\n> Foo](x.md)")).toEqual([false, true]);
+    expect(lines("Text [a \\\nFoo](x.md)")).toEqual([false, false]);
+  });
+  it("stays quick on lines built to be slow", () => {
+    const slow = ["](x".repeat(2000) + ' "' + "\nline".repeat(30000), ("> ".repeat(16) + "[Foo]: x y\n").repeat(50), "a".repeat(100000) + " Foo"];
+    for (const note of slow) {
+      const t0 = performance.now();
+      mentionLines(note);
+      expect(performance.now() - t0).toBeLessThan(1000);
+    }
+  });
+  it("skips a reference split over two lines, and a definition's title on the next line", () => {
+    const lines = (note: string) => mentionLines(note).map((l) => l.includes("Foo"));
+    expect(lines("See [Foo\nnotes] end\n\n[foo notes]: https://e.com\n")).toEqual([false, false, false, false, false]);
+    expect(lines("[Released in\n2024. Foo notes](x.md)\n")).toEqual([false, false, false]);
+    expect(lines('[r]: https://e.com\n"about Foo"\n\nUse [r] here\n')).toEqual([false, false, false, false, false]);
+    expect(lines('[r]: https://e.com "t"\n"about Foo"\n')).toEqual([false, true, false]);
+    expect(lines("1. [a\n2. Foo](x.md)\n")).toEqual([false, true, false]);
   });
 });
 

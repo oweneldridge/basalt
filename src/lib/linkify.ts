@@ -23,14 +23,16 @@ const AUTOLINK_RE = /<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>|<[\w.+-]+@[\w-]+(?:
 // A link reference definition, in a quote or a list item too: a label (not a
 // footnote's), an address and maybe a title, with nothing after them.
 const REF_DEF_RE =
-  /^(?: {0,3}>[ \t]?)*([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)?[ \t]*\[(?!\^)([^\]\n]+)\]:[ \t]*(?:<[^<>\n]*>|[^\s<]\S*)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$/;
+  /^[ \t>]*((?:[-*+]|\d{1,9}[.)])[ \t]+)?\[(?!\^)([^\]\n]+)\]:[ \t]*(?:<[^<>\n]*>|[^\s<]\S*)(?:[ \t]+("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|\((?:[^()\\\n]|\\.)*\)))?[ \t\r]*$/;
+// A definition's title on the line after it.
+const DEF_TITLE_RE = /^[ \t>]*(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|\((?:[^()\\\n]|\\.)*\))[ \t\r]*$/;
 // A reference link or image, `[text][label]`, `![alt][label]` or `[label][]`.
 const REF_LINK_RE = /!?\[[^\]\n]*\]\[[^\]\n]*\]/g;
 // A shortcut reference link, `[label]`, a link only when the note defines it.
 const SHORTCUT_RE = /!?\[([^\][\n]+)\]/g;
 // A callout's type, a footnote reference and an email address. Run after the
 // links and URLs are masked, so a linked image's `[![` isn't read as a callout.
-const OTHER_RE = /\[![^\]\n]*\]|\[\^[^\]\n]+\]|[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+const OTHER_RE = /\[![^\]\n]*\]|\[\^[^\]\n]+\]|(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 
 /** A reference label as links match it: case and runs of spaces ignored. */
 const label = (text: string) => text.trim().replace(/\s+/g, " ").toLowerCase();
@@ -40,7 +42,7 @@ const label = (text: string) => text.trim().replace(/\s+/g, " ").toLowerCase();
  * footnotes, references, emails) blanked to spaces, same length, so offsets
  * still match the line. `refs` are the labels the note defines. */
 export function maskForMentions(line: string, refs: ReadonlySet<string> = new Set()): string {
-  return maskRest(blankLinks(maskCode(line)), refs);
+  return maskRest(blankLinks(maskCode(line), refs), refs);
 }
 
 /** `line` with definitions, code, math, HTML and wikilinks blanked: what
@@ -66,34 +68,70 @@ function maskRest(line: string, refs: ReadonlySet<string>): string {
     .replace(tagRegex(), (m) => " ".repeat(m.length));
 }
 
-// A line that ends a paragraph before it: blank, a heading or a list item.
-const BREAK_RE = /^[ \t>]*(?:$|#{1,6}(?:[ \t]|$)|(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$))/;
+// A line that ends a paragraph: blank, a heading, a thematic break or a
+// heading's `===` underline.
+const ENDS_RE = /^[ \t>]*(?:\r?$|#{1,6}(?:[ \t]|\r?$)|([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$|=+[ \t]*\r?$)/;
+// A line that starts a block of its own: a bullet item or a table row. A
+// numbered item does when it's 1 or follows another item.
+const STARTS_RE = /^[ \t>]*(?:[-*+](?:[ \t]|\r?$)|\|)/;
+const NUMBERED_RE = /^[ \t>]*(\d{1,9})[.)](?:[ \t]|\r?$)/;
+const ITEM_RE = /^[ \t>]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|\r?$)/;
+const starts = (next: string, line: string) => {
+  const n = NUMBERED_RE.exec(next);
+  return STARTS_RE.test(next) || (!!n && (parseInt(n[1], 10) === 1 || ITEM_RE.test(line)));
+};
+// A line that is a block by itself: a heading or a table row.
+const SINGLE_RE = /^[ \t>]*(?:#{1,6}(?:[ \t]|\r?$)|\|)/;
 // Spaces with at most one line break, and the quote marks after it.
 const SPACE_RE = /[ \t]*(?:\n[ \t>]*)?/y;
-// A link's title, if any, and the `)` that ends the link.
-const TITLE_RE = /(?:"[^"]*"|'[^']*'|\([^()]*\))?[ \t]*(?:\n[ \t>]*)?\)/y;
+// A link's title, if any, on at most two lines, and the `)` that ends the link.
+const TITLE_RE =
+  /(?:"(?:[^"\\\n]|\\.)*(?:\n(?:[^"\\\n]|\\.)*)?"|'(?:[^'\\\n]|\\.)*(?:\n(?:[^'\\\n]|\\.)*)?'|\((?:[^()\\\n]|\\.)*(?:\n(?:[^()\\\n]|\\.)*)?\))?[ \t]*(?:\n[ \t>]*)?\)/y;
+// A reference link's label, after its text.
+const LABEL_RE = /\[[^[\]\n]*\]/y;
+// Characters a backslash escapes.
+const PUNCT_RE = /[!-/:-@[-`{-~]/;
+// The quote marks a line starts with.
+const quotes = (line: string) => (/^[ \t>]*/.exec(line)![0].match(/>/g) ?? []).length;
+// Whether a line ends a paragraph: it's blank, a heading, a break or underline.
+const endsPara = (line: string) => ENDS_RE.test(line);
 
 /** `text` with each inline link and image blanked, however deep the brackets
  * in its text or the parentheses in its address go, and whichever lines its
- * text, address or title run onto. A `](` with no `[` before it in its
- * paragraph ends a link whose text began on a line above. */
-function blankLinks(text: string): string {
+ * text, address or title run onto, along with each `[text][label]`. A `](`
+ * with no `[` before it in its paragraph ends a link whose text began above. */
+function blankLinks(text: string, refs: ReadonlySet<string>): string {
   const open: number[] = [];
   const links: [number, number][] = [];
   const marks = /[\\\n[\]]/g;
+  let lineStart = 0;
   for (let m; (m = marks.exec(text)); ) {
     const j = m.index;
-    if (text[j] === "\\") marks.lastIndex = j + 2;
-    else if (text[j] === "\n") {
-      const next = text.indexOf("\n", j + 1);
-      if (open.length && BREAK_RE.test(text.slice(j + 1, next < 0 ? text.length : next))) open.length = 0;
+    if (text[j] === "\\") {
+      if (PUNCT_RE.test(text[j + 1] ?? "")) marks.lastIndex = j + 2;
+    } else if (text[j] === "\n") {
+      if (open.length) {
+        // A bracket left open ends with its paragraph.
+        const line = text.slice(lineStart, j);
+        const nextEnd = text.indexOf("\n", j + 1);
+        const next = text.slice(j + 1, nextEnd < 0 ? text.length : nextEnd);
+        if (SINGLE_RE.test(line) || endsPara(next) || starts(next, line) || quotes(next) > quotes(line)) open.length = 0;
+      }
+      lineStart = j + 1;
     } else if (text[j] === "[") open.push(j);
     else {
       const i = open.pop() ?? j;
-      const end = text[j + 1] === "(" ? addressEnd(text, j + 2) : -1;
+      let end = -1;
+      if (text[j + 1] === "(") end = addressEnd(text, j + 2);
+      else if (text[j + 1] === "[") {
+        LABEL_RE.lastIndex = j + 1;
+        if (LABEL_RE.test(text)) end = LABEL_RE.lastIndex;
+      } else if (i < j && refs.has(label(text.slice(i + 1, j).replace(/\n[ \t>]*/g, " ")))) end = j + 1;
       if (end < 0) continue;
       links.push([text[i - 1] === "!" ? i - 1 : i, end]);
       marks.lastIndex = end;
+      const nl = text.slice(j, end).lastIndexOf("\n");
+      if (nl >= 0) lineStart = j + nl + 1;
     }
   }
   return blank(text, links);
@@ -105,33 +143,37 @@ function addressEnd(text: string, at: number): number {
   SPACE_RE.lastIndex = at;
   let j = at + SPACE_RE.exec(text)![0].length;
   if (text[j] === "<") {
-    for (j++; j < text.length && text[j] !== ">"; j++) {
-      if (text[j] === "<" || text[j] === "\n") return -1;
-      if (text[j] === "\\") j++;
+    for (j++; text[j] !== ">"; j++) {
+      if (j >= text.length || text[j] === "<" || text[j] === "\n") return -1;
+      if (text[j] === "\\" && PUNCT_RE.test(text[j + 1] ?? "")) j++;
     }
     j++;
   } else {
     for (let depth = 0; j < text.length && !/\s/.test(text[j]); j++) {
-      if (text[j] === "\\") j++;
+      if (text[j] === "\\" && PUNCT_RE.test(text[j + 1] ?? "")) j++;
       else if (text[j] === "(") depth++;
       else if (text[j] === ")" && depth-- === 0) return j + 1;
     }
   }
   SPACE_RE.lastIndex = j;
   TITLE_RE.lastIndex = j + SPACE_RE.exec(text)![0].length;
-  const rest = TITLE_RE.exec(text);
-  return rest ? TITLE_RE.lastIndex : -1;
+  return TITLE_RE.test(text) ? TITLE_RE.lastIndex : -1;
 }
 
 /** The labels a note defines, from `lines` with what isn't prose blanked. A
- * definition can't break into a paragraph, though a list item can start one. */
+ * definition can't break into a paragraph, though a list item or a quote that
+ * starts there can hold one. */
 function definedLabels(lines: string[]): Set<string> {
   const refs = new Set<string>();
-  let para = false;
+  let para = -1; // the quote depth of the paragraph the line before is in, if any
+  let untitled = false; // the line before is a definition with no title
   for (const line of lines) {
+    const depth = quotes(line);
     const m = REF_DEF_RE.exec(line);
-    if (m && (m[1] || !para)) refs.add(label(m[2]));
-    para = !m && !/^[ \t>]*(?:$|#{1,6}(?:[ \t]|$))/.test(line);
+    if (m && (m[1] || para < 0 || depth > para)) refs.add(label(m[2]));
+    const title = untitled && DEF_TITLE_RE.test(line);
+    para = m || title || endsPara(line) ? -1 : depth;
+    untitled = !!m && !m[3];
   }
   return refs;
 }
@@ -146,8 +188,14 @@ export function mentionLines(content: string, indented = true): string[] {
     .split("\n")
     .map((l, i) => (prose[i] ? l : " ".repeat(l.length)));
   const refs = content.includes("]:") ? definedLabels(text) : new Set<string>();
+  // A definition's title may sit on the line after it.
+  const code = text.map((l, i) => {
+    if (!prose[i]) return l;
+    const def = i > 0 ? REF_DEF_RE.exec(text[i - 1]) : null;
+    return def && !def[3] && DEF_TITLE_RE.test(l) ? " ".repeat(l.length) : maskCode(l);
+  });
   // Links are found across lines: a link's text, address or title may run on.
-  return blankLinks(text.map((l, i) => (prose[i] ? maskCode(l) : l)).join("\n"))
+  return blankLinks(code.join("\n"), refs)
     .split("\n")
     .map((l, i) => (prose[i] ? maskRest(l, refs) : l));
 }
