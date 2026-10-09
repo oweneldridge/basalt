@@ -299,11 +299,20 @@ describe("raw HTML", () => {
     expect(out).not.toContain("raw-html"); // stays a paragraph
     expect(out).toContain("<sup>");
   });
+  it("leaves a quote's marks and a list's indent out of code that runs over lines", () => {
+    expect(renderMarkdown("> `a\n> b` c")).toBe('<blockquote><p><code class="md-code-inline">a b</code> c</p></blockquote>');
+    expect(renderMarkdown("- `a\n  b`")).toBe('<ul><li><code class="md-code-inline">a b</code></li></ul>');
+  });
   it("keeps inline HTML on the safe list without its attributes, escapes the rest", () => {
     const out = renderMarkdown("hi <span onclick=alert(1)>x</span> and <iframe src=x>");
     expect(out).not.toContain("onclick");
     expect(out).toContain("<span>x</span>"); // shown as markup, as in Obsidian
     expect(out).toContain("&lt;iframe"); // not on the list: text
+    // text keeps its line breaks, even where the parser read a tag over one
+    expect(renderMarkdown("x <\nFoo>")).toBe("<p>x &lt;<br>\nFoo&gt;</p>");
+    expect(renderMarkdown("><\n>Foo>")).toBe("<blockquote><p>&lt;<br>\nFoo&gt;</p></blockquote>");
+    // a tag over a quote's lines is a tag, without the quote's marks
+    expect(renderMarkdown("> x <span\n> title=a>y</span>")).toBe('<blockquote><p>x <span title="a">y</span></p></blockquote>');
   });
   it("treats a <font>-led line as a raw-HTML block (Obsidian daily-note header)", () => {
     // A common Obsidian daily-note template: <font color=…><center>…<cite>…</cite></center></font>

@@ -95,13 +95,14 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
   });
   it("takes a label only from a real definition", () => {
     const link = (note: string, n: number) => linkifyMention(note.split("\n")[n], "Foo", undefined, mentionLines(note)[n]);
-    expect(link("%%\n[Foo]: x.md\n%%\n\nUse [Foo] here", 4)).toBe("Use [[[Foo]]] here");
-    expect(link("<!--\n[Foo]: x.md\n-->\n\nUse [Foo] here", 4)).toBe("Use [[[Foo]]] here");
-    expect(link("Para line\n[Foo]: x.md\n\nUse [Foo] here", 3)).toBe("Use [[[Foo]]] here");
-    expect(link("- item\n[Foo]: x.md\n\nUse [Foo] here", 3)).toBe("Use [[[Foo]]] here");
-    expect(link("# Heading\n[Foo]: x.md\n\nUse [Foo] here", 3)).toBeNull();
+    expect(link("%%\n[x Foo]: x.md\n%%\n\nUse [x Foo] here", 4)).toBe("Use [x [[Foo]]] here");
+    expect(link("<!--\n[x Foo]: x.md\n-->\n\nUse [x Foo] here", 4)).toBe("Use [x [[Foo]]] here");
+    expect(link("Para line\n[x Foo]: x.md\n\nUse [x Foo] here", 3)).toBe("Use [x [[Foo]]] here");
+    expect(link("- item\n[x Foo]: x.md\n\nUse [x Foo] here", 3)).toBe("Use [x [[Foo]]] here");
+    expect(link("# Heading\n[x Foo]: x.md\n\nUse [x Foo] here", 3)).toBeNull();
     expect(link("> [12:54 PM]: Foo might exist\n", 0)).toBe("> [12:54 PM]: [[Foo]] might exist");
-    expect(link("- [Foo]: x.md\n\nUse [Foo] here", 2)).toBeNull();
+    expect(link("- [x Foo]: x.md\n\nUse [x Foo] here", 2)).toBeNull();
+    expect(mentionLines("1. >[r]:Foo\n* + [r]:-z:-:Foo\n2. - 1. [r]:---*Foo").join("")).not.toContain("Foo"); // addresses
     expect(link("- [Foo]: x.md\n\nUse [Foo] here", 0)).toBeNull();
   });
   it("skips a link whose text, address or title runs onto the next line", () => {
@@ -173,7 +174,7 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
     const link = (note: string, n = 0) => linkifyMention(note.split("\n")[n], "Foo", undefined, mentionLines(note)[n]);
     expect(link("x][](Foo.md) y")).toBeNull();
     expect(link("See [x][y](Foo.md) here")).toBeNull();
-    expect(link("x][Foo] y")).toBe("x][[[Foo]]] y");
+    expect(link("x][a Foo] y")).toBe("x][a [[Foo]]] y");
     expect(link('Para\n[r]: https://e.com\n"Foo here"', 2)).toBe('"[[Foo]] here"');
     expect(link("1. [a\n   more\n2. Foo](x.md)", 2)).toBe("2. [[Foo]]](x.md)");
     expect(link("x@y.zz+Foo@bar.com")).toBeNull();
@@ -192,6 +193,131 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
       mentionLines(note);
       expect(performance.now() - t0).toBeLessThan(1000);
     }
+  });
+  it("keeps a definition under a heading or break in a list, a dash underline or a table", () => {
+    const link = (note: string, n: number) => linkifyMention(note.split("\n")[n], "Quokka", undefined, mentionLines(note)[n]);
+    for (const head of ["1. # Heading", "- # Heading", "Title\n--", "Title\n-", "Text\n\n* ---", "| a | b |\n| - | - |\n| 1 | 2 |"]) {
+      const note = `${head}\n[Quokka]: https://x.com\n\nSee [Quokka].\n`;
+      const k = head.split("\n").length;
+      expect(link(note, k), head).toBeNull();
+      expect(link(note, k + 2), head).toBeNull();
+    }
+  });
+  it("leaves a reference followed by an address alone, and a table only with matching cells", () => {
+    const lines = (note: string) => mentionLines(note).map((l) => l.includes("Quokka"));
+    expect(lines('[Quokka][r](y.md)\n\n[r]: https://x.com "a\nb\nc"\n')[0]).toBe(false);
+    expect(lines("[Quokka | bar\n:-\n](x.md)\n")).toEqual([false, false, false, false]);
+    expect(lines("[a\n| Quokka\n| b](x.md)")).toEqual([false, false, false]);
+  });
+  it("keeps a link whole over a lone bullet or an indented marker, and skips multi-line code and long titles", () => {
+    const lines = (note: string) => mentionLines(note).map((l) => l.includes("Quokka"));
+    expect(lines("[a\n*\nQuokka](x.md)")).toEqual([false, false, false]);
+    expect(lines("[a\n+\nQuokka](x.md)")).toEqual([false, false, false]);
+    expect(lines("[a\n    1. Quokka](x.md)")).toEqual([false, false]);
+    expect(lines("Run `a\nQuokka b` now")).toEqual([false, false]);
+    expect(lines("Run `` a ` b\nQuokka ` now")).toEqual([false, false]);
+    expect(lines('[a](x.md "one\ntwo\nQuokka three") end')).toEqual([false, false, false]);
+    expect(lines('[r]: https://x.com "one\ntwo\nQuokka"\n\nUse [r]')).toEqual([false, false, false, false, false]);
+  });
+  it("doesn't link a name right after !, a backslash or [", () => {
+    expect(linkifyMention("See !Quokka here", "Quokka")).toBeNull();
+    expect(linkifyMention("See \\Quokka here", "Quokka")).toBeNull();
+    expect(linkifyMention("See !Quokka and Quokka", "Quokka")).toBe("See !Quokka and [[Quokka]]");
+    // [[[Quokka]]] would link to "[Quokka", in Obsidian and in Reading view
+    expect(linkifyMention("See [Quokka] here", "Quokka")).toBeNull();
+    expect(linkifyMention("x][Quokka] y", "Quokka")).toBeNull();
+    expect(linkifyMention("x \\[Quokka\\] y", "Quokka")).toBe("x \\[[[Quokka]]\\] y"); // an escaped bracket is text
+  });
+  it("links a name in bold or italics, but not where its brackets would change them", () => {
+    expect(linkifyMention("**Quokka**: x", "Quokka")).toBe("**[[Quokka]]**: x");
+    expect(linkifyMention("(*Quokka*) and _Quokka_.", "Quokka")).toBe("(*[[Quokka]]*) and _Quokka_.");
+    expect(linkifyMention("a*Quokka*b", "Quokka")).toBeNull();
+    expect(linkifyMention("*Quokka*a then Quokka", "Quokka")).toBe("*Quokka*a then [[Quokka]]");
+    expect(linkifyMention("=Quokka*-* then Quokka", "Quokka")).toBe("=Quokka*-* then [[Quokka]]");
+    expect(linkifyMention("'===[===Quokka", "Quokka")).toBeNull();
+    const note = "*a\nQuokka*b";
+    const lines = note.split("\n");
+    expect(linkifyMention(lines[1], "Quokka", undefined, mentionLines(note)[1], lines, 1)).toBeNull();
+  });
+  it("pairs code spans in order over the paragraph, as CommonMark does", () => {
+    const open = (note: string) => mentionLines(note).map((l) => l.includes("Quokka"));
+    expect(open("`a\nb `Quokka` c`")).toEqual([false, true]); // `a\nb ` is the span
+    expect(open("`z\nQuokka|1*`--2. `")).toEqual([false, false]);
+    expect(open("- a `b\n- Quokka` c")).toEqual([false, true]); // a new item ends the paragraph
+    expect(open("\\`Quokka` here")).toEqual([true]); // an escaped backtick opens nothing
+    // after `\``, a span opens with the second backtick (CommonMark) or not at all (the editor)
+    expect(open("`x\\` y \\`` z `Quokka` w")).toEqual([false]);
+    expect(open("\\``Quokka` b`")).toEqual([false]);
+    expect(open("see <Foo:1--<'Quokka> here")).toEqual([false]); // an autolink
+    expect(open("`Quokka [[b` and `Quokka $a`$")).toEqual([false]); // code wins over what starts inside it
+    expect(open("`a\n[|\\`[r]: Quokka")).toEqual([false, true]); // a bracket in a label isn't one, so its backtick closes the span
+  });
+  it("reads where a paragraph ends by columns, so code and links run on as they render", () => {
+    const shut = (note: string) => mentionLines(note).every((l) => !l.includes("Quokka"));
+    expect(shut("`\n\t- Quokka`")).toBe(true); // a tab is four columns: no list item here
+    expect(shut("`\n    # Quokka`")).toBe(true); // nor a heading
+    expect(shut("`\n#\tQuokka`")).toBe(true); // `#` and a tab, which the editor reads as text
+    expect(shut("o\n2. `\n3)\tQuokka`")).toBe(true); // `2.` carries on the paragraph, so `3)` can't break it
+    expect(shut("[r]:`)\nQuokka`")).toBe(true); // an unbalanced `)` isn't an address
+    expect(shut("![[\nQuokka]](d)")).toBe(true); // an image's text, not a wikilink
+    expect(shut("[][\nQuokka]")).toBe(true); // a label over a line break
+    expect(shut("[][\\[:Quokka]")).toBe(true); // and one with an escaped bracket
+    expect(shut("[\nQuokka]:a")).toBe(true); // a definition's label over a line break
+    expect(shut("[-Quokka\n]:-")).toBe(true);
+    expect(shut("[](Quokka`)`")).toBe(true); // an address runs over code, as it's parsed
+    expect(shut("|#Quokka|\n|-|")).toBe(true); // a tag starts the table's cell
+    expect(shut("[|Quokka<!--]()--->")).toBe(true); // `--` inside: no comment, so a link
+    expect(shut("|`Quokka\n[o]:`")).toBe(true); // a `|` alone isn't a table, so no definition can follow it
+    expect(shut("o\n    # `Quokka\n`")).toBe(true); // four spaces in, a paragraph's line isn't a heading
+    expect(shut("o\n    # [\nQuokka]()")).toBe(true); // nor for a link
+    expect(shut("[][![]Quokka]()")).toBe(true); // a bracket after `[]` may open a link of its own
+    expect(shut("2\n[o]:[\nQuokka]()")).toBe(true); // in a paragraph, `[o]:[` isn't a definition
+    const open = (note: string) => mentionLines(note).some((l) => l.includes("Quokka"));
+    expect(open("`a`#Quokka and [x](y)#Quokka")).toBe(true); // a `#` after code or a link isn't a tag's
+    expect(open("<o>[o]:Quokka")).toBe(true); // nor is a blanked tag room for a definition
+    expect(shut("- a\n    # Quokka")).toBe(false); // in the item, a heading
+  });
+  it("leaves raw HTML alone, as Reading view shows it", () => {
+    const open = (note: string) => mentionLines(note).map((l) => l.includes("Quokka"));
+    expect(open("<div>\nQuokka here\n</div>\n\nQuokka")).toEqual([false, false, false, false, true]);
+    expect(open("<div>\nx\n</div>\nQuokka after the close")).toEqual([false, false, false, true]);
+    expect(open('<img\n  alt="Quokka" src="a.png">')).toEqual([false, false]);
+    expect(open("<?x\nQuokka\n?>\n\n<!F x\nQuokka y\n>")).toEqual([false, false, false, false, false, false, false]);
+  });
+  it("leaves a tag right after a quote's marks alone", () => {
+    expect(linkifyMention(">#Quokka", "Quokka")).toBeNull();
+    expect(mentionLines("> [!note]\n>#Quokka")[1]).not.toContain("Quokka");
+  });
+  it("doesn't link after a [[ that nothing closes on its line", () => {
+    // the link's ]] would close it: [[a [[Quokka]] reads as one link to "a [[Quokka"
+    expect(linkifyMention("See [[a and Quokka", "Quokka")).toBeNull();
+    expect(linkifyMention("x.md[[Foo]:b:Quokka", "Quokka")).toBeNull();
+    expect(linkifyMention("Quokka then [[a", "Quokka")).toBe("[[Quokka]] then [[a");
+    expect(linkifyMention("[[]] Quokka", "Quokka")).toBe("[[]] [[Quokka]]");
+    expect(mentionLines("See [[a\nQuokka")[1]).toContain("Quokka");
+  });
+  it("stays quick on long space runs, long bracket lines, runs of ]( and long runs of quote and list marks", () => {
+    const slow = [
+      "[a]: b" + " ".repeat(40000) + "c\n",
+      "[a\n" + " ".repeat(40000) + "\nb](x.md)\n",
+      "[a] ".repeat(400000),
+      "[x][y](z) ".repeat(100000),
+      "](".repeat(20000),
+      "[a\n" + "> ".repeat(20000) + "b](c) #t\n",
+      "-  ".repeat(20000) + "b\n",
+      "`a\n" + "``".repeat(20000) + "\n`",
+      "[x\n".repeat(20000) + "]: y\n",
+    ];
+    for (const note of slow) {
+      const t0 = performance.now();
+      mentionLines(note);
+      expect(performance.now() - t0, note.slice(0, 12)).toBeLessThan(1500);
+    }
+  });
+  it("reads a definition on a CRLF line, and leaves a bracket with brackets in it after a link's text", () => {
+    expect(mentionLines("[Foo]: x.md\r\n[Foo] here\r\n")[1]).not.toContain("Foo");
+    expect(mentionLines('[r][["|-|Foo(-[- ===]')[0]).not.toContain("Foo");
+    expect(mentionLines("[r][[x][Foo] and [r][a[x][Foo]")[0]).not.toContain("Foo");
   });
 });
 

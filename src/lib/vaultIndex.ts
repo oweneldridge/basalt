@@ -10,7 +10,7 @@
 import type { VaultNote } from "./vault";
 import { linkpathDest } from "./linkpath";
 import { htmlBlockRanges } from "./htmlBlocks";
-import { mentionLines, mentionRegex } from "./linkify";
+import { keepsEmphasis, mentionLinesFor, mentionRegex } from "./linkify";
 import {
   internalMdHref,
   mdLinkRegexGlobal,
@@ -637,14 +637,15 @@ export class VaultIndex {
     for (const note of notes) {
       if (note.path === excludePath || !any.test(note.content)) continue;
       // The mentions "Link" can link (the same mask it uses), one entry each:
-      // Obsidian counts every match. Indented code is looked for only when a
-      // line naming the note is indented.
+      // Obsidian counts every match. Indented code and raw HTML are looked for
+      // only where a line naming the note could be in them.
       const lines = note.content.split("\n");
-      const indented = lines.some((l) => /^(?: {4}|\t)/.test(l) && any.test(l));
-      const masked = mentionLines(note.content, indented);
+      const masked = mentionLinesFor(note.content, any);
       for (let i = 0; i < lines.length; i++) {
-        const count = masked[i].match(mention)?.length ?? 0;
-        for (let k = 0; k < count; k++) out.push({ path: note.path, name: note.name, line: i + 1, snippet: lines[i].trim() });
+        mention.lastIndex = 0;
+        for (let m; (m = mention.exec(masked[i])); ) {
+          if (keepsEmphasis(lines, i, m.index, m.index + m[0].length)) out.push({ path: note.path, name: note.name, line: i + 1, snippet: lines[i].trim() });
+        }
       }
     }
     return out;

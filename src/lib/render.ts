@@ -324,10 +324,10 @@ const INLINE_TAGS = new Set([
 ]);
 const SAFE_ATTRS = new Set(["title", "dir", "lang", "color", "size", "face", "datetime"]);
 
-function inlineHtml(tag: string): string {
+function inlineHtml(tag: string): string | null {
   const m = /^<(\/?)([a-z][a-z0-9-]*)([^>]*)>$/i.exec(tag);
   const name = m?.[2].toLowerCase() ?? "";
-  if (!m || !INLINE_TAGS.has(name)) return escapeHtml(tag);
+  if (!m || !INLINE_TAGS.has(name)) return null;
   if (m[1]) return name === "img" || name === "br" || name === "wbr" ? "" : `</${name}>`;
   const attrs: Record<string, string> = {};
   for (const a of m[3].matchAll(/([a-z][a-z0-9-]*)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>/]+)))?/gi))
@@ -422,6 +422,19 @@ class Inline {
     return this.doc.src.slice(n.from, n.to);
   }
 
+  /** `n`'s text without its container markup: the quote marks and indent that
+   * start each line it runs onto. */
+  private content(n: SyntaxNode) {
+    let s = "";
+    let pos = n.from;
+    for (let c = n.firstChild; c; c = c.nextSibling) {
+      if (c.name !== "QuoteMark") continue;
+      s += this.doc.src.slice(pos, c.from);
+      pos = c.to;
+    }
+    return (s + this.doc.src.slice(pos, n.to)).replace(/\n[ \t]*/g, "\n");
+  }
+
   node(n: SyntaxNode) {
     const wasStart = this.atLineStart;
     this.atLineStart = false;
@@ -435,7 +448,7 @@ class Inline {
       case "Highlight":
         return this.wrap('<mark class="md-highlight">', "</mark>", n);
       case "InlineCode": {
-        let code = this.src(n).replace(/^`+|`+$/g, "");
+        let code = this.content(n).replace(/^`+|`+$/g, "");
         if (/^ .*[^ ].* $/s.test(code)) code = code.slice(1, -1);
         this.out += `<code class="md-code-inline">${escapeHtml(code.replace(/\n/g, " "))}</code>`;
         return;
@@ -450,9 +463,13 @@ class Inline {
         this.out += "<br>\n";
         this.atLineStart = true;
         return;
-      case "HTMLTag":
-        this.out += inlineHtml(this.src(n));
+      case "HTMLTag": {
+        // Anything but a tag the sanitizer keeps is text, its line breaks too.
+        const html = inlineHtml(this.content(n));
+        if (html === null) this.range(n, n.from, n.to);
+        else this.out += html;
         return;
+      }
       case "Comment":
       case "ProcessingInstruction":
         return;
@@ -922,10 +939,21 @@ export function stripComments(md: string): string {
  * Obsidian `%%comment%%`, inline or over lines. */
 const COMMENT_OR_CODE = /(```[\s\S]*?```|~~~[\s\S]*?~~~|``[^\n]*?``|`[^`\n]*`)|%%[\s\S]*?%%/g;
 
+/** A line indented four spaces or a tab past any quote or list markers, which
+ * may be code depending on the lines around it (more than that, as it only
+ * decides whether to parse). The markers are matched once, as read: the
+ * lookahead and its backreference keep a long run of them from being tried
+ * every way it could split. */
+export const INDENTED_RE = /^(?=((?: {0,3}(?:>|(?:[-*+]|\d{1,9}[.)])(?=[ \t])))*))\1(?: {4}|[ \t]*\t)/;
+const INDENTED_LINES = new RegExp(INDENTED_RE.source, "m");
+/** Whether any line of `md` may be indented code. */
+export const mayIndent = (md: string) => INDENTED_LINES.test(md);
+const INDENTED_COMMENT = new RegExp(INDENTED_RE.source + ".*%%", "m");
+
 /** Whether an indented line holds a `%%`, which may be code rather than a
  * comment depending on the lines around it. */
 export function mayHaveIndentedComment(md: string): boolean {
-  return /^(?: {4}|\t).*%%/m.test(md);
+  return INDENTED_COMMENT.test(md);
 }
 
 /** Indented code blocks (four spaces or a tab, outside a list), whose text is
@@ -937,12 +965,71 @@ function indentedCode(md: string): [number, number][] {
 /** Where the indented code blocks are (four spaces or a tab, outside a list),
  * as [from, to) offsets. The note is parsed only if a line is indented. */
 export function indentedCodeRanges(md: string): [number, number][] {
-  if (!/^(?: {4}|\t)/m.test(md)) return [];
+  if (!INDENTED_LINES.test(md)) return [];
   const out: [number, number][] = [];
   mdParser.parse(md).iterate({
     enter: (n) => {
       if (n.name === "CodeBlock") out.push([n.from, n.to]);
       return n.name !== "CodeBlock";
+    },
+  });
+  return out;
+}
+
+/** Whether `md` has HTML a line's own mask can't see: `<!` or `<?`, a tag
+ * still open at a line break, or a line led by a tag (after any quote and list
+ * marks). */
+export function mayRunHtml(md: string): boolean {
+  if (!md.includes("<")) return false;
+  if (/<(?:[!?]|[A-Za-z/][^>\n]*\n)/.test(md)) return true;
+  for (let i = md.indexOf("<"); i >= 0; i = md.indexOf("<", i + 1)) {
+    if (!/[A-Za-z/]/.test(md[i + 1] ?? "")) continue;
+    let k = i;
+    while (k > 0 && i - k < 40 && " \t>-*+.)0123456789".includes(md[k - 1])) k--;
+    if ((k === 0 || md[k - 1] === "\n") && /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]*)*$/.test(md.slice(k, i))) return true;
+  }
+  return false;
+}
+
+/** Where `md` shows as raw HTML, escaped or not at all, as Reading view renders
+ * it: an HTML block or a paragraph led by a block-level tag up to the line
+ * closing its tag (all of it when nothing closes it or its first line has no
+ * `>`), comments, processing instructions and inline HTML (unless `withHtml`
+ * is false). With `indented`, indented code too. One parse, and only when a
+ * line is indented or HTML could run past what a line's own mask sees. */
+export function rawRanges(md: string, indented: boolean, withHtml = true): [number, number][] {
+  const code = indented && INDENTED_LINES.test(md);
+  const html = withHtml && mayRunHtml(md);
+  if (!code && !html) return [];
+  const out: [number, number][] = [];
+  mdParser.parse(md).iterate({
+    enter: (n) => {
+      switch (n.name) {
+        case "FencedCode":
+          return false;
+        case "CodeBlock":
+          if (code) out.push([n.from, n.to]);
+          return false;
+        case "CommentBlock":
+        case "ProcessingInstructionBlock":
+        case "HTMLTag":
+        case "Comment":
+        case "ProcessingInstruction":
+          if (html) out.push([n.from, n.to]);
+          return false;
+        case "HTMLBlock":
+        case "Paragraph": {
+          if (!html) return;
+          const lines = md.slice(n.from, n.to).split("\n");
+          if (n.name === "Paragraph" && !(HTML_BLOCK.test(lines[0].trim()) && lines[0].includes(">"))) return;
+          const tag = lines[0].includes(">") ? /^\s*<\/?([a-zA-Z][a-zA-Z0-9-]*)/.exec(lines[0])?.[1] : undefined;
+          const close = tag ? new RegExp(`</${tag}\\s*>`, "i") : null;
+          const k = close ? lines.findIndex((l) => close.test(l)) : -1;
+          const end = k < 0 || k === lines.length - 1 ? n.to : n.from + lines.slice(0, k + 1).join("\n").length;
+          out.push([n.from, end]);
+          return false;
+        }
+      }
     },
   });
   return out;

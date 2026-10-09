@@ -47,7 +47,7 @@ import { setQueryHost } from "./lib/queryHost";
 import { setTranscludeHost, splitSubpath, subpathToLine, extractHeadings, extractBlockIds } from "./lib/transclude";
 import { recordSnapshot, listSnapshots, clearSnapshots, renameSnapshots, type Snapshot } from "./lib/snapshots";
 import { installHoverPreview } from "./lib/hoverPreview";
-import { linkifyMention, mentionLines } from "./lib/linkify";
+import { linkifyMention, mentionLinesFor, mentionRegex } from "./lib/linkify";
 import { reorderTabs, insertTab } from "./lib/tabs";
 import { loadBindings, saveBindings, matchChord, type Bindings } from "./lib/hotkeys";
 import { parseObsidianImport, type ObsidianImportResult } from "./lib/obsidianImport";
@@ -78,7 +78,7 @@ import type { NoteRef } from "./editor/wikilink";
 import { clearImageCache, resolveImage } from "./lib/assets";
 import { remoteImagesNeedReload, setRemoteImages } from "./lib/remoteImages";
 import { isHiddenRel } from "./lib/hiddenFiles";
-import { normalizeName, targetPathPart } from "./lib/markdown";
+import { normalizeName, targetPathPart, wikilinkRegex } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { Ribbon } from "./components/Ribbon";
 import { WorkspacesModal } from "./components/WorkspacesModal";
@@ -4566,27 +4566,27 @@ export default function App() {
   // Convert an unlinked mention into a `[[wikilink]]` in its SOURCE note (the
   // "Link" / "Link all" backlink actions). Reads disk (authoritative), edits
   // the one line, writes, and reconciles index/notes/panes — like a rename's
-  // link rewrite. Returns whether it changed anything.
+  // link rewrite. Returns the line it wrote, or null if it changed nothing.
   const linkifyInNote = useCallback(
-    async (sourcePath: string, line: number, target: VaultNote): Promise<boolean> => {
+    async (sourcePath: string, line: number, target: VaultNote): Promise<string | null> => {
       if (conflictsRef.current.has(sourcePath)) {
         setSaveError("Resolve the “Changed on disk” conflict before linking mentions");
-        return false;
+        return null;
       }
       await flushPath(sourcePath);
       let disk: string;
       try {
         disk = await readNote(sourcePath);
       } catch {
-        return false;
+        return null;
       }
       if (pending.current.has(sourcePath)) {
         setSaveError("Save this note before linking mentions");
-        return false;
+        return null;
       }
       const lines = disk.split("\n");
       const idx = line - 1;
-      if (idx < 0 || idx >= lines.length) return false;
+      if (idx < 0 || idx >= lines.length) return null;
       // What Obsidian would write: the bare name if it resolves to the target
       // from this note, else a path in the vault's link format.
       const srcRel = notesRef.current.find((n) => n.path === sourcePath)?.rel ?? null;
@@ -4596,16 +4596,17 @@ export default function App() {
         fmt === "shortest" && bareWorks
           ? target.name
           : linkTargetForFormat(fmt, target.rel.replace(/\.md$/i, ""), !bareWorks, srcRel);
-      const masked = mentionLines(disk)[idx];
-      const next = linkifyMention(lines[idx], [target.name, ...index.current.aliasesOf(target.path)], linkText, masked);
-      if (next === null) return false;
+      const names = [target.name, ...index.current.aliasesOf(target.path)];
+      const masked = mentionLinesFor(disk, mentionRegex(names))[idx];
+      const next = linkifyMention(lines[idx], names, linkText, masked, lines, idx);
+      if (next === null) return null;
       lines[idx] = next;
       const content = lines.join("\n");
       try {
         await writeNote(sourcePath, content, disk);
       } catch (e) {
         setSaveError(`Couldn't link mention: ${e}`);
-        return false;
+        return null;
       }
       const note = notesRef.current.find((n) => n.path === sourcePath);
       if (note) {
@@ -4618,7 +4619,7 @@ export default function App() {
         }
       }
       bumpStructure(); // the mention is now a real link → backlinks/unlinked recompute
-      return true;
+      return next;
     },
     [flushPath, rememberSelfWrite, patchPane, bumpStructure, getLinkFormat],
   );
@@ -4637,7 +4638,14 @@ export default function App() {
       const target = notesRef.current.find((n) => n.path === lastNotePathRef.current);
       if (!target) return;
       // Snapshot the list; line numbers stay valid (linkify never adds lines).
-      for (const m of [...mentions]) await linkifyInNote(m.path, m.line, target);
+      const named = mentionRegex([target.name, ...index.current.aliasesOf(target.path)]);
+      const again: { path: string; line: number }[] = [];
+      for (const m of [...mentions]) {
+        const line = await linkifyInNote(m.path, m.line, target);
+        if (line !== null && named.test(line.replace(wikilinkRegex(), ""))) again.push(m);
+      }
+      // A mention its neighbour's link made linkable (`*Foo*Foo`) is linked too.
+      for (const m of again) for (let k = 0; k < 3 && (await linkifyInNote(m.path, m.line, target)) !== null; k++);
     },
     [linkifyInNote],
   );

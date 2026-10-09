@@ -69,6 +69,48 @@ describe("proseMask", () => {
     ];
     expect(proseMask(lines)).toEqual([true, false, false, false, false, true, false, false, true, true, false, false, true, true]);
   });
+  it("masks fenced code indented under a list item, and ends it with the item", () => {
+    const lines = [
+      "1. Run it:", // 0
+      "", // 1
+      "    ```bash", // 2: in item 1, whose text starts at column 3
+      "    python3 ~/.claude/lib/x.py", // 3
+      "    ```", // 4
+      "", // 5
+      "10. Then:", // 6
+      "    ```", // 7: item 10's text starts at column 4
+      "    code [[x]]", // 8
+      "    ```", // 9
+      "- a", // 10
+      "  1. nested", // 11
+      "     ```", // 12: the nested item's text starts at column 5
+      "     inside", // 13
+      "     ```", // 14
+      "- b", // 15
+      "  ```", // 16
+      "  code", // 17
+      "after", // 18: the item ended, so its fence did
+      "",
+      "Para",
+      "        ```", // 21: under a paragraph, not a fence
+      "prose", // 22
+    ];
+    expect(proseMask(lines)).toEqual([
+      true, true, false, false, false, true, true, false, false, false, true, true, false, false, false, true, false, false, true, true, true, true, true,
+    ]);
+  });
+  it("reads a tab to the next stop of four, and opens no fence four past an item's text", () => {
+    const lines = [
+      "- a", // 0: text at column 2
+      "   \t```", // 1: the tab reaches column 4, so a fence in the item
+      "   \tcode", // 2
+      "   \t```", // 3
+      "- b", // 4
+      "          ```", // 5: eight past the text, so not a fence
+      "prose", // 6
+    ];
+    expect(proseMask(lines)).toEqual([true, false, false, false, true, true, true]);
+  });
   it("doesn't open a fence on backticks with a backtick after them", () => {
     const lines = [
       "> [!tip] Shell", // 0
@@ -307,6 +349,33 @@ describe("2.9b review regressions", () => {
     const notes = [note("Ideas.md"), note("S.md", body)];
     expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([1]);
   });
+  it("leaves out indented code in a quote, in a list item and after spaces and a tab", () => {
+    const body = ["> Ideas in a quote", ">", ">     Ideas in quoted code", "", "  \tIdeas in code", "", "Ideas again"].join("\n");
+    const notes = [
+      note("Ideas.md"),
+      note("S.md", body),
+      note("T.md", "-     Ideas in an item's code\n\nIdeas again"),
+      note("U.md", "    -Ideas, code\n\nIdeas"),
+      note("V.md", "\t>Ideas, code\n\nIdeas"),
+      note("W.md", ">\t Ideas, code\n\nIdeas"),
+      note("X.md", "\t`\n[[`Ideas\n\nIdeas"), // the code above isn't a code span's start
+    ];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => `${m.name} ${m.line}`)).toEqual(["S 1", "S 7", "T 3", "U 3", "V 3", "W 3", "X 4"]);
+  });
+  it("scans a line of thousands of quote and list marks quickly", () => {
+    const notes = [note("Ideas.md"), note("S.md", "> ".repeat(20000) + "Ideas\n" + "-  ".repeat(20000) + "Ideas")];
+    const t0 = performance.now();
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes)).toHaveLength(2);
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+  it("leaves out a mention in raw HTML", () => {
+    const notes = [note("Ideas.md"), note("S.md", "<div>\nIdeas here\n</div>\n\nIdeas\n\n<?x\n\nIdeas\n?>")];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([5]);
+  });
+  it("leaves out a mention its link would unbold or embolden around it", () => {
+    const notes = [note("Ideas.md"), note("S.md", "**Ideas**: one\na*Ideas*b\n=Ideas*-*")];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([1]);
+  });
   it("leaves out callout types, footnotes, references, emails and code, and keeps prose with < in it", () => {
     const body = [
       "Run `echo $$` here", // 1
@@ -347,6 +416,16 @@ describe("outgoingLinksFor", () => {
     expect(out.resolved.map((r) => r.name).sort()).toEqual(["B", "C"]);
     expect(out.resolved.filter((r) => r.name === "B")).toHaveLength(1); // deduped
     expect(out.unresolved).toEqual(["Ghost"]);
+  });
+  it("reads an escaped \\[[ as no link, and one after an escaped backslash as one", () => {
+    const idx = indexOf([note("A.md", "\\[[B]] and \\\\[[C]] and \\[[[D]]"), note("B.md"), note("C.md"), note("D.md")]);
+    expect(idx.outgoingLinksFor("/v/A.md").resolved.map((r) => r.name).sort()).toEqual(["C", "D"]);
+  });
+  it("reads [[[B]]] as a link to \"[B\", as Obsidian does", () => {
+    const idx = indexOf([note("A.md", "see [[[B]]] and [[B]]]"), note("B.md")]);
+    const out = idx.outgoingLinksFor("/v/A.md");
+    expect(out.resolved.map((r) => r.name)).toEqual(["B"]);
+    expect(out.unresolved).toEqual(["[B"]);
   });
   it("is empty for a note with no links", () => {
     const idx = indexOf([note("Solo.md", "no links here")]);

@@ -34,6 +34,11 @@ describe("tags", () => {
     expect(tags("a#b \\#escaped (#paren) http://x.com/#frag")).toEqual([]);
     expect(tags("**#bold** ==#lit==")).toEqual(["bold", "lit"]);
   });
+  it("start a quote's text, right after its marks", () => {
+    expect(tags(">#one\n>>#two\n> >#three\nx\n>a\n>#four")).toEqual(["one", "two", "three", "four"]);
+    expect(tags("a>#no -#no")).toEqual([]);
+    expect(tags(" >#five\n+ >#six\n> - >#seven\n1. > >#eight")).toEqual(["five", "six", "seven", "eight"]);
+  });
   it("end at punctuation", () => {
     expect(tags("see #tag, then #other. and #q?")).toEqual(["tag", "other", "q"]);
   });

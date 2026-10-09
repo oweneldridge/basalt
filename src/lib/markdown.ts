@@ -6,10 +6,12 @@
  * optional alias. A new instance avoids shared `lastIndex` bugs between callers.
  * Matches `[[Target]]` and `[[Target|Alias]]`; target/alias forbid `[ ] |` and
  * NEWLINES — a multiline match would emit a line-break-replacing decoration
- * from a ViewPlugin, which is a CM6 RangeError crash.
+ * from a ViewPlugin, which is a CM6 RangeError crash. Brackets right after the
+ * `[[` are the target's, as in Obsidian: `[[[Foo]]]` links to "[Foo". An
+ * escaped `\[[` (an odd run of backslashes before it) opens no link.
  */
 export function wikilinkRegex(): RegExp {
-  return /\[\[([^[\]|\n]+)(?:\|([^[\]\n]+))?\]\]/g;
+  return /(?<!(?:^|[^\\])\\(?:\\\\)*)\[\[(\[*[^[\]|\n]+)(?:\|([^[\]\n]+))?\]\]/g;
 }
 
 /**
@@ -30,27 +32,57 @@ export function proseMask(lines: string[]): boolean[] {
     for (let j = 1; j <= end; j++) mask[j] = false;
     i = end + 1;
   }
-  // A fence may sit inside a quote or callout (`> ```), and its code ends
-  // with that quote.
-  let fence: { char: string; len: number; depth: number } | null = null;
+  // A fence may sit inside a quote or callout (`> ```) or a list item, as far
+  // in as the item's text plus three spaces, and its code ends with them.
+  let fence: { char: string; len: number; depth: number; col: number } | null = null;
+  let items: number[] = []; // open list items' text columns, innermost last
+  let listDepth = 0; // the quote depth those items are at
   for (; i < lines.length; i++) {
-    const quote = QUOTE_PREFIX.exec(lines[i])![0];
-    const depth = (quote.match(/>/g) ?? []).length;
+    const line = lines[i];
+    const c0 = line[0];
+    const quote = c0 === ">" || c0 === " " ? QUOTE_PREFIX.exec(line)![0] : "";
+    const depth = quote ? (quote.match(/>/g) ?? []).length : 0;
     if (fence && depth < fence.depth) fence = null;
-    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(fence ? unquote(lines[i], fence.depth) : lines[i].slice(quote.length));
+    const body: string = fence ? unquote(line, fence.depth) : quote ? line.slice(quote.length) : line;
+    if (depth !== listDepth) (items = []), (listDepth = depth);
+    // The indent in columns (tabs to the next stop of 4) and the char after it.
+    // Four past the innermost item's text nothing opens, closes or ends here.
+    const limit = (items.length ? items[items.length - 1] : 0) + 4;
+    let indent = 0;
+    let k = 0;
+    for (; k < body.length && indent < limit; k++) {
+      const c = body.charCodeAt(k);
+      if (c === 32) indent++;
+      else if (c === 9) indent += 4 - (indent % 4);
+      else break;
+    }
+    const first: string | undefined = indent < limit ? body[k] : "";
+    const blank = first === undefined || (/\s/.test(first) && body.trim() === "");
+    if (!blank) while (items.length && indent < items[items.length - 1]) items.pop();
+    if (fence && !blank && indent < fence.col) fence = null; // its list item ended
+    FENCE_RE.lastIndex = k;
+    const m: RegExpExecArray | null = first === "`" || first === "~" ? FENCE_RE.exec(body) : null;
     if (fence) {
       mask[i] = false;
-      if (
-        m &&
-        m[1][0] === fence.char &&
-        m[1].length >= fence.len &&
-        m[2].trim() === ""
-      ) {
+      if (m && indent - fence.col <= 3 && m[1][0] === fence.char && m[1].length >= fence.len && m[2].trim() === "") {
         fence = null; // closing fence (itself non-prose)
       }
-    } else if (m && !(m[1][0] === "`" && m[2].includes("`"))) {
+      continue;
+    }
+    const base = items.length ? items[items.length - 1] : 0;
+    if (m && indent - base <= 3 && !(m[1][0] === "`" && m[2].includes("`"))) {
       mask[i] = false;
-      fence = { char: m[1][0], len: m[1].length, depth };
+      fence = { char: m[1][0], len: m[1].length, depth, col: base };
+      continue;
+    }
+    LIST_ITEM_RE.lastIndex = k;
+    const item = first === "-" || first === "*" || first === "+" || (first !== undefined && first >= "0" && first <= "9") ? LIST_ITEM_RE.exec(body) : null;
+    if (item) {
+      let col = indent + item[1].length;
+      const from = col;
+      for (let g = 0; g < item[2].length; g++) col += item[2][g] === "\t" ? 4 - (col % 4) : 1;
+      const gap = col - from;
+      items.push(from + (gap === 0 || gap > 4 ? 1 : gap));
     }
   }
   return mask;
@@ -58,6 +90,10 @@ export function proseMask(lines: string[]): boolean[] {
 
 // The `>` markers a line starts with, however deep.
 const QUOTE_PREFIX = /^(?: {0,3}>[ \t]?)*/;
+// A list item's marker, and the spaces between it and the item's text.
+const LIST_ITEM_RE = /([-*+]|\d{1,9}[.)])([ \t]+|$)/y;
+// A fence's marker run and what follows it.
+const FENCE_RE = /(`{3,}|~{3,})(.*)$/y;
 
 /** `line` without its first `depth` quote markers. */
 function unquote(line: string, depth: number): string {
@@ -179,11 +215,16 @@ export const TAG_NAME = "[^\\u2000-\\u206F\\u2E00-\\u2E7F'!\"#$%&()*+,.:;<=>?@^`
  * Obsidian's index). So `a#b`, `\#escaped`, `(#x)` and a URL's `/#frag` aren't. */
 export const TAG_BEFORE = /[\s*_~=]/;
 
-/** Tags `#tag` / `#nested/tag`, as Obsidian finds them (see TAG_BEFORE).
+// A quote's last `>` at the start of a line, after any list marks and quote
+// marks before it: the quote's text starts right after it.
+const QUOTE_START = String.raw`(?:^|\n)[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]*)*>`;
+
+/** Tags `#tag` / `#nested/tag`, as Obsidian finds them (see TAG_BEFORE), and
+ * right after a quote's marks, where the quote's text starts.
  * Group 1 = `#tag`, group 2 = bare name; a name of digits only (`#42`) is for
  * the caller to skip. */
 export function tagRegex(): RegExp {
-  return new RegExp(`(?<=^|${TAG_BEFORE.source})(#(${TAG_NAME}))`, "gu");
+  return new RegExp(`(?=#)(?<=^|${TAG_BEFORE.source}|${QUOTE_START})(#(${TAG_NAME}))`, "gu");
 }
 
 /**
