@@ -203,6 +203,8 @@ export interface ObsidianConfig {
   readableLineLength?: boolean | null;
   /** "daily" opens today's daily note with the vault. */
   openBehavior?: string | null;
+  /** Templater's "Trigger on new file creation". */
+  templaterOnCreate?: boolean | null;
   attachmentFolderPath?: string | null;
   dailyNotesFolder?: string | null;
   dailyNotesFormat?: string | null;

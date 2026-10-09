@@ -70,6 +70,7 @@ import {
   emitVaultEvent,
   emitWorkspaceEvent,
   pluginRightViews,
+  isLoaded,
   type HostDeps,
 } from "./lib/plugins";
 import { listPlugins, writePluginData, listCssSnippets, deleteFolder, renameFolder, type PluginInfo, type CssSnippet } from "./lib/vault";
@@ -172,6 +173,23 @@ const SAVE_DEBOUNCE_MS = 500;
 const BIG_COUNT = 200_000;
 // Readable width, once chosen in Basalt (until then the vault's setting).
 const READABLE_WIDTH_KEY = "basalt-readable-width-choice";
+// The vault's daily note is opened once a browser session, so a reload keeps your place.
+const dailyKey = (root: string) => `basalt.dailyOpened.${root}`;
+const todayStamp = () => new Date().toDateString();
+function dailyOpened(root: string): boolean {
+  try {
+    return sessionStorage.getItem(dailyKey(root)) === todayStamp();
+  } catch {
+    return false;
+  }
+}
+function markDailyOpened(root: string) {
+  try {
+    sessionStorage.setItem(dailyKey(root), todayStamp());
+  } catch {
+    /* no session storage: open it each time */
+  }
+}
 // Bound on the self-write suppression map (rel -> last written content).
 const SELF_WRITES_MAX = 128;
 
@@ -596,6 +614,10 @@ export default function App() {
   attachmentsRef.current = attachmentsList;
   // Read-only .obsidian settings (link format, daily notes, attachment folder).
   const obsConfigRef = useRef<ObsidianConfig | null>(null);
+  // showNotice, for callbacks declared above it.
+  const noticeRef = useRef<(msg: string, timeoutMs?: number) => void>(() => {});
+  // Settles once the open vault's plugins have loaded.
+  const pluginsReady = useRef<{ vault: string; promise: Promise<void>; done: () => void } | null>(null);
   // Deleting asks first unless the vault turns that off ("Confirm file deletion").
   const confirmDelete = useCallback(
     (message: string, opts: Parameters<typeof confirm>[1]) =>
@@ -1766,6 +1788,11 @@ export default function App() {
       setLineNumbers(obsConfigRef.current?.showLineNumber ?? false);
       if (localStorage.getItem(READABLE_WIDTH_KEY) === null) setReadableWidth(obsConfigRef.current?.readableLineLength ?? true);
       setBookmarks(await readObsidianBookmarks().catch(() => []));
+      if (vaultRef.current !== root || !pluginsReady.current) {
+        let done = () => {};
+        const promise = new Promise<void>((resolve) => (done = resolve));
+        pluginsReady.current = { vault: root, promise, done };
+      }
       const savedTab = localStorage.getItem(rightTabKey(root));
       setRightTab(
         savedTab === "outline" || savedTab === "tags" || savedTab === "bookmarks" || savedTab === "links"
@@ -1814,9 +1841,16 @@ export default function App() {
       if (openNoteRel) {
         const target = list.find((n) => n.rel === openNoteRel);
         if (target) await openInPane(ensureWorkspace(), target.path);
-      } else if (obsConfigRef.current?.openBehavior === "daily") {
-        // Obsidian's "Default file to open: Daily note", made from the template if missing.
-        await dailyNoteApi.current.open();
+      } else if (obsConfigRef.current?.openBehavior === "daily" && !dailyOpened(root)) {
+        // Obsidian's "Default file to open: Daily note", made from the template
+        // if missing. Once a session, so a reload keeps your place, and once
+        // the plugins are in, so Templater Lite can fill the template.
+        const ready = pluginsReady.current;
+        if (ready?.vault === root) await Promise.race([ready.promise, new Promise((r) => setTimeout(r, 15000))]);
+        if (vaultRef.current === root) {
+          markDailyOpened(root);
+          await dailyNoteApi.current.open(undefined, undefined, true);
+        }
       }
       await listenerReady.current?.promise; // ensure we can hear events first
       startWatching().catch(() => {
@@ -2987,45 +3021,67 @@ export default function App() {
   );
 
   /** Open (creating if needed) the daily note for a date (default today),
-   * honoring daily-notes.json. */
-  const openDailyNote = useCallback(async (date: Date = new Date(), folderIfUnset?: string) => {
+   * honoring daily-notes.json. At startup, a note whose template has Templater
+   * tags nothing here would run isn't made at all. */
+  const openDailyNote = useCallback(async (date: Date = new Date(), folderIfUnset?: string, atStartup = false) => {
     const cfg = obsConfigRef.current;
     // The note's day with the current time, so a template's {{time}} is now.
     const clock = new Date();
     const now = new Date(date);
     now.setHours(clock.getHours(), clock.getMinutes(), clock.getSeconds(), clock.getMilliseconds());
     const { relNoExt, name, fallback } = dailyNoteRel(date, folderIfUnset);
-    if (fallback) setSaveError(fallback);
+    // Said once the note is open: opening it clears the status line.
+    const said = fallback ? [fallback] : [];
+    const say = () => said.forEach((msg) => noticeRef.current(msg, 10000));
     const want = normRelKey(`${relNoExt}.md`);
     const existing = notesRef.current.find((n) => normRelKey(n.rel) === want);
     if (existing) {
       await openNoteByPath(existing.path);
+      say();
       return;
     }
+    let tplContent = "";
+    const tplSetting = cfg?.dailyNotesTemplate?.trim();
+    if (tplSetting) {
+      const tplKey = normRelKey(tplSetting);
+      const tpl = notesRef.current.find((n) => normRelKey(n.rel) === tplKey);
+      // Read fresh from disk — the index blanks oversized notes' content.
+      const read = tpl ? await readNote(tpl.path).catch(() => null) : null;
+      if (read === null) said.push(`Daily note template "${tplSetting}" ${tpl ? "couldn't be read" : "wasn't found"}, so the note starts empty`);
+      else tplContent = read;
+    }
+    if (/<%/.test(tplContent) && !(isLoaded("templater-lite") && cfg?.templaterOnCreate)) {
+      if (atStartup) {
+        noticeRef.current(
+          "Today's daily note wasn't made: its template uses Templater, which isn't running here. Turn on Templater Lite, or make it with \"Open today's daily note\".",
+          12000,
+        );
+        return;
+      }
+      said.push("The daily note's Templater tags were left as written: Templater Lite isn't running here");
+    }
+    const root = vaultRef.current ?? "";
     try {
-      const path = await createNote(relNoExt);
-      const root = vaultRef.current ?? "";
+      let path: string;
+      try {
+        path = await createNote(relNoExt);
+      } catch (e) {
+        // Made meanwhile (another tab, or a sync just in): open that one.
+        if (!String(e).includes("already exists")) throw e;
+        await openNoteByPath(`${root.replace(/[/\\]+$/, "")}/${relNoExt}.md`);
+        say();
+        return;
+      }
       const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
-      // Apply the configured template, if any.
-      let content = "";
-      const tplSetting = cfg?.dailyNotesTemplate?.trim();
-      if (tplSetting) {
-        const tplKey = normRelKey(tplSetting);
-        const tpl = notesRef.current.find((n) => normRelKey(n.rel) === tplKey);
-        if (tpl) {
-          // Read fresh from disk — the index blanks oversized notes' content.
-          const tplContent = await readNote(tpl.path).catch(() => "");
-          content = fillTemplate(tplContent, now, name.split("/").pop() ?? name);
-          // Only into the still-empty note: if it was written meanwhile (another
-          // device, or typing in it), that text stays.
-          if (content) {
-            try {
-              await writeNote(path, content, "");
-            } catch (e) {
-              if (!isWriteConflict(e)) throw e;
-              content = await readNote(path);
-            }
-          }
+      let content = fillTemplate(tplContent, now, name.split("/").pop() ?? name);
+      // Only into the still-empty note: if it was written meanwhile (another
+      // device, or typing in it), that text stays.
+      if (content) {
+        try {
+          await writeNote(path, content, "");
+        } catch (e) {
+          if (!isWriteConflict(e)) throw e;
+          content = await readNote(path);
         }
       }
       const note: VaultNote = { path, rel, name: nameFromRel(rel), content };
@@ -3040,6 +3096,7 @@ export default function App() {
       // Plugins hear of it once its template is in (Templater processes it then).
       emitVaultEvent("create", { path: rel, name: note.name });
       await openNoteByPath(path);
+      say();
     } catch (e) {
       setSaveError(`Couldn't open daily note: ${e}`);
     }
@@ -3497,6 +3554,7 @@ export default function App() {
 
   // A transient toast (used by plugins' Notice + a few app messages). Capped so
   // a plugin spamming Notice() can't accumulate unbounded toasts.
+  noticeRef.current = (msg, timeoutMs) => showNotice(msg, timeoutMs);
   const showNotice = useCallback((msg: string, timeoutMs = 4000) => {
     const id = ++noticeSeq.current;
     setNotices((n) => [...n, { id, msg }].slice(-6));
@@ -3668,28 +3726,32 @@ export default function App() {
   const refreshPlugins = useCallback(async () => {
     const v = vaultRef.current;
     if (!v) return;
-    let infos: PluginInfo[] = [];
     try {
-      infos = await listPlugins();
-    } catch {
-      /* no plugins folder */
-    }
-    if (vaultRef.current !== v) return; // vault changed during the async list
-    setInstalledPlugins(infos);
-    const { run, changed } = await vetEnabledPlugins(v, infos);
-    for (const info of changed) {
-      showNotice(`Plugin "${info.name}" changed since you enabled it, so it's off. Turn it on again in Settings to run the new version.`, 10000);
-    }
-    await unloadAll();
-    for (const info of run) {
-      if (vaultRef.current !== v) break; // vault switched mid-load — stop
+      let infos: PluginInfo[] = [];
       try {
-        await loadPlugin(info);
-      } catch (e) {
-        showNotice(`Plugin "${info.name}" failed to load: ${e instanceof Error ? e.message : e}`, 8000);
+        infos = await listPlugins();
+      } catch {
+        /* no plugins folder */
       }
+      if (vaultRef.current !== v) return; // vault changed during the async list
+      setInstalledPlugins(infos);
+      const { run, changed } = await vetEnabledPlugins(v, infos);
+      for (const info of changed) {
+        showNotice(`Plugin "${info.name}" changed since you enabled it, so it's off. Turn it on again in Settings to run the new version.`, 10000);
+      }
+      await unloadAll();
+      for (const info of run) {
+        if (vaultRef.current !== v) break; // vault switched mid-load — stop
+        try {
+          await loadPlugin(info);
+        } catch (e) {
+          showNotice(`Plugin "${info.name}" failed to load: ${e instanceof Error ? e.message : e}`, 8000);
+        }
+      }
+      setPluginVersion((x) => x + 1);
+    } finally {
+      if (pluginsReady.current?.vault === v) pluginsReady.current.done();
     }
-    setPluginVersion((x) => x + 1);
   }, [showNotice]);
 
   // Enable/disable a plugin from Settings.

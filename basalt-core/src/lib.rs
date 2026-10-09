@@ -1326,6 +1326,8 @@ pub struct ObsidianConfig {
     readable_line_length: Option<bool>,
     /// What to open with the vault: "daily" opens today's daily note.
     open_behavior: Option<String>,
+    /// Templater's "Trigger on new file creation".
+    templater_on_create: Option<bool>,
     attachment_folder_path: Option<String>,
     daily_notes_folder: Option<String>,
     daily_notes_format: Option<String>,
@@ -1384,9 +1386,12 @@ pub fn read_obsidian_config(root: &Path) -> Result<ObsidianConfig, String> {
     }
     // Templates folder: prefer Templater's setting, then the core Templates
     // plugin's. Basalt reuses whichever the vault already configured.
-    cfg.templates_folder = fs::read_to_string(root.join(".obsidian/plugins/templater-obsidian/data.json"))
+    let templater = fs::read_to_string(root.join(".obsidian/plugins/templater-obsidian/data.json"))
         .ok()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+    cfg.templater_on_create = templater.as_ref().and_then(|v| v.get("trigger_on_file_creation")).and_then(|x| x.as_bool());
+    cfg.templates_folder = templater
+        .as_ref()
         .and_then(|v| v.get("templates_folder").and_then(|x| x.as_str()).map(String::from))
         .filter(|s| !s.is_empty())
         .or_else(|| {
@@ -2245,6 +2250,11 @@ mod tests {
         assert_eq!(open(&root), serde_json::Value::Null);
         fs::write(root.join(".obsidian/app.json"), r#"{"openBehavior": "file"}"#).unwrap();
         assert_eq!(open(&root), serde_json::Value::String("file".into()));
+        fs::create_dir_all(root.join(".obsidian/plugins/templater-obsidian")).unwrap();
+        fs::write(root.join(".obsidian/plugins/templater-obsidian/data.json"), r#"{"trigger_on_file_creation": true, "templates_folder": "T"}"#).unwrap();
+        let cfg = serde_json::to_value(read_obsidian_config(&root).unwrap()).unwrap();
+        assert_eq!(cfg["templaterOnCreate"], serde_json::Value::Bool(true));
+        assert_eq!(cfg["templatesFolder"], serde_json::Value::String("T".into()));
         fs::remove_dir_all(&root).unwrap();
     }
 

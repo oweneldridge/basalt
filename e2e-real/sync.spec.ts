@@ -678,7 +678,7 @@ test.describe("today's daily note from a template", () => {
     },
   });
 
-  test("doesn't overwrite text typed into it while the template loads", async ({ page, vault }) => {
+  test("doesn't overwrite text that lands in it before the template goes in", async ({ page, vault }) => {
     const d = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
     const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -687,26 +687,25 @@ test.describe("today's daily note from a template", () => {
     let held = false;
     await page.route("**/api/invoke", async (route) => {
       const body = route.request().postData() ?? "";
-      const res = await route.fetch().catch(() => null);
-      if (!res) return;
-      if (!held && body.includes('"cmd":"read_note"') && body.includes("Daily.md")) {
+      // The template's write waits, before it reaches the disk.
+      if (!held && body.includes('"cmd":"write_note"') && body.includes("## Log")) {
         held = true;
         await new Promise<void>((r) => (release = r));
       }
+      const res = await route.fetch().catch(() => null);
+      if (!res) return;
       await route.fulfill({ response: res }).catch(() => {});
     });
     await page.keyboard.press("ControlOrMeta+p");
     await page.locator(".palette-input").first().fill("Open today's daily note");
     await page.keyboard.press("Enter");
     await expect.poll(() => held, { timeout: 10000 }).toBe(true);
-    await expect(page.locator(".tree-row.file", { hasText: today })).toHaveCount(1, { timeout: 10000 });
-    await page.locator(".tree-row.file", { hasText: today }).first().click();
-    await page.locator(".pane:not(.dock) .cm-content").first().click();
-    await page.keyboard.type("my first thought");
-    await expect.poll(() => vault.read(`${today}.md`)).toBe("my first thought");
+    // The phone's copy syncs in meanwhile.
+    vault.write(`${today}.md`, "from the phone\n");
     release();
+    await expect(page.locator(".pane:not(.dock) .cm-content").first()).toContainText("from the phone");
     await settle(page, 2500);
-    expect(vault.read(`${today}.md`)).toBe("my first thought");
+    expect(vault.read(`${today}.md`)).toBe("from the phone\n");
     await expect(page.locator(".tree-row.file", { hasText: today })).toHaveCount(1);
   });
 });

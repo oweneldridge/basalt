@@ -49,10 +49,15 @@ test("a large vault opens, browses and stays untouched", async ({ page }) => {
     await page.waitForTimeout(1500);
     expect(errors, errors.join("\n")).toEqual([]);
     const after = mtimes(BIG!);
-    const changed = [...after].filter(([p, m]) => before.get(p) !== m).map(([p]) => p);
+    const changed = [...after].filter(([p, m]) => before.has(p) && before.get(p) !== m).map(([p]) => p);
     const removed = [...before.keys()].filter((p) => !after.has(p) && !p.includes(".basalt-tmp-"));
+    // A vault set to open its daily note may make today's, and nothing else.
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}.md`;
+    const added = [...after.keys()].filter((p) => !before.has(p) && !p.endsWith(today));
     expect(changed, "files modified by browsing").toEqual([]);
     expect(removed, "files removed by browsing").toEqual([]);
+    expect(added, "files added by browsing").toEqual([]);
   } finally {
     proc.kill();
   }
