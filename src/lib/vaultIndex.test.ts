@@ -318,8 +318,10 @@ describe("2.9b review regressions", () => {
       "> [!ideas] Title", // 7
       "see ``code Ideas `x` here`` end", // 8
       "a footnote[^Ideas] here", // 9
-      "[Ideas]: https://x.com/a", // 10
-      "mail ideas@x.com", // 11
+      "",
+      "[Ideas]: https://x.com/a", // 11: a definition, after a blank line
+      "",
+      "mail ideas@x.com", // 13
     ].join("\n");
     const notes = [note("Ideas.md"), note("S.md", body)];
     expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([6]);

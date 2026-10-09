@@ -159,5 +159,39 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
     expect(lines('[r]: https://e.com "t"\n"about Foo"\n')).toEqual([false, true, false]);
     expect(lines("1. [a\n2. Foo](x.md)\n")).toEqual([false, true, false]);
   });
+  it("keeps a link whole over a lazy quote line, a lone pipe or a line that only looks like a new block", () => {
+    const lines = (note: string) => mentionLines(note).map((l) => l.includes("Foo"));
+    expect(lines("> See [the\nFoo notes\n> here](x.md)")).toEqual([false, false, false]);
+    expect(lines("Text [a\n| Foo](x.md)")).toEqual([false, false]);
+    expect(lines("> [Foo\n=\n](x.md)")).toEqual([false, false, false]);
+    expect(lines("[Foo\n    >](x.md)")).toEqual([false, false]);
+    expect(lines("- [a\\\n2. Foo](x.md)")).toEqual([false, false]);
+    expect(lines("[\n`c`>Foo](x.md)")).toEqual([false, false]);
+    expect(lines("[[W]]|[\nFoo](x.md)")).toEqual([false, false]);
+  });
+  it("reads references and inline links the way they render", () => {
+    const link = (note: string, n = 0) => linkifyMention(note.split("\n")[n], "Foo", undefined, mentionLines(note)[n]);
+    expect(link("x][](Foo.md) y")).toBeNull();
+    expect(link("See [x][y](Foo.md) here")).toBeNull();
+    expect(link("x][Foo] y")).toBe("x][[[Foo]]] y");
+    expect(link('Para\n[r]: https://e.com\n"Foo here"', 2)).toBe('"[[Foo]] here"');
+    expect(link("1. [a\n   more\n2. Foo](x.md)", 2)).toBe("2. [[Foo]]](x.md)");
+    expect(link("x@y.zz+Foo@bar.com")).toBeNull();
+  });
+  it("skips a definition with its address or title on the next line, and links over CRLF breaks", () => {
+    const link = (note: string, n = 0) => linkifyMention(note.split("\n")[n], "Foo", undefined, mentionLines(note)[n]);
+    expect(link("[Foo]:\nhttps://e.com\n\nSee [Foo] here", 0)).toBeNull();
+    expect(link("[Foo]:\nhttps://e.com\n\nSee [Foo] here", 3)).toBeNull();
+    expect(link('[r]: https://e.com "a Foo\nb"\n\nUse [r]', 0)).toBeNull();
+    expect(link('[r]: https://e.com "a\nFoo b"\n\nUse [r]', 1)).toBeNull();
+    expect(mentionLines("[x](\r\nFoo.md)\r\n")[1]).not.toContain("Foo");
+  });
+  it("stays quick on deeply nested brackets", () => {
+    for (const note of ["[x\n".repeat(8000) + "]\n".repeat(8000), "[x ".repeat(30000) + "]".repeat(30000) + " Foo"]) {
+      const t0 = performance.now();
+      mentionLines(note);
+      expect(performance.now() - t0).toBeLessThan(1000);
+    }
+  });
 });
 
