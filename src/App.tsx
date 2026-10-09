@@ -71,6 +71,7 @@ import {
   emitWorkspaceEvent,
   pluginRightViews,
   isLoaded,
+  listensFor,
   type HostDeps,
 } from "./lib/plugins";
 import { listPlugins, writePluginData, listCssSnippets, deleteFolder, renameFolder, type PluginInfo, type CssSnippet } from "./lib/vault";
@@ -189,6 +190,24 @@ function markDailyOpened(root: string) {
   } catch {
     /* no session storage: open it each time */
   }
+}
+// Why it can't be made from a Templater template, said once a session too.
+const dailyNoticeKey = (root: string) => `basalt.dailyNotice.${root}`;
+function firstDailyNotice(root: string): boolean {
+  try {
+    if (sessionStorage.getItem(dailyNoticeKey(root)) === todayStamp()) return false;
+    sessionStorage.setItem(dailyNoticeKey(root), todayStamp());
+  } catch {
+    /* no session storage: say it each time */
+  }
+  return true;
+}
+/** Why Templater Lite won't fill a new note's tags here, or null if it will. */
+function templaterWontRun(cfg: ObsidianConfig | null): string | null {
+  if (!isLoaded("templater-lite")) return "Templater Lite isn't on";
+  if (!cfg?.templaterOnCreate) return "Templater's \"Trigger Templater on new file creation\" is off in this vault";
+  if (!listensFor("templater-lite", "create")) return "this copy of Templater Lite doesn't fill new notes, so update it";
+  return null;
 }
 // Bound on the self-write suppression map (rel -> last written content).
 const SELF_WRITES_MAX = 128;
@@ -1789,6 +1808,7 @@ export default function App() {
       if (localStorage.getItem(READABLE_WIDTH_KEY) === null) setReadableWidth(obsConfigRef.current?.readableLineLength ?? true);
       setBookmarks(await readObsidianBookmarks().catch(() => []));
       if (vaultRef.current !== root || !pluginsReady.current) {
+        pluginsReady.current?.done(); // anything waiting on the last vault's plugins stops waiting
         let done = () => {};
         const promise = new Promise<void>((resolve) => (done = resolve));
         pluginsReady.current = { vault: root, promise, done };
@@ -1841,21 +1861,19 @@ export default function App() {
       if (openNoteRel) {
         const target = list.find((n) => n.rel === openNoteRel);
         if (target) await openInPane(ensureWorkspace(), target.path);
-      } else if (obsConfigRef.current?.openBehavior === "daily" && !dailyOpened(root)) {
-        // Obsidian's "Default file to open: Daily note", made from the template
-        // if missing. Once a session, so a reload keeps your place, and once
-        // the plugins are in, so Templater Lite can fill the template.
-        const ready = pluginsReady.current;
-        if (ready?.vault === root) await Promise.race([ready.promise, new Promise((r) => setTimeout(r, 15000))]);
-        if (vaultRef.current === root) {
-          markDailyOpened(root);
-          await dailyNoteApi.current.open(undefined, undefined, true);
-        }
       }
       await listenerReady.current?.promise; // ensure we can hear events first
       startWatching().catch(() => {
         /* watcher unavailable — degrade gracefully */
       });
+      // Obsidian's "Default file to open: Daily note", made from the template
+      // if missing. Once a session it opens one, so a reload keeps your place;
+      // it doesn't hold up the vault while it waits for Templater Lite.
+      if (!openNoteRel && obsConfigRef.current?.openBehavior === "daily" && !dailyOpened(root)) {
+        void dailyNoteApi.current.open(undefined, undefined, true).then((opened) => {
+          if (opened && vaultRef.current === root) markDailyOpened(root);
+        });
+      }
     },
     [flushAll, loadVault, restoreWorkspace, openInPane, ensureWorkspace],
   );
@@ -3021,10 +3039,20 @@ export default function App() {
   );
 
   /** Open (creating if needed) the daily note for a date (default today),
-   * honoring daily-notes.json. At startup, a note whose template has Templater
-   * tags nothing here would run isn't made at all. */
-  const openDailyNote = useCallback(async (date: Date = new Date(), folderIfUnset?: string, atStartup = false) => {
+   * honoring daily-notes.json, and say whether it opened one. At startup it
+   * waits for the plugins (15 s at most) when a missing note's template has
+   * Templater tags, makes no note if nothing here would fill them, and opens
+   * nothing once you've opened something else meanwhile. */
+  const openDailyNote = useCallback(async (date: Date = new Date(), folderIfUnset?: string, atStartup = false): Promise<boolean> => {
     const cfg = obsConfigRef.current;
+    const root = vaultRef.current ?? "";
+    const active = () => {
+      const id = focusedIdRef.current;
+      return id ? (panesRef.current[id]?.active ?? null) : null;
+    };
+    const shown = active();
+    // The vault switched, or (at startup) you or a link opened another note.
+    const stale = () => vaultRef.current !== root || (atStartup && (active() !== shown || dailyOpened(root)));
     // The note's day with the current time, so a template's {{time}} is now.
     const clock = new Date();
     const now = new Date(date);
@@ -3034,12 +3062,14 @@ export default function App() {
     const said = fallback ? [fallback] : [];
     const say = () => said.forEach((msg) => noticeRef.current(msg, 10000));
     const want = normRelKey(`${relNoExt}.md`);
-    const existing = notesRef.current.find((n) => normRelKey(n.rel) === want);
-    if (existing) {
-      await openNoteByPath(existing.path);
+    const openMade = async () => {
+      const made = notesRef.current.find((n) => normRelKey(n.rel) === want);
+      if (!made) return false;
+      await openNoteByPath(made.path);
       say();
-      return;
-    }
+      return true;
+    };
+    if (await openMade()) return true;
     let tplContent = "";
     const tplSetting = cfg?.dailyNotesTemplate?.trim();
     if (tplSetting) {
@@ -3047,20 +3077,26 @@ export default function App() {
       const tpl = notesRef.current.find((n) => normRelKey(n.rel) === tplKey);
       // Read fresh from disk: the index blanks oversized notes' content.
       const read = tpl ? await readNote(tpl.path).catch(() => null) : null;
+      if (stale()) return false;
       if (read === null) said.push(`Daily note template "${tplSetting}" ${tpl ? "couldn't be read" : "wasn't found"}, so the note starts empty`);
       else tplContent = read;
     }
-    if (/<%/.test(tplContent) && !(isLoaded("templater-lite") && cfg?.templaterOnCreate)) {
+    let unfilled: string | null = null;
+    if (/<%/.test(tplContent)) {
       if (atStartup) {
-        noticeRef.current(
-          "Today's daily note wasn't made: its template uses Templater, which isn't running here. Turn on Templater Lite, or make it with \"Open today's daily note\".",
-          12000,
-        );
-        return;
+        // Templater Lite fills it once it's in.
+        const ready = pluginsReady.current;
+        if (ready?.vault === root) await Promise.race([ready.promise, new Promise((r) => setTimeout(r, 15000))]);
+        if (stale()) return false;
+        if (await openMade()) return true; // made meanwhile (a sync, another tab)
       }
-      said.push("The daily note's Templater tags were left as written: Templater Lite isn't running here");
+      unfilled = templaterWontRun(cfg);
+      if (unfilled && atStartup) {
+        if (firstDailyNotice(root))
+          noticeRef.current(`Today's daily note wasn't made: its template uses Templater, and ${unfilled}. Or make it with "Open today's daily note".`, 12000);
+        return false;
+      }
     }
-    const root = vaultRef.current ?? "";
     try {
       let path: string;
       try {
@@ -3068,10 +3104,12 @@ export default function App() {
       } catch (e) {
         // Made meanwhile (another tab, or a sync just in): open that one.
         if (!String(e).includes("already exists")) throw e;
+        if (stale()) return false;
         await openNoteByPath(`${root.replace(/[/\\]+$/, "")}/${relNoExt}.md`);
         say();
-        return;
+        return true;
       }
+      if (vaultRef.current !== root) return false;
       const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
       let content = fillTemplate(tplContent, now, name.split("/").pop() ?? name);
       // Only into the still-empty note: if it was written meanwhile (another
@@ -3083,6 +3121,7 @@ export default function App() {
           if (!isWriteConflict(e)) throw e;
           content = await readNote(path);
         }
+        if (vaultRef.current !== root) return false;
       }
       const note: VaultNote = { path, rel, name: nameFromRel(rel), content };
       index.current.setNote(note);
@@ -3095,10 +3134,14 @@ export default function App() {
       bumpStructure();
       // Plugins hear of it once its template is in (Templater processes it then).
       emitVaultEvent("create", { path: rel, name: note.name });
+      if (unfilled) said.push(`The daily note's Templater tags were left as written: ${unfilled}`);
+      if (stale()) return false;
       await openNoteByPath(path);
       say();
+      return true;
     } catch (e) {
       setSaveError(`Couldn't open daily note: ${e}`);
+      return false;
     }
   }, [openNoteByPath, rememberSelfWrite, bumpStructure]);
   // The plugin host reads these through a ref, so it isn't reinstalled.
@@ -3714,7 +3757,9 @@ export default function App() {
       resolvedLinks: () => index.current.linkCounts(attachmentRel).resolved,
       unresolvedLinks: () => index.current.linkCounts(attachmentRel).unresolved,
       insertAtCursor: (text, caretOffset) => editorApiRef.current?.insertAtCursor(text, caretOffset),
-      openDailyNote: (date, folderIfUnset) => dailyNoteApi.current.open(date, folderIfUnset),
+      openDailyNote: async (date, folderIfUnset) => {
+        await dailyNoteApi.current.open(date, folderIfUnset);
+      },
       hasDailyNote: (date, folderIfUnset) => dailyNoteApi.current.has(date, folderIfUnset),
       onRegistryChanged: () => setPluginVersion((v) => v + 1),
     };

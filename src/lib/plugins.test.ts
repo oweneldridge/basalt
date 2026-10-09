@@ -14,6 +14,7 @@ import {
   vetEnabledPlugins,
   emitVaultEvent,
   emitWorkspaceEvent,
+  listensFor,
   pluginSettingTabs,
   pluginRightViews,
   type HostDeps,
@@ -228,6 +229,27 @@ describe("plugin events", () => {
     (globalThis as any).__events = [];
     emitVaultEvent("modify", { path: "A.md", name: "A" });
     expect((globalThis as any).__events).toEqual([]);
+  });
+
+  it("tells which plugins listen for a vault event, until they unload or let go", async () => {
+    installHost(fakeHost().host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          this.registerEvent(this.app.vault.on("create", () => {}));
+          const once = this.app.vault.on("modify", () => {});
+          once.off();
+          once.off();
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "tpl", code }));
+    expect(listensFor("tpl", "create")).toBe(true);
+    expect(listensFor("tpl", "modify")).toBe(false); // let go, and twice counts once
+    expect(listensFor("other", "create")).toBe(false);
+    await unloadPlugin("tpl");
+    expect(listensFor("tpl", "create")).toBe(false);
   });
 
   it("registerInterval + registerDomEvent are cleared on unload", async () => {

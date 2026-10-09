@@ -142,6 +142,14 @@ type Listener = (...args: unknown[]) => void;
 
 const vaultListeners = new Map<string, Set<Listener>>();
 const workspaceListeners = new Map<string, Set<Listener>>();
+// Live vault subscriptions per plugin and event ("id:event"), so the host can
+// tell whether a plugin will act on a note it makes.
+const listening = new Map<string, number>();
+
+/** Whether plugin `id` is subscribed to vault event `name` right now. */
+export function listensFor(id: string, name: VaultEventName): boolean {
+  return (listening.get(`${id}:${name}`) ?? 0) > 0;
+}
 
 function subscribe(map: Map<string, Set<Listener>>, name: string, cb: Listener): EventRef {
   let set = map.get(name);
@@ -353,8 +361,19 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       createFolder: (path: string) => host.createFolder(path),
       /** Subscribe to a vault event: create/delete/modify → (file); rename →
        * (file, oldPath). Pass the returned ref to plugin.registerEvent(). */
-      on: (name: VaultEventName, cb: (...args: unknown[]) => void): EventRef =>
-        subscribe(vaultListeners, name, cb),
+      on: (name: VaultEventName, cb: (...args: unknown[]) => void): EventRef => {
+        const key = `${ctx.info.id}:${name}`;
+        const ref = subscribe(vaultListeners, name, cb);
+        listening.set(key, (listening.get(key) ?? 0) + 1);
+        let live = true;
+        return {
+          off: () => {
+            ref.off();
+            if (live) listening.set(key, (listening.get(key) ?? 1) - 1);
+            live = false;
+          },
+        };
+      },
     },
     /** Daily notes as the vault's Daily notes settings define them. Absent on
      * hosts that don't provide them. */
