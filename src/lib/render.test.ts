@@ -568,7 +568,7 @@ describe("mayRunHtml", () => {
   };
 
   it("stays linear on many tags that close late", () => {
-    for (const md of ["Foo is here\n" + "a<b ".repeat(25_000) + "c>d\nend", "x " + "a<b ".repeat(25_000)]) {
+    for (const md of ["Foo is here\n" + "a<b ".repeat(100_000) + "c>d\nend", "x " + "a<b ".repeat(100_000)]) {
       const t0 = performance.now();
       expect(mayRunHtml(md)).toBe(false);
       expect(performance.now() - t0).toBeLessThan(100);
@@ -579,9 +579,9 @@ describe("mayRunHtml", () => {
     let seed = 11;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
     const chars = ["<", "<", ">", "\n", "a", "/", "!", "?", " ", "-", "1", ".", "x"];
-    for (let n = 0; n < 20_000; n++) {
+    for (let n = 0; n < 50_000; n++) {
       let md = "";
-      for (let k = 0, len = 1 + Math.floor(rnd() * 14); k < len; k++) md += chars[Math.floor(rnd() * chars.length)];
+      for (let k = 0, len = 1 + Math.floor(rnd() * 40); k < len; k++) md += chars[Math.floor(rnd() * chars.length)];
       expect(mayRunHtml(md), JSON.stringify(md)).toBe(before(md));
     }
   });

@@ -14,7 +14,7 @@
 import { parser as baseParser, GFM } from "@lezer/markdown";
 import type { BlockContext, DelimiterType, InlineContext, Line, MarkdownConfig } from "@lezer/markdown";
 import type { SyntaxNode } from "@lezer/common";
-import { mdImageTarget, proseMask, TAG_BEFORE, TAG_NAME, wikilinkLabel } from "./markdown";
+import { frontmatterEnd, mdImageTarget, proseMask, TAG_BEFORE, TAG_NAME, wikilinkLabel } from "./markdown";
 
 const TAG_AT = new RegExp(`^#(${TAG_NAME})`, "u");
 import { parseFm } from "./frontmatter";
@@ -963,14 +963,33 @@ function indentedCode(md: string): [number, number][] {
   return mayHaveIndentedComment(md) ? indentedCodeRanges(md) : [];
 }
 
-/** Offsets of the `>` marks that open quote lines, as Reading view reads them. */
+/** Offsets of the `>` marks that open quote lines, as Reading view reads them:
+ * with comments taken out, frontmatter and footnote definitions blanked, and
+ * what follows an HTML block's closing line read as a note of its own. */
 export function quoteMarkOffsets(md: string): Set<number> {
+  const { text, at } = withoutComments(md);
+  const lines = text.split("\n");
+  const kept = extractFootnoteDefs(text).text.split("\n");
+  const fm = lines[0]?.trim() === "---" && parseFm(text) ? frontmatterEnd(lines) : -1;
+  const prepared = lines.map((l, i) => (i <= fm || (kept[i] === "" && l !== "") ? " ".repeat(l.length) : l)).join("\n");
   const out = new Set<number>();
-  mdParser.parse(md).iterate({
-    enter: (n) => {
-      if (n.name === "QuoteMark") out.add(n.from);
-    },
-  });
+  const collect = (doc: string, offset: number, depth: number) => {
+    mdParser.parse(doc).iterate({
+      enter: (n) => {
+        if (n.name === "QuoteMark") out.add(at(offset + n.from));
+        if (n.name !== "HTMLBlock") return;
+        const ls = doc.slice(n.from, n.to).split("\n");
+        const tag = ls[0].includes(">") ? /^\s*<\/?([a-zA-Z][a-zA-Z0-9-]*)/.exec(ls[0])?.[1] : undefined;
+        const close = tag ? new RegExp(`</${tag}\\s*>`, "i") : null;
+        const k = close ? ls.findIndex((l) => close.test(l)) : -1;
+        if (k < 0 || k === ls.length - 1 || depth + 1 > MAX_DEPTH) return false;
+        const end = n.from + ls.slice(0, k + 1).join("\n").length;
+        collect(doc.slice(end + 1, n.to), offset + end + 1, depth + 1);
+        return false;
+      },
+    });
+  };
+  collect(prepared, 0, 0);
   return out;
 }
 
@@ -1020,7 +1039,7 @@ export function mayRunHtml(md: string): boolean {
  * `>`), comments, processing instructions and inline HTML (unless `withHtml`
  * is false). With `indented`, indented code too. One parse, and only when a
  * line is indented or HTML could run past what a line's own mask sees. */
-export function rawRanges(md: string, indented: boolean, withHtml = true): [number, number][] {
+export function rawRanges(md: string, indented: boolean, withHtml = true, depth = 0): [number, number][] {
   const code = indented && INDENTED_LINES.test(md);
   const html = withHtml && mayRunHtml(md);
   if (!code && !html) return [];
@@ -1050,8 +1069,12 @@ export function rawRanges(md: string, indented: boolean, withHtml = true): [numb
           const k = close ? lines.findIndex((l) => close.test(l)) : -1;
           const end = k < 0 || k === lines.length - 1 ? n.to : n.from + lines.slice(0, k + 1).join("\n").length;
           out.push([n.from, end]);
-          // What follows the closing line shows as a note of its own.
-          if (n.name === "HTMLBlock" && end < n.to) for (const [f, t] of rawRanges(md.slice(end + 1, n.to), indented, withHtml)) out.push([f + end + 1, t + end + 1]);
+          // What follows the closing line shows as a note of its own, and past
+          // Reading view's nesting limit as its source, escaped.
+          if (n.name === "HTMLBlock" && end < n.to) {
+            if (depth + 1 > MAX_DEPTH) out.push([end + 1, n.to]);
+            else for (const [f, t] of rawRanges(md.slice(end + 1, n.to), indented, withHtml, depth + 1)) out.push([f + end + 1, t + end + 1]);
+          }
           return false;
         }
       }
@@ -1060,10 +1083,10 @@ export function rawRanges(md: string, indented: boolean, withHtml = true): [numb
   return out;
 }
 
-/** `rawRanges` as Reading view sees the note: with its `%%comments%%` taken
- * out first. The ranges are offsets into `md`. */
-export function rawRangesBeyondComments(md: string, indented: boolean, withHtml = true): [number, number][] {
-  if (!md.includes("%%")) return rawRanges(md, indented, withHtml);
+/** `md` with its `%%comments%%` taken out, as Reading view takes them out, and
+ * where each offset of that text was in `md`. */
+function withoutComments(md: string): { text: string; at: (p: number) => number } {
+  if (!md.includes("%%")) return { text: md, at: (p) => p };
   const kept: [number, number][] = []; // where each kept stretch starts: [in the text, in md]
   let text = "";
   let last = 0;
@@ -1084,6 +1107,13 @@ export function rawRangesBeyondComments(md: string, indented: boolean, withHtml 
     }
     return kept[lo][1] + p - kept[lo][0];
   };
+  return { text, at };
+}
+
+/** `rawRanges` as Reading view sees the note: with its `%%comments%%` taken
+ * out first. The ranges are offsets into `md`. */
+export function rawRangesBeyondComments(md: string, indented: boolean, withHtml = true): [number, number][] {
+  const { text, at } = withoutComments(md);
   return rawRanges(text, indented, withHtml).map(([f, t]) => [at(f), t > f ? at(t - 1) + 1 : at(f)]);
 }
 

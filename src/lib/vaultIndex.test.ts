@@ -596,6 +596,22 @@ describe("tags after a `>`", () => {
     expect(mask).toEqual(proseMask(lines));
   });
 
+  it("read the note as Reading view does when one is indented", () => {
+    expect(extractTags("<div>x</div>\n- a\n    >#b")).toEqual(["b"]);
+    expect(extractTags("[^1]: fn >#q\n2. two\n    >#r")).toEqual(["r"]);
+    expect(extractTags("---\nk: |\n  ```\n---\n- a\n    >#c")).toEqual(["c"]);
+    expect(extractTags("%% a\nb %%- a\n    >#d")).toEqual(["d"]);
+    expect(extractTags("<div>x</div>\n>#a")).toEqual(["a"]);
+    expect(extractTags("</details>\n> [!note]\n>#e")).toEqual(["e"]);
+  });
+
+  it("stay quick on deeply nested quote lines", () => {
+    const t0 = performance.now();
+    expect(extractTags("- > 1. ".repeat(10_000) + ">#a")).toEqual(["a"]);
+    expect(extractTags(">#a\n".repeat(100_000))).toEqual(["a"]);
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+
   it("skip the parse when no line has one", () => {
     expect(extractTags("> #quoted and #plain\n`code #no`")).toEqual(["quoted", "plain"]);
   });
@@ -611,10 +627,28 @@ describe("mentions near raw HTML, as Reading view shows it", () => {
     expect(count("<div>Header</div>\nFoo here")).toBe(1);
   });
 
+  it("read a long run of closed HTML lines as Reading view does, quickly", () => {
+    const html = (n: number) => "Foo is here.\n" + Array.from({ length: n }, (_, i) => `<p>Paragraph ${i}.</p>`).join("\n") + "\nFoo at the end";
+    expect(count(html(30))).toBe(2);
+    const t0 = performance.now();
+    expect(count(html(5000))).toBe(1); // past the nesting limit the rest shows as its source
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+
   it("read HTML with the comments taken out", () => {
     expect(count("%%\n<div>\nold\n%%\nFoo is here")).toBe(1);
     expect(count("<div>\n%%note%% Foo\n</div>")).toBe(0);
     expect(count("%% a %%\n<div>\nFoo\n</div>\nFoo after")).toBe(1);
     expect(count(`%% ${"x".repeat(40)} %%\n<div>\nFoo\n</div>\nFoo after`)).toBe(1);
+    expect(count("%% c %%\n<b>x</b>Foo")).toBe(1);
+  });
+});
+
+describe("the index's prose mask", () => {
+  it("keeps tags and links in code out", () => {
+    const idx = new VaultIndex();
+    idx.build([{ path: "/v/A.md", rel: "A.md", name: "A", content: "#real [[B]]\n```\n#incode [[C]]\n```" }] as never);
+    expect(idx.allTags().map((t) => t.tag)).toEqual(["real"]);
+    expect(idx.outgoingLinksFor("/v/A.md").unresolved).toEqual(["B"]);
   });
 });

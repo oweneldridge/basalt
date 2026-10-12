@@ -242,6 +242,9 @@ function splitOutsideQuotes(s: string): string[] {
 const HTML_TAG =
   /<[a-zA-Z][a-zA-Z0-9-]*(?:\s+[a-zA-Z_:][a-zA-Z0-9_.:-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>|<\/[a-zA-Z][a-zA-Z0-9-]*\s*>/g;
 
+// What may come before a quote's `>`: indent, list marks and other quote marks.
+const QUOTE_MARKS_RE = /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]*)*$/;
+
 export function extractTags(content: string, lines = content.split("\n"), mask = proseMask(lines)): string[] {
   let prose = mask;
   // An SVG drawing's markup and labels aren't prose (its colours aren't tags).
@@ -261,8 +264,9 @@ export function extractTags(content: string, lines = content.split("\n"), mask =
     out.push(t);
   };
   for (const t of frontmatterTags(lines)) add(t);
-  // `>#tag` is a tag only where that `>` really opens a quote line, which takes
-  // the whole note to tell, so it's parsed only when a line has one.
+  // `>#tag` is a tag where only quote and list marks come before it on its
+  // line. Indented four or more, it's a tag only if that `>` opens a quote,
+  // which takes the whole note to tell, so the note is parsed only then.
   let quoteMarks: Set<number> | null = null;
   let at = 0;
   const blank = (s: string) => " ".repeat(s.length);
@@ -276,7 +280,11 @@ export function extractTags(content: string, lines = content.split("\n"), mask =
     let m: RegExpExecArray | null;
     while ((m = re.exec(line))) {
       if (/^\d+$/.test(m[2])) continue; // group 2 = bare name; `#42` isn't a tag
-      if (line[m.index - 1] === ">" && !(quoteMarks ??= quoteMarkOffsets(content)).has(at + m.index - 1)) continue;
+      if (line[m.index - 1] === ">") {
+        const marks = lines[i].slice(0, m.index - 1);
+        if (!QUOTE_MARKS_RE.test(marks)) continue;
+        if (/ {4}|\t/.test(marks) && !(quoteMarks ??= quoteMarkOffsets(content)).has(at + m.index - 1)) continue;
+      }
       add(m[2]);
     }
   }
