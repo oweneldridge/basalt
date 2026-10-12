@@ -532,21 +532,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   aren't offered, as Reading view shows them as HTML or code. A line indented
   under a paragraph no longer hides a mention in the definition after it.
 - Switching vaults several times quickly, when the later switches fail, leaves
-  you in the vault that opened. A switch that doesn't answer in 10 seconds
-  counts as failed, and if it answers after all, the app opens the vault on
-  screen again. A failed switch while today's daily note loads its template no
-  longer stops it opening.
+  you in the vault that opened. A failed switch while today's daily note loads
+  its template no longer stops it opening.
 - Today's daily note is made with its template already in it, so a start that
   stops never leaves it empty, and an empty one (emptied by you or by another
   app) opens as it is and is never filled again. A window opened for one note
   opens the daily note when you pick its vault from the switcher, but not when
   it reloads, even mid-load.
-- Callouts render their body as the quote holds it: a callout inside a quote
-  no longer shows an extra quote, one in a nested list no longer shows its body
-  as code, and the line after the title stays part of its paragraph. Reading
+- A callout inside a quote no longer shows an extra quote in its body, and one
+  in a nested list no longer shows its body as code. Unlinked mentions in a
+  callout's body are offered where Reading view shows them as text. Reading
   view no longer fails on a list nested thousands deep on one line.
-- A note changed outside the app has its size and modified time updated, so
-  Bases filtering or sorting on them see the change.
+- A note added or changed outside the app has its size and dates from the
+  file, so Bases filtering or sorting on them see the change at once, a synced
+  note's own modified time included.
 
 ### Security
 
@@ -585,8 +584,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a note tab in a side panel shrinks to fit a narrow one. They close from their
   menu, a middle click or Delete, and focus stays on the panel's tabs, without
   coming back to them once it has moved on. The Outline icon is drawn on whole
-  pixels, so it stays sharp on a 1x screen. A tab's name is no longer read out
-  a second time as its description.
+  pixels, so it stays sharp on a 1x screen. A tab's tooltip shows anywhere on
+  the tab, and its name is no longer read out a second time as its
+  description; a pinned tab is named as pinned. Closing a panel's last tab, or
+  switching to and from Reading view with Cmd-E, leaves focus in the note
+  rather than nowhere.
 - Graph view and Slides are dialogs: focus stays inside, Escape returns it to
   where it was, and the rest of the app is inert. Slides announce "Slide 2 of
   5" as you move. The graph's filter, mode buttons and canvas have names.
