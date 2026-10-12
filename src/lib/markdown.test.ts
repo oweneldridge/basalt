@@ -260,9 +260,11 @@ describe("proseMask reads containers as the editor's parser does", () => {
       ["> 1) a\n>\t\t```\n>\t\t[[L]]", [1, 0, 0]],
       [">     x\n>\n\t> ```\n\t> [[L]]", [1, 1, 1, 1]],
       ["> > > > ```\n> > > > [[L]]", [0, 0]],
-      ["> ".repeat(100) + "```\n" + "> ".repeat(100) + "[[L]]", [0, 0]],
-      // Past 100 containers in one another the markers are read as text.
-      ["> ".repeat(101) + "```\n" + "> ".repeat(101) + "[[L]]", [1, 1]],
+      [">".repeat(101) + " ```\n" + ">".repeat(101) + " [[L]]\n" + ">".repeat(101) + " ```", [0, 0, 0]],
+      ["> ".repeat(1000) + "```\n" + "> ".repeat(1000) + "[[L]]", [0, 0]],
+      // Past 1,000 containers in one another the markers are read as text.
+      ["> ".repeat(1001) + "```\n" + "> ".repeat(1001) + "[[L]]", [1, 1]],
+      ["- ".repeat(101) + "# h\n2. ```\n   Foo", [1, 0, 0]],
     ]);
   });
 
@@ -329,5 +331,68 @@ describe("blockDepths", () => {
     expect(depths("> <div>x</div>\n> - y\n\nz")).toEqual([1, 4, 4, 0]);
     expect(depths("- ".repeat(39) + "<div>x</div>\n" + "  ".repeat(39) + "y")).toEqual([39, 40]);
     expect(depths("- ".repeat(40) + "<div>x</div>\n" + "  ".repeat(40) + "y")).toEqual([40, 41]);
+  });
+});
+
+describe("proseMask and blockDepths on inputs that tell near misses apart", () => {
+  // Each read as the editor's parser reads it, with Reading view's HTML split.
+  it("masks code as the editor's parser finds it", () => {
+    const rows: [string, number[]][] = [
+      ["####### a\n-->\n<textarea>\n- \t```", [1,1,1,0]],
+      ["<!doctype html>\n-|-\n1. \n     ~~~", [1,1,1,1]],
+      ["1. - a\n2. ```", [1,0]],
+      ["1. -\n2. ```", [1,0]],
+      ["| a | b |\n10) a\n \t```", [1,1,1]],
+      ["> - a\n10) a\n     ```", [1,1,1]],
+      ["- \t ```\n\t- a", [0,1]],
+      ["- \t ```\n  - b", [0,1]],
+      ["-\ta\n_ _ _\n    ```", [1,1,1]],
+      ["- [x] ```\n___\n   ```\na | b", [1,1,0,0]],
+      ["[a\\]]: b\n<span>\n```", [1,1,1]],
+      ["<?x?>\n````", [1,0]],
+      ["<?x?>\n+ ```", [1,0]],
+      ["<!DOCTYPE html>\n2. ```", [1,0]],
+      ["<!DOCTYPE html>\n````", [1,0]],
+      ["<![CDATA[ x ]]>\n> ```", [1,0]],
+      ["<![CDATA[ x ]]>\n- - ```", [1,0]],
+      ["?>\n<table>\n  > ```", [1,1,1]],
+      ["  -\n<table>\n-    - ```", [1,1,1]],
+      ["<a_b>\n\r\n>  ```", [1,1,0]],
+      ["<div>\n\r\n1. - ```", [1,1,0]],
+    ];
+    for (const [md, want] of rows) expect(proseMask(md.split("\n")).map(Number), JSON.stringify(md)).toEqual(want);
+  });
+
+  it("counts each block's depth", () => {
+    const rows: [string, number[]][] = [
+      ["####### a\n-->\n<textarea>\n| a |\n-\ta\n- \t```\n> - - -", [0,0,0,0,1,1,1]],
+      ["<!x\n1. -\n10. a", [0,2,1]],
+      ["</pre></div>\n10) a\ntext", [0,0,0]],
+      ["- a\r\n1. \n- \t ```\n  b\n- <!-- x\n<DIV>```\n    <div>\n\t- a", [1,1,1,0,1,0,0,0]],
+      ["   - b\n___\n  text", [1,0,0]],
+      ["  * * *\n[a\\]]: b\n\t```\n3. a\n>\n- <!--", [0,0,0,1,1,1]],
+      ["  text\n<?x?>\n1.\t\t```\n***\n````\n:-:|-\n<details>", [0,0,1,0,0,0,0]],
+      ["<!DOCTYPE html>\na|b|c\n> \r\n> - a\n<!doctype html>\n  1. x", [0,0,1,2,2,1]],
+      ["\"t\"\n1) a\n</style>\n<![CDATA[ x ]]>\n  1. x", [0,1,1,0,1]],
+      ["--\n- -\n<table>\n-\ta\n<search>\n<br>\n  - - -\n<details>", [0,2,0,0,0,0,0,0]],
+      ["- ```\n<div>```\n1.\n-|-\n\r\n</p>\n*\t*\t*", [1,0,0,0,0,0,1]],
+    ];
+    for (const [md, want] of rows) expect(blockDepths(md.split("\n")), JSON.stringify(md)).toEqual(want);
+    expect(0 in blockDepths(["", "", "a"])).toBe(true);
+  });
+
+  it("stays quick on open link reference titles and long marker lines", () => {
+    const t0 = performance.now();
+    proseMask((('[a]: b "\n' + "x\n".repeat(5000) + "\n").repeat(20) + "```").split("\n"));
+    proseMask((("- ".repeat(150) + "a\n").repeat(5000) + "```").split("\n"));
+    expect(performance.now() - t0).toBeLessThan(800);
+    const t1 = performance.now();
+    proseMask((("- ".repeat(300) + "a\n").repeat(3000) + "```").split("\n"));
+    expect(performance.now() - t1).toBeLessThan(300);
+  });
+
+  it("reads a table and a long link reference as the editor's parser does", () => {
+    expect(proseMask("- a\nb|c\n\u00a0-|-\n  ```\nFoo".split("\n")).map(Number)).toEqual([1, 1, 1, 0, 0]);
+    expect(proseMask(("[a]:\n<" + "y".repeat(10_050) + ">\n2. ```\n   Foo").split("\n")).map(Number)).toEqual([1, 1, 0, 0]);
   });
 });

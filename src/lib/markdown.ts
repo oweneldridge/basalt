@@ -39,12 +39,12 @@ export function proseMask(lines: string[]): boolean[] {
 }
 
 /** How deep in quotes and lists the block each line is part of sits, as
- * Reading view counts it (past 100 the markers are read as text). */
+ * Reading view counts it (past 1,000 the markers are read as text). */
 export function blockDepths(lines: string[]): number[] {
   const depths = new Array<number>(lines.length);
   maskFrom(lines, 0, new Array<boolean>(lines.length), 0, depths);
   for (let k = 1; k < depths.length; k++) depths[k] ??= depths[k - 1];
-  return depths.map((d) => d ?? 0);
+  return Array.from(depths, (d) => d ?? 0);
 }
 
 /** proseMask's work from line `start` on, for a note or, `depth` deep, for what
@@ -205,7 +205,7 @@ interface Container {
 const QUOTE: Container = { value: 0, ordered: false };
 
 // Past this many containers in one another a line's markers are read as text.
-const MAX_CONTAINERS = 100;
+const MAX_CONTAINERS = 1000;
 
 // A line as the editor's parser walks it: past the containers it goes on with
 // (`depth` of them), where their text starts (`basePos`, column `baseIndent`),
@@ -218,12 +218,19 @@ class Line {
   indent = 0;
   next = -1;
   depth = 0;
+  // The column basePos is at (past baseIndent when a tab spans it), so the
+  // next container's column is counted on from there.
+  baseAt = 0;
+  // Where the line ends in nothing but `breakChar` and spaces, once asked.
+  breakChar = -1;
+  breakFrom = 0;
 
   reset(text: string) {
     if (text.charCodeAt(text.length - 1) === 13) text = text.slice(0, -1);
     const p = skipSpace(text, 0);
     this.text = text;
-    this.basePos = this.baseIndent = this.depth = 0;
+    this.basePos = this.baseIndent = this.baseAt = this.depth = 0;
+    this.breakChar = -1;
     this.pos = p;
     this.indent = p && columnAt(text, p, 0, 0);
     this.next = p === text.length ? -1 : text.charCodeAt(p);
@@ -238,14 +245,17 @@ class Line {
 
   moveBase(to: number) {
     this.basePos = to;
-    this.baseIndent = columnAt(this.text, to, this.pos, this.indent);
+    this.baseIndent = this.baseAt = columnAt(this.text, to, this.pos, this.indent);
   }
 
   moveBaseColumn(col: number) {
     this.baseIndent = col;
     let i = 0;
-    for (let c = 0; i < this.text.length && c < col; i++) c += this.text.charCodeAt(i) === 9 ? 4 - (c % 4) : 1;
+    let c = 0;
+    if (col >= this.baseAt) (i = this.basePos), (c = this.baseAt);
+    for (; i < this.text.length && c < col; i++) c += this.text.charCodeAt(i) === 9 ? 4 - (c % 4) : 1;
     this.basePos = i;
+    this.baseAt = c;
   }
 
   skipQuote(): boolean {
@@ -289,12 +299,15 @@ function fenceAt(line: Line): number {
 function breakAt(line: Line): boolean {
   const c = line.next;
   if (c !== 42 && c !== 45 && c !== 95) return false;
-  let count = 1;
-  for (let p = line.pos + 1; p < line.text.length; p++) {
-    const d = line.text.charCodeAt(p);
-    if (d === c) count++;
-    else if (!isSpace(d)) return false;
+  const t = line.text;
+  if (line.breakChar !== c) {
+    let from = t.length;
+    while (from > 0 && (t.charCodeAt(from - 1) === c || isSpace(t.charCodeAt(from - 1)))) from--;
+    (line.breakChar = c), (line.breakFrom = from);
   }
+  if (line.pos < line.breakFrom) return false;
+  let count = 0;
+  for (let p = line.pos; p < t.length && count < 3; p++) if (t.charCodeAt(p) === c) count++;
   return count >= 3;
 }
 
@@ -389,8 +402,7 @@ function interrupts(line: Line, stack: Container[]): boolean {
  * delimiter row (`--|--`) with as many cells. */
 function tableAt(line: Line, after: string | undefined): boolean {
   if (after === undefined) return false;
-  const c = after.charCodeAt(0);
-  if (c !== 124 && c !== 45 && c !== 58 && c !== 32 && c !== 9) return false;
+  if (!/^[|:\-\s]/.test(after)) return false;
   if (!hasPipe(line.text, line.basePos)) return false;
   if (after.endsWith("\r")) after = after.slice(0, -1);
   return DELIMITER_ROW.test(after) && cellsOf(line.text, line.basePos) === cellsOf(after, line.basePos);
@@ -431,6 +443,9 @@ class LinkRef {
   stage = 0; // the label, the URL, after the URL, after the title, or -1: not one
   pos = 0;
   content: string;
+  // A title still open: where it starts, how far it's been read, and whether
+  // that stopped after a backslash. Each line goes on from there.
+  title = { from: -1, at: 0, escaped: false };
 
   constructor(first: string) {
     this.content = first;
@@ -441,11 +456,10 @@ class LinkRef {
   nextLine(text: string): boolean {
     if (this.stage < 0) return false;
     this.content += "\n" + text;
-    if (this.content.length > LINK_REF_LIMIT) {
-      this.stage = -1;
-      return false;
-    }
-    return this.advance() > -1;
+    if (this.advance() > -1) return true;
+    // Only an open title runs on line after line.
+    if (this.stage === 2 && this.title.from >= 0 && this.content.length > LINK_REF_LIMIT) this.stage = -1;
+    return false;
   }
 
   // Where the definition ends, or -1 for not yet (or not one).
@@ -469,7 +483,7 @@ class LinkRef {
         const at = skipSpace(c, this.pos);
         let end = 0;
         if (at > this.pos) {
-          const title = titleEnd(c, at);
+          const title = this.titleEnd(c, at);
           const after = title < 0 ? -1 : lineEnd(c, title);
           if (after > 0) (this.stage = 3), (this.pos = title), (end = after);
         }
@@ -478,8 +492,23 @@ class LinkRef {
       } else return lineEnd(c, this.pos);
     }
   }
+
+  titleEnd(text: string, start: number): number {
+    const open = text.charCodeAt(start);
+    if (open !== 39 && open !== 34 && open !== 40) return -1;
+    const close = open === 40 ? 41 : open;
+    let { at: p, escaped } = this.title.from === start ? this.title : { at: start + 1, escaped: false };
+    for (; p < text.length; p++) {
+      const c = text.charCodeAt(p);
+      if (escaped) escaped = false;
+      else if (c === close) return p + 1;
+      else if (c === 92) escaped = true;
+    }
+    this.title = { from: start, at: p, escaped };
+    return PENDING;
+  }
 }
-// Past this length a link reference definition still open is read as text.
+// Past this length a link reference definition whose title is still open is read as text.
 const LINK_REF_LIMIT = 10_000;
 // A part of a link reference definition that may go on to the next line.
 const PENDING = -2;
@@ -522,19 +551,6 @@ function urlEnd(text: string, start: number): number {
     } else if (c === 92) escaped = true;
   }
   return p > start ? p : p === text.length ? PENDING : -1;
-}
-
-function titleEnd(text: string, start: number): number {
-  const open = text.charCodeAt(start);
-  if (open !== 39 && open !== 34 && open !== 40) return -1;
-  const close = open === 40 ? 41 : open;
-  for (let p = start + 1, escaped = false; p < text.length; p++) {
-    const c = text.charCodeAt(p);
-    if (escaped) escaped = false;
-    else if (c === close) return p + 1;
-    else if (c === 92) escaped = true;
-  }
-  return PENDING;
 }
 
 /** Where the line from `pos` ends, if only spaces are left on it, else -1. */
