@@ -505,6 +505,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Today's daily note isn't made in a vault you switch to while the first one
   is still loading, still opens when a vault switch fails, and its notice says
   when Templater Lite didn't load rather than that it was waiting.
+- Switching vaults twice in quick succession leaves you in the one you picked
+  last, and a switch that fails while a vault loads no longer keeps its daily
+  note from opening. A daily note left empty (the app closed before its
+  template went in) is filled from the template next time. A window opened for
+  one note stays on it when it reloads.
+- The index reads HTML blocks as Reading view does (a code fence after a line
+  that closes its tag is code), along with spaced thematic breaks (`- - -`),
+  items that start with code or HTML, and list kinds a quote held. `>#tag`
+  counts only where Reading view shows a quote. Link all keeps checking bold
+  and italics past a bullet between numbered items or a `#` and a tab, links a
+  long chain of mentions in one go, stays quick on long lines, and leaves alone
+  mentions nested past Reading view's depth limit inside quotes.
 
 ### Security
 
