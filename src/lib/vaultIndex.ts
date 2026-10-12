@@ -264,9 +264,11 @@ export function extractTags(content: string, lines = content.split("\n"), mask =
     out.push(t);
   };
   for (const t of frontmatterTags(lines)) add(t);
-  // `>#tag` is a tag where only quote and list marks come before it on its
-  // line. Indented four or more, it's a tag only if that `>` opens a quote,
-  // which takes the whole note to tell, so the note is parsed only then.
+  // `>#tag` is a tag where that `>` opens a quote line. Where only quote
+  // marks come before it, in a note with no HTML or math, it does; anything
+  // else (list marks, indents, a block it may sit in) takes the whole note to
+  // tell, so the note is parsed only then.
+  const plainNote = !content.includes("<") && !content.includes("$$");
   let quoteMarks: Set<number> | null = null;
   let at = 0;
   const blank = (s: string) => " ".repeat(s.length);
@@ -283,7 +285,7 @@ export function extractTags(content: string, lines = content.split("\n"), mask =
       if (line[m.index - 1] === ">") {
         const marks = lines[i].slice(0, m.index - 1);
         if (!QUOTE_MARKS_RE.test(marks)) continue;
-        if (/ {4}|\t/.test(marks) && !(quoteMarks ??= quoteMarkOffsets(content)).has(at + m.index - 1)) continue;
+        if (!(plainNote && /^(?: {0,3}> ?)*$/.test(marks)) && !(quoteMarks ??= quoteMarkOffsets(content)).has(at + m.index - 1)) continue;
       }
       add(m[2]);
     }

@@ -28,11 +28,8 @@ export function findTags(state: EditorState, ranges: readonly { from: number; to
       if (isInExcludedRegion(state, tagStart)) continue; // code / tables
       if (isInHtml(state, tagStart)) continue; // `fill="#e8710a"` is a colour
       if (isInLinkContext(state, tagStart)) continue; // link text / destinations
-      // `>#tag` indented four or more only where the `>` opens a quote line.
-      if (text[tagStart - from - 1] === ">") {
-        const marks = state.doc.sliceString(state.doc.lineAt(tagStart).from, tagStart - 1);
-        if (/ {4}|\t/.test(marks) && syntaxTree(state).resolveInner(tagStart - 1, 1).name !== "QuoteMark") continue;
-      }
+      // `>#tag` only where the `>` opens a quote line.
+      if (text[tagStart - from - 1] === ">" && syntaxTree(state).resolveInner(tagStart - 1, 1).name !== "QuoteMark") continue;
       out.push([tagStart, tagEnd]);
     }
   }

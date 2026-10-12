@@ -1039,13 +1039,27 @@ export function mayRunHtml(md: string): boolean {
  * `>`), comments, processing instructions and inline HTML (unless `withHtml`
  * is false). With `indented`, indented code too. One parse, and only when a
  * line is indented or HTML could run past what a line's own mask sees. */
+const NESTING = new Set(["Blockquote", "BulletList", "OrderedList"]);
+
 export function rawRanges(md: string, indented: boolean, withHtml = true, depth = 0): [number, number][] {
   const code = indented && INDENTED_LINES.test(md);
   const html = withHtml && mayRunHtml(md);
-  if (!code && !html) return [];
+  // What follows an HTML block is always read, for how deep it sits.
+  if (!code && !html && !depth) return [];
   const out: [number, number][] = [];
+  // Each quote and list a block sits in takes it a level deeper, as in Reading view.
+  let nest = 0;
   mdParser.parse(md).iterate({
+    leave: (n) => {
+      if (NESTING.has(n.name)) nest--;
+    },
     enter: (n) => {
+      if (NESTING.has(n.name)) nest++;
+      // Too deep, Reading view shows a block as its source.
+      if ((n.name === "Paragraph" || n.name === "HTMLBlock") && depth + nest > MAX_DEPTH) {
+        out.push([n.from, n.to]);
+        return false;
+      }
       switch (n.name) {
         case "FencedCode":
           return false;
@@ -1071,9 +1085,10 @@ export function rawRanges(md: string, indented: boolean, withHtml = true, depth 
           out.push([n.from, end]);
           // What follows the closing line shows as a note of its own, and past
           // Reading view's nesting limit as its source, escaped.
+          const at = depth + nest + 1;
           if (n.name === "HTMLBlock" && end < n.to) {
-            if (depth + 1 > MAX_DEPTH) out.push([end + 1, n.to]);
-            else for (const [f, t] of rawRanges(md.slice(end + 1, n.to), indented, withHtml, depth + 1)) out.push([f + end + 1, t + end + 1]);
+            if (at > MAX_DEPTH) out.push([end + 1, n.to]);
+            else for (const [f, t] of rawRanges(md.slice(end + 1, n.to), indented, withHtml, at)) out.push([f + end + 1, t + end + 1]);
           }
           return false;
         }

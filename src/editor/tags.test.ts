@@ -27,6 +27,8 @@ describe("Live Preview tags", () => {
     expect(chips("- a\n      >#y")).toEqual([]);
     expect(chips("        >#seven")).toEqual([]);
     expect(chips("a >#b")).toEqual([]);
+    expect(chips("- a\n2. >#u")).toEqual([]);
+    expect(chips("text\n\t>#t")).toEqual([]);
   });
 
   it("still chips ordinary tags", () => {

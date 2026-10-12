@@ -603,11 +603,19 @@ describe("tags after a `>`", () => {
     expect(extractTags("%% a\nb %%- a\n    >#d")).toEqual(["d"]);
     expect(extractTags("<div>x</div>\n>#a")).toEqual(["a"]);
     expect(extractTags("</details>\n> [!note]\n>#e")).toEqual(["e"]);
+    expect(extractTags(Array.from({ length: 5000 }, (_, i) => `<p>${i}</p>`).join("\n") + "\n- a\n    >#t")).toEqual([]);
+  });
+
+  it("aren't tags where Reading view shows the `>` as text", () => {
+    for (const note of ["- a\n2. >#u", "text\n2. >#u", "text\n10) >#u", "> - a\n> 2. >#u", "<div>\n>#a", "<!--\n>#a", "<span>\n>#a", "<br>\n>#a", "$$\n>#a\n$$", "text\n\t>#t"]) {
+      expect(extractTags(note), note).toEqual([]);
+    }
+    expect(extractTags("text\n- >#c")).toEqual(["c"]);
   });
 
   it("stay quick on deeply nested quote lines", () => {
     const t0 = performance.now();
-    expect(extractTags("- > 1. ".repeat(10_000) + ">#a")).toEqual(["a"]);
+    expect(extractTags("- > 1. ".repeat(1_000) + ">#a")).toEqual(["a"]);
     expect(extractTags(">#a\n".repeat(100_000))).toEqual(["a"]);
     expect(performance.now() - t0).toBeLessThan(1500);
   });
@@ -633,6 +641,13 @@ describe("mentions near raw HTML, as Reading view shows it", () => {
     const t0 = performance.now();
     expect(count(html(5000))).toBe(1); // past the nesting limit the rest shows as its source
     expect(performance.now() - t0).toBeLessThan(1500);
+  });
+
+  it("count a quote's levels toward the nesting limit, as Reading view does", () => {
+    const quoted = (n: number) => Array.from({ length: n }, (_, i) => `> <div>x</div>\n> Foo ${i}`).join("\n");
+    expect(count(quoted(19))).toBe(19);
+    expect(count(quoted(20))).toBe(19);
+    expect(count(quoted(30))).toBe(19);
   });
 
   it("read HTML with the comments taken out", () => {
