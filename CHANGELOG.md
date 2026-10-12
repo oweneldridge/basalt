@@ -524,16 +524,29 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the block does, as Reading view renders it.
 - Unlinked mentions nested more than 40 quotes or lists deep, which Reading
   view shows as plain text, aren't offered for linking, headings and tables
-  included. A line of thousands of quote or list markers scans in a moment.
+  included (a callout's title at that depth still shows, so it's offered). A
+  line of thousands of quote or list markers scans in a moment, and so does a
+  link reference definition whose title is never closed.
+- Unlinked mentions inside raw HTML in a quote (past a `>` line), after
+  frontmatter, or after a paragraph that starts with a tag such as `<span>`
+  aren't offered, as Reading view shows them as HTML or code. A line indented
+  under a paragraph no longer hides a mention in the definition after it.
 - Switching vaults several times quickly, when the later switches fail, leaves
-  you in the vault that opened, and a switch that never answers holds up the
-  next one for 10 seconds at most. A failed switch while today's daily note
-  loads its template no longer stops it opening.
-- A daily note you emptied yourself stays empty: only one left empty by a
-  start that stopped is filled from its template, and only if the template is
-  there. With Templater Lite off, today's empty note opens instead of a notice
-  that it wasn't made. A window opened for one note opens the daily note when
-  you pick its vault from the switcher.
+  you in the vault that opened. A switch that doesn't answer in 10 seconds
+  counts as failed, and if it answers after all, the app opens the vault on
+  screen again. A failed switch while today's daily note loads its template no
+  longer stops it opening.
+- Today's daily note is made with its template already in it, so a start that
+  stops never leaves it empty, and an empty one (emptied by you or by another
+  app) opens as it is and is never filled again. A window opened for one note
+  opens the daily note when you pick its vault from the switcher, but not when
+  it reloads, even mid-load.
+- Callouts render their body as the quote holds it: a callout inside a quote
+  no longer shows an extra quote, one in a nested list no longer shows its body
+  as code, and the line after the title stays part of its paragraph. Reading
+  view no longer fails on a list nested thousands deep on one line.
+- A note changed outside the app has its size and modified time updated, so
+  Bases filtering or sorting on them see the change.
 
 ### Security
 
@@ -561,16 +574,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Accessibility
 
-- Placeholder text in every text box reaches 4.5:1 contrast in both themes,
-  and view tab names in light mode are no longer faded.
+- Placeholder text in every text box, the Bases filter and formula fields
+  included, reaches 4.5:1 contrast in both themes, and view tab names in light
+  mode are no longer faded.
 - The Files panel's sort menu sits on its own row, so the panel no longer
   scrolls sideways at its default width.
 - Side panel tabs are icons, named in their tooltips and to screen readers, so
   every panel's tab stays in view; when there are more than fit, they wrap
-  onto another row. A plugin's panel shows its name, and a note tab in a
-  narrow side panel shrinks to fit. They close from their menu, a middle click
-  or Delete, and focus stays on the panel's tabs. The Outline icon is drawn on
-  whole pixels, so it stays sharp on a 1x screen.
+  onto another row. A plugin's panel shows its name (cut short when long), and
+  a note tab in a side panel shrinks to fit a narrow one. They close from their
+  menu, a middle click or Delete, and focus stays on the panel's tabs, without
+  coming back to them once it has moved on. The Outline icon is drawn on whole
+  pixels, so it stays sharp on a 1x screen. A tab's name is no longer read out
+  a second time as its description.
 - Graph view and Slides are dialogs: focus stays inside, Escape returns it to
   where it was, and the rest of the app is inert. Slides announce "Slide 2 of
   5" as you move. The graph's filter, mode buttons and canvas have names.

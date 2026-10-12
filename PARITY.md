@@ -113,7 +113,7 @@ are left: under an empty list item or quote line, the editor's parser keeps
 unindented lines in one paragraph where CommonMark doesn't, and Link all reads
 them the CommonMark way; and after a link whose address holds a backtick
 (`[](a`b)`), Link all can still write into a code span that follows. Past
-100 quotes and lists inside one another, the index reads further markers as
+1,000 quotes and lists inside one another, the index reads further markers as
 text, where the editor's parser keeps nesting. The index counts links and tags
 inside HTML blocks, which Reading view shows as raw HTML; whether Obsidian
 counts them is what `Notes/Blocks.md` in the rename parity run shows. A table
