@@ -16,7 +16,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "test:e2e:real": "vite build && cargo build -p basalt-server && playwright test -c playwright.real.config.ts"
+    "test:e2e:real": "vite build && cargo build -p basalt-server && playwright test -c playwright.real.config.ts",
+    "parity:prepare": "node parity/prepare.mjs",
+    "parity:basalt": "vite build && cargo build -p basalt-server && playwright test -c parity/playwright.config.ts",
+    "parity:diff": "node parity/diff.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.6",
