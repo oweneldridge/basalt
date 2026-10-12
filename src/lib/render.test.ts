@@ -2,7 +2,7 @@ import { toggleTaskLine } from "./render";
 // Markdown→HTML rendering for Reading mode / export. Output is inserted via
 // innerHTML, so escaping is security-critical and gets first-class coverage.
 import { afterEach, describe, expect, it } from "vitest";
-import { renderMarkdown, renderInline, escapeHtml, setStrictLineBreaks, commentRanges } from "./render";
+import { renderMarkdown, renderInline, escapeHtml, setStrictLineBreaks, commentRanges, mayRunHtml } from "./render";
 
 describe("escaping (XSS safety)", () => {
   it("escapes HTML in prose, code, and attributes", () => {
@@ -551,5 +551,38 @@ describe("%% inside code", () => {
   it("stays as written in Reading view", () => {
     expect(renderMarkdown("~~~\nx = 10 %% 3\ny = 7 %% 2\n~~~\n")).toContain("x = 10 %% 3\ny = 7 %% 2");
     expect(renderMarkdown("see `` a %% b %% `` here\n")).toContain("a %% b %%");
+  });
+});
+
+describe("mayRunHtml", () => {
+  const before = (md: string): boolean => {
+    if (!md.includes("<")) return false;
+    if (/<(?:[!?]|[A-Za-z/][^>\n]*\n)/.test(md)) return true;
+    for (let i = md.indexOf("<"); i >= 0; i = md.indexOf("<", i + 1)) {
+      if (!/[A-Za-z/]/.test(md[i + 1] ?? "")) continue;
+      let k = i;
+      while (k > 0 && i - k < 40 && " \t>-*+.)0123456789".includes(md[k - 1])) k--;
+      if ((k === 0 || md[k - 1] === "\n") && /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]*)*$/.test(md.slice(k, i))) return true;
+    }
+    return false;
+  };
+
+  it("stays linear on many tags that close late", () => {
+    for (const md of ["Foo is here\n" + "a<b ".repeat(25_000) + "c>d\nend", "x " + "a<b ".repeat(25_000)]) {
+      const t0 = performance.now();
+      expect(mayRunHtml(md)).toBe(false);
+      expect(performance.now() - t0).toBeLessThan(100);
+    }
+  });
+
+  it("answers as it did before", () => {
+    let seed = 11;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const chars = ["<", "<", ">", "\n", "a", "/", "!", "?", " ", "-", "1", ".", "x"];
+    for (let n = 0; n < 20_000; n++) {
+      let md = "";
+      for (let k = 0, len = 1 + Math.floor(rnd() * 14); k < len; k++) md += chars[Math.floor(rnd() * chars.length)];
+      expect(mayRunHtml(md), JSON.stringify(md)).toBe(before(md));
+    }
   });
 });

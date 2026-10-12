@@ -11,7 +11,9 @@
  * escaped `\[[` (an odd run of backslashes before it) opens no link.
  */
 export function wikilinkRegex(): RegExp {
-  return /(?<!(?:^|[^\\])\\(?:\\\\)*)\[\[(\[*[^[\]|\n]+)(?:\|([^[\]\n]+))?\]\]/g;
+  // A match can't start two brackets into a run: one from a bracket earlier
+  // would have matched first, and trying every start makes a long run quadratic.
+  return /(?<!(?:^|[^\\])\\(?:\\\\)*)(?<!\[\[)\[\[(\[*[^[\]|\n]+)(?:\|([^[\]\n]+))?\]\]/g;
 }
 
 /**

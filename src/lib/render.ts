@@ -981,9 +981,20 @@ export function indentedCodeRanges(md: string): [number, number][] {
  * marks). */
 export function mayRunHtml(md: string): boolean {
   if (!md.includes("<")) return false;
-  if (/<(?:[!?]|[A-Za-z/][^>\n]*\n)/.test(md)) return true;
+  // The next `>` and line break, found again only once passed, so this stays linear.
+  const next = (c: string, from: number) => {
+    const at = md.indexOf(c, from);
+    return at < 0 ? Infinity : at;
+  };
+  let gt = -1;
+  let nl = -1;
   for (let i = md.indexOf("<"); i >= 0; i = md.indexOf("<", i + 1)) {
-    if (!/[A-Za-z/]/.test(md[i + 1] ?? "")) continue;
+    const c = md[i + 1] ?? "";
+    if (c === "!" || c === "?") return true;
+    if (!/[A-Za-z/]/.test(c)) continue;
+    if (gt <= i) gt = next(">", i + 1);
+    if (nl <= i) nl = next("\n", i + 1);
+    if (nl < gt) return true;
     let k = i;
     while (k > 0 && i - k < 40 && " \t>-*+.)0123456789".includes(md[k - 1])) k--;
     if ((k === 0 || md[k - 1] === "\n") && /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]*)*$/.test(md.slice(k, i))) return true;

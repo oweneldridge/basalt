@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { internalLinkTarget, tagRegex } from "./markdown";
+import { internalLinkTarget, tagRegex, wikilinkRegex } from "./markdown";
 
 describe("internalLinkTarget", () => {
   it("reads any href that isn't a URL as a vault link, decoded", () => {
@@ -41,5 +41,33 @@ describe("tags", () => {
   });
   it("end at punctuation", () => {
     expect(tags("see #tag, then #other. and #q?")).toEqual(["tag", "other", "q"]);
+  });
+});
+
+describe("wikilinkRegex on runs of brackets", () => {
+  const before = () => /(?<!(?:^|[^\\])\\(?:\\\\)*)\[\[(\[*[^[\]|\n]+)(?:\|([^[\]\n]+))?\]\]/g;
+  const all = (re: RegExp, s: string) => [...s.matchAll(re)].map((m) => [m.index, m[0], m[1], m[2]]);
+
+  it("stays linear on a long run", () => {
+    for (const s of ["[".repeat(100_000) + "x", "[".repeat(100_000) + "x\n" + "y".repeat(1000), "a [[" + "[".repeat(50_000) + "b]] c"]) {
+      const t0 = performance.now();
+      all(wikilinkRegex(), s);
+      expect(performance.now() - t0).toBeLessThan(250);
+    }
+  });
+
+  it("finds exactly the links it found before", () => {
+    for (const s of ["\\[[[Foo]]", "\\[[[[Foo]]", "[[[Foo]]]", "x[[[[a]]", "\\\\[[[a]]", "[[a]] [[[b|c]]"]) {
+      expect(all(wikilinkRegex(), s), s).toEqual(all(before(), s));
+      expect(all(wikilinkRegex(), s), s).not.toEqual([]);
+    }
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const chars = ["[", "[", "[", "]", "]", "\\", "a", "|", "\n", " ", "#"];
+    for (let n = 0; n < 20_000; n++) {
+      let s = "";
+      for (let k = 0, len = 1 + Math.floor(rnd() * 16); k < len; k++) s += chars[Math.floor(rnd() * chars.length)];
+      expect(all(wikilinkRegex(), s), JSON.stringify(s)).toEqual(all(before(), s));
+    }
   });
 });
