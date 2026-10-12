@@ -203,9 +203,11 @@ function firstDailyNotice(root: string): boolean {
   return true;
 }
 /** Why Templater Lite won't fill a new note's tags here, or null if it will. */
-function templaterWontRun(cfg: ObsidianConfig | null, root: string): string | null {
-  if (!isLoaded("templater-lite"))
-    return loadEnabled(root).includes("templater-lite") ? "Templater Lite was still waiting on a slow plugin to load" : "Templater Lite isn't on";
+function templaterWontRun(cfg: ObsidianConfig | null, root: string, timedOut = false): string | null {
+  if (!isLoaded("templater-lite")) {
+    if (!loadEnabled(root).includes("templater-lite")) return "Templater Lite isn't on";
+    return timedOut ? "Templater Lite was still waiting on a slow plugin to load" : "Templater Lite didn't load";
+  }
   if (!cfg?.templaterOnCreate) return "Templater's \"Trigger Templater on new file creation\" is off in this vault";
   if (!listensFor("templater-lite", "create")) return "this copy of Templater Lite doesn't fill new notes, so update it";
   return null;
@@ -1807,8 +1809,14 @@ export default function App() {
       await flushAll();
       if (!(await okToDropUnsaved("Switch vaults"))) return;
       clearImageCache();
-      vaultGen.current++;
-      const root = await openVaultBackend(path); // canonical; sets managed state
+      const gen = ++vaultGen.current;
+      let root: string;
+      try {
+        root = await openVaultBackend(path); // canonical; sets managed state
+      } catch (e) {
+        if (vaultGen.current === gen) vaultGen.current = gen - 1; // still on the vault before
+        throw e;
+      }
       // Read the saved workspace NOW (before any state reset fires the save
       // effect and overwrites it) so it survives until restore below.
       const savedWs = localStorage.getItem(workspaceKey(root));
@@ -1880,7 +1888,8 @@ export default function App() {
       // Obsidian's "Default file to open: Daily note", made from the template
       // if missing. Once a session it opens one, so a reload keeps your place;
       // it doesn't hold up the vault while it waits for Templater Lite.
-      if (!openNoteRel && obsConfigRef.current?.openBehavior === "daily" && !dailyOpened(root)) {
+      // Not if another vault has started opening since (its own open goes on).
+      if (!openNoteRel && obsConfigRef.current?.openBehavior === "daily" && !dailyOpened(root) && vaultGen.current === gen) {
         void dailyNoteApi.current.open(undefined, undefined, true).then((opened) => {
           if (opened && vaultRef.current === root) markDailyOpened(root);
         });
@@ -3099,15 +3108,16 @@ export default function App() {
       else tplContent = read;
     }
     let unfilled: string | null = null;
+    let timedOut = false;
     if (/<%/.test(tplContent)) {
       if (atStartup) {
         // Templater Lite fills it once it's in.
         const ready = pluginsReady.current;
-        if (ready?.vault === root) await Promise.race([ready.promise, new Promise((r) => setTimeout(r, 15000))]);
+        if (ready?.vault === root) timedOut = await Promise.race([ready.promise.then(() => false), new Promise<boolean>((r) => setTimeout(() => r(true), 15000))]);
         if (stale()) return false;
         if (await openMade()) return true; // made meanwhile (a sync, another tab)
       }
-      unfilled = templaterWontRun(cfg, root);
+      unfilled = templaterWontRun(cfg, root, timedOut);
       if (unfilled && atStartup) {
         if (firstDailyNotice(root))
           noticeRef.current(`Today's daily note wasn't made: its template uses Templater, and ${unfilled}. Or make it with "Open today's daily note".`, 12000);

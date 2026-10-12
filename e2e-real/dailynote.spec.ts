@@ -11,12 +11,17 @@ const pad = (n: number) => String(n).padStart(2, "0");
 const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const activeTab = (page: import("@playwright/test").Page) => page.locator(".pane:not(.dock) .tab.active .tab-name").first();
 
-// Turns a plugin on in Settings.
+// Turns a plugin on in Settings (opening them again if a busy page missed it).
 const enable = async (page: import("@playwright/test").Page, name: string) => {
-  await page.keyboard.press("ControlOrMeta+p");
-  await page.locator(".palette-input").first().fill("Open settings");
-  await page.keyboard.press("Enter");
   const box = page.locator(".plugin-row", { hasText: name }).locator('input[type="checkbox"]');
+  await expect(async () => {
+    if (!(await box.isVisible())) {
+      await page.keyboard.press("ControlOrMeta+p");
+      await page.locator(".palette-input").first().fill("Open settings");
+      await page.keyboard.press("Enter");
+    }
+    await expect(box).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 20000 });
   await box.click(); // it follows the plugin as it loads
   await expect(box).toBeChecked();
   await page.keyboard.press("Escape");
@@ -426,5 +431,100 @@ test.describe("a vault that opens its daily note from a Templater template, swit
     } finally {
       await other.stop();
     }
+  });
+});
+
+test.describe("a vault that opens its daily note, switched away from while it loads", () => {
+  test.use({ vaultFiles: { ".obsidian/app.json": JSON.stringify({ openBehavior: "daily" }), ".obsidian/daily-notes.json": JSON.stringify({ folder: "Daily" }) } });
+
+  test("makes no daily note in the vault you switched to", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    const other = await otherVault({ "Welcome B.md": "vault b\n" });
+    try {
+      const rootA = ((await (await fetch(`${vault.url}/api/vault-root`)).json()) as { root: string }).root;
+      let backend = vault.url;
+      let switching!: () => void;
+      const switched = new Promise<void>((r) => (switching = r));
+      let held = false;
+      await page.addInitScript((root) => localStorage.setItem("basalt.recentVaults", JSON.stringify([{ path: root, name: "B", ts: Date.now() }])), other.root);
+      // The first vault's notes arrive only once the switch has begun, and the
+      // switch itself takes a while, so the first vault finishes loading mid-switch.
+      await page.route("**/api/invoke", async (route) => {
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        if (body.cmd === "open_vault") {
+          const toOther = body.args?.path === other.root;
+          backend = toOther ? other.url : vault.url;
+          if (toOther) {
+            switching();
+            await new Promise((r) => setTimeout(r, 3000));
+          }
+          return route.fulfill({ contentType: "application/json", body: JSON.stringify({ result: toOther ? other.root : rootA }) });
+        }
+        const target = backend;
+        const res = await route.fetch({ url: `${target}/api/invoke` });
+        if (body.cmd === "read_vault" && !held && target === vault.url) {
+          held = true;
+          await switched;
+        }
+        return route.fulfill({ response: res });
+      });
+      await page.goto(vault.url + "/");
+      await settle(page, 800);
+      await page.getByRole("button", { name: /Command palette/ }).click();
+      await page.locator(".palette-input").first().fill("Switch vault");
+      await page.keyboard.press("Enter");
+      await page.locator(".vault-item", { hasText: other.root }).click();
+      await expect(page.locator(".tree-row.file", { hasText: "Welcome B" })).toBeVisible({ timeout: 15000 });
+      await settle(page, 2000);
+      expect(other.exists(`Daily/${today}.md`)).toBe(false);
+    } finally {
+      await other.stop();
+    }
+  });
+});
+
+test.describe("a vault that opens its daily note from a Templater template, with a failed switch while it waits", () => {
+  test.use({ vaultFiles: { ...templaterDaily, ...slowPlugin(4000, "zz-slow", "Zz Slow") } });
+
+  test("still opens it", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    await page.context().addInitScript(() => {
+      const list = JSON.parse(localStorage.getItem("basalt.recentVaults") ?? "[]");
+      if (!list.some((r: { path: string }) => r.path === "/nonexistent/gone")) list.push({ path: "/nonexistent/gone", name: "Gone", ts: 1 });
+      localStorage.setItem("basalt.recentVaults", JSON.stringify(list));
+    });
+    await openApp(page, vault);
+    await enable(page, "Templater Lite");
+    await enable(page, "Zz Slow");
+    await openNote(page, "Ideas");
+    await settle(page, 1200);
+    await page.close();
+    const next = await page.context().newPage();
+    // As the desktop core answers for a vault folder that's gone.
+    await next.route("**/api/invoke", async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      if (body.cmd === "open_vault" && body.args?.path === "/nonexistent/gone") return route.fulfill({ contentType: "application/json", body: JSON.stringify({ error: "not a folder" }) });
+      return route.fallback();
+    });
+    await openApp(next, vault);
+    await expect(activeTab(next)).toHaveText("Ideas");
+    await next.keyboard.press("ControlOrMeta+p");
+    await next.locator(".palette-input").first().fill("Switch vault");
+    await next.keyboard.press("Enter");
+    await next.locator(".vault-item", { hasText: "gone" }).click();
+    await expect(activeTab(next)).toHaveText(today, { timeout: 15000 });
+  });
+});
+
+test.describe("a vault that opens its daily note from a Templater template, with Templater Lite gone", () => {
+  test.use({ vaultFiles: templaterDaily });
+
+  test("says it didn't load, not that it was waiting", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await enable(page, "Templater Lite");
+    rmSync(vault.path(".basalt/plugins/templater-lite"), { recursive: true, force: true });
+    const next = await page.context().newPage();
+    await openApp(next, vault);
+    await expect(next.locator(".notice", { hasText: "daily note" })).toContainText("Templater Lite didn't load");
   });
 });
