@@ -110,7 +110,9 @@ escaped one, Link all leaves alone what either reads as code. Two rare gaps
 are left: under an empty list item or quote line, the editor's parser keeps
 unindented lines in one paragraph where CommonMark doesn't, and Link all reads
 them the CommonMark way; and after a link whose address holds a backtick
-(`[](a`b)`), Link all can still write into a code span that follows. A table
+(`[](a`b)`), Link all can still write into a code span that follows. The
+index can also miss a code fence right after a line that runs on a list
+item inside a quote, where the editor's parser keeps the quote open. A table
 whose header and delimiter rows have different cell counts isn't read as a
 table (Obsidian draws one), and Basalt's link colours fade less than
 Obsidian's for unresolved links, to keep their contrast. A large pasted
