@@ -38,8 +38,13 @@ export function proseMask(lines: string[]): boolean[] {
   // in as the item's text plus three spaces, and its code ends with them.
   let fence: { char: string; len: number; depth: number; col: number } | null = null;
   let items: number[] = []; // open list items' text columns, innermost last
+  let ordered: boolean[] = []; // whether each of those items is numbered
   let listDepth = 0; // the quote depth those items are at
   let paragraph: [number, number] | null = null; // the line before is paragraph text: its quote depth and items open
+  // An open HTML block, where nothing opens: its container, and what ends it
+  // (null: a blank line).
+  let html: { depth: number; items: number; end: RegExp | null } | null = null;
+  let lastDepth = 0;
   for (; i < lines.length; i++) {
     const line = lines[i];
     const c0 = line[0];
@@ -47,7 +52,7 @@ export function proseMask(lines: string[]): boolean[] {
     const depth = quote ? (quote.match(/>/g) ?? []).length : 0;
     if (fence && depth < fence.depth) fence = null;
     const body: string = fence ? unquote(line, fence.depth) : quote ? line.slice(quote.length) : line;
-    if (depth !== listDepth) (items = []), (listDepth = depth);
+    if (depth !== listDepth) (items = []), (ordered = []), (listDepth = depth);
     // The indent in columns (tabs to the next stop of 4) and the char after it.
     // Four past the innermost item's text nothing opens, closes or ends here.
     const limit = (items.length ? items[items.length - 1] : 0) + 4;
@@ -61,17 +66,34 @@ export function proseMask(lines: string[]): boolean[] {
     }
     const first: string | undefined = indent < limit ? body[k] : "";
     const blank = first === undefined || (/\s/.test(first) && body.trim() === "");
-    if (!blank) while (items.length && indent < items[items.length - 1]) items.pop();
+    // Lists this line is in before its indent ends any (an item may start
+    // within one where it couldn't start a list).
+    const inBullets = ordered.includes(false);
+    const inNumbers = ordered.includes(true);
+    const open: [number[], boolean[]] = [items, ordered];
+    if (!blank && items.length && indent < items[items.length - 1]) {
+      items = items.slice();
+      ordered = ordered.slice();
+      while (items.length && indent < items[items.length - 1]) items.pop(), ordered.pop();
+    }
     if (fence && !blank && indent < fence.col) {
       // Its list item ended: read the line again as if no fence were open.
       fence = null;
       i--;
       continue;
     }
-    // A paragraph on the line before, in this container or a quote this line
-    // could lazily continue: an item here would interrupt it.
-    const interrupts = paragraph !== null && ((depth === paragraph[0] && items.length === paragraph[1]) || depth < paragraph[0]);
+    const newQuote = depth > lastDepth;
+    lastDepth = depth;
+    // A paragraph on the line before, in this container or one this line could
+    // lazily continue: an item here would interrupt it.
+    const before: [number, number] | null = paragraph;
+    const interrupts: boolean = before !== null && depth <= before[0] && items.length <= before[1];
     paragraph = null;
+    if (html && (depth < html.depth || items.length < html.items || (!html.end && unquote(line, html.depth).trim() === ""))) html = null;
+    if (html) {
+      if (html.end?.test(body)) html = null;
+      continue;
+    }
     FENCE_RE.lastIndex = k;
     const m: RegExpExecArray | null = first === "`" || first === "~" ? FENCE_RE.exec(body) : null;
     if (fence) {
@@ -87,21 +109,43 @@ export function proseMask(lines: string[]): boolean[] {
       fence = { char: m[1][0], len: m[1].length, depth, col: base };
       continue;
     }
+    if (first === "<" && indent - base <= 3) {
+      const rest = body.slice(k);
+      const end = htmlBlockEnd(rest, interrupts);
+      if (end !== undefined) {
+        if (!end?.test(rest)) html = { depth, items: items.length, end };
+        continue;
+      }
+    }
     LIST_ITEM_RE.lastIndex = k;
-    const item = first === "-" || first === "*" || first === "+" || (first !== undefined && first >= "0" && first <= "9") ? LIST_ITEM_RE.exec(body) : null;
-    // Only an item with text, and an ordered one only from 1, can interrupt a
-    // paragraph: `text` then `-` is a heading.
-    const empty = interrupts && item !== null && k + item[0].length === body.length;
-    const underline = empty && item?.[1] === "-";
-    const opens = item !== null && !empty && !(interrupts && item[1].length > 1 && parseInt(item[1], 10) !== 1);
+    const item = indent - base <= 3 && (first === "-" || first === "*" || first === "+" || (first !== undefined && first >= "0" && first <= "9")) ? LIST_ITEM_RE.exec(body) : null;
+    // As the editor's parser reads it: in a paragraph, an item can start only
+    // inside a list of its kind, or with text (a numbered one from 1). So
+    // `text` then `-` is a heading, and `- a` then `2. b` is one paragraph.
+    const empty = item !== null && k + item[0].length === body.length;
+    const numbered = item !== null && item[1].length > 1;
+    const opens = item !== null && (!interrupts || (numbered ? inNumbers || (!empty && parseInt(item[1], 10) === 1) : inBullets || !empty));
+    const underline = interrupts && !opens && empty && item?.[1] === "-";
     if (opens && item) {
-      let col = indent + item[1].length;
-      const from = col;
-      for (let g = 0; g < item[2].length; g++) col += item[2][g] === "\t" ? 4 - (col % 4) : 1;
-      const gap = col - from;
-      items.push(from + (gap === 0 || gap > 4 ? 1 : gap));
+      // Each marker on the line opens an item (`1. - x` is a list in a list).
+      let at = k;
+      let col = indent;
+      let gap = 0;
+      for (let mark: RegExpExecArray | null = item; mark; ) {
+        col += mark[1].length;
+        const from = col;
+        for (let g = 0; g < mark[2].length; g++) col += mark[2][g] === "\t" ? 4 - (col % 4) : 1;
+        gap = col - from;
+        // Nothing after the marker: the editor's parser takes the text to start
+        // right after it.
+        items.push(from + (gap === 0 ? 0 : gap > 4 ? 1 : gap));
+        ordered.push(mark[1].length > 1);
+        at += mark[0].length;
+        col = items[items.length - 1];
+        LIST_ITEM_RE.lastIndex = at;
+        mark = gap >= 1 && gap <= 4 && at < body.length ? LIST_ITEM_RE.exec(body) : null;
+      }
       // A fence can open on the marker's line: `- ```.
-      const at = k + item[0].length;
       FENCE_RE.lastIndex = at;
       const f = gap >= 1 && gap <= 4 && (body[at] === "`" || body[at] === "~") ? FENCE_RE.exec(body) : null;
       if (f && !(f[1][0] === "`" && f[2].includes("`"))) {
@@ -109,11 +153,42 @@ export function proseMask(lines: string[]): boolean[] {
         fence = { char: f[1][0], len: f[1].length, depth, col: items[items.length - 1] };
         continue;
       }
+      // The item's text, or an empty one the editor's parser still reads on into.
+      paragraph = [depth, items.length];
+    } else if (blank && newQuote) {
+      paragraph = [depth, items.length]; // as for an empty item
+    } else if (!blank && !underline && (first !== "" || interrupts) && !(first === "#" && /^#{1,6}(?:[ \t]|$)/.test(body.slice(k))) && !((first === "-" || first === "*" || first === "_") && BREAK_RE.test(body.slice(k)))) {
+      // A line an item couldn't start goes on with the paragraph before it,
+      // and leaves the list items it's in open.
+      paragraph = interrupts ? before : [depth, items.length];
+      if (interrupts) [items, ordered] = open;
     }
-    if (!blank && !opens && !underline && (first !== "" || interrupts) && !/^#{1,6}(?:[ \t]|$)/.test(body.slice(k))) paragraph = [depth, items.length];
   }
   return mask;
 }
+
+// CommonMark's HTML blocks, by how their first line starts: what ends each
+// (a line it matches), null for a blank line, or undefined for no block. The
+// last kind, a lone tag, can't break into a paragraph.
+const HTML_STARTS: [RegExp, RegExp | null][] = [
+  [/^<(?:script|pre|style|textarea)(?:[\s>]|$)/i, /<\/(?:script|pre|style|textarea)>/i],
+  [/^<!--/, /-->/],
+  [/^<\?/, /\?>/],
+  [/^<![A-Za-z]/, />/],
+  [/^<!\[CDATA\[/, /\]\]>/],
+  [
+    /^<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[\s>]|\/>|$)/i,
+    null,
+  ],
+];
+const LONE_TAG = /^(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][\w.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*\s*\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>)\s*$/;
+function htmlBlockEnd(rest: string, inParagraph: boolean): RegExp | null | undefined {
+  for (const [start, end] of HTML_STARTS) if (start.test(rest)) return end;
+  return !inParagraph && LONE_TAG.test(rest) ? null : undefined;
+}
+
+// A thematic break (`---`, `* * *`), which ends a paragraph and its lists.
+const BREAK_RE = /^([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 
 // The `>` markers a line starts with, however deep.
 const QUOTE_PREFIX = /^(?: {0,3}>[ \t]?)*/;

@@ -107,3 +107,43 @@ describe("proseMask and list items", () => {
     expect(mask("-     ```\n  x")).toEqual([true, true]);
   });
 });
+
+describe("proseMask reads lists as the editor's parser does", () => {
+  const mask = (md: string) => proseMask(md.split("\n"));
+
+  it("reads a number a list can't start with as more of the paragraph before", () => {
+    expect(mask("- a\n2. ```\n   see [[Foo]] #t")).toEqual([true, true, true]);
+    expect(mask("1. step\n\n- note\n2. ```\n   see [[Foo]] #t\n   ```")).toEqual([true, true, true, true, true, false]);
+    expect(mask("- step one\n2. ```js see Foo")).toEqual([true, true]);
+    expect(mask("1. a\n2) ```\n   x")).toEqual([true, false, false]);
+  });
+
+  it("keeps a list item open across a line that only goes on with its text", () => {
+    expect(mask("   - b\n    - c\n\t\t```")).toEqual([true, true, false]);
+    expect(mask("- a\n2.\n     ~~~")).toEqual([true, true, false]);
+    expect(mask("   - b\n---\n\t\t```")).toEqual([true, true, true]);
+  });
+
+  it("reads on into an empty quote line or an empty item, as the parser does", () => {
+    expect(mask(">\n2. ```")).toEqual([true, true]);
+    expect(mask("> -\n2. ```")).toEqual([true, true]);
+    expect(mask(">\n1. ```")).toEqual([true, false]);
+    expect(mask("-\nfoo\n     ~~~")).toEqual([true, true, true]);
+    expect(mask("-\nfoo\n   ~~~")).toEqual([true, true, false]);
+  });
+
+  it("opens no fence inside an HTML block", () => {
+    expect(mask("<div>\n- ```\nx")).toEqual([true, true, true]);
+    expect(mask("<div>\n```\nx\n\n```\ny")).toEqual([true, true, true, true, false, false]);
+    expect(mask("<!--\n```\n-->\n```\nx")).toEqual([true, true, true, false, false]);
+    expect(mask("<div>\n>\n> - ```")).toEqual([true, true, true]);
+    expect(mask("text\n<span>\n```\nx")).toEqual([true, true, false, false]);
+  });
+
+  it("opens an item for each marker on a line", () => {
+    expect(mask("1. - ```\n     x\n     ```\ny")).toEqual([false, false, false, true]);
+    expect(mask("- ```a`b\n  x")).toEqual([true, true]);
+    expect(mask("# h\n2. ```\n   x")).toEqual([true, false, false]);
+    expect(mask("   - b\n    - ```\n      [[Foo]] #t")).toEqual([true, true, true]);
+  });
+});
