@@ -434,6 +434,22 @@ describe("CommonMark and Obsidian fidelity (Reading view hunt)", () => {
     expect(renderInline("[[#Local]]")).toContain(">Local</a>");
   });
 
+  it("finds a link definition inside a quote or a list", () => {
+    expect(renderMarkdown("> [a]: https://e.com/q\n\n- [b]: https://e.com/l\n\n[x][a] [y][b]")).toMatch(/href="https:\/\/e\.com\/q"[\s\S]*href="https:\/\/e\.com\/l"/);
+  });
+
+  it("survives a list nested thousands deep on one line", () => {
+    expect(() => renderMarkdown("- ".repeat(5000) + "a")).not.toThrow();
+  });
+
+  it("renders a callout's body from the quote's own blocks", () => {
+    expect(renderMarkdown("> > [!note] T\n> > body")).not.toContain("<blockquote><p>body");
+    expect(renderMarkdown("> > [!note] T\n> > body")).toContain('<div class="md-callout-body"><p>body</p></div>');
+    expect(renderMarkdown("- - > [!note] T\n    > body")).toContain('<div class="md-callout-body"><p>body</p></div>');
+    expect(renderMarkdown("> [!note] T\n> 2. ```\n>    Foo")).not.toContain("<pre");
+    expect(renderMarkdown("> [!tip] Run\n> ```bash\n> x\n> ```\n> after")).toContain('<code class="language-bash">x</code></pre>\n<p>after</p>');
+  });
+
   it("survives absurdly deep blockquotes", () => {
     expect(() => renderMarkdown(">".repeat(2000) + " deep")).not.toThrow();
   });

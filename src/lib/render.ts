@@ -780,35 +780,34 @@ class Blocks {
     return `<pre class="md-code"><code${cls}>${escapeHtml(body)}</code></pre>`;
   }
 
-  /** The quote's text with one `>` level taken off each line. */
-  private unquote(n: SyntaxNode): { text: string; map: number[] } {
-    const firstLine = lineOf(this.doc, n.from);
-    const lastLine = lineOf(this.doc, n.to);
-    const lines: string[] = [];
-    const map: number[] = [];
-    for (let l = firstLine; l <= lastLine; l++) {
-      const ls = l === firstLine ? n.from : this.doc.lineStarts[l];
-      const line = this.doc.src.slice(ls, Math.min(lineEnd(this.doc, l), n.to));
-      lines.push(line.replace(/^[ \t]{0,3}>[ \t]?/, ""));
-      map.push(this.doc.map[l] ?? l);
-    }
-    return { text: lines.join("\n"), map };
-  }
-
   private quote(n: SyntaxNode): string {
-    const { text, map } = this.unquote(n);
-    const head = text.split("\n", 1)[0];
+    const inner = new Blocks(this.doc, this.ctx, this.depth + 1);
+    const blocks: SyntaxNode[] = [];
+    for (let c = n.firstChild; c; c = c.nextSibling) if (c.name !== "QuoteMark") blocks.push(c);
+    // A callout is a quote whose first line is `[!type] Title`: the rest of
+    // that paragraph and the blocks after it, as the quote holds them, are
+    // its body.
+    const lead = blocks[0];
+    const head = lead && /^(?:Paragraph|SetextHeading[12])$/.test(lead.name) ? this.src(lead).split("\n", 1)[0] : "";
     const callout = CALLOUT.exec(head.trim());
-    if (!callout) return `<blockquote>${new Blocks(this.doc, this.ctx, this.depth + 1).children(n).join("\n")}</blockquote>`;
+    if (!callout) return `<blockquote>${inner.children(n).join("\n")}</blockquote>`;
     const type = callout[1].toLowerCase();
     const fold = callout[2]; // "", "+" (foldable-open) or "-" (foldable-closed)
     const titleText = callout[3].trim() || callout[1].charAt(0).toUpperCase() + callout[1].slice(1).toLowerCase();
-    const bodyMd = text.slice(head.length + 1);
     const icon = `<span class="md-callout-icon">${calloutIcon(type)}</span>`;
     const title = inlineOf(titleText, this.ctx);
-    const body = bodyMd.trim()
-      ? `<div class="md-callout-body">${renderDoc(bodyMd, map.slice(1), this.ctx, this.depth + 1)}</div>`
-      : "";
+    const parts: string[] = [];
+    // The paragraph's next line, past its quote markers.
+    let rest = lead.from + head.length + 1;
+    while (rest < lead.to && " \t>".includes(this.doc.src[rest])) rest++;
+    if (lead.name === "Paragraph" && rest < lead.to && this.doc.src.slice(rest, lead.to).trim()) {
+      parts.push(this.depth + 1 > MAX_DEPTH ? `<p>${escapeHtml(this.doc.src.slice(rest, lead.to))}</p>` : `<p>${inlineNode(this.doc, this.ctx, lead, rest, lead.to)}</p>`);
+    }
+    for (const b of blocks.slice(1)) {
+      const html = inner.block(b);
+      if (html) parts.push(html);
+    }
+    const body = parts.length ? `<div class="md-callout-body">${parts.join("\n")}</div>` : "";
     const cls = `md-callout md-callout-${escapeHtml(type)} md-callout-color-${calloutColor(type)}`;
     if (fold)
       return `<details class="${cls} md-callout-foldable"${fold === "-" ? "" : " open"}><summary class="md-callout-title">${icon}${title}</summary>${body}</details>`;
@@ -901,19 +900,25 @@ class Blocks {
 
 /** Collect link reference definitions (`[label]: url`). */
 function collectLinks(doc: Doc, top: SyntaxNode) {
-  const visit = (n: SyntaxNode) => {
-    for (let c = n.firstChild; c; c = c.nextSibling) {
-      if (c.name === "LinkReference") {
-        const label = c.getChild("LinkLabel");
-        const url = c.getChild("URL");
-        if (label && url) {
-          const key = refKey(doc.src.slice(label.from, label.to));
-          if (!doc.links.has(key)) doc.links.set(key, { url: doc.src.slice(url.from, url.to).replace(/^<|>$/g, "") });
-        }
-      } else if (["Blockquote", "ListItem", "BulletList", "OrderedList"].includes(c.name)) visit(c);
-    }
+  // In document order, the first definition of a label winning, without
+  // recursion, as lists can nest thousands deep.
+  const todo: SyntaxNode[] = [];
+  const childrenOf = (n: SyntaxNode) => {
+    const kids: SyntaxNode[] = [];
+    for (let c = n.firstChild; c; c = c.nextSibling) kids.push(c);
+    for (let i = kids.length - 1; i >= 0; i--) todo.push(kids[i]);
   };
-  visit(top);
+  childrenOf(top);
+  for (let c = todo.pop(); c; c = todo.pop()) {
+    if (c.name === "LinkReference") {
+      const label = c.getChild("LinkLabel");
+      const url = c.getChild("URL");
+      if (label && url) {
+        const key = refKey(doc.src.slice(label.from, label.to));
+        if (!doc.links.has(key)) doc.links.set(key, { url: doc.src.slice(url.from, url.to).replace(/^<|>$/g, "") });
+      }
+    } else if (["Blockquote", "ListItem", "BulletList", "OrderedList"].includes(c.name)) childrenOf(c);
+  }
 }
 
 function renderDoc(text: string, map: number[] | undefined, ctx: Ctx, depth: number): string {
@@ -1027,7 +1032,9 @@ export function mayRunHtml(md: string): boolean {
     if (nl <= i) nl = next("\n", i + 1);
     if (nl < gt) return true;
     let k = i;
-    while (k > 0 && i - k < 40 && " \t>-*+.)0123456789".includes(md[k - 1])) k--;
+    // Back to the line's start over its quote and list markers, which stops at
+    // the `<` before it, so the scan stays linear.
+    while (k > 0 && " \t>-*+.)0123456789".includes(md[k - 1])) k--;
     if ((k === 0 || md[k - 1] === "\n") && /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]*)*$/.test(md.slice(k, i))) return true;
   }
   return false;
@@ -1038,14 +1045,20 @@ export function mayRunHtml(md: string): boolean {
  * closing its tag (all of it when nothing closes it or its first line has no
  * `>`), comments, processing instructions and inline HTML (unless `withHtml`
  * is false). With `indented`, indented code too. One parse, and only when a
- * line is indented or HTML could run past what a line's own mask sees. */
+ * line is indented or HTML could run past what a line's own mask sees. With
+ * `fences`, fenced code too: what follows a paragraph led by a tag is read
+ * apart from it here, where the note's own mask doesn't split it. */
 const NESTING = new Set(["Blockquote", "BulletList", "OrderedList"]);
 
-export function rawRanges(md: string, indented: boolean, withHtml = true, depth = 0): [number, number][] {
+export function rawRanges(md: string, indented: boolean, withHtml = true, depth = 0, fences = false): [number, number][] {
   const code = indented && INDENTED_LINES.test(md);
   const html = withHtml && mayRunHtml(md);
   // What follows an HTML block is always read, for how deep it sits.
-  if (!code && !html && !depth) return mayNestDeep(md) ? tooDeep(md) : [];
+  if (!code && !html && !depth && !mayNestDeep(md)) return [];
+  // Reading view leaves frontmatter out before it reads the note (blanked
+  // only now, as a blanked line would look indented).
+  if (!depth && md.startsWith("---")) md = blankFrontmatter(md);
+  if (!code && !html && !depth) return tooDeep(md);
   const out: [number, number][] = [];
   // Each quote and list a block sits in takes it a level deeper, as in Reading view.
   let nest = 0;
@@ -1054,14 +1067,25 @@ export function rawRanges(md: string, indented: boolean, withHtml = true, depth 
       if (NESTING.has(n.name)) nest--;
     },
     enter: (n) => {
-      // Too deep, Reading view shows a block as its source.
+      // Too deep, Reading view shows a block as its source; a callout at the
+      // limit still shows its title.
       if (depth + nest > MAX_DEPTH) {
         out.push([n.from, n.to]);
         return false;
       }
+      if (n.name === "Blockquote" && depth + nest === MAX_DEPTH) {
+        let lead = n.node.firstChild;
+        while (lead?.name === "QuoteMark") lead = lead.nextSibling;
+        const eol = lead ? md.indexOf("\n", lead.from) : -1;
+        if (lead && CALLOUT.test(md.slice(lead.from, eol < 0 ? n.to : Math.min(eol, n.to)).trim())) {
+          if (eol >= 0 && eol < n.to) out.push([eol + 1, n.to]);
+          return false;
+        }
+      }
       if (NESTING.has(n.name)) nest++;
       switch (n.name) {
         case "FencedCode":
+          if (fences) out.push([n.from, n.to]);
           return false;
         case "CodeBlock":
           if (code) out.push([n.from, n.to]);
@@ -1086,9 +1110,9 @@ export function rawRanges(md: string, indented: boolean, withHtml = true, depth 
           // What follows the closing line shows as a note of its own, and past
           // Reading view's nesting limit as its source, escaped.
           const at = depth + nest + 1;
-          if (n.name === "HTMLBlock" && end < n.to) {
+          if (end < n.to) {
             if (at > MAX_DEPTH) out.push([end + 1, n.to]);
-            else for (const [f, t] of rawRanges(md.slice(end + 1, n.to), indented, withHtml, at)) out.push([f + end + 1, t + end + 1]);
+            else for (const [f, t] of rawRanges(md.slice(end + 1, n.to), indented, withHtml, at, fences || n.name === "Paragraph")) out.push([f + end + 1, t + end + 1]);
           }
           return false;
         }
@@ -1103,9 +1127,23 @@ export function rawRanges(md: string, indented: boolean, withHtml = true, depth 
 function tooDeep(md: string): [number, number][] {
   const lines = md.split("\n");
   const depths = blockDepths(lines);
+  // A callout's title at the limit shows: the first line of a quote just past it.
+  const title = (k: number) =>
+    depths[k] === MAX_DEPTH + 1 &&
+    CALLOUT.test(lines[k].replace(/^[ \t>]*/, "").trim()) &&
+    (k === 0 || depths[k - 1] !== depths[k] || /^[ \t>]*$/.test(lines[k - 1]));
   const out: [number, number][] = [];
-  for (let k = 0, at = 0; k < lines.length; at += lines[k].length + 1, k++) if (depths[k] > MAX_DEPTH) out.push([at, at + lines[k].length]);
+  for (let k = 0, at = 0; k < lines.length; at += lines[k].length + 1, k++) if (depths[k] > MAX_DEPTH && !title(k)) out.push([at, at + lines[k].length]);
   return out;
+}
+
+/** `md` with its frontmatter blanked to spaces, keeping every offset. */
+function blankFrontmatter(md: string): string {
+  const lines = md.split("\n");
+  const end = frontmatterEnd(lines);
+  if (end < 0) return md;
+  for (let k = 0; k <= end; k++) lines[k] = " ".repeat(lines[k].length);
+  return lines.join("\n");
 }
 
 /** Whether a line's quote and list markers and indent are wide enough to put

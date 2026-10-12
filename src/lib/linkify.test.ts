@@ -196,6 +196,31 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
     await linkUntilSettled(async () => ++calls);
     expect(calls).toBe(100);
   });
+  it("skips mentions Reading view shows as raw HTML or code, however the note is scanned", () => {
+    const lines = (note: string) => mentionLines(note).map((l) => +l.includes("Foo"));
+    const near = (note: string) => mentionLinesFor(note, /Foo/i).map((l) => +l.includes("Foo"));
+    for (const note of [
+      ">".repeat(21) + " <div>x</div>\n" + ">".repeat(21) + "\n" + ">".repeat(21) + " Foo",
+      "> <div>\n>\n> Foo",
+      "> text\n>\n> <div>\n>\n> Foo bar\n>\n> </div>",
+      "---\nsnippet: |\n  ```js\n---\n<div>\nFoo\n</div>",
+      "---\nsnippet: |\n  ```js\n---\n" + ">".repeat(41) + " Foo",
+      "> ".repeat(21) + "<span>Foo</span>",
+      "<span>a</span>\n2. ```\n   Foo",
+      "<span>a</span>\n    Foo",
+    ]) {
+      expect(lines(note).some(Boolean), note.slice(0, 40)).toBe(false);
+      expect(near(note).some(Boolean), note.slice(0, 40)).toBe(false);
+    }
+  });
+  it("offers a callout's title at Reading view's depth limit, and text an indented line runs on", () => {
+    const note = "> ".repeat(41) + "[!note] Foo";
+    expect(mentionLines(note)[0]).toContain("Foo");
+    // The same where HTML elsewhere has the note parsed.
+    expect(mentionLines("<div>\n</div>\n\n" + note)[3]).toContain("Foo");
+    expect(mentionLines("> ".repeat(41) + "[!note] T\n" + "> ".repeat(41) + "Foo")[1]).not.toContain("Foo");
+    expect(mentionLines("x\n    ---\n[a]: b 'Foo'")[2]).toContain("Foo");
+  });
   it("keeps each list item's length to itself when checking emphasis", () => {
     const long = "- (**Foo**) " + "word ".repeat(700);
     const short = "- (**Foo**) here";

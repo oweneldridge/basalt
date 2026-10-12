@@ -463,6 +463,10 @@ function definitionAt(lines: string[], k: number): { label: string; item: boolea
   return rest.slice(dest).trim() ? null : def;
 }
 
+// Text indented four or more past its quote marks, which only runs on a
+// paragraph (`    ---` is text there, not a break or an underline).
+const RUNS_ON_RE = /^(?: {0,3}>[ \t]?)*(?: {4}|\t)[ \t]*\S/;
+
 /** Whether `line` is paragraph text a definition can't break into (unless a
  * table holds it). */
 const isParagraph = (line: string) => !ENDS_RE.test(line) && !UNDERLINE_RE.test(line) && !ITEM_BLOCK_RE.test(line);
@@ -491,7 +495,7 @@ function definitions(lines: string[], written = lines): { labels: Set<string>; t
       for (let n = k; n <= def.end; n++) taken.add(n);
       k = def.end;
       para = -1;
-    } else para = !table && isParagraph(lines[k]) ? depth : -1;
+    } else para = !table && (isParagraph(lines[k]) || (para >= 0 && RUNS_ON_RE.test(lines[k]))) ? depth : -1;
   }
   return { labels, taken };
 }
@@ -614,8 +618,9 @@ export function mentionLinesFor(content: string, named: RegExp): string[] {
   const code = mayIndent(content);
   const html = mayRunHtml(content);
   if (!code && !html) return mentionLines(content, false, false);
-  // Read only the blocks (the lines between blank ones) that name the note.
-  const blank = (from: number, to: number) => /^[ \t>]*$/.test(content.slice(from, to));
+  // Read only the blocks (the lines between blank ones) that name the note. A
+  // line of `>` alone doesn't end an HTML block, so it doesn't count here.
+  const blank = (from: number, to: number) => /^[ \t\r]*$/.test(content.slice(from, to));
   const re = new RegExp(named.source, named.flags.replace("g", "") + "g");
   let indented = false;
   let raw = false;
