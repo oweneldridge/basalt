@@ -258,6 +258,11 @@ button.primary:hover {
   font-size: 0.86rem;
   outline: none;
 }
+.filter::placeholder,
+.palette-input::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
 .filter:focus {
   border-color: var(--accent);
 }
@@ -2336,9 +2341,10 @@ button.primary:hover {
 .ref-child { padding-left: 20px; }
 
 /* ------- File sort control ------- */
-.sidebar-controls { display: flex; gap: 4px; align-items: center; padding: 0 6px; }
-.sidebar-controls .filter { flex: 1; }
-.file-sort { font-size: 11px; background: var(--bg); color: var(--text-muted); border: 1px solid var(--control-border); border-radius: 5px; padding: 2px; max-width: 90px; }
+/* The search box takes the whole row, the sort menu the one under it. */
+.sidebar-controls { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 0 6px 6px; }
+.sidebar-controls .filter { margin: 0; }
+.file-sort { align-self: flex-end; font-size: 11px; background: var(--bg); color: var(--text-muted); border: 1px solid var(--control-border); border-radius: 5px; padding: 2px; max-width: 100%; }
 
 /* ------- Unlinked mention Link buttons ------- */
 .ref-child-row { display: flex; align-items: center; }
@@ -2596,7 +2602,7 @@ button.primary:hover {
 
 /* ------- View leaves (a view rendered as a tab in the layout) ------- */
 .leaf-view { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
-.tab.view-tab .tab-name { font-style: italic; opacity: 0.9; }
+.tab.view-tab .tab-name { font-style: italic; }
 
 /* Sidebar dock panes (view tabs living in the layout tree) */
 .pane.dock { background: var(--bg-sidebar); }
