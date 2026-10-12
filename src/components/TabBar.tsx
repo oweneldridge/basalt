@@ -52,7 +52,9 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
     if (!holdsFocus.current) return;
     const frame = requestAnimationFrame(() => {
       const at = document.activeElement;
-      if (holdsFocus.current && (!at || at === document.body)) strip.current?.querySelector<HTMLElement>('[role="tab"][tabindex="0"]')?.focus();
+      // Focus that went on elsewhere (the next note's editor) ends the claim.
+      if (at && at !== document.body) holdsFocus.current = !!(strip.current?.contains(at) || at.closest(".ctx-menu"));
+      else if (holdsFocus.current) strip.current?.querySelector<HTMLElement>('[role="tab"][tabindex="0"]')?.focus();
     });
     return () => cancelAnimationFrame(frame);
   }, [tabs, activePath]);
@@ -136,7 +138,6 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
           className={`tab${t.path === activePath ? " active" : ""}${t.pinned ? " pinned" : ""}${t.view ? " view-tab" : ""}${dropAt === i ? " drop-before" : ""}`}
           role="tab"
           aria-selected={t.path === activePath}
-          title={t.pinned ? `${t.name} (pinned)` : t.name}
           draggable
           onDragStart={(e) => {
             e.dataTransfer.setData(TAB_MIME, `${paneId}\n${t.path}`);
@@ -183,8 +184,12 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
               📌
             </button>
           )}
-          {iconOnly && <ViewIcon path={t.path} />}
-          <span className={iconOnly ? "tab-name sr-only" : "tab-name"}>{t.name}</span>
+          {/* The tooltip sits on the name (or the icon), not the tab, so it
+              isn't read out again as the tab's description. */}
+          {iconOnly && <ViewIcon path={t.path} title={t.name} />}
+          <span className={iconOnly ? "tab-name sr-only" : "tab-name"} title={iconOnly ? undefined : t.pinned ? `${t.name} (pinned)` : t.name}>
+            {t.name}
+          </span>
           {!t.pinned && !(dock && t.view) && (
             <button
               className="tab-close"

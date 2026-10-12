@@ -258,7 +258,8 @@ button.primary:hover {
   font-size: 0.86rem;
   outline: none;
 }
-::placeholder {
+::placeholder,
+.cm-editor .cm-content .cm-placeholder {
   color: var(--text-muted);
   opacity: 1;
 }
@@ -2558,7 +2559,6 @@ button.primary:hover {
 }
 .readable-width .inline-title { max-width: 720px; margin: 0 auto; }
 .inline-title:focus { border-bottom: 1px solid var(--border); }
-.inline-title::placeholder { color: var(--text-faint); }
 
 /* ------- Properties panel ------- */
 .properties { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
@@ -2607,7 +2607,8 @@ button.primary:hover {
 /* Sidebar dock panes (view tabs living in the layout tree) */
 .pane.dock { background: var(--bg-sidebar); }
 .pane.dock .tab-bar { background: var(--bg-sidebar); flex-wrap: wrap; height: auto; min-height: 34px; overflow-x: visible; }
-.pane.dock .tab { height: 33px; min-width: 0; max-width: 100%; }
+.pane.dock .tab { height: 33px; min-width: 0; max-width: min(200px, 100%); }
+.pane.dock .tab.view-tab .tab-name { max-width: 8em; }
 .pane.dock .tab.view-tab { padding: 0 10px; }
 .pane.dock .leaf-view { font-size: 13px; }
 

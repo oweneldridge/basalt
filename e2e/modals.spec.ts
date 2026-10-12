@@ -72,6 +72,29 @@ test("tabs work from the keyboard: arrows move, Enter opens, Delete closes", asy
   await expect(page.getByRole("tablist", { name: "Open notes" })).toBeVisible();
 });
 
+test("closing the open note's tab hands focus to the next note, and nothing takes it back later", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await page.evaluate(() => {
+    Object.keys(localStorage).filter((k) => k.includes("workspace")).forEach((k) => localStorage.removeItem(k));
+  });
+  await page.reload();
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  const tabs = page.locator(".pane:not(.dock) [role='tab']");
+  await tabs.filter({ hasText: "Ideas" }).focus();
+  await page.keyboard.press("Delete");
+  await expect(page.locator(".pane:not(.dock) .cm-content").first()).toBeFocused();
+  // A click on empty space in the Files panel leaves focus there, not on a tab.
+  await page.locator(".pane.dock-left .leaf-view").first().click({ position: { x: 20, y: 400 } });
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => document.activeElement?.getAttribute("role"))).not.toBe("tab");
+  // And closing a side panel's tab then keeps focus in that panel.
+  const bar = page.locator(".pane.dock-right [role='tablist']").first();
+  await bar.getByRole("tab", { name: "Outline" }).focus();
+  await page.keyboard.press("Delete");
+  await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest(".pane.dock-right"))).toBe(true);
+});
+
 test("closing a side panel's tab leaves focus on its tabs", async ({ page }) => {
   await page.goto("/app-harness.html");
   await page.evaluate(() => {
@@ -195,21 +218,22 @@ test("the graph is a named dialog with labelled controls; Escape returns focus",
 
 test("with reduced motion the graph is drawn once it settles, not animated", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
+  // Each frame drawn starts by clearing the canvas.
+  await page.addInitScript(() => {
+    const clear = CanvasRenderingContext2D.prototype.clearRect;
+    CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+      (window as unknown as { frames2d: number }).frames2d = ((window as unknown as { frames2d?: number }).frames2d ?? 0) + 1;
+      return clear.apply(this, args);
+    };
+  });
   await page.goto("/app-harness.html");
   await expect(page.locator(".sidebar")).toBeVisible();
   await page.locator(".ribbon").getByRole("button", { name: "Graph view" }).click();
-  const snap = () => page.locator(".graph-canvas-wrap canvas").evaluate((c: HTMLCanvasElement) => c.toDataURL());
-  const blank = await page.evaluate(() => {
-    const c = document.querySelector<HTMLCanvasElement>(".graph-canvas-wrap canvas")!;
-    const e = document.createElement("canvas");
-    e.width = c.width;
-    e.height = c.height;
-    return e.toDataURL();
-  });
-  await expect.poll(snap, { timeout: 10000 }).not.toBe(blank);
-  const a = await snap();
-  await page.waitForTimeout(500);
-  expect(await snap()).toBe(a);
+  const frames = () => page.evaluate(() => (window as unknown as { frames2d?: number }).frames2d ?? 0);
+  await expect.poll(frames, { timeout: 10000 }).toBeGreaterThan(0);
+  await page.waitForTimeout(3000);
+  // Drawn when it settles (and at once if its layout was kept), not frame by frame.
+  expect(await frames()).toBeLessThanOrEqual(3);
 });
 
 test("buttons, tabs and checkboxes are at least 24 by 24 pixels", async ({ page }) => {

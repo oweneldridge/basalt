@@ -83,6 +83,12 @@ async function faintPlaceholders(page: Page): Promise<string[]> {
       const r = ratio(c.slice(0, 3), behind(el));
       if (r < 4.5 || shown < 1) faint.push(`${r.toFixed(2)} ${el.placeholder}`);
     });
+    // CodeMirror boxes (the Bases filter and formula fields) draw their own.
+    document.querySelectorAll<HTMLElement>(".cm-placeholder").forEach((el) => {
+      if (!el.getBoundingClientRect().width) return;
+      const r = ratio(rgb(getComputedStyle(el).color).slice(0, 3), behind(el));
+      if (r < 4.5) faint.push(`${r.toFixed(2)} ${el.textContent}`);
+    });
     return faint;
   });
 }
@@ -109,7 +115,10 @@ for (const scheme of ["light", "dark"] as const) {
       for (const tab of await bar.locator(".tab").all()) {
         const t = await tab.boundingBox();
         expect(t!.x + t!.width).toBeLessThanOrEqual(box!.x + box!.width + 0.5);
-        await expect(tab).toHaveAttribute("title", /.+/);
+        // A tooltip names it, on its name or icon rather than the tab, so the
+        // name isn't read out twice.
+        expect(await tab.locator("[title], svg title").count()).toBeGreaterThan(0);
+        expect(await tab.getAttribute("title")).toBeNull();
       }
     }
     // A note tab in a narrow dock shrinks to fit, its name cut short.
@@ -121,15 +130,29 @@ for (const scheme of ["light", "dark"] as const) {
       tab.className = "tab";
       tab.innerHTML = '<span class="tab-name">A very long note name that goes on and on</span><button class="tab-close">×</button>';
       strip.append(tab);
-      const out = { right: tab.querySelector(".tab-close")!.getBoundingClientRect().right, edge: strip.parentElement!.getBoundingClientRect().right };
+      const out = { right: tab.querySelector(".tab-close")!.getBoundingClientRect().right, edge: strip.parentElement!.getBoundingClientRect().right, wide: 0 };
+      // In a wide one it keeps a note tab's usual cap.
+      pane.style.width = "495px";
+      out.wide = tab.getBoundingClientRect().width;
       tab.remove();
       pane.style.width = pane.style.flex = "";
       return out;
     });
     expect(narrow.right).toBeLessThanOrEqual(narrow.edge + 0.5);
+    expect(narrow.wide).toBeLessThanOrEqual(200);
     // The Outline icon, all straight lines, is drawn on whole pixels.
     await expect(page.locator(".pane.dock .tab.view-tab", { hasText: "Outline" }).locator(".tab-icon path")).toHaveAttribute("shape-rendering", "crispEdges");
-    // So does a field further in, like the Graph view's filter.
+    // So do fields further in: a note's properties, a base's filter and the
+    // Graph view's filter.
+    await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+    await page.locator(".pane.dock .tab.view-tab", { hasText: "Properties" }).click();
+    await expect(page.getByPlaceholder("Add property…").first()).toBeVisible();
+    expect(await faintPlaceholders(page)).toEqual([]);
+    await page.locator(".tree-row.attachment", { hasText: "Notes" }).click();
+    await page.getByRole("button", { name: "\u270e Edit" }).click();
+    await page.locator(".base-editor-section", { hasText: "Filter" }).locator(".base-filter-add").click();
+    await expect(page.locator(".cm-placeholder").first()).toBeVisible();
+    expect(await faintPlaceholders(page)).toEqual([]);
     await page.keyboard.press("ControlOrMeta+p");
     await page.locator(".palette-input").first().fill("Open graph view");
     await page.keyboard.press("Enter");

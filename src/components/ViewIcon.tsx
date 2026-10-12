@@ -15,11 +15,12 @@ const PATHS: Record<BuiltinView, string> = {
 const SQUARE = new Set<BuiltinView>(["outline", "properties"]);
 
 /** The icon for a built-in view tab's path, or null. */
-export function ViewIcon({ path }: { path: string }) {
+export function ViewIcon({ path, title }: { path: string; title?: string }) {
   const spec = parseViewPath(path);
   if (!spec || spec.type === "plugin") return null;
   return (
     <svg className="tab-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+      {title && <title>{title}</title>}
       <path
         d={PATHS[spec.type]}
         fill="none"

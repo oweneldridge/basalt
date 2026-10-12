@@ -44,6 +44,15 @@ test("a plugin can register a settings tab that renders in Settings", async ({ p
   // A plugin's view is told apart by its name, shown on its tab.
   await expect(demo.locator(".tab-name")).not.toHaveClass(/sr-only/);
   expect((await demo.locator(".tab-name").boundingBox())!.width).toBeGreaterThan(20);
+  // A long name is cut short so the panel keeps its room.
+  const width = await demo.locator(".tab-name").evaluate((el) => {
+    const was = el.textContent;
+    el.textContent = "A plugin view with a very long name indeed";
+    const w = el.getBoundingClientRect().width;
+    el.textContent = was;
+    return w;
+  });
+  expect(width).toBeLessThan(140);
   await demo.click();
   await expect(page.locator(".pane.dock .plugin-view-mount")).toHaveText("demo-view-content");
   // vault.rename mutates the vault through the host.
