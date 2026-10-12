@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { menuKeyOpens } from "./ContextMenu";
+import { ViewIcon } from "./ViewIcon";
 
 export interface TabItem {
   path: string;
@@ -147,8 +148,11 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
               📌
             </button>
           )}
-          <span className="tab-name">{t.name}</span>
-          {!t.pinned && (
+          {/* In a side dock a view tab is its icon, named in its tooltip, so all fit.
+              It closes from its menu, a middle click or Delete, as in Obsidian. */}
+          {dock && t.view && <ViewIcon path={t.path} />}
+          <span className={dock && t.view ? "tab-name sr-only" : "tab-name"}>{t.name}</span>
+          {!t.pinned && !(dock && t.view) && (
             <button
               className="tab-close"
               tabIndex={-1}

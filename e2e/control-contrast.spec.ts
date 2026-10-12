@@ -103,5 +103,42 @@ for (const scheme of ["light", "dark"] as const) {
     });
     expect(files.overflow).toBeLessThanOrEqual(0);
     expect(files.sortRight).toBeLessThanOrEqual(files.panelRight);
+    // Every tab in a side dock is in view, without scrolling.
+    for (const bar of await page.locator(".pane.dock .tab-bar").all()) {
+      const box = await bar.boundingBox();
+      for (const tab of await bar.locator(".tab").all()) {
+        const t = await tab.boundingBox();
+        expect(t!.x + t!.width).toBeLessThanOrEqual(box!.x + box!.width + 0.5);
+        await expect(tab).toHaveAttribute("title", /.+/);
+      }
+    }
+    // Six view tabs fit a right dock of the default width on one row.
+    const right = page.locator(".pane.dock-right .tab-bar").first();
+    expect((await right.boundingBox())!.height).toBeLessThanOrEqual(36);
+    // More than fit (plugin views) go onto another row rather than out of sight.
+    expect(await right.evaluate((el) => getComputedStyle(el).flexWrap)).toBe("wrap");
+    // Each view tab's icon stands out from the bar, and its name isn't faded.
+    for (const tab of await right.locator(".tab.view-tab").all()) {
+      const { ratio, opacity } = await tab.evaluate((el) => {
+        const rgb = (c: string) => (c.match(/[\d.]+/g) ?? []).map(Number);
+        const lum = ([r, g, b]: number[]) => {
+          const f = (v: number) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+          return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+        };
+        let bg = [255, 255, 255];
+        for (let e: Element | null = el; e; e = e.parentElement) {
+          const c = rgb(getComputedStyle(e).backgroundColor);
+          if (c.length >= 3 && (c.length < 4 || c[3] > 0.5)) {
+            bg = c.slice(0, 3);
+            break;
+          }
+        }
+        const fg = rgb(getComputedStyle(el.querySelector(".tab-icon")!).color).slice(0, 3);
+        const [x, y] = [lum(fg), lum(bg)].sort((p, q) => q - p);
+        return { ratio: (x + 0.05) / (y + 0.05), opacity: getComputedStyle(el.querySelector(".tab-name")!).opacity };
+      });
+      expect(ratio).toBeGreaterThanOrEqual(4.5);
+      expect(opacity).toBe("1");
+    }
   });
 }

@@ -2603,10 +2603,13 @@ button.primary:hover {
 /* ------- View leaves (a view rendered as a tab in the layout) ------- */
 .leaf-view { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .tab.view-tab .tab-name { font-style: italic; }
+.tab-icon { flex: none; }
 
 /* Sidebar dock panes (view tabs living in the layout tree) */
 .pane.dock { background: var(--bg-sidebar); }
-.pane.dock .tab-bar { background: var(--bg-sidebar); }
+.pane.dock .tab-bar { background: var(--bg-sidebar); flex-wrap: wrap; height: auto; min-height: 34px; overflow-x: visible; }
+.pane.dock .tab { height: 33px; }
+.pane.dock .tab.view-tab { padding: 0 10px; }
 .pane.dock .leaf-view { font-size: 13px; }
 
 /* ------- Import from Obsidian report ------- */

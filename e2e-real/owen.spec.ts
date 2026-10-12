@@ -927,8 +927,8 @@ test.describe("closing tabs", () => {
     await openApp(page, vault);
     await openNote(page, "Ideas");
     const right = page.locator(".pane.dock").filter({ has: page.getByRole("tab", { name: "Outline" }) });
-    await right.getByRole("tab", { name: "Backlinks" }).click();
-    await right.getByRole("tab", { name: "Backlinks" }).locator("button").click();
+    await right.getByRole("tab", { name: "Backlinks" }).click({ button: "right" });
+    await page.getByRole("menu", { name: "Tab actions" }).getByText("Close", { exact: true }).click();
     await expect(right.getByRole("tab", { name: "Backlinks" })).toHaveCount(0);
     await expect(right.getByRole("tab", { selected: true })).toHaveCount(1);
     await expect(page.locator(".status-error")).toHaveCount(0);
