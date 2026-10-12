@@ -203,8 +203,9 @@ function firstDailyNotice(root: string): boolean {
   return true;
 }
 /** Why Templater Lite won't fill a new note's tags here, or null if it will. */
-function templaterWontRun(cfg: ObsidianConfig | null): string | null {
-  if (!isLoaded("templater-lite")) return "Templater Lite isn't on";
+function templaterWontRun(cfg: ObsidianConfig | null, root: string): string | null {
+  if (!isLoaded("templater-lite"))
+    return loadEnabled(root).includes("templater-lite") ? "Templater Lite was still waiting on a slow plugin to load" : "Templater Lite isn't on";
   if (!cfg?.templaterOnCreate) return "Templater's \"Trigger Templater on new file creation\" is off in this vault";
   if (!listensFor("templater-lite", "create")) return "this copy of Templater Lite doesn't fill new notes, so update it";
   return null;
@@ -630,6 +631,11 @@ export default function App() {
   const index = useRef(new VaultIndex());
   const vaultRef = useRef<string | null>(null);
   vaultRef.current = vault;
+  // Counts vault switches from the moment the backend switches, before a render
+  // catches vaultRef up.
+  const vaultGen = useRef(0);
+  // Counts edits you make in an editor.
+  const editsRef = useRef(0);
   const notesRef = useRef<VaultNote[]>([]);
   notesRef.current = notes;
   const attachmentsRef = useRef<Attachment[]>([]);
@@ -1172,6 +1178,7 @@ export default function App() {
   const handleChange = useCallback(
     (paneId: string, editorPath: string, doc: string) => {
       if (!editorPath || !isMarkdownPath(editorPath)) return; // read-only viewers don't autosave
+      editsRef.current++;
       const path = renameWindow.current.get(editorPath) ?? editorPath;
       pending.current.set(path, doc);
       liveDocs.current.set(path, doc);
@@ -1800,6 +1807,7 @@ export default function App() {
       await flushAll();
       if (!(await okToDropUnsaved("Switch vaults"))) return;
       clearImageCache();
+      vaultGen.current++;
       const root = await openVaultBackend(path); // canonical; sets managed state
       // Read the saved workspace NOW (before any state reset fires the save
       // effect and overwrites it) so it survives until restore below.
@@ -3049,13 +3057,19 @@ export default function App() {
   const openDailyNote = useCallback(async (date: Date = new Date(), folderIfUnset?: string, atStartup = false): Promise<boolean> => {
     const cfg = obsConfigRef.current;
     const root = vaultRef.current ?? "";
-    const active = () => {
-      const id = focusedIdRef.current;
-      return id ? (panesRef.current[id]?.active ?? null) : null;
-    };
-    const shown = active();
-    // The vault switched, or (at startup) you or a link opened another note.
-    const stale = () => vaultRef.current !== root || (atStartup && (active() !== shown || dailyOpened(root)));
+    const gen = vaultGen.current;
+    // What the editors show; the side panels don't count.
+    const opened = () =>
+      Object.values(panesRef.current)
+        .filter((p) => !p.dock)
+        .map((p) => p.active)
+        .join("\n");
+    const shown = opened();
+    const edits = editsRef.current;
+    const switched = () => vaultRef.current !== root || vaultGen.current !== gen;
+    // The vault switched, or (at startup) you or a link opened another note, or
+    // you started typing.
+    const stale = () => switched() || (atStartup && (opened() !== shown || editsRef.current !== edits || dailyOpened(root)));
     // The note's day with the current time, so a template's {{time}} is now.
     const clock = new Date();
     const now = new Date(date);
@@ -3093,7 +3107,7 @@ export default function App() {
         if (stale()) return false;
         if (await openMade()) return true; // made meanwhile (a sync, another tab)
       }
-      unfilled = templaterWontRun(cfg);
+      unfilled = templaterWontRun(cfg, root);
       if (unfilled && atStartup) {
         if (firstDailyNotice(root))
           noticeRef.current(`Today's daily note wasn't made: its template uses Templater, and ${unfilled}. Or make it with "Open today's daily note".`, 12000);
@@ -3112,7 +3126,7 @@ export default function App() {
         say();
         return true;
       }
-      if (vaultRef.current !== root) return false;
+      if (switched()) return false;
       const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
       let content = fillTemplate(tplContent, now, name.split("/").pop() ?? name);
       // Only into the still-empty note: if it was written meanwhile (another
@@ -3124,7 +3138,7 @@ export default function App() {
           if (!isWriteConflict(e)) throw e;
           content = await readNote(path);
         }
-        if (vaultRef.current !== root) return false;
+        if (switched()) return false;
       }
       const note: VaultNote = { path, rel, name: nameFromRel(rel), content };
       index.current.setNote(note);

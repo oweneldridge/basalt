@@ -1,5 +1,8 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { test, expect, openApp, openNote, settle, ROOT } from "./fixture";
 
 // Obsidian's "Default file to open: Daily note" (openBehavior in app.json).
@@ -259,5 +262,169 @@ test.describe("a vault that opens its daily note from a Templater template, with
     await settle(next, 4500);
     await expect(next.locator(".pane:not(.dock) .tab.active .tab-name").first()).toHaveText("Other");
     expect(vault.exists(`Daily/${today}.md`)).toBe(false);
+  });
+});
+
+const slowPlugin = (ms: number, id: string, name: string) => ({
+  [`.basalt/plugins/${id}/main.js`]: `const { Plugin } = require("basalt"); module.exports = class extends Plugin { async onload() { await new Promise((r) => setTimeout(r, ${ms})); } };`,
+  [`.basalt/plugins/${id}/manifest.json`]: JSON.stringify({ id, name, version: "0.0.1" }),
+});
+const templaterDaily = {
+  ".obsidian/app.json": JSON.stringify({ openBehavior: "daily" }),
+  ".obsidian/daily-notes.json": JSON.stringify({ folder: "Daily", template: "Templates/Daily" }),
+  ".obsidian/plugins/templater-obsidian/data.json": JSON.stringify({ trigger_on_file_creation: true }),
+  "Templates/Daily.md": "title: <% tp.file.title %>\n",
+  ".basalt/plugins/templater-lite/main.js": readFileSync(join(templater, "main.js"), "utf8"),
+  ".basalt/plugins/templater-lite/manifest.json": readFileSync(join(templater, "manifest.json"), "utf8"),
+};
+
+test.describe("a vault that opens its daily note from a Templater template, while it waits", () => {
+  test.use({ vaultFiles: { ...templaterDaily, ...slowPlugin(3000, "zz-slow", "Zz Slow") } });
+
+  // A reload with Ideas open, while the daily note waits for Zz Slow.
+  async function reloadOnIdeas(page: import("@playwright/test").Page, vault: Parameters<typeof openApp>[1]) {
+    await openApp(page, vault);
+    await enable(page, "Templater Lite");
+    await enable(page, "Zz Slow");
+    await openNote(page, "Ideas");
+    await settle(page, 1200);
+    await page.close();
+    const next = await page.context().newPage();
+    await openApp(next, vault);
+    await expect(activeTab(next)).toHaveText("Ideas");
+    return next;
+  }
+
+  test("still opens it after a click in the file tree or a side panel", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    const next = await reloadOnIdeas(page, vault);
+    await next.locator(".tree-row", { hasText: "Projects" }).first().click();
+    await next.locator(".pane.dock-right .tab.view-tab", { hasText: "Outline" }).click();
+    await expect(activeTab(next)).toHaveText(today, { timeout: 10000 });
+    expect(vault.read(`Daily/${today}.md`)).toBe(`title: ${today}\n`);
+  });
+
+  test("leaves you typing in the note you're on", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    const next = await reloadOnIdeas(page, vault);
+    await next.locator(".pane:not(.dock) .cm-content").first().click();
+    await next.keyboard.press("ControlOrMeta+End");
+    for (const w of ["one", "two", "three", "four", "five", "six", "seven", "eight"]) {
+      await next.keyboard.type(w + " ", { delay: 30 });
+      await next.waitForTimeout(400);
+    }
+    await settle(next, 1500);
+    await expect(activeTab(next)).toHaveText("Ideas");
+    expect(vault.read("Ideas.md")).toContain("one two three four five six seven eight");
+    expect(vault.exists(`Daily/${today}.md`)).toBe(false);
+  });
+});
+
+test.describe("a vault that opens its daily note from a Templater template, behind a plugin that never loads", () => {
+  test.use({
+    vaultFiles: {
+      ...templaterDaily,
+      ".basalt/plugins/aa-hang/main.js": 'const { Plugin } = require("basalt"); module.exports = class extends Plugin { onload() { return new Promise(() => {}); } };',
+      ".basalt/plugins/aa-hang/manifest.json": JSON.stringify({ id: "aa-hang", name: "Aa Hang", version: "0.0.1" }),
+    },
+  });
+
+  test("says Templater Lite was still waiting, not that it's off", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    await openApp(page, vault);
+    await enable(page, "Templater Lite");
+    await page.keyboard.press("ControlOrMeta+p");
+    await page.locator(".palette-input").first().fill("Open settings");
+    await page.keyboard.press("Enter");
+    await page.locator(".plugin-row", { hasText: "Aa Hang" }).locator('input[type="checkbox"]').click();
+    await settle(page, 500);
+    await page.keyboard.press("Escape");
+    const next = await page.context().newPage();
+    await openApp(next, vault);
+    await expect(next.locator(".notice")).toContainText("still waiting on a slow plugin", { timeout: 20000 });
+    expect(vault.exists(`Daily/${today}.md`)).toBe(false);
+  });
+});
+
+/** Another basalt-server over a temp vault of its own. */
+async function otherVault(files: Record<string, string>) {
+  const dir = mkdtempSync(join(tmpdir(), "basalt-e2e-other-"));
+  for (const [rel, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, rel)), { recursive: true });
+    writeFileSync(join(dir, rel), content);
+  }
+  const port = await new Promise<number>((resolve, reject) => {
+    const srv = createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const p = (srv.address() as { port: number }).port;
+      srv.close(() => resolve(p));
+    });
+  });
+  const url = `http://127.0.0.1:${port}`;
+  const env: NodeJS.ProcessEnv = { ...process.env, BASALT_PORT: String(port), BASALT_HOST: "127.0.0.1", BASALT_WEB_DIR: join(ROOT, "dist") };
+  delete env.BASALT_AUTH;
+  delete env.BASALT_VAULT;
+  const proc = spawn(join(ROOT, "target/debug/basalt-server"), ["--vault", dir], { env, stdio: "ignore" });
+  let root = "";
+  for (let i = 0; i < 100 && !root; i++) {
+    root = await fetch(`${url}/api/vault-root`)
+      .then(async (r) => (r.ok ? ((await r.json()) as { root: string }).root : ""))
+      .catch(() => "");
+    if (!root) await new Promise((r) => setTimeout(r, 50));
+  }
+  return {
+    url,
+    root,
+    exists: (rel: string) => existsSync(join(dir, rel)),
+    stop: async () => {
+      if (proc.exitCode === null) await new Promise<void>((r) => (proc.once("exit", () => r()), proc.kill()));
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+test.describe("a vault that opens its daily note from a Templater template, switched away from while it waits", () => {
+  test.use({ vaultFiles: { ...templaterDaily, ...slowPlugin(4000, "zz-slow", "Zz Slow") } });
+
+  test("makes nothing in the vault you switched to", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    const other = await otherVault({ "Welcome B.md": "vault b\n" });
+    try {
+      await openApp(page, vault);
+      await enable(page, "Templater Lite");
+      await enable(page, "Zz Slow");
+      await page.close();
+      const next = await page.context().newPage();
+      // As in the desktop app: once the window opens the other vault, every
+      // command goes to it.
+      const rootA = ((await (await fetch(`${vault.url}/api/vault-root`)).json()) as { root: string }).root;
+      let backend = vault.url;
+      await next.route("**/api/invoke", async (route) => {
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        if (body.cmd === "open_vault") {
+          backend = body.args?.path === other.root ? other.url : vault.url;
+          return route.fulfill({ contentType: "application/json", body: JSON.stringify({ result: backend === other.url ? other.root : rootA }) });
+        }
+        return route.fulfill({ response: await route.fetch({ url: `${backend}/api/invoke` }) });
+      });
+      await openApp(next, vault);
+      await settle(next, 1500);
+      await next.evaluate((root) => {
+        const list = JSON.parse(localStorage.getItem("basalt.recentVaults") ?? "[]");
+        list.push({ path: root, name: "B", ts: Date.now() });
+        localStorage.setItem("basalt.recentVaults", JSON.stringify(list));
+      }, other.root);
+      await next.keyboard.press("ControlOrMeta+p");
+      await next.locator(".palette-input").first().fill("Switch vault");
+      await next.keyboard.press("Enter");
+      await next.locator(".vault-item", { hasText: other.root }).click();
+      await expect(next.locator(".tree-row.file", { hasText: "Welcome B" })).toBeVisible();
+      await settle(next, 5000);
+      expect(other.exists(`Daily/${today}.md`)).toBe(false);
+      await expect(next.locator(".notice", { hasText: "daily note" })).toHaveCount(0);
+    } finally {
+      await other.stop();
+    }
   });
 });
