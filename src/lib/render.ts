@@ -1050,12 +1050,41 @@ export function rawRanges(md: string, indented: boolean, withHtml = true): [numb
           const k = close ? lines.findIndex((l) => close.test(l)) : -1;
           const end = k < 0 || k === lines.length - 1 ? n.to : n.from + lines.slice(0, k + 1).join("\n").length;
           out.push([n.from, end]);
+          // What follows the closing line shows as a note of its own.
+          if (n.name === "HTMLBlock" && end < n.to) for (const [f, t] of rawRanges(md.slice(end + 1, n.to), indented, withHtml)) out.push([f + end + 1, t + end + 1]);
           return false;
         }
       }
     },
   });
   return out;
+}
+
+/** `rawRanges` as Reading view sees the note: with its `%%comments%%` taken
+ * out first. The ranges are offsets into `md`. */
+export function rawRangesBeyondComments(md: string, indented: boolean, withHtml = true): [number, number][] {
+  if (!md.includes("%%")) return rawRanges(md, indented, withHtml);
+  const kept: [number, number][] = []; // where each kept stretch starts: [in the text, in md]
+  let text = "";
+  let last = 0;
+  for (const r of commentsAndCode(md)) {
+    if (r.code || r.from < last) continue;
+    kept.push([text.length, last]);
+    text += md.slice(last, r.from);
+    last = r.to;
+  }
+  kept.push([text.length, last]);
+  text += md.slice(last);
+  const at = (p: number) => {
+    let lo = 0;
+    for (let hi = kept.length - 1; lo < hi; ) {
+      const mid = (lo + hi + 1) >> 1;
+      if (kept[mid][0] <= p) lo = mid;
+      else hi = mid - 1;
+    }
+    return kept[lo][1] + p - kept[lo][0];
+  };
+  return rawRanges(text, indented, withHtml).map(([f, t]) => [at(f), t > f ? at(t - 1) + 1 : at(f)]);
 }
 
 /** The code and comments in `md`, in order: `code` is true for code (left as

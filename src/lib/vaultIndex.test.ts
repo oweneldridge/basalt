@@ -600,3 +600,21 @@ describe("tags after a `>`", () => {
     expect(extractTags("> #quoted and #plain\n`code #no`")).toEqual(["quoted", "plain"]);
   });
 });
+
+describe("mentions near raw HTML, as Reading view shows it", () => {
+  const count = (content: string) => new VaultIndex().unlinkedMentionsFor("Foo", [{ path: "/v/N.md", rel: "N.md", name: "N", content }] as never).length;
+
+  it("skip raw HTML and code after a block's closing line", () => {
+    expect(count("<div>Header</div>\n<div>Foo</div>")).toBe(0);
+    expect(count("<center>Title</center>\n<div align=center>Foo</div>")).toBe(0);
+    expect(count("<div>\n</div>\n    Foo")).toBe(0);
+    expect(count("<div>Header</div>\nFoo here")).toBe(1);
+  });
+
+  it("read HTML with the comments taken out", () => {
+    expect(count("%%\n<div>\nold\n%%\nFoo is here")).toBe(1);
+    expect(count("<div>\n%%note%% Foo\n</div>")).toBe(0);
+    expect(count("%% a %%\n<div>\nFoo\n</div>\nFoo after")).toBe(1);
+    expect(count(`%% ${"x".repeat(40)} %%\n<div>\nFoo\n</div>\nFoo after`)).toBe(1);
+  });
+});

@@ -3,7 +3,7 @@
 // + length-preserving masking so we splice into the ORIGINAL line by offset,
 // never touching a mention that sits inside inline code or an existing link.
 import { mdLinkRegexGlobal, tagRegex, proseMask, TAG_NAME } from "./markdown";
-import { commentRanges, INDENTED_RE, mayIndent, mayRunHtml, rawRanges, renderMarkdown, strictLineBreaksOn } from "./render";
+import { commentRanges, INDENTED_RE, mayIndent, mayRunHtml, rawRangesBeyondComments, renderMarkdown, strictLineBreaksOn } from "./render";
 
 // A code span: a run of backticks, closed by a run of the same length.
 const INLINE_CODE_RE = /(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g;
@@ -652,7 +652,7 @@ export function mentionLinesFor(content: string, named: RegExp): string[] {
  * (unless `indented` is false). Frontmatter and fenced code are `proseMask`'s. */
 export function hiddenSpans(content: string, indented = true, lines = content.split("\n"), prose = proseMask(lines), html = true): [number, number][] {
   const spans: [number, number][] = content.includes("%%") ? commentRanges(content) : [];
-  spans.push(...rawRanges(content, indented, html));
+  spans.push(...rawRangesBeyondComments(content, indented, html));
   if (content.includes("$$") || content.includes("<!--")) {
     // Paired outside code and comments, so a `$$` in them can't shift the pairs.
     const outside = blank(content, spans)
