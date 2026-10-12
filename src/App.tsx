@@ -79,7 +79,7 @@ import type { NoteRef } from "./editor/wikilink";
 import { clearImageCache, resolveImage } from "./lib/assets";
 import { remoteImagesNeedReload, setRemoteImages } from "./lib/remoteImages";
 import { isHiddenRel } from "./lib/hiddenFiles";
-import { normalizeName, targetPathPart, wikilinkRegex } from "./lib/markdown";
+import { normalizeName, targetPathPart } from "./lib/markdown";
 import { Sidebar } from "./components/Sidebar";
 import { Ribbon } from "./components/Ribbon";
 import { WorkspacesModal } from "./components/WorkspacesModal";
@@ -4701,14 +4701,22 @@ export default function App() {
       const target = notesRef.current.find((n) => n.path === lastNotePathRef.current);
       if (!target) return;
       // Snapshot the list; line numbers stay valid (linkify never adds lines).
-      const named = mentionRegex([target.name, ...index.current.aliasesOf(target.path)]);
-      const again: { path: string; line: number }[] = [];
-      for (const m of [...mentions]) {
-        const line = await linkifyInNote(m.path, m.line, target);
-        if (line !== null && named.test(line.replace(wikilinkRegex(), ""))) again.push(m);
+      for (const m of [...mentions]) await linkifyInNote(m.path, m.line, target);
+      // A link can make a mention near it linkable (`*Foo*Foo`, or `o*Foo` then
+      // `_*Foo` below), so the notes are read again, a few times at most.
+      const names = [target.name, ...index.current.aliasesOf(target.path)];
+      const touched = [...new Set(mentions.map((m) => m.path))];
+      for (let round = 0; round < 3; round++) {
+        const fresh: VaultNote[] = [];
+        for (const p of touched) {
+          const note = notesRef.current.find((n) => n.path === p);
+          const content = note ? await readNote(p).catch(() => null) : null;
+          if (note && content !== null) fresh.push({ ...note, content });
+        }
+        let linked = 0;
+        for (const m of index.current.unlinkedMentionsFor(names, fresh, target.path)) if ((await linkifyInNote(m.path, m.line, target)) !== null) linked++;
+        if (!linked) break;
       }
-      // A mention its neighbour's link made linkable (`*Foo*Foo`) is linked too.
-      for (const m of again) for (let k = 0; k < 3 && (await linkifyInNote(m.path, m.line, target)) !== null; k++);
       setMentionsLinked((x) => x + 1);
     },
     [linkifyInNote],

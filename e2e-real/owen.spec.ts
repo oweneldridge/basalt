@@ -140,6 +140,21 @@ test.describe("Link all", () => {
   });
 });
 
+test.describe("Link all, where one link makes another mention linkable", () => {
+  test.use({ vaultFiles: { "Chain.md": "o*Ideas\n_*Ideas\nand *Ideas*Ideas stuck\n" } });
+
+  test("links those too, and leaves none listed", async ({ page, vault }) => {
+    await openApp(page, vault);
+    await openNote(page, "Ideas");
+    await page.locator(".pane.dock .tab.view-tab", { hasText: "Backlinks" }).click();
+    const unlinked = page.locator(".panel-section").nth(1);
+    await expect(unlinked.locator(".ref-group", { hasText: "Chain" }).locator(".ref-child")).toHaveCount(2);
+    await unlinked.locator(".link-all-btn").click();
+    await expect.poll(() => vault.read("Chain.md")).toBe("o*[[Ideas]]\n_*[[Ideas]]\nand *[[Ideas]]*[[Ideas]] stuck\n");
+    await expect(unlinked.locator(".ref-group", { hasText: "Chain" })).toHaveCount(0);
+  });
+});
+
 test.describe("backlink counts", () => {
   test.use({ vaultFiles: { "Mentions.md": "Ideas, then ideas again, and #ideas\n" } });
 

@@ -722,18 +722,54 @@ export function keepsEmphasis(lines: string[], i: number, from: number, to: numb
     if (line.slice(to, to + n) === c.repeat(n) && past !== c && !/[\p{L}\p{N}]/u.test(past)) return true;
   }
   // The paragraph, out to blank lines and fences, without its shared indent.
-  // Emphasis can't reach past a list item, heading or table row either.
   const ends = (l: string) => /^[ \t>]*$/.test(l) || /^[ \t>]*(```|~~~)/.test(l);
-  const own = (l: string) => /^[ \t>]*(?:#{1,6}(?:[ \t]|$)|\|)/.test(l);
-  const opens = (l: string) => own(l) || /^[ \t>]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/.test(l);
   let a = i;
   let b = i;
-  while (a > 0 && i - a < 50 && !opens(lines[a]) && !ends(lines[a - 1]) && !own(lines[a - 1])) a--;
-  while (b < lines.length - 1 && b - i < 50 && !own(lines[b]) && !ends(lines[b + 1]) && !opens(lines[b + 1])) b++;
+  while (a > 0 && i - a < 50 && !ends(lines[a - 1])) a--;
+  while (b < lines.length - 1 && b - i < 50 && !ends(lines[b + 1])) b++;
+  // Emphasis can't reach past a heading or into another list item, so the
+  // check narrows to the mention's own, where nothing could make those lines
+  // read otherwise (comments, math, HTML, quotes).
+  if (!lines.slice(a, b + 1).some((l) => /%%|\$\$|<|^[ \t]*>/.test(l))) {
+    const heading = (k: number) => /^ {0,3}#{1,6}(?:[ \t]|$)/.test(lines[k]);
+    let known = itemsKnown.get(lines);
+    if (!known) itemsKnown.set(lines, (known = new Map()));
+    const memo = known;
+    // Any item can start a list after a blank line; within a paragraph only a
+    // bullet or a 1 can, or any number inside a numbered list (as the editor's
+    // parser reads it).
+    const item = (k: number): boolean => {
+      const chain: number[] = [];
+      let is = false;
+      for (let at = k; ; ) {
+        const had = memo.get(at);
+        if (had && had[0] === lines[at]) {
+          is = had[1];
+          break;
+        }
+        const m = LIST_START_RE.exec(lines[at]);
+        chain.push(at);
+        if (!m || !m[3] || parseInt(m[3], 10) === 1 || at === 0 || ends(lines[at - 1])) {
+          is = !!m;
+          break;
+        }
+        let j = at - 1;
+        while (j > 0 && !ends(lines[j]) && !LIST_START_RE.exec(lines[j])?.[3]) j--;
+        if (ends(lines[j]) || !LIST_START_RE.exec(lines[j])?.[3]) break;
+        at = j;
+      }
+      for (const at of chain) memo.set(at, [lines[at], is]);
+      return is;
+    };
+    const starts = (k: number) => heading(k) || heading(k - 1) || item(k);
+    for (let k = i; k > a; k--) if (starts(k)) (a = k), (k = 0);
+    for (let k = i + 1; k <= b; k++) if (starts(k)) (b = k - 1), (k = Infinity);
+  }
   const para = lines.slice(a, b + 1);
   // Each mention renders its paragraph, so a huge one would be slow to scan;
-  // its mentions by emphasis are left alone instead.
-  if (para.reduce((n, l) => n + l.length + 1, 0) > EMPHASIS_CHECK_LIMIT) return false;
+  // its mentions by emphasis are left alone instead. Links count as their
+  // text, so linking one mention doesn't change the answer for the next.
+  if (para.join("\n").replace(/\[\[(?:[^\]|\n]*\|)?([^\]\n]*)\]\]/g, "$1").length > EMPHASIS_CHECK_LIMIT) return false;
   const cut = Math.min(...para.map((l) => /^[ \t]*/.exec(l)![0].length));
   const text = (ls: string[]) => ls.map((l) => l.slice(cut)).join("\n");
   const linked = [...para];
@@ -744,6 +780,13 @@ export function keepsEmphasis(lines: string[], i: number, from: number, to: numb
 }
 
 export const EMPHASIS_CHECK_LIMIT = 3000;
+
+// Which lines of a note start a list item, as found so far (each line kept
+// with its answer, so an edited line is looked at again).
+const itemsKnown = new WeakMap<string[], Map<number, [string, boolean]>>();
+
+// A list item with text: its indent, bullet, or number and delimiter.
+const LIST_START_RE = /^( {0,3})(?:([-*+])|(\d{1,9})([.)]))[ \t]+\S/;
 
 // The last paragraph checked, as shown: a line's mentions are checked in turn.
 let shownCache: { key: string; html: string } | null = null;

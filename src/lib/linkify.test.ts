@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EMPHASIS_CHECK_LIMIT, keepsEmphasis, linkifyMention, maskForMentions, mentionLines } from "./linkify";
+import { setStrictLineBreaks } from "./render";
 
 describe("linkifyMention", () => {
   it("wraps the first bare occurrence, preserving surrounding text + casing", () => {
@@ -342,10 +343,63 @@ describe("checking emphasis stays quick", () => {
     expect(performance.now() - t0).toBeLessThan(1500);
   });
 
-  it("stops at a heading or a table row", () => {
-    expect(keepsEmphasis(["# Head *x", "Foo*y"], 1, 0, 3)).toBe(true);
-    expect(keepsEmphasis(["| a *x |", "Foo*y"], 1, 0, 3)).toBe(true);
-    expect(keepsEmphasis(["a *x", "Foo*y"], 1, 0, 3)).toBe(false);
+  const keeps = (md: string) => {
+    const lines = md.split("\n");
+    const i = lines.findIndex((l) => l.includes("Foo"));
+    return keepsEmphasis(lines, i, lines[i].indexOf("Foo"), lines[i].indexOf("Foo") + 3);
+  };
+
+  it("stops at a heading or another list item", () => {
+    expect(keeps("# Head *x\nFoo*y")).toBe(true);
+    expect(keeps("- a *x\n- Foo*y")).toBe(true);
+    expect(keeps("1. a *x\n2. Foo*y")).toBe(true);
+    expect(keeps("a *x\nFoo*y")).toBe(false);
+  });
+
+  it("reads on through lines that only look like a new block", () => {
+    for (const md of ["**Launched in\n2024. Foo**v2 shipped", "*a\n| Foo*b", "foo *bar\n2. Foo*baz", "*a\n    # Foo*b", "*a\n    - Foo*b", "*a\n*\nFoo*b", "$$\n|*Foo"]) {
+      expect(keeps(md), md).toBe(false);
+    }
+    for (const md of ["o\n2. <span>*Foo", "<span>*Foo\n-", "t\n    - o*Foo\no", "*a\n%%c%%\n- Foo*b", "*a <b>\n- Foo*b"]) expect(keeps(md), md).toBe(true);
+  });
+
+  it("reads a number as a list item only where a list can start or go on", () => {
+    expect(keepsEmphasis(["x", "", "7. a *x", "8. Foo*y"], 3, 3, 6)).toBe(true);
+    expect(keepsEmphasis(["x *x", "8. Foo*y"], 1, 3, 6)).toBe(false);
+    expect(keepsEmphasis(["1. a *x", "2) Foo*y"], 1, 3, 6)).toBe(true);
+    expect(keepsEmphasis(["1. a *x", "   - b", " 2. Foo*y"], 2, 4, 7)).toBe(true);
+    expect(keepsEmphasis(["- a *x", "2. Foo*y"], 1, 3, 6)).toBe(false);
+    const long = Array.from({ length: 100_000 }, (_, i) => `${i + 1}. item (*Foo*) x`);
+    expect(keepsEmphasis(long, long.length - 1, 10 + String(long.length).length, 13 + String(long.length).length)).toBe(true);
+  });
+
+  it("checks a numbered list item by item, quickly", () => {
+    const lines = Array.from({ length: 1600 }, (_, i) => `${i + 1}. item (*Foo*) [[Bar]]`);
+    const t0 = performance.now();
+    for (let i = 0; i < lines.length; i++) expect(keepsEmphasis(lines, i, lines[i].indexOf("Foo"), lines[i].indexOf("Foo") + 3)).toBe(true);
+    expect(performance.now() - t0).toBeLessThan(2500);
+  });
+
+  it("gives the same answer for a mention after another in its paragraph is linked", () => {
+    const pad = "x".repeat(3000 - "Foo starts\n\nand then (*Foo*) here".length);
+    const lines = ["Foo starts", pad, "and then (*Foo*) here"];
+    expect(lines.join("\n").length).toBe(3000);
+    const at = lines[2].indexOf("Foo");
+    expect(keepsEmphasis(lines, 2, at, at + 3)).toBe(true);
+    lines[0] = "[[Foo]] starts";
+    expect(keepsEmphasis(lines, 2, at, at + 3)).toBe(true);
+    expect(keepsEmphasis(["x".repeat(3001 - 14), "(*Foo*) there"], 1, 2, 5)).toBe(false);
+  });
+
+  it("checks again when the line-break setting changes", () => {
+    const lines = ["*a", "Foo* b"];
+    expect(keepsEmphasis(lines, 1, 0, 3)).toBe(true);
+    setStrictLineBreaks(true);
+    try {
+      expect(keepsEmphasis(lines, 1, 0, 3)).toBe(true);
+    } finally {
+      setStrictLineBreaks(false);
+    }
   });
 
   it("leaves mentions by emphasis alone in a paragraph too long to check", () => {
