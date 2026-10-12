@@ -102,7 +102,9 @@ both: one in raw HTML, right after `[` (Obsidian writes `[[[Foo]]]`, a link to
 "[Foo"), after a `[[` nothing on its line closes, or whose brackets would undo
 or start bold, italics or a highlight around it (in a paragraph of more than
 3,000 characters, any mention right next to them, as checking each would be
-slow). A `[[` inside a link's target
+slow). Two mentions that share emphasis marks (`Foo*_*Foo`) are both listed,
+but linking one leaves the other unlinkable, so Link all links one of them. A
+`[[` inside a link's target
 (`[[a [[b]]`) links to "a [[b" in Reading view but to "b" in the index and
 Live Preview; which one Obsidian reads hasn't been checked. Where the editor's
 parser and CommonMark disagree on a `#` and a tab or a backtick after an
