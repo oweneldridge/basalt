@@ -39,6 +39,7 @@ export const HTML_BLOCK =
 // default). Off, every newline inside a paragraph is a line break; on, only a
 // line ending in two spaces or a backslash breaks.
 let strictLineBreaks = false;
+export const strictLineBreaksOn = (): boolean => strictLineBreaks;
 export function setStrictLineBreaks(on: boolean): void {
   strictLineBreaks = on;
 }

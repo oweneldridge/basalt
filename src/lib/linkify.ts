@@ -3,7 +3,7 @@
 // + length-preserving masking so we splice into the ORIGINAL line by offset,
 // never touching a mention that sits inside inline code or an existing link.
 import { mdLinkRegexGlobal, tagRegex, proseMask, TAG_NAME } from "./markdown";
-import { commentRanges, INDENTED_RE, mayIndent, mayRunHtml, rawRanges, renderMarkdown } from "./render";
+import { commentRanges, INDENTED_RE, mayIndent, mayRunHtml, rawRanges, renderMarkdown, strictLineBreaksOn } from "./render";
 
 // A code span: a run of backticks, closed by a run of the same length.
 const INLINE_CODE_RE = /(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g;
@@ -722,20 +722,34 @@ export function keepsEmphasis(lines: string[], i: number, from: number, to: numb
     if (line.slice(to, to + n) === c.repeat(n) && past !== c && !/[\p{L}\p{N}]/u.test(past)) return true;
   }
   // The paragraph, out to blank lines and fences, without its shared indent.
+  // Emphasis can't reach past a list item, heading or table row either.
   const ends = (l: string) => /^[ \t>]*$/.test(l) || /^[ \t>]*(```|~~~)/.test(l);
+  const own = (l: string) => /^[ \t>]*(?:#{1,6}(?:[ \t]|$)|\|)/.test(l);
+  const opens = (l: string) => own(l) || /^[ \t>]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/.test(l);
   let a = i;
   let b = i;
-  while (a > 0 && i - a < 50 && !ends(lines[a - 1])) a--;
-  while (b < lines.length - 1 && b - i < 50 && !ends(lines[b + 1])) b++;
+  while (a > 0 && i - a < 50 && !opens(lines[a]) && !ends(lines[a - 1]) && !own(lines[a - 1])) a--;
+  while (b < lines.length - 1 && b - i < 50 && !own(lines[b]) && !ends(lines[b + 1]) && !opens(lines[b + 1])) b++;
   const para = lines.slice(a, b + 1);
+  // Each mention renders its paragraph, so a huge one would be slow to scan;
+  // its mentions by emphasis are left alone instead.
+  if (para.reduce((n, l) => n + l.length + 1, 0) > EMPHASIS_CHECK_LIMIT) return false;
   const cut = Math.min(...para.map((l) => /^[ \t]*/.exec(l)![0].length));
   const text = (ls: string[]) => ls.map((l) => l.slice(cut)).join("\n");
   const linked = [...para];
   linked[i - a] = `${line.slice(0, from)}[[${line.slice(from, to)}]]${line.slice(to)}`;
-  // Links in the paragraph already show as their text on both sides.
-  const plain = (ls: string[]) => renderMarkdown(text(ls)).replace(/<a class="md-wikilink" data-target="[^"]*">([^<]*)<\/a>/g, "$1");
-  return plain(linked) === plain(para);
+  const was = `${strictLineBreaksOn()}\n${text(para)}`;
+  if (shownCache?.key !== was) shownCache = { key: was, html: plain(text(para)) };
+  return plain(text(linked)) === shownCache.html;
 }
+
+export const EMPHASIS_CHECK_LIMIT = 3000;
+
+// The last paragraph checked, as shown: a line's mentions are checked in turn.
+let shownCache: { key: string; html: string } | null = null;
+
+// Links in the paragraph already show as their text on both sides.
+const plain = (md: string) => renderMarkdown(md).replace(/<a class="md-wikilink" data-target="[^"]*">([^<]*)<\/a>/g, "$1");
 
 /** Wrap the FIRST bare, word-bounded occurrence of `name` on `line` in a link.
  * Occurrences inside inline code, URLs, tags or existing links are skipped

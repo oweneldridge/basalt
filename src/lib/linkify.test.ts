@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { linkifyMention, maskForMentions, mentionLines } from "./linkify";
+import { EMPHASIS_CHECK_LIMIT, keepsEmphasis, linkifyMention, maskForMentions, mentionLines } from "./linkify";
 
 describe("linkifyMention", () => {
   it("wraps the first bare occurrence, preserving surrounding text + casing", () => {
@@ -331,5 +331,31 @@ describe("emphasis around a mention, with another link in the paragraph", () => 
 
   it("still refuses one that would break the emphasis", () => {
     expect(linkifyMention("*Workflow*a see [[Other]]", "Workflow")).toBeNull();
+  });
+});
+
+describe("checking emphasis stays quick", () => {
+  it("checks each list item on its own, not the whole list", () => {
+    const lines = Array.from({ length: 1600 }, (_, i) => `- item ${i} (*Foo*) [[Bar]]`);
+    const t0 = performance.now();
+    for (let i = 0; i < lines.length; i++) expect(keepsEmphasis(lines, i, lines[i].indexOf("Foo"), lines[i].indexOf("Foo") + 3)).toBe(true);
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+
+  it("stops at a heading or a table row", () => {
+    expect(keepsEmphasis(["# Head *x", "Foo*y"], 1, 0, 3)).toBe(true);
+    expect(keepsEmphasis(["| a *x |", "Foo*y"], 1, 0, 3)).toBe(true);
+    expect(keepsEmphasis(["a *x", "Foo*y"], 1, 0, 3)).toBe(false);
+  });
+
+  it("leaves mentions by emphasis alone in a paragraph too long to check", () => {
+    const short = "(*Foo*) ".repeat(10);
+    expect(keepsEmphasis([short], 0, 2, 5)).toBe(true);
+    const long = "(*Foo*) ".repeat(Math.ceil(EMPHASIS_CHECK_LIMIT / 8) + 1);
+    const t0 = performance.now();
+    expect(keepsEmphasis([long], 0, 2, 5)).toBe(false);
+    expect(linkifyMention(long, "Foo")).toBeNull();
+    expect(performance.now() - t0).toBeLessThan(50);
+    expect(linkifyMention("Foo and " + long, "Foo")).toBe("[[Foo]] and " + long);
   });
 });
