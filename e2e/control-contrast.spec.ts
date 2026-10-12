@@ -112,6 +112,29 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(tab).toHaveAttribute("title", /.+/);
       }
     }
+    // A note tab in a narrow dock shrinks to fit, its name cut short.
+    const narrow = await page.locator(".pane.dock-right .tab-strip").first().evaluate((strip) => {
+      const pane = strip.closest(".pane") as HTMLElement;
+      pane.style.width = "150px";
+      pane.style.flex = "none";
+      const tab = document.createElement("div");
+      tab.className = "tab";
+      tab.innerHTML = '<span class="tab-name">A very long note name that goes on and on</span><button class="tab-close">×</button>';
+      strip.append(tab);
+      const out = { right: tab.querySelector(".tab-close")!.getBoundingClientRect().right, edge: strip.parentElement!.getBoundingClientRect().right };
+      tab.remove();
+      pane.style.width = pane.style.flex = "";
+      return out;
+    });
+    expect(narrow.right).toBeLessThanOrEqual(narrow.edge + 0.5);
+    // The Outline icon, all straight lines, is drawn on whole pixels.
+    await expect(page.locator(".pane.dock .tab.view-tab", { hasText: "Outline" }).locator(".tab-icon path")).toHaveAttribute("shape-rendering", "crispEdges");
+    // So does a field further in, like the Graph view's filter.
+    await page.keyboard.press("ControlOrMeta+p");
+    await page.locator(".palette-input").first().fill("Open graph view");
+    await page.keyboard.press("Enter");
+    await expect(page.getByLabel("Filter notes")).toBeVisible();
+    expect(await faintPlaceholders(page)).toEqual([]);
     // Six view tabs fit a right dock of the default width on one row.
     const right = page.locator(".pane.dock-right .tab-bar").first();
     expect((await right.boundingBox())!.height).toBeLessThanOrEqual(36);

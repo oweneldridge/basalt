@@ -72,6 +72,26 @@ test("tabs work from the keyboard: arrows move, Enter opens, Delete closes", asy
   await expect(page.getByRole("tablist", { name: "Open notes" })).toBeVisible();
 });
 
+test("closing a side panel's tab leaves focus on its tabs", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await page.evaluate(() => {
+    Object.keys(localStorage).filter((k) => k.includes("workspace")).forEach((k) => localStorage.removeItem(k));
+  });
+  await page.reload();
+  const bar = page.locator(".pane.dock-right [role='tablist']").first();
+  const focusIn = () => page.evaluate(() => document.activeElement?.closest(".pane.dock-right [role='tablist']") !== null && document.activeElement?.getAttribute("role") === "tab");
+  await bar.getByRole("tab", { name: "Outline" }).focus();
+  await page.keyboard.press("Delete");
+  await expect(bar.getByRole("tab", { name: "Outline" })).toHaveCount(0);
+  await expect.poll(focusIn).toBe(true);
+  await bar.getByRole("tab", { name: "Tags" }).focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(page.getByRole("menu", { name: "Tab actions" }).getByRole("menuitem", { name: "Close", exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(bar.getByRole("tab", { name: "Tags" })).toHaveCount(0);
+  await expect.poll(focusIn).toBe(true);
+});
+
 test("the palette is a combobox whose active option is announced", async ({ page }) => {
   await page.goto("/app-harness.html");
   await expect(page.locator(".sidebar")).toBeVisible();

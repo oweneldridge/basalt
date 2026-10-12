@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { parseViewPath } from "../lib/leafViews";
 import { menuKeyOpens } from "./ContextMenu";
 import { ViewIcon } from "./ViewIcon";
 
@@ -43,6 +44,18 @@ const TAB_MIME = "application/x-basalt-tab";
 export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onTogglePin, onTabDrop, onContextMenu, onDragStateChange, linked, onToggleLink, stacked, onToggleStacked, dock }: Props) {
   // Index the drop indicator sits before (null = none, tabs.length = at end).
   const [dropAt, setDropAt] = useState<number | null>(null);
+  // Whether focus is on this bar (a tab, or a menu one opened), so closing the
+  // focused tab hands focus to the tab now active rather than to the page.
+  const strip = useRef<HTMLDivElement>(null);
+  const holdsFocus = useRef(false);
+  useEffect(() => {
+    if (!holdsFocus.current) return;
+    const frame = requestAnimationFrame(() => {
+      const at = document.activeElement;
+      if (holdsFocus.current && (!at || at === document.body)) strip.current?.querySelector<HTMLElement>('[role="tab"][tabindex="0"]')?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [tabs, activePath]);
 
   const readDrag = (dt: DataTransfer): { from: string; path: string } | null => {
     const raw = dt.getData(TAB_MIME);
@@ -74,8 +87,30 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
         }
       }}
     >
-      <div className="tab-strip" role="tablist" aria-label={dock ? "Panel views" : "Open notes"}>
-      {tabs.map((t, i) => (
+      <div
+        ref={strip}
+        className="tab-strip"
+        role="tablist"
+        aria-label={dock ? "Panel views" : "Open notes"}
+        onFocus={() => (holdsFocus.current = true)}
+        onBlur={(e) => {
+          const to = e.relatedTarget;
+          if (to instanceof Element) holdsFocus.current = !!(strip.current?.contains(to) || to.closest(".ctx-menu"));
+          else {
+            // Gone with its tab, it keeps the bar's claim; still there, it was clicked away from.
+            const from = e.target;
+            queueMicrotask(() => {
+              if (from.isConnected) holdsFocus.current = false;
+            });
+          }
+        }}
+      >
+      {tabs.map((t, i) => {
+        // A built-in view in a side dock is its icon, named in its tooltip, so all
+        // fit; a plugin's view shows its name. It closes from its menu, a middle
+        // click or Delete, as in Obsidian.
+        const iconOnly = !!dock && !!t.view && parseViewPath(t.path)?.type !== "plugin";
+        return (
         <div
           key={t.path}
           // One Tab stop per bar (the active tab); arrows move between tabs.
@@ -148,10 +183,8 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
               📌
             </button>
           )}
-          {/* In a side dock a view tab is its icon, named in its tooltip, so all fit.
-              It closes from its menu, a middle click or Delete, as in Obsidian. */}
-          {dock && t.view && <ViewIcon path={t.path} />}
-          <span className={dock && t.view ? "tab-name sr-only" : "tab-name"}>{t.name}</span>
+          {iconOnly && <ViewIcon path={t.path} />}
+          <span className={iconOnly ? "tab-name sr-only" : "tab-name"}>{t.name}</span>
           {!t.pinned && !(dock && t.view) && (
             <button
               className="tab-close"
@@ -168,7 +201,8 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
             </button>
           )}
         </div>
-      ))}
+        );
+      })}
       </div>
       <span className={`tab-drop-end${dropAt === tabs.length ? " active" : ""}`} aria-hidden />
       {!dock && (

@@ -258,8 +258,7 @@ button.primary:hover {
   font-size: 0.86rem;
   outline: none;
 }
-.filter::placeholder,
-.palette-input::placeholder {
+::placeholder {
   color: var(--text-muted);
   opacity: 1;
 }
@@ -2608,7 +2607,7 @@ button.primary:hover {
 /* Sidebar dock panes (view tabs living in the layout tree) */
 .pane.dock { background: var(--bg-sidebar); }
 .pane.dock .tab-bar { background: var(--bg-sidebar); flex-wrap: wrap; height: auto; min-height: 34px; overflow-x: visible; }
-.pane.dock .tab { height: 33px; }
+.pane.dock .tab { height: 33px; min-width: 0; max-width: 100%; }
 .pane.dock .tab.view-tab { padding: 0 10px; }
 .pane.dock .leaf-view { font-size: 13px; }
 
