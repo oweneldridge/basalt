@@ -321,3 +321,15 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
   });
 });
 
+describe("emphasis around a mention, with another link in the paragraph", () => {
+  it("still links it, as when the paragraph has no other link", () => {
+    expect(linkifyMention("**Git Workflow**: see [[Other]]", "Workflow")).toBe("**Git [[Workflow]]**: see [[Other]]");
+    expect(linkifyMention("==Git Workflow==: a [[Other]]", "Workflow")).toBe("==Git [[Workflow]]==: a [[Other]]");
+    const lines = ["**Git Workflow**: see", "[[Other]] too"];
+    expect(linkifyMention(lines[0], "Workflow", undefined, undefined, lines, 0)).toBe("**Git [[Workflow]]**: see");
+  });
+
+  it("still refuses one that would break the emphasis", () => {
+    expect(linkifyMention("*Workflow*a see [[Other]]", "Workflow")).toBeNull();
+  });
+});

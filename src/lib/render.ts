@@ -962,6 +962,17 @@ function indentedCode(md: string): [number, number][] {
   return mayHaveIndentedComment(md) ? indentedCodeRanges(md) : [];
 }
 
+/** Offsets of the `>` marks that open quote lines, as Reading view reads them. */
+export function quoteMarkOffsets(md: string): Set<number> {
+  const out = new Set<number>();
+  mdParser.parse(md).iterate({
+    enter: (n) => {
+      if (n.name === "QuoteMark") out.add(n.from);
+    },
+  });
+  return out;
+}
+
 /** Where the indented code blocks are (four spaces or a tab, outside a list),
  * as [from, to) offsets. The note is parsed only if a line is indented. */
 export function indentedCodeRanges(md: string): [number, number][] {

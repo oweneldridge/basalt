@@ -11,6 +11,7 @@ import type { VaultNote } from "./vault";
 import { linkpathDest } from "./linkpath";
 import { htmlBlockRanges } from "./htmlBlocks";
 import { keepsEmphasis, mentionLinesFor, mentionRegex } from "./linkify";
+import { quoteMarkOffsets } from "./render";
 import {
   internalMdHref,
   mdLinkRegexGlobal,
@@ -260,14 +261,23 @@ export function extractTags(content: string): string[] {
     out.push(t);
   };
   for (const t of frontmatterTags(lines)) add(t);
-  for (let i = 0; i < lines.length; i++) {
+  // `>#tag` is a tag only where that `>` really opens a quote line, which takes
+  // the whole note to tell, so it's parsed only when a line has one.
+  let quoteMarks: Set<number> | null = null;
+  let at = 0;
+  const blank = (s: string) => " ".repeat(s.length);
+  for (let i = 0; i < lines.length; at += lines[i].length + 1, i++) {
     if (!prose[i]) continue;
     const line = lines[i]
-      .replace(INLINE_CODE_RE, " ") // `#x` in code isn't a tag
-      .replace(HTML_TAG, " "); // nor is a colour in an HTML attribute
+      .replace(INLINE_CODE_RE, blank) // `#x` in code isn't a tag
+      .replace(HTML_TAG, blank); // nor is a colour in an HTML attribute
     const re = tagRegex();
     let m: RegExpExecArray | null;
-    while ((m = re.exec(line))) if (!/^\d+$/.test(m[2])) add(m[2]); // group 2 = bare name; `#42` isn't a tag
+    while ((m = re.exec(line))) {
+      if (/^\d+$/.test(m[2])) continue; // group 2 = bare name; `#42` isn't a tag
+      if (line[m.index - 1] === ">" && !(quoteMarks ??= quoteMarkOffsets(content)).has(at + m.index - 1)) continue;
+      add(m[2]);
+    }
   }
   return out;
 }

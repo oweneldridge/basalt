@@ -574,3 +574,21 @@ describe("resolvedLinks", () => {
     expect(counts.unresolved).toEqual({ "A.md": { Missing: 2, B: 1 } });
   });
 });
+
+
+describe("tags after a `>`", () => {
+  it("count only where the `>` opens a quote line", () => {
+    expect(extractTags(">#a\n> >#b\n- >#c\n\n- a\n  - b\n    >#d")).toEqual(["a", "b", "c", "d"]);
+    expect(extractTags("para\n   >#e")).toEqual(["e"]);
+  });
+
+  it("aren't tags after code or HTML, or in paragraph text or indented code", () => {
+    for (const note of ["`x`>#four", "<br>>#b", "<span>>#a</span>", "- `x`>#f", "x\n`y`>#n", "para\n    >#x", "- a\n      >#y", "        >#seven"]) {
+      expect(extractTags(note), note).toEqual([]);
+    }
+  });
+
+  it("skip the parse when no line has one", () => {
+    expect(extractTags("> #quoted and #plain\n`code #no`")).toEqual(["quoted", "plain"]);
+  });
+});

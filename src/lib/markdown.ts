@@ -39,6 +39,7 @@ export function proseMask(lines: string[]): boolean[] {
   let fence: { char: string; len: number; depth: number; col: number } | null = null;
   let items: number[] = []; // open list items' text columns, innermost last
   let listDepth = 0; // the quote depth those items are at
+  let paragraph: [number, number] | null = null; // the line before is paragraph text: its quote depth and items open
   for (; i < lines.length; i++) {
     const line = lines[i];
     const c0 = line[0];
@@ -61,7 +62,16 @@ export function proseMask(lines: string[]): boolean[] {
     const first: string | undefined = indent < limit ? body[k] : "";
     const blank = first === undefined || (/\s/.test(first) && body.trim() === "");
     if (!blank) while (items.length && indent < items[items.length - 1]) items.pop();
-    if (fence && !blank && indent < fence.col) fence = null; // its list item ended
+    if (fence && !blank && indent < fence.col) {
+      // Its list item ended: read the line again as if no fence were open.
+      fence = null;
+      i--;
+      continue;
+    }
+    // A paragraph on the line before, in this container or a quote this line
+    // could lazily continue: an item here would interrupt it.
+    const interrupts = paragraph !== null && ((depth === paragraph[0] && items.length === paragraph[1]) || depth < paragraph[0]);
+    paragraph = null;
     FENCE_RE.lastIndex = k;
     const m: RegExpExecArray | null = first === "`" || first === "~" ? FENCE_RE.exec(body) : null;
     if (fence) {
@@ -79,13 +89,28 @@ export function proseMask(lines: string[]): boolean[] {
     }
     LIST_ITEM_RE.lastIndex = k;
     const item = first === "-" || first === "*" || first === "+" || (first !== undefined && first >= "0" && first <= "9") ? LIST_ITEM_RE.exec(body) : null;
-    if (item) {
+    // Only an item with text, and an ordered one only from 1, can interrupt a
+    // paragraph: `text` then `-` is a heading.
+    const empty = interrupts && item !== null && k + item[0].length === body.length;
+    const underline = empty && item?.[1] === "-";
+    const opens = item !== null && !empty && !(interrupts && item[1].length > 1 && parseInt(item[1], 10) !== 1);
+    if (opens && item) {
       let col = indent + item[1].length;
       const from = col;
       for (let g = 0; g < item[2].length; g++) col += item[2][g] === "\t" ? 4 - (col % 4) : 1;
       const gap = col - from;
       items.push(from + (gap === 0 || gap > 4 ? 1 : gap));
+      // A fence can open on the marker's line: `- ```.
+      const at = k + item[0].length;
+      FENCE_RE.lastIndex = at;
+      const f = gap >= 1 && gap <= 4 && (body[at] === "`" || body[at] === "~") ? FENCE_RE.exec(body) : null;
+      if (f && !(f[1][0] === "`" && f[2].includes("`"))) {
+        mask[i] = false;
+        fence = { char: f[1][0], len: f[1].length, depth, col: items[items.length - 1] };
+        continue;
+      }
     }
+    if (!blank && !opens && !underline && (first !== "" || interrupts) && !/^#{1,6}(?:[ \t]|$)/.test(body.slice(k))) paragraph = [depth, items.length];
   }
   return mask;
 }

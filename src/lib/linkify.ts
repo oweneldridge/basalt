@@ -732,8 +732,9 @@ export function keepsEmphasis(lines: string[], i: number, from: number, to: numb
   const text = (ls: string[]) => ls.map((l) => l.slice(cut)).join("\n");
   const linked = [...para];
   linked[i - a] = `${line.slice(0, from)}[[${line.slice(from, to)}]]${line.slice(to)}`;
-  const unlinked = renderMarkdown(text(linked)).replace(/<a class="md-wikilink" data-target="[^"]*">([^<]*)<\/a>/g, "$1");
-  return unlinked === renderMarkdown(text(para));
+  // Links in the paragraph already show as their text on both sides.
+  const plain = (ls: string[]) => renderMarkdown(text(ls)).replace(/<a class="md-wikilink" data-target="[^"]*">([^<]*)<\/a>/g, "$1");
+  return plain(linked) === plain(para);
 }
 
 /** Wrap the FIRST bare, word-bounded occurrence of `name` on `line` in a link.

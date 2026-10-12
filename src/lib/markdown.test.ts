@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { internalLinkTarget, tagRegex, wikilinkRegex } from "./markdown";
+import { internalLinkTarget, proseMask, tagRegex, wikilinkRegex } from "./markdown";
 
 describe("internalLinkTarget", () => {
   it("reads any href that isn't a URL as a vault link, decoded", () => {
@@ -69,5 +69,41 @@ describe("wikilinkRegex on runs of brackets", () => {
       for (let k = 0, len = 1 + Math.floor(rnd() * 16); k < len; k++) s += chars[Math.floor(rnd() * chars.length)];
       expect(all(wikilinkRegex(), s), JSON.stringify(s)).toEqual(all(before(), s));
     }
+  });
+});
+
+describe("proseMask and list items", () => {
+  const mask = (md: string) => proseMask(md.split("\n"));
+
+  it("reads an empty `-` after a paragraph as a heading's underline, not an item", () => {
+    expect(mask("text\n-\n  ~~~\n> [[Foo]] #tagA")).toEqual([true, true, false, false]);
+  });
+
+  it("lets an ordered item interrupt a paragraph only from 1", () => {
+    expect(mask("para\n2. b\n   ~~~\n   x\nc")).toEqual([true, true, false, false, false]);
+    expect(mask("para\n1. b\n   ~~~\n   x\nc")).toEqual([true, true, false, false, true]);
+  });
+
+  it("still opens an empty item where nothing is interrupted", () => {
+    expect(mask("- a\n-\n  ~~~\n  x\nc")).toEqual([true, true, false, false, true]);
+    expect(mask("- a\n  b\n-\n  ~~~\n  x\nc")).toEqual([true, true, true, false, false, true]);
+  });
+
+  it("opens an empty item after indented code, which is no paragraph", () => {
+    expect(mask("    code\n-\n  ~~~\n  x\nc")).toEqual([true, true, false, false, true]);
+  });
+
+  it("reads an empty `-` after a quote's paragraph as more of it", () => {
+    expect(mask("> text\n-\n  ~~~\n  x\nc")).toEqual([true, true, false, false, false]);
+  });
+
+  it("opens a quoted fence on the line that ends a list item's fence", () => {
+    expect(mask("- a\n  ```\n  [[Foo]] #tagA\n> ```\n> [[Bar]] #tagB\n> ```\nafter")).toEqual([true, false, false, false, false, false, true]);
+  });
+
+  it("opens a fence on a list marker's line", () => {
+    expect(mask("- ```\n  [[Foo]]\n  ```\nafter")).toEqual([false, false, false, true]);
+    expect(mask("1. ~~~\n   x\n\nafter\n")).toEqual([false, false, false, true, true]);
+    expect(mask("-     ```\n  x")).toEqual([true, true]);
   });
 });
