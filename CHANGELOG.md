@@ -524,13 +524,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the block does, as Reading view renders it.
 - Unlinked mentions nested more than 40 quotes or lists deep, which Reading
   view shows as plain text, aren't offered for linking, headings and tables
-  included (a callout's title at that depth still shows, so it's offered). A
-  line of thousands of quote or list markers scans in a moment, and so does a
+  included (a callout's title at that depth still shows, so it's offered, but
+  only on its quote's first line). A line of thousands of quote or list
+  markers scans in a moment, and so do a paragraph in a quote 40 deep and a
   link reference definition whose title is never closed.
 - Unlinked mentions inside raw HTML in a quote (past a `>` line), after
   frontmatter, or after a paragraph that starts with a tag such as `<span>`
   aren't offered, as Reading view shows them as HTML or code. A line indented
-  under a paragraph no longer hides a mention in the definition after it.
+  under a paragraph no longer hides a mention in the definition after it,
+  counting from the paragraph's own text, so `    ---` under a list item still
+  ends it. Mentions in a math block nothing closes, or in deep quotes a `%%`
+  comment joins, aren't offered either, and frontmatter after a byte order
+  mark is read as frontmatter. A paragraph runs on over a line of inline HTML
+  or math and stops at a callout's title, and a definition's open title stops
+  at a list item, heading or quote, so the definitions Link all skips are the
+  ones Reading view hides. Backlinks and Link all read a note with `%%`
+  comments the same way.
 - Switching vaults several times quickly, when the later switches fail, leaves
   you in the vault that opened. A failed switch while today's daily note loads
   its template no longer stops it opening.
@@ -542,7 +551,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A callout inside a quote no longer shows an extra quote in its body, and one
   in a nested list no longer shows its body as code. Unlinked mentions in a
   callout's body are offered where Reading view shows them as text. Reading
-  view no longer fails on a list nested thousands deep on one line.
+  view no longer fails on a list nested thousands deep on one line, shows no
+  checkbox for a task nested past its depth limit, and reads `> [!note]: x` as
+  a callout.
 - A note added or changed outside the app has its size and dates from the
   file, so Bases filtering or sorting on them see the change at once, a synced
   note's own modified time included.

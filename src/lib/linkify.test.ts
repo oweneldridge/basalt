@@ -377,6 +377,170 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
       expect(performance.now() - t0, note.slice(0, 12)).toBeLessThan(1500);
     }
   });
+  it("reads where a paragraph runs on by its own text's column", () => {
+    const offered = (note: string) => [mentionLines(note), mentionLinesFor(note, /Foo/i)].map((ls) => ls.at(-1)!.includes("Foo"));
+    for (const [note, want] of [
+      ["x\n   ---\n[a]: b 'Foo'", false],
+      ["x\n    ---\n[a]: b 'Foo'", true],
+      ["x\n\t---\n[a]: b 'Foo'", true],
+      ["x\n  \t---\n[a]: b 'Foo'", true],
+      ["> x\n> ---\n> [a]: b 'Foo'", false],
+      ["> x\n>     ---\n> [a]: b 'Foo'", true],
+      ["- x\n    ---\n[a]: b 'Foo'", false],
+      ["1. x\n    ---\n[a]: b 'Foo'", false],
+      ["- x\n    ===\n[a]: b 'Foo'", false],
+      ["- x\n      ---\n[a]: b 'Foo'", true],
+      ["1) ".repeat(48) + "</center>\n[a]: b 'Foo'", false],
+      ["1. </details>\n[a]: b 'Foo'", false],
+    ] as const)
+      expect(offered(note), note).toEqual([want, want]);
+  });
+  it("hides the first of two definitions of a label", () => {
+    expect(mentionLines("[Foo]: x\n[Foo]: y\n\n[Foo]")[3]).not.toContain("Foo");
+  });
+  it("skips mentions in a math block nothing closes, or deep blocks a comment joins", () => {
+    for (const [note, want] of [
+      ["$$\nx\nFoo", false],
+      ["> $$\n> x\n> Foo", false],
+      ["$$ x $$\n$$\nFoo", false],
+      ["a $$ x\nFoo", true],
+      ["- $$\n- Foo", true],
+      ["> $$\nFoo", true],
+      [">".repeat(41) + " a %%x\n\ny%% Foo", false],
+    ] as const) {
+      expect(mentionLines(note).join("\n").includes("Foo"), note).toBe(want);
+      expect(mentionLinesFor(note, /Foo/i).join("\n").includes("Foo"), note).toBe(want);
+    }
+  });
+  it("reads frontmatter after a byte order mark as frontmatter, through its closing line", () => {
+    expect(mentionLines("\uFEFF---\n<div>\n---\nFoo")[3]).toContain("Foo");
+    expect(mentionLines("---\na: 1\n---\n    Foo\n<div>")[3]).not.toContain("Foo");
+    expect(mentionLines("---\na: 1\n...\n    Foo")[3]).not.toContain("Foo");
+  });
+  it("reads a callout's body as a note of its own when looking near a mention", () => {
+    for (const note of ["> [!note] T\n> 2. ```\n>    Foo", "> [!note] T\n> 2. ```Foo"]) {
+      expect(mentionLines(note).at(-1), note).not.toContain("Foo");
+      expect(mentionLinesFor(note, /Foo/i).at(-1), note).not.toContain("Foo");
+    }
+  });
+  it("offers a callout's title just past the depth limit only on its quote's first line", () => {
+    const q = (n: number) => "> ".repeat(n);
+    for (const [note, want] of [
+      [q(41) + "[!note] A\n" + q(41) + "\n" + q(41) + "[!note] Foo", false],
+      [q(41) + "text\n" + q(41) + "\n" + q(41) + "[!note] Foo", false],
+      [q(41) + "[!note] A\n\n" + q(41) + "[!note] Foo", true],
+      [q(41) + "[!note] A\n" + q(42) + "[!note] Foo", false],
+      [q(42) + "[!note] A\n" + q(41) + "[!note] Foo", false],
+      ["- ".repeat(39) + "> > [!tip] Foo", true],
+      ["- ".repeat(40) + "> [!tip] Foo", true],
+      ["<div>\n</div>\n\n" + "- ".repeat(40) + "> [!tip] Foo", true],
+      [q(40) + "- [!note] Foo", false],
+      [q(40) + "1. [!note] Foo", false],
+      ["- ".repeat(41) + "[!note] Foo", false],
+    ] as const) {
+      expect(mentionLines(note).at(-1)!.includes("Foo"), note.slice(-30)).toBe(want);
+      expect(mentionLinesFor(note, /Foo/i).at(-1)!.includes("Foo"), note.slice(-30)).toBe(want);
+    }
+  });
+  it("reads a line hidden whole, a callout's title and a lone === as Reading view does", () => {
+    // Whether the last mention on the last line is offered.
+    const offered = (note: string) =>
+      [mentionLines(note), mentionLinesFor(note, /Foo/i)].map((ls) => {
+        const last = note.split("\n").at(-1)!;
+        const at = last.lastIndexOf("Foo");
+        return ls.at(-1)!.slice(at, at + 3) === "Foo";
+      });
+    for (const [note, want] of [
+      ["a\n<b>\n[a]: b 'Foo'", true],
+      ["a\n$$x$$\n[a]: b 'Foo'", true],
+      ["a\n          <b>\n[a]: b 'Foo'", true],
+      ["- a\n  <b>\n  [a]: b 'Foo'", true],
+      ["> a\n<b>\n[a]: b 'Foo'", true],
+      ["Foo\r\n" + " ".repeat(63) + "<script>\n" + "\t".repeat(20) + "[a]: b 'Foo'", true],
+      ["a\n<span>x</span>\n[a]: b 'Foo'", false],
+      ["a\n<!-- x -->\n[a]: b 'Foo'", false],
+      ["a\n> <b>\n[a]: b 'Foo'", false],
+      ["a\n>     <b>\n[a]: b 'Foo'", false],
+      ["a\n%%x%%\n[a]: b 'Foo'", false],
+      ["a\n- <b>\n[a]: b 'Foo'", false],
+      ["1. ".repeat(39) + "-|-\n" + " ".repeat(42) + "</pre>\n[a]: b 'Foo'", false],
+      ["> - ".repeat(20) + "<div>x</div>\n[a]: b 'Foo'", false],
+      ["  Foo\r\n" + ">\t".repeat(42) + "<center>x</center>\n[a]: b 'Foo'", false],
+      ["1) ".repeat(20) + "> \n[a]: b 'Foo'", true],
+      ["> [!note] Foo\n> [a]: b 'Foo'", false],
+      ["> > [!tip] Foo\n[a]: b 'Foo'", false],
+      ["===\n[a]: b 'Foo'", true],
+      ["> a\n===\n[a]: b 'Foo'", true],
+      ["> > [!tip] T\n===\n[a]: b 'Foo'", true],
+      ["a\n===\n[a]: b 'Foo'", false],
+      ["<b></b>\n[a]: b 'Foo'", true],
+      ["<b/>\n[a]: b 'Foo'", true],
+      ["a\n> <b></b>\n[a]: b 'Foo'", true],
+      ["- <b></b>\n[a]: b 'Foo'", true],
+      ["<b>\n[a]: b 'Foo'", false],
+      ["</b >\n[a]: b 'Foo'", false],
+      ["$$x$$\n[a]: b 'Foo'", false],
+      ["-\t-\t\n" + " ".repeat(78) + "[a]: b 'Foo'", true],
+      ["- x\n    > [!note] T\n[a]: b 'Foo'", false],
+      ["> - ".repeat(20) + "> <pre>\n" + " ".repeat(40) + "> [!note] Foo\n" + " ".repeat(90) + "[a]: b 'Foo'", true],
+      [">".repeat(41) + " <!--\n" + "> ".repeat(39) + "[!note]- T\n" + "\t".repeat(50) + "[a]: b 'Foo'", true],
+    ] as const)
+      expect(offered(note), note).toEqual([want, want]);
+  });
+  it("ends a definition's open title at a line that starts a block", () => {
+    for (const note of ["[a]: b 'x\n- Foo'", "[a]: b 'x\n# Foo'", "[a]: b 'x\n> Foo'", "[a]: b 'x\n" + "* ".repeat(39) + "Foo'"]) {
+      expect(mentionLines(note)[1], note).toContain("Foo");
+      expect(mentionLinesFor(note, /Foo/i)[1], note).toContain("Foo");
+    }
+    expect(mentionLines("[a]: b 'x\nFoo'")[1]).not.toContain("Foo");
+  });
+  it("reads math blocks, HTML split by a closing tag and deep lazy lines as Reading view does", () => {
+    const at = (note: string) => {
+      const lines = note.split("\n");
+      const i = lines.length - 1;
+      const c = lines[i].lastIndexOf("Foo");
+      return [mentionLines(note), mentionLinesFor(note, /Foo/i)].map((ls) => ls[i].slice(c, c + 3) === "Foo");
+    };
+    for (const [note, want] of [
+      ["  </div>\n$$\n$$ Foo $$", false],
+      ["$$\nx\n$$ Foo", false],
+      ["---\n<div>\n---\n$$\n" + "\t".repeat(21) + "$$ Foo $$", false],
+      ["</pre>\n- $$\n    # Foo", false],
+      ["---\n<div>\n---\n</pre>\n" + "- ".repeat(38) + "$$\n" + " ".repeat(129) + "# Foo", false],
+      ["> [!note] T\n" + " ".repeat(300) + "<div>Foo", false],
+      [">".repeat(41) + " $$ x $$\n Foo | b", true],
+      [">".repeat(43) + " ---\nFoo", true],
+      ["- ".repeat(99) + "```\nFoo | b", true],
+      ["1) ".repeat(43) + "---\nFoo", true],
+      ["> ".repeat(21) + "\n" + " ".repeat(78) + "</details>\n[a]: b 'Foo'", true],
+      ["- ".repeat(41) + "a b\n" + " ".repeat(76) + ">\n" + " ".repeat(82) + "<script>\n" + " ".repeat(90) + "[a]: b 'Foo'", true],
+      ["   %% x\n" + "* ".repeat(38) + "%% Foo", false],
+      ["a\n<b>x</b>\n[a]: b 'Foo'", true],
+      ["> [!note] T\n> x\n\n```\ncode\n```\n" + "> ".repeat(41) + "Foo", false],
+      ["> [!note] T\n2. ```\n   Foo", true],
+      ["a\n- $$x$$\n[a]: b 'Foo'", false],
+      ["<b></b>\n   ---\n[a]: b 'Foo'", false],
+      ["> ".repeat(45) + "<center>\n" + ">".repeat(41) + " <!--\n" + "> ".repeat(39) + "[!note]- T\n" + "\t".repeat(50) + "[a]: b 'Foo'", true],
+      ["a\n    > [!note] T\n[a]: b 'Foo'", true],
+      ["* ".repeat(38) + "> > [!tip] Foo\n[a]: b 'Foo'", false],
+      ["a\n- %%x%%\n[a]: b 'Foo'", false],
+      ["    x\nFoo\n\n> [!note] T\n> 2. ```Foo", false],
+      ["Foo\n\n> [!note] T\n> 2. ```Foo", false],
+      ["a\n    $$x$$\n[a]: b 'Foo'", true],
+    ] as const)
+      expect(at(note), note.slice(-40)).toEqual([want, want]);
+  });
+  it("stays quick on deep quotes around a paragraph, and long marker runs before HTML", () => {
+    for (const note of [
+      "[a]: http://x\n\n" + "> ".repeat(40) + "text\n" + "> ".repeat(40),
+      ("> ".repeat(500) + "<div>\n").repeat(8000),
+      ("1".repeat(500) + " <div>\n").repeat(200),
+    ]) {
+      const t0 = performance.now();
+      mentionLines(note);
+      expect(performance.now() - t0, note.slice(0, 12)).toBeLessThan(1500);
+    }
+  });
   it("reads a definition on a CRLF line, and leaves a bracket with brackets in it after a link's text", () => {
     expect(mentionLines("[Foo]: x.md\r\n[Foo] here\r\n")[1]).not.toContain("Foo");
     expect(mentionLines('[r][["|-|Foo(-[- ===]')[0]).not.toContain("Foo");

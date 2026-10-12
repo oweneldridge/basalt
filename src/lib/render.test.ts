@@ -454,6 +454,22 @@ describe("CommonMark and Obsidian fidelity (Reading view hunt)", () => {
     expect(renderMarkdown("> [!note] T\n> Body line one", { lines: true })).toMatch(/<p data-line="1">Body line one/);
   });
 
+  it("reads a callout title the first line holds, whatever block it starts", () => {
+    expect(renderMarkdown("> [!note]: x")).toContain('<div class="md-callout-title"><span class="md-callout-icon">🗒️</span>: x</div>');
+  });
+
+  it("shows a callout's body and a task past the depth limit as source", () => {
+    const q = (n: number) => "> ".repeat(n);
+    expect(renderMarkdown(q(40) + "[!note] T\n" + q(40) + "**b**")).toContain("<p><strong>b</strong></p>");
+    expect(renderMarkdown(q(41) + "[!note] T\n" + q(41) + "**b**")).toContain("<p>**b**</p>");
+    expect(renderMarkdown("- ".repeat(40) + "[ ] task")).toContain('type="checkbox"');
+    expect(renderMarkdown("- ".repeat(41) + "[ ] task")).not.toContain('type="checkbox"');
+  });
+
+  it("uses the first of two definitions of a label", () => {
+    expect(renderMarkdown("[a]: one\n[a]: two\n\n[a]")).toContain('data-href="one"');
+  });
+
   it("survives absurdly deep blockquotes", () => {
     expect(() => renderMarkdown(">".repeat(2000) + " deep")).not.toThrow();
   });

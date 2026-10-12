@@ -3,7 +3,7 @@
 // + length-preserving masking so we splice into the ORIGINAL line by offset,
 // never touching a mention that sits inside inline code or an existing link.
 import { mdLinkRegexGlobal, tagRegex, proseMask, TAG_NAME } from "./markdown";
-import { CALLOUT_LINE, commentRanges, INDENTED_RE, mayIndent, mayNestDeep, mayRunHtml, rawRangesBeyondComments, renderMarkdown, strictLineBreaksOn } from "./render";
+import { CALLOUT_LINE, commentRanges, INDENTED_RE, mathBlocksAt, mayIndent, mayNestDeep, mayRunHtml, rawRangesBeyondComments, renderMarkdown, strictLineBreaksOn } from "./render";
 
 // A code span: a run of backticks, closed by a run of the same length.
 const INLINE_CODE_RE = /(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g;
@@ -170,8 +170,14 @@ function maskRest(line: string, refs: ReadonlySet<string>, written = line): stri
 // The quote marks a line starts with, each at most three spaces in.
 const QUOTE_RE = /^(?: {0,3}>[ \t]?)*/;
 const quotes = (line: string) => (QUOTE_RE.exec(line)![0].match(/>/g) ?? []).length;
+// A line's quote and list markers, in any order.
+const LEAD_RE = /^(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])[ \t])*/;
+const quoteMarks = (line: string) => (LEAD_RE.exec(line)![0].match(/>/g) ?? []).length;
 // A line that ends a paragraph: blank, a heading or a thematic break.
 const ENDS_RE = /^[ \t>]*(?:\r?$|#{1,6}(?:[ \t]|\r?$)|([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$)/;
+// A line that starts a block a paragraph can't run into: a list item with
+// text, a heading, a break or a fence.
+const STARTS_BLOCK_RE = /^[ \t>]*(?:(?:[-*+]|1[.)])[ \t]+\S|#{1,6}(?:[ \t]|\r?$)|([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$|```|~~~)/;
 // A heading's underline, which ends a paragraph in its own quote.
 const UNDERLINE_RE = /^[ \t>]*(?:=+|-+)[ \t]*\r?$/;
 // A heading or a thematic break inside a list item, which isn't a paragraph.
@@ -457,31 +463,57 @@ function definitionAt(lines: string[], k: number): { label: string; item: boolea
   for (let n = end; n - def.end <= 10; n++) {
     if (DEF_TITLE_RE.test(title)) return { ...def, end: n };
     const next = lineAfter(n + 1);
-    if (!next) break;
+    if (!next || STARTS_BLOCK_RE.test(lines[n + 1]) || quotes(lines[n + 1]) > quotes(lines[k])) break;
     title += "\n" + next;
   }
   return rest.slice(dest).trim() ? null : def;
 }
 
-// Text indented four or more past its quote marks, which only runs on a
-// paragraph (`    ---` is text there, not a break or an underline).
-const RUNS_ON_RE = /^(?: {0,3}>[ \t]?)*(?: {4}|\t)[ \t]*\S/;
+/** The column a line's text starts at past its quote marks, and past its list
+ * markers too with `items`, or -1 if it has none. */
+function textColumn(line: string, items: boolean): number {
+  let k = QUOTE_RE.exec(line)![0].length;
+  let col = 0;
+  for (;;) {
+    for (; line[k] === " " || line[k] === "\t"; k++) col += line[k] === "\t" ? 4 - (col % 4) : 1;
+    const m = items ? LIST_MARK_RE.exec(line.slice(k)) : null;
+    if (!m) return k < line.length && !(line[k] === "\r" && k + 1 === line.length) ? col : -1;
+    k += m[0].length;
+    col += m[0].length;
+  }
+}
+const LIST_MARK_RE = /^(?:[-*+]|\d{1,9}[.)])(?=[ \t])/;
+// A line of quote and list markers in any order, and nothing else.
+const BARE_RE = /^(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])(?=[ \t]|$))*$/;
 
 /** Whether `line` is paragraph text a definition can't break into (unless a
- * table holds it). */
-const isParagraph = (line: string) => !ENDS_RE.test(line) && !UNDERLINE_RE.test(line) && !ITEM_BLOCK_RE.test(line);
+ * table holds it), with a paragraph in its own quote above or not (`===`
+ * only underlines one). */
+const isParagraph = (line: string, after: boolean) => !ENDS_RE.test(line) && !(after && UNDERLINE_RE.test(line)) && !ITEM_BLOCK_RE.test(line);
 
 /** The labels a note defines and the lines its definitions take, from
  * `lines` with what isn't prose blanked (`written` are the lines as the note
  * has them). A definition can't break into a paragraph, though a list item or
  * a quote that starts there can hold one. */
-function definitions(lines: string[], written = lines): { labels: Set<string>; taken: Set<number> } {
+function definitions(
+  lines: string[],
+  written = lines,
+  kept = written,
+  parsed = kept,
+): { labels: Set<string>; taken: Set<number> } {
   const labels = new Set<string>();
   const taken = new Set<number>();
   let para = -1; // the quote depth of the paragraph the line before is in, if any
+  let paraCol = 0; // the column that paragraph's text starts at
   let table = false; // whether a table holds the line
   for (let k = 0; k < lines.length; k++) {
     const depth = quotes(lines[k]);
+    // Text hidden whole: inside a line (a tag, inline math), or as a block. A
+    // tag the parse found inside a line is paragraph text for sure.
+    const bare = lines[k] !== written[k] && (/^[ \t\r]*$/.test(lines[k]) || BARE_RE.test(lines[k]));
+    const sure = bare && parsed !== lines && !BARE_RE.test(parsed[k]);
+    const inLine = sure || (bare && kept !== lines && !BARE_RE.test(kept[k]));
+    const asBlock = bare && !inLine && !BARE_RE.test(written[k]);
     // A table starts at a header over a delimiter row with as many cells, and
     // runs while its lines have a `|`.
     if (!lines[k].includes("|")) table = false;
@@ -495,7 +527,25 @@ function definitions(lines: string[], written = lines): { labels: Set<string>; t
       for (let n = k; n <= def.end; n++) taken.add(n);
       k = def.end;
       para = -1;
-    } else para = !table && (isParagraph(lines[k]) || (para >= 0 && RUNS_ON_RE.test(lines[k]))) ? depth : -1;
+    } else if (inLine && para >= depth && textColumn(kept[k], true) === textColumn(kept[k], false)) {
+      // Hidden inline, it runs on the paragraph.
+    } else {
+      // Text indented four past the paragraph's own runs it on (`    ---` is
+      // text there, not a break or an underline).
+      const runsOn = para >= 0 && textColumn(lines[k], false) >= paraCol + 4;
+      // Hidden inline, it starts a paragraph where the parse found one; hidden
+      // by its marks alone (`$$x$$` on its own line), it's a block.
+      const next = !table && !asBlock && (inLine ? sure : isParagraph(lines[k], para === depth) || runsOn) ? depth : -1;
+      if (next >= 0 && para < 0) paraCol = textColumn(inLine ? kept[k] : lines[k], true);
+      // A callout's title, on the line its quote opens, is a line of its own:
+      // its body reads as a note.
+      const title =
+        lines[k].includes("[!") &&
+        CALLOUT_LINE.test(lines[k]) &&
+        quoteMarks(written[k]) > (k ? quoteMarks(written[k - 1]) : 0) &&
+        textColumn(lines[k], false) < (para >= 0 ? paraCol : 0) + 4;
+      para = title ? -1 : next;
+    }
   }
   return { labels, taken };
 }
@@ -591,15 +641,35 @@ function blankCodeAcross(code: string[], lines: string[], content: string, skip:
   return out;
 }
 
+/** A note's prose with what it hides inside lines (`inline`) shown again, to
+ * tell a line hidden inline from one a block hides. */
+function keptInline(content: string, hidden: [number, number][], inline: [number, number][], prose: boolean[]): string[] {
+  const inLine = new Set(inline.map((r) => r.join()));
+  return blank(content, hidden.filter((s) => !inLine.has(s.join())))
+    .split("\n")
+    .map((l, i) => (prose[i] ? l : ""));
+}
+
 /** Each line of a note as `maskForMentions` leaves it, with what spans lines
  * blanked too: frontmatter, fenced and indented code, `%%comments%%`, `$$`
  * math and HTML comments. What's left is where a mention can be linked. */
 export function mentionLines(content: string, indented = true, html = true, deep = true): string[] {
   const lines = content.split("\n");
   const prose = proseMask(lines);
-  const shape = blank(content, hiddenSpans(content, indented, lines, prose, html, deep));
+  // Hidden inside lines: tags and comments the parse found, and math and
+  // comments found by their marks.
+  const inline: [number, number][] = [];
+  const inlineText: [number, number][] = [];
+  const hidden = hiddenSpans(content, indented, lines, prose, html, deep, inline, inlineText);
+  const shape = blank(content, hidden);
   const text = shape.split("\n").map((l, i) => (prose[i] ? l : " ".repeat(l.length)));
-  const { labels: refs, taken } = content.includes("]:") ? definitions(text, lines) : { labels: new Set<string>(), taken: new Set<number>() };
+  let refs = new Set<string>();
+  let taken = new Set<number>();
+  if (content.includes("]:")) {
+    const parsed = inline.length ? keptInline(content, hidden, inline, prose) : text;
+    const kept = inlineText.length ? keptInline(content, hidden, [...inline, ...inlineText], prose) : parsed;
+    ({ labels: refs, taken } = definitions(text, lines, kept, parsed));
+  }
   // Code spans and links are found across lines: either may run on. Code
   // first, as a backtick that opens one before a link or tag does wins.
   const paraAt = paragraphs(text);
@@ -610,6 +680,13 @@ export function mentionLines(content: string, indented = true, html = true, deep
     .map((l, i) => (prose[i] ? cutUnclosed(maskRest(l, refs, text[i]), unclosedAt(code[i])) : l));
 }
 
+/** Whether a line starts with eleven quote or list marker characters, the
+ * fewest that can nest a block past Reading view's limit. */
+function marksLead(l: string): boolean {
+  for (let i = 0; i < 11; i++) if (!" \t>-*+.)0123456789".includes(l[i])) return false;
+  return true;
+}
+
 /** `mentionLines` as a scan for the note `named` (a mention regex, not global)
  * runs it: indented code, raw HTML, callouts and nesting past Reading view's
  * limit are looked for only near a line naming the note, which skips a parse. The
@@ -617,6 +694,8 @@ export function mentionLines(content: string, indented = true, html = true, deep
 export function mentionLinesFor(content: string, named: RegExp): string[] {
   const code = mayIndent(content);
   const html = mayRunHtml(content);
+  // A `%%` comment can join blocks once it's taken out, so then the whole note is checked.
+  if (content.includes("%%")) return mentionLines(content);
   // Read only the blocks (the lines between blank ones) that name the note. A
   // line of `>` alone doesn't end an HTML block, so it doesn't count here.
   const blank = (from: number, to: number) => /^[ \t\r]*$/.test(content.slice(from, to));
@@ -643,7 +722,7 @@ export function mentionLinesFor(content: string, named: RegExp): string[] {
     for (const l of content.slice(from, to).split("\n")) {
       if (code && !indented && INDENTED_RE.test(l)) indented = true;
       if (html && !raw && l.includes("<") && mayRunHtml(l + "\n")) raw = true;
-      if (!deep && (mayNestDeep(l) || CALLOUT_LINE.test(l))) deep = true;
+      if (!deep && ((l.length > 10 && marksLead(l) && mayNestDeep(l)) || (l.includes("[!") && CALLOUT_LINE.test(l)))) deep = true;
     }
     last = to;
     if ((indented || !code) && (raw || !html) && deep) break;
@@ -656,21 +735,54 @@ export function mentionLinesFor(content: string, named: RegExp): string[] {
 /** Where a note's text isn't prose though its lines are: `%%comments%%`, `$$`
  * math, HTML comments, raw HTML (unless `html` is false) and indented code
  * (unless `indented` is false). Frontmatter and fenced code are `proseMask`'s. */
-export function hiddenSpans(content: string, indented = true, lines = content.split("\n"), prose = proseMask(lines), html = true, deep = true): [number, number][] {
+export function hiddenSpans(
+  content: string,
+  indented = true,
+  lines = content.split("\n"),
+  prose = proseMask(lines),
+  html = true,
+  deep = true,
+  inline?: [number, number][],
+  inlineText?: [number, number][],
+): [number, number][] {
   const spans: [number, number][] = content.includes("%%") ? commentRanges(content) : [];
-  spans.push(...rawRangesBeyondComments(content, indented, html, deep));
+  spans.push(...rawRangesBeyondComments(content, indented, html, deep, inline));
   if (content.includes("$$") || content.includes("<!--")) {
     // Paired outside code and comments, so a `$$` in them can't shift the pairs.
     const outside = blank(content, spans)
       .split("\n")
       .map((l, i) => (prose[i] ? l.replace(INLINE_CODE_RE, (m) => " ".repeat(m.length)) : " ".repeat(l.length)))
       .join("\n");
+    // A math block runs on to the end of its quote or list, or of the note,
+    // when nothing closes it: the last `$$` if nothing pairs it, or one whose
+    // closing `$$` has text after it on its line.
+    const runOn: number[] = [];
     // A comment as the editor's parser reads one: no `>` straight after `<!--`,
     // and no `--` inside.
-    for (const m of outside.matchAll(/\$\$[\s\S]*?\$\$|<!--[^>](?:-[^-]|[^-])*?-->/g)) spans.push([m.index!, m.index! + m[0].length]);
+    const re = /\$\$[\s\S]*?\$\$|<!--[^>](?:-[^-]|[^-])*?-->/g;
+    for (let m; (m = re.exec(outside)); ) {
+      const from = m.index;
+      const to = from + m[0].length;
+      // Math over lines is a block, which opens its line; a `$$` inside a line
+      // closes on that line or is text.
+      if (m[0][0] === "$" && m[0].includes("\n") && !leads(outside, from)) {
+        re.lastIndex = from + 2;
+        continue;
+      }
+      spans.push([from, to]);
+      if (!m[0].includes("\n")) inlineText?.push([from, to]);
+      const eol = outside.indexOf("\n", to);
+      if (m[0][0] === "$" && m[0].includes("\n") && outside.slice(to, eol < 0 ? undefined : eol).trim() && leads(outside, from)) runOn.push(from);
+    }
+    const open = outside.lastIndexOf("$$");
+    if (open >= 0 && leads(outside, open) && !spans.some(([f, t]) => f <= open && open < t)) runOn.push(open);
+    if (runOn.length) spans.push(...mathBlocksAt(content, runOn));
   }
   return spans;
 }
+
+/** Whether only quote and list markers come before `at` on its line. */
+const leads = (text: string, at: number) => BARE_RE.test(text.slice(text.lastIndexOf("\n", at - 1) + 1, at));
 
 /** `text` with each span blanked to spaces, its newlines kept. */
 function blank(text: string, spans: [number, number][]): string {

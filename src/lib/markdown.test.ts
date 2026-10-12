@@ -394,5 +394,6 @@ describe("proseMask and blockDepths on inputs that tell near misses apart", () =
   it("reads a table and a long link reference as the editor's parser does", () => {
     expect(proseMask("- a\nb|c\n\u00a0-|-\n  ```\nFoo".split("\n")).map(Number)).toEqual([1, 1, 1, 0, 0]);
     expect(proseMask(("[a]:\n<" + "y".repeat(10_050) + ">\n2. ```\n   Foo").split("\n")).map(Number)).toEqual([1, 1, 0, 0]);
+    expect(proseMask(('[a]: b "' + "x\n".repeat(6000) + '"\n2. ```\n   Foo').split("\n")).map(Number).slice(-2)).toEqual([0, 0]);
   });
 });

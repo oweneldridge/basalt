@@ -104,25 +104,25 @@ or start bold, italics or a highlight around it (in a paragraph of more than
 3,000 characters, any mention right next to them, as checking each would be
 slow). Two mentions that share emphasis marks (`Foo*_*Foo`) are both listed,
 but linking one leaves the other unlinkable, so Link all links one of them. A
-`[[` inside a link's target
-(`[[a [[b]]`) links to "a [[b" in Reading view but to "b" in the index and
-Live Preview; which one Obsidian reads hasn't been checked. Where the editor's
-parser and CommonMark disagree on a `#` and a tab or a backtick after an
-escaped one, Link all leaves alone what either reads as code. Two rare gaps
-are left: under an empty list item or quote line, the editor's parser keeps
-unindented lines in one paragraph where CommonMark doesn't, and Link all reads
-them the CommonMark way; and after a link whose address holds a backtick
-(`[](a`b)`), Link all can still write into a code span that follows. Past
-1,000 quotes and lists inside one another, the index reads further markers as
-text, where the editor's parser keeps nesting. The index counts links and tags
-inside HTML blocks, which Reading view shows as raw HTML; whether Obsidian
+`[[` inside a link's target (`[[a [[b]]`) links to "a [[b" in Reading view but
+to "b" in the index and Live Preview; which one Obsidian reads hasn't been
+checked. Where the editor's parser and CommonMark disagree on a `#` and a tab
+or a backtick after an escaped one, Link all leaves alone what either reads as
+code. Two rare gaps are left: under an empty list item or quote line, the
+editor's parser keeps unindented lines in one paragraph where CommonMark
+doesn't, and Link all reads them the CommonMark way; and after a link whose
+address holds a backtick (`[](a`b)`), Link all can still write into a code span
+that follows. Past 1,000 quotes and lists inside one another, the index reads
+further markers as text, where the editor's parser keeps nesting. Link all
+reads a link reference definition's title over at most ten lines, so a mention
+on the eleventh line of a longer one is offered. The index counts links and
+tags inside HTML blocks, which Reading view shows as raw HTML; whether Obsidian
 counts them is what `Notes/Blocks.md` in the rename parity run shows. A table
 whose header and delimiter rows have different cell counts isn't read as a
-table (Obsidian draws one), and Basalt's link colours fade less than
-Obsidian's for unresolved links, to keep their contrast. A large pasted
-`data:` image is left out, where Obsidian saves it as an attachment. Bases
-show 300 rows with a button for the rest; Obsidian scrolls through all of
-them.
+table (Obsidian draws one), and Basalt's link colours fade less than Obsidian's
+for unresolved links, to keep their contrast. A large pasted `data:` image is
+left out, where Obsidian saves it as an attachment. Bases show 300 rows with a
+button for the rest; Obsidian scrolls through all of them.
 
 ## Fixed since this audit (2026-07-07)
 

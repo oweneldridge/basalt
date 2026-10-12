@@ -43,8 +43,9 @@ export function proseMask(lines: string[]): boolean[] {
 export function blockDepths(lines: string[]): number[] {
   const depths = new Array<number>(lines.length);
   maskFrom(lines, 0, new Array<boolean>(lines.length), 0, depths);
+  if (depths.length) depths[0] ??= 0;
   for (let k = 1; k < depths.length; k++) depths[k] ??= depths[k - 1];
-  return Array.from(depths, (d) => d ?? 0);
+  return depths;
 }
 
 /** proseMask's work from line `start` on, for a note or, `depth` deep, for what
@@ -402,7 +403,8 @@ function interrupts(line: Line, stack: Container[]): boolean {
  * delimiter row (`--|--`) with as many cells. */
 function tableAt(line: Line, after: string | undefined): boolean {
   if (after === undefined) return false;
-  if (!/^[|:\-\s]/.test(after)) return false;
+  const c = after.charCodeAt(0);
+  if ((c >= 48 && c <= 57) || ((c | 32) >= 97 && (c | 32) <= 122) || !/^[|:\-\s]/.test(after)) return false;
   if (!hasPipe(line.text, line.basePos)) return false;
   if (after.endsWith("\r")) after = after.slice(0, -1);
   return DELIMITER_ROW.test(after) && cellsOf(line.text, line.basePos) === cellsOf(after, line.basePos);
@@ -509,7 +511,7 @@ class LinkRef {
   }
 }
 // Past this length a link reference definition whose title is still open is read as text.
-const LINK_REF_LIMIT = 10_000;
+const LINK_REF_LIMIT = 1_000_000;
 // A part of a link reference definition that may go on to the next line.
 const PENDING = -2;
 
