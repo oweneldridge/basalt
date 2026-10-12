@@ -47,7 +47,7 @@ import { setQueryHost } from "./lib/queryHost";
 import { setTranscludeHost, splitSubpath, subpathToLine, extractHeadings, extractBlockIds } from "./lib/transclude";
 import { recordSnapshot, listSnapshots, clearSnapshots, renameSnapshots, type Snapshot } from "./lib/snapshots";
 import { installHoverPreview } from "./lib/hoverPreview";
-import { linkifyMention, mentionLinesFor, mentionRegex } from "./lib/linkify";
+import { linkifyMention, linkUntilSettled, mentionLinesFor, mentionRegex } from "./lib/linkify";
 import { reorderTabs, insertTab } from "./lib/tabs";
 import { loadBindings, saveBindings, matchChord, type Bindings } from "./lib/hotkeys";
 import { parseObsidianImport, type ObsidianImportResult } from "./lib/obsidianImport";
@@ -191,6 +191,24 @@ function markDailyOpened(root: string) {
     /* no session storage: open it each time */
   }
 }
+// A window opened for a note stays on it when it reloads.
+const noteWindowKey = (root: string) => `basalt.noteWindow.${root}`;
+function openedForNote(root: string): boolean {
+  try {
+    return sessionStorage.getItem(noteWindowKey(root)) === todayStamp();
+  } catch {
+    return false;
+  }
+}
+function markOpenedForNote(root: string) {
+  try {
+    sessionStorage.setItem(noteWindowKey(root), todayStamp());
+  } catch {
+    /* no session storage: a reload opens the daily note */
+  }
+}
+// How long a vault switch waits on the one before it to answer.
+const SWITCH_WAIT_MS = 10_000;
 // Why it can't be made from a Templater template, said once a session too.
 const dailyNoticeKey = (root: string) => `basalt.dailyNotice.${root}`;
 function firstDailyNotice(root: string): boolean {
@@ -638,6 +656,8 @@ export default function App() {
   const vaultGen = useRef(0);
   // The latest switch's call to open its vault, settled either way.
   const opening = useRef<Promise<void> | null>(null);
+  // The latest switch whose call opened its vault: where a failed one leaves you.
+  const openedGen = useRef(0);
   // Whether `gen` is still the vault switched to, once any newer switch's
   // call has settled (a failed one leaves this vault open).
   const stillCurrent = useCallback(async (gen: number) => {
@@ -1816,16 +1836,19 @@ export default function App() {
   );
 
   const openVault = useCallback(
-    async (path: string, openNoteRel?: string) => {
+    async (path: string, openNoteRel?: string, restoring = false) => {
       await flushAll();
       if (!(await okToDropUnsaved("Switch vaults"))) return;
       clearImageCache();
       const gen = ++vaultGen.current;
-      // One switch's call at a time, so the vault asked for last is the one left open.
+      // One switch's call at a time, so the vault asked for last is the one left
+      // open; a call that never answers holds the next one back for a while only.
       const prior = opening.current;
       const call = (async () => {
-        await prior;
-        return openVaultBackend(path); // canonical; sets managed state
+        if (prior) await Promise.race([prior, new Promise((resolve) => setTimeout(resolve, SWITCH_WAIT_MS))]);
+        const root = await openVaultBackend(path); // canonical; sets managed state
+        openedGen.current = Math.max(openedGen.current, gen);
+        return root;
       })();
       opening.current = call.then(
         () => undefined,
@@ -1835,7 +1858,7 @@ export default function App() {
       try {
         root = await call;
       } catch (e) {
-        if (vaultGen.current === gen) vaultGen.current = gen - 1; // still on the vault before
+        if (vaultGen.current === gen) vaultGen.current = openedGen.current; // still on the last vault opened
         throw e;
       }
       // A newer switch began meanwhile: it decides the window, unless it fails.
@@ -1913,8 +1936,13 @@ export default function App() {
       // it doesn't hold up the vault while it waits for Templater Lite.
       // Not if another vault has opened since (its own open goes on). A window
       // opened for a note stays on it, reload or not.
-      if (openNoteRel) markDailyOpened(root);
-      else if (obsConfigRef.current?.openBehavior === "daily" && !dailyOpened(root) && (await stillCurrent(gen))) {
+      if (openNoteRel) markOpenedForNote(root);
+      else if (
+        obsConfigRef.current?.openBehavior === "daily" &&
+        !dailyOpened(root) &&
+        !(restoring && openedForNote(root)) &&
+        (await stillCurrent(gen))
+      ) {
         void dailyNoteApi.current.open(undefined, undefined, true).then((opened) => {
           if (opened && vaultRef.current === root) markDailyOpened(root);
         });
@@ -1935,13 +1963,13 @@ export default function App() {
     const fromUrl = params.get("vault");
     if (fromUrl) {
       // A window spawned by "move tab to new window" also carries ?note=<rel>.
-      openVault(fromUrl, params.get("note") ?? undefined).catch((e) => setSaveError(`Couldn't open vault: ${e}`));
+      openVault(fromUrl, params.get("note") ?? undefined, true).catch((e) => setSaveError(`Couldn't open vault: ${e}`));
       return;
     }
     if (WINDOW_LABEL !== "main") return;
     const last = localStorage.getItem(LAST_VAULT_KEY);
     if (last) {
-      openVault(last).catch(() => localStorage.removeItem(LAST_VAULT_KEY));
+      openVault(last, undefined, true).catch(() => localStorage.removeItem(LAST_VAULT_KEY));
     }
   }, [openVault]);
 
@@ -3100,10 +3128,12 @@ export default function App() {
         .join("\n");
     const shown = opened();
     const edits = editsRef.current;
-    const switched = () => vaultRef.current !== root || vaultGen.current !== gen;
+    // Another vault is open, once any switch under way has settled (a failed
+    // one leaves this vault open).
+    const switched = async () => vaultRef.current !== root || !(await stillCurrent(gen));
     // The vault switched, or (at startup) you or a link opened another note, or
     // you started typing.
-    const stale = () => switched() || (atStartup && (opened() !== shown || editsRef.current !== edits || dailyOpened(root)));
+    const stale = async () => (await switched()) || (atStartup && (opened() !== shown || editsRef.current !== edits || dailyOpened(root)));
     // The note's day with the current time, so a template's {{time}} is now.
     const clock = new Date();
     const now = new Date(date);
@@ -3113,9 +3143,13 @@ export default function App() {
     const said = fallback ? [fallback] : [];
     const say = () => said.forEach((msg) => noticeRef.current(msg, 10000));
     const want = normRelKey(`${relNoExt}.md`);
+    const tplSetting = cfg?.dailyNotesTemplate?.trim();
+    const tpl = tplSetting ? notesRef.current.find((n) => normRelKey(n.rel) === normRelKey(tplSetting)) : undefined;
     // Made, and not left empty by a start that stopped before its template
-    // went in (that one is filled below).
-    const leftEmpty = (n: VaultNote) => n.content === "" && !n.size && !!cfg?.dailyNotesTemplate?.trim();
+    // went in (that one is filled below): empty, unchanged since it was made,
+    // and with a template to fill it. One you emptied yourself stays empty.
+    const leftEmpty = (n: VaultNote) =>
+      n.content === "" && !n.size && !!tpl && !lastSave.current.has(n.path) && !!n.ctime && !!n.mtime && Math.abs(n.mtime - n.ctime) < 2000;
     const openMade = async () => {
       const made = notesRef.current.find((n) => normRelKey(n.rel) === want);
       if (!made || leftEmpty(made)) return false;
@@ -3125,13 +3159,10 @@ export default function App() {
     };
     if (await openMade()) return true;
     let tplContent = "";
-    const tplSetting = cfg?.dailyNotesTemplate?.trim();
     if (tplSetting) {
-      const tplKey = normRelKey(tplSetting);
-      const tpl = notesRef.current.find((n) => normRelKey(n.rel) === tplKey);
       // Read fresh from disk: the index blanks oversized notes' content.
       const read = tpl ? await readNote(tpl.path).catch(() => null) : null;
-      if (stale()) return false;
+      if (await stale()) return false;
       if (read === null) said.push(`Daily note template "${tplSetting}" ${tpl ? "couldn't be read" : "wasn't found"}, so the note starts empty`);
       else tplContent = read;
     }
@@ -3142,11 +3173,18 @@ export default function App() {
         // Templater Lite fills it once it's in.
         const ready = pluginsReady.current;
         if (ready?.vault === root) timedOut = await Promise.race([ready.promise.then(() => false), new Promise<boolean>((r) => setTimeout(() => r(true), 15000))]);
-        if (stale()) return false;
+        if (await stale()) return false;
         if (await openMade()) return true; // made meanwhile (a sync, another tab)
       }
       unfilled = templaterWontRun(cfg, root, timedOut);
       if (unfilled && atStartup) {
+        // It's there, left empty: open it as it is.
+        const left = notesRef.current.find((n) => normRelKey(n.rel) === want);
+        if (left) {
+          await openNoteByPath(left.path);
+          say();
+          return true;
+        }
         if (firstDailyNotice(root))
           noticeRef.current(`Today's daily note wasn't made: its template uses Templater, and ${unfilled}. Or make it with "Open today's daily note".`, 12000);
         return false;
@@ -3160,12 +3198,12 @@ export default function App() {
       } catch (e) {
         // Made meanwhile (another tab, or a sync just in): open that one.
         if (!String(e).includes("already exists")) throw e;
-        if (stale()) return false;
+        if (await stale()) return false;
         await openNoteByPath(`${root.replace(/[/\\]+$/, "")}/${relNoExt}.md`);
         say();
         return true;
       }
-      if (switched()) return false;
+      if (await switched()) return false;
       const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
       let content = fillTemplate(tplContent, now, name.split("/").pop() ?? name);
       // Only into the still-empty note: if it was written meanwhile (another
@@ -3177,7 +3215,7 @@ export default function App() {
           if (!isWriteConflict(e)) throw e;
           content = await readNote(path);
         }
-        if (switched()) return false;
+        if (await switched()) return false;
       }
       const note: VaultNote = { path, rel, name: nameFromRel(rel), content };
       index.current.setNote(note);
@@ -3191,7 +3229,7 @@ export default function App() {
       // Plugins hear of it once its template is in (Templater processes it then).
       emitVaultEvent("create", { path: rel, name: note.name });
       if (unfilled) said.push(`The daily note's Templater tags were left as written: ${unfilled}`);
-      if (stale()) return false;
+      if (await stale()) return false;
       await openNoteByPath(path);
       say();
       return true;
@@ -3199,7 +3237,7 @@ export default function App() {
       setSaveError(`Couldn't open daily note: ${e}`);
       return false;
     }
-  }, [openNoteByPath, rememberSelfWrite, bumpStructure]);
+  }, [openNoteByPath, rememberSelfWrite, bumpStructure, stillCurrent]);
   // The plugin host reads these through a ref, so it isn't reinstalled.
   const dailyNoteApi = useRef({ open: openDailyNote, has: hasDailyNote });
   dailyNoteApi.current = { open: openDailyNote, has: hasDailyNote };
@@ -4745,7 +4783,7 @@ export default function App() {
       // `_*Foo` below), so the notes are read again while that keeps happening.
       const names = [target.name, ...index.current.aliasesOf(target.path)];
       const touched = [...new Set(mentions.map((m) => m.path))];
-      for (let round = 0; round < 100; round++) {
+      await linkUntilSettled(async () => {
         const fresh: VaultNote[] = [];
         for (const p of touched) {
           const note = notesRef.current.find((n) => n.path === p);
@@ -4754,8 +4792,8 @@ export default function App() {
         }
         let linked = 0;
         for (const m of index.current.unlinkedMentionsFor(names, fresh, target.path)) if ((await linkifyInNote(m.path, m.line, target)) !== null) linked++;
-        if (!linked) break;
-      }
+        return linked;
+      });
       setMentionsLinked((x) => x + 1);
     },
     [linkifyInNote],
