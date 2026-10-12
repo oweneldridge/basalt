@@ -84,18 +84,18 @@ function normalizeRel(rel: string): string {
 
 const INLINE_CODE_RE = /`[^`\n]*`/g;
 
-function extractLinks(content: string): LinkOccurrence[] {
+function extractLinks(lines: string[], prose: boolean[]): LinkOccurrence[] {
   const out: LinkOccurrence[] = [];
-  const lines = content.split("\n");
-  const prose = proseMask(lines); // skip frontmatter + fenced code
   const yamlLines = yamlValueLines(lines);
+  const re = wikilinkRegex();
+  const mre = mdLinkRegexGlobal();
   for (let i = 0; i < lines.length; i++) {
     // Property values are scanned too, as rewriteLinks does on rename.
     const yaml = yamlLines[i];
-    if (!prose[i] && !yaml) continue;
+    if ((!prose[i] && !yaml) || !lines[i].includes("[")) continue;
     const line = yaml ? lines[i] : lines[i].replace(INLINE_CODE_RE, " "); // `[[x]]` in code isn't a link
     const ctxAt = (pos: number, len: number) => (yaml ? yamlLinkAt(line, pos, len) : { ok: true, quote: null });
-    const re = wikilinkRegex();
+    re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(line))) {
       const ctx = ctxAt(m.index, m[0].length);
@@ -110,7 +110,7 @@ function extractLinks(content: string): LinkOccurrence[] {
     // Markdown-style internal links: [text](Note.md), [t](folder/My%20Note.md#H)
     // — Obsidian vaults configured with "Use [[Wikilinks]]: off" are full of
     // them, and they must feed backlinks/graph like wikilinks do.
-    const mre = mdLinkRegexGlobal();
+    mre.lastIndex = 0;
     while ((m = mre.exec(line))) {
       const ctx = ctxAt(m.index, m[0].length);
       if (!ctx.ok) continue;
@@ -242,12 +242,12 @@ function splitOutsideQuotes(s: string): string[] {
 const HTML_TAG =
   /<[a-zA-Z][a-zA-Z0-9-]*(?:\s+[a-zA-Z_:][a-zA-Z0-9_.:-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>|<\/[a-zA-Z][a-zA-Z0-9-]*\s*>/g;
 
-export function extractTags(content: string): string[] {
-  const lines = content.split("\n");
-  const prose = proseMask(lines);
+export function extractTags(content: string, lines = content.split("\n"), mask = proseMask(lines)): string[] {
+  let prose = mask;
   // An SVG drawing's markup and labels aren't prose (its colours aren't tags).
   for (const b of htmlBlockRanges(content)) {
     if (!/^\s*<svg[\s>]/i.test(lines[b.fromLine])) continue;
+    if (prose === mask) prose = [...mask];
     for (let i = b.fromLine; i <= b.toLine; i++) prose[i] = false;
   }
   const seen = new Set<string>();
@@ -266,12 +266,13 @@ export function extractTags(content: string): string[] {
   let quoteMarks: Set<number> | null = null;
   let at = 0;
   const blank = (s: string) => " ".repeat(s.length);
+  const re = tagRegex();
   for (let i = 0; i < lines.length; at += lines[i].length + 1, i++) {
-    if (!prose[i]) continue;
+    if (!prose[i] || !lines[i].includes("#")) continue;
     const line = lines[i]
       .replace(INLINE_CODE_RE, blank) // `#x` in code isn't a tag
       .replace(HTML_TAG, blank); // nor is a colour in an HTML attribute
-    const re = tagRegex();
+    re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(line))) {
       if (/^\d+$/.test(m[2])) continue; // group 2 = bare name; `#42` isn't a tag
@@ -311,9 +312,11 @@ export class VaultIndex {
     this.removeFromMaps(note.path); // drop the old name/alias entries for this path
     const aliases = frontmatterAliases(note.content);
     this.meta.set(note.path, { rel: note.rel, name: note.name, aliases: aliases.length ? aliases : undefined });
-    this.occ.set(note.path, extractLinks(note.content));
+    const lines = note.content.split("\n");
+    const prose = proseMask(lines);
+    this.occ.set(note.path, extractLinks(lines, prose));
     this.reverse = null;
-    this.tags.set(note.path, extractTags(note.content));
+    this.tags.set(note.path, extractTags(note.content, lines, prose));
     this.addToMaps(note.path, note.name, aliases);
   }
 

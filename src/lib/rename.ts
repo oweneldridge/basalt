@@ -94,15 +94,16 @@ export function rewriteLinks(content: string, mapTarget: LinkMapper): string | n
   const prose = proseMask(lines);
   const yamlLines = yamlValueLines(lines);
   let changed = false;
+  const re = wikilinkRegex();
   for (let i = 0; i < lines.length; i++) {
     // Property values hold links too (Obsidian rewrites them on rename).
     const yaml = yamlLines[i];
-    if (!prose[i] && !yaml) continue;
+    if ((!prose[i] && !yaml) || !lines[i].includes("[")) continue;
     const original = lines[i];
     // Mask inline code with same-length blanks; offsets stay identical, so
     // matches found in the masked copy splice cleanly into the original.
     const masked = yaml ? original : original.replace(INLINE_CODE_RE, (m) => " ".repeat(m.length));
-    const re = wikilinkRegex();
+    re.lastIndex = 0;
     let m: RegExpExecArray | null;
     let out = "";
     let last = 0;

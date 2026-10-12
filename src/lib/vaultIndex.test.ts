@@ -588,6 +588,14 @@ describe("tags after a `>`", () => {
     }
   });
 
+  it("leave a mask passed in as it was", () => {
+    const content = '<svg>\n<text fill="#1a73e8">#x</text>\n</svg>\n#real';
+    const lines = content.split("\n");
+    const mask = proseMask(lines);
+    expect(extractTags(content, lines, mask)).toEqual(["real"]);
+    expect(mask).toEqual(proseMask(lines));
+  });
+
   it("skip the parse when no line has one", () => {
     expect(extractTags("> #quoted and #plain\n`code #no`")).toEqual(["quoted", "plain"]);
   });
