@@ -488,8 +488,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   indented text, and a code fence opened on a list marker's line, after a
   heading's `-` underline, or in a quote right after a list item's fence is
   read as code.
-- A plugin that subscribes one callback to an event twice has it run twice,
-  as in Obsidian, and each `off()` ends one subscription.
+- A plugin that subscribes one callback to a vault or workspace event twice
+  has it run twice, as in Obsidian, and each `off()` ends one subscription.
+- Link all reads bold and italics on across lines that only look like a new
+  list item, heading or table row (`2024.` at the start of a line, a `|`, a
+  marker indented four spaces), so it no longer breaks them there. It checks
+  numbered lists item by item, and links a mention that another link made
+  linkable in the same pass. A note with thousands of closed HTML lines in a
+  row no longer empties the unlinked mentions list.
+- The index reads list items, lines that run on a paragraph, and HTML blocks
+  as Reading view does, so code fences, and the links and tags around them,
+  are found where Reading view shows them: `- a` then `2. ```` is one
+  paragraph, `1. - ```` opens code, and a fence inside an HTML block doesn't.
+  A `>#tag` after a closed HTML block, a footnote, frontmatter or a comment
+  counts as Reading view shows it.
+- Today's daily note isn't made in a vault you switch to while the first one
+  is still loading, still opens when a vault switch fails, and its notice says
+  when Templater Lite didn't load rather than that it was waiting.
 
 ### Security
 
