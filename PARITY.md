@@ -4,6 +4,12 @@ _Point-in-time audit, 2026-07-07. Method: a multi-agent sweep — for each featu
 
 ## Verdict
 
+_The verdict below is from the July audit. Since then, CRLF files keep their
+line endings, renames update canvas and base links, and markdown links open in
+the editor; a non-UTF-8 file is still refused, now with a clear message, on
+purpose. See "Fixed since this audit" below, and the October 2026 update for
+what's still different from Obsidian._
+
 Basalt clears the bar for a credible core-app foundation but not for full core-app parity: ~67% weighted parity, with 37 of 84 in-scope features at full parity and a striking 38 partials. The everyday note-taking loop — markdown Live Preview, wikilinks, backlinks, tags, full-text search, file tree, canvas, and properties — is present and mostly usable, so the pattern is breadth over depth: most features exist as thin implementations that stop well short of Obsidian's controls, panels, and configurability. The most serious holes are in data safety and interop: opening and editing any note silently rewrites CRLF to LF, non-UTF8 files are unreadable, and rename does not rewrite references inside .canvas/.base files (leaving dangling links) — real deviations from the "plain files, untouched" promise. There is also a concrete editor bug (internal [text](note.md) links do not navigate in edit mode, only in reading view) and four wholly missing core-plugin equivalents (note composer, random note, slides, audio recorder), plus no plugin-extensibility for settings tabs, ribbon, or status bar. Graph view, tables, canvas node types, and Bases are functional but shallow, so this reads as a strong pre-1.0 alternative that is close on surface coverage yet clearly behind on depth and safety guarantees.
 
 **Weighted parity: ~67%** ((full + 0.5·partial) / in-scope features). Of 85 in-scope features: **37 full, 38 partial, 9 missing, 1 bonus**.
