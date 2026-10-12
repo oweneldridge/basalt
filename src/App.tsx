@@ -70,7 +70,7 @@ import {
   emitVaultEvent,
   emitWorkspaceEvent,
   pluginRightViews,
-  isLoaded,
+  isStarted,
   listensFor,
   type HostDeps,
 } from "./lib/plugins";
@@ -204,7 +204,7 @@ function firstDailyNotice(root: string): boolean {
 }
 /** Why Templater Lite won't fill a new note's tags here, or null if it will. */
 function templaterWontRun(cfg: ObsidianConfig | null, root: string, timedOut = false): string | null {
-  if (!isLoaded("templater-lite")) {
+  if (!isStarted("templater-lite")) {
     if (!loadEnabled(root).includes("templater-lite")) return "Templater Lite isn't on";
     return timedOut ? "Templater Lite was still waiting on a slow plugin to load" : "Templater Lite didn't load";
   }
@@ -636,6 +636,17 @@ export default function App() {
   // Counts vault switches from the moment the backend switches, before a render
   // catches vaultRef up.
   const vaultGen = useRef(0);
+  // The latest switch's call to open its vault, settled either way.
+  const opening = useRef<Promise<void> | null>(null);
+  // Whether `gen` is still the vault switched to, once any newer switch's
+  // call has settled (a failed one leaves this vault open).
+  const stillCurrent = useCallback(async (gen: number) => {
+    for (let p = opening.current; vaultGen.current !== gen && p; p = opening.current) {
+      await p;
+      if (opening.current === p) break;
+    }
+    return vaultGen.current === gen;
+  }, []);
   // Counts edits you make in an editor.
   const editsRef = useRef(0);
   const notesRef = useRef<VaultNote[]>([]);
@@ -1810,13 +1821,25 @@ export default function App() {
       if (!(await okToDropUnsaved("Switch vaults"))) return;
       clearImageCache();
       const gen = ++vaultGen.current;
+      // One switch's call at a time, so the vault asked for last is the one left open.
+      const prior = opening.current;
+      const call = (async () => {
+        await prior;
+        return openVaultBackend(path); // canonical; sets managed state
+      })();
+      opening.current = call.then(
+        () => undefined,
+        () => undefined,
+      );
       let root: string;
       try {
-        root = await openVaultBackend(path); // canonical; sets managed state
+        root = await call;
       } catch (e) {
         if (vaultGen.current === gen) vaultGen.current = gen - 1; // still on the vault before
         throw e;
       }
+      // A newer switch began meanwhile: it decides the window, unless it fails.
+      if (!(await stillCurrent(gen))) return;
       // Read the saved workspace NOW (before any state reset fires the save
       // effect and overwrites it) so it survives until restore below.
       const savedWs = localStorage.getItem(workspaceKey(root));
@@ -1888,14 +1911,16 @@ export default function App() {
       // Obsidian's "Default file to open: Daily note", made from the template
       // if missing. Once a session it opens one, so a reload keeps your place;
       // it doesn't hold up the vault while it waits for Templater Lite.
-      // Not if another vault has started opening since (its own open goes on).
-      if (!openNoteRel && obsConfigRef.current?.openBehavior === "daily" && !dailyOpened(root) && vaultGen.current === gen) {
+      // Not if another vault has opened since (its own open goes on). A window
+      // opened for a note stays on it, reload or not.
+      if (openNoteRel) markDailyOpened(root);
+      else if (obsConfigRef.current?.openBehavior === "daily" && !dailyOpened(root) && (await stillCurrent(gen))) {
         void dailyNoteApi.current.open(undefined, undefined, true).then((opened) => {
           if (opened && vaultRef.current === root) markDailyOpened(root);
         });
       }
     },
-    [flushAll, loadVault, restoreWorkspace, openInPane, ensureWorkspace],
+    [flushAll, loadVault, restoreWorkspace, openInPane, ensureWorkspace, stillCurrent],
   );
 
   // Restore the last vault on launch (once — StrictMode double-mounts effects).
@@ -3088,9 +3113,12 @@ export default function App() {
     const said = fallback ? [fallback] : [];
     const say = () => said.forEach((msg) => noticeRef.current(msg, 10000));
     const want = normRelKey(`${relNoExt}.md`);
+    // Made, and not left empty by a start that stopped before its template
+    // went in (that one is filled below).
+    const leftEmpty = (n: VaultNote) => n.content === "" && !n.size && !!cfg?.dailyNotesTemplate?.trim();
     const openMade = async () => {
       const made = notesRef.current.find((n) => normRelKey(n.rel) === want);
-      if (!made) return false;
+      if (!made || leftEmpty(made)) return false;
       await openNoteByPath(made.path);
       say();
       return true;
@@ -3127,7 +3155,8 @@ export default function App() {
     try {
       let path: string;
       try {
-        path = await createNote(relNoExt);
+        const left = notesRef.current.find((n) => normRelKey(n.rel) === want && leftEmpty(n));
+        path = left ? left.path : await createNote(relNoExt);
       } catch (e) {
         // Made meanwhile (another tab, or a sync just in): open that one.
         if (!String(e).includes("already exists")) throw e;

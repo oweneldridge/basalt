@@ -15,6 +15,7 @@ import {
   emitVaultEvent,
   emitWorkspaceEvent,
   listensFor,
+  isStarted,
   pluginSettingTabs,
   pluginRightViews,
   type HostDeps,
@@ -284,17 +285,37 @@ describe("plugin events", () => {
       module.exports = class extends Plugin {
         onload() {
           const cb = () => { globalThis.__opened = (globalThis.__opened ?? 0) + 1; };
-          const first = this.app.workspace.on("file-open", cb);
+          globalThis.__first = this.app.workspace.on("file-open", cb);
           this.registerEvent(this.app.workspace.on("file-open", cb));
-          first.off();
         }
       };
     `;
     (globalThis as any).__opened = 0;
     await loadPlugin(info({ id: "ws-twice", code }));
     emitWorkspaceEvent("file-open", null);
-    expect((globalThis as any).__opened).toBe(1);
+    expect((globalThis as any).__opened).toBe(2);
+    (globalThis as any).__first.off();
+    emitWorkspaceEvent("file-open", null);
+    expect((globalThis as any).__opened).toBe(3);
     await unloadPlugin("ws-twice");
+  });
+
+  it("isn't started until its onload has finished", async () => {
+    installHost(fakeHost().host);
+    let finish = () => {};
+    (globalThis as any).__gate = new Promise<void>((r) => (finish = r));
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin { async onload() { await globalThis.__gate; } };
+    `;
+    const loading = loadPlugin(info({ id: "slow-start", code }));
+    await Promise.resolve();
+    expect(isStarted("slow-start")).toBe(false);
+    finish();
+    await loading;
+    expect(isStarted("slow-start")).toBe(true);
+    await unloadPlugin("slow-start");
+    expect(isStarted("slow-start")).toBe(false);
   });
 
   it("registerInterval + registerDomEvent are cleared on unload", async () => {

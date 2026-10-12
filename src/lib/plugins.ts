@@ -258,6 +258,12 @@ const loaded = new Map<string, LoadedPlugin>();
 export function isLoaded(id: string): boolean {
   return loaded.has(id);
 }
+// Plugins whose onload hasn't finished.
+const starting = new Set<string>();
+/** Whether a plugin is loaded and its onload has finished. */
+export function isStarted(id: string): boolean {
+  return loaded.has(id) && !starting.has(id);
+}
 export function loadedIds(): string[] {
   return [...loaded.keys()];
 }
@@ -569,6 +575,7 @@ export async function loadPlugin(info: PluginInfo): Promise<void> {
   const ctx = new PluginContext(info);
   const entry: LoadedPlugin = { info, instance: {}, cleanups: ctx.cleanups };
   loaded.set(info.id, entry);
+  starting.add(info.id);
   try {
     const mod = evalPluginModule(ctx, deps);
     entry.instance = instantiate(mod, ctx);
@@ -576,6 +583,8 @@ export async function loadPlugin(info: PluginInfo): Promise<void> {
   } catch (e) {
     await unloadPlugin(info.id); // undo any partial registrations
     throw e;
+  } finally {
+    starting.delete(info.id);
   }
   deps.onRegistryChanged();
 }

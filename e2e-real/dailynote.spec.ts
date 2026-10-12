@@ -382,6 +382,7 @@ async function otherVault(files: Record<string, string>) {
     url,
     root,
     exists: (rel: string) => existsSync(join(dir, rel)),
+    read: (rel: string) => readFileSync(join(dir, rel), "utf8"),
     stop: async () => {
       if (proc.exitCode === null) await new Promise<void>((r) => (proc.once("exit", () => r()), proc.kill()));
       rmSync(dir, { recursive: true, force: true });
@@ -526,5 +527,174 @@ test.describe("a vault that opens its daily note from a Templater template, with
     const next = await page.context().newPage();
     await openApp(next, vault);
     await expect(next.locator(".notice", { hasText: "daily note" })).toContainText("Templater Lite didn't load");
+  });
+});
+
+const plainDaily = {
+  ".obsidian/app.json": JSON.stringify({ openBehavior: "daily" }),
+  ".obsidian/daily-notes.json": JSON.stringify({ folder: "Daily", template: "Templates/Plain" }),
+  "Templates/Plain.md": "# {{date}}\nfrom the template\n",
+};
+
+test.describe("a vault that opens its daily note, with a switch that fails while it loads", () => {
+  test.use({ vaultFiles: { ".obsidian/app.json": JSON.stringify({ openBehavior: "daily" }), ".obsidian/daily-notes.json": JSON.stringify({ folder: "Daily" }) } });
+
+  test("still opens its daily note", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    await page.addInitScript(() => localStorage.setItem("basalt.recentVaults", JSON.stringify([{ path: "/nonexistent/gone", name: "Gone", ts: Date.now() }])));
+    let switching!: () => void;
+    const switched = new Promise<void>((r) => (switching = r));
+    let held = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      if (body.cmd === "open_vault" && body.args?.path === "/nonexistent/gone") {
+        switching();
+        await new Promise((r) => setTimeout(r, 3000));
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({ error: "not a folder" }) });
+      }
+      if (body.cmd === "read_vault" && !held) {
+        held = true;
+        const res = await route.fetch();
+        await switched;
+        return route.fulfill({ response: res });
+      }
+      return route.fallback();
+    });
+    await page.goto(vault.url + "/");
+    await settle(page, 800);
+    await page.getByRole("button", { name: /Command palette/ }).click();
+    await page.locator(".palette-input").first().fill("Switch vault");
+    await page.keyboard.press("Enter");
+    await page.locator(".vault-item", { hasText: "gone" }).click();
+    await expect(activeTab(page)).toHaveText(today, { timeout: 10000 });
+    expect(vault.exists(`Daily/${today}.md`)).toBe(true);
+  });
+});
+
+test.describe("a vault that opens its daily note, switched away from twice, the first switch slow", () => {
+  test.use({ vaultFiles: { "Plain.md": "a\n" } });
+
+  test("ends on the vault picked last, with its daily note", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    const b = await otherVault({ ...plainDaily, "Welcome B.md": "b\n" });
+    const c = await otherVault({ ...plainDaily, "Welcome C.md": "c\n" });
+    try {
+      const rootA = ((await (await fetch(`${vault.url}/api/vault-root`)).json()) as { root: string }).root;
+      let backend = vault.url;
+      await page.addInitScript(([rb, rc]) => localStorage.setItem("basalt.recentVaults", JSON.stringify([{ path: rb, name: "B", ts: Date.now() }, { path: rc, name: "C", ts: Date.now() - 1 }])), [b.root, c.root]);
+      await page.route("**/api/invoke", async (route) => {
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        if (body.cmd === "open_vault") {
+          const to = body.args?.path === b.root ? b : body.args?.path === c.root ? c : null;
+          if (to === b) await new Promise((r) => setTimeout(r, 4000));
+          backend = to ? to.url : vault.url; // the core switches as it answers
+          return route.fulfill({ contentType: "application/json", body: JSON.stringify({ result: to ? to.root : rootA }) });
+        }
+        return route.fulfill({ response: await route.fetch({ url: `${backend}/api/invoke` }) });
+      });
+      await openApp(page, vault);
+      await settle(page, 800);
+      for (const which of [b.root, c.root]) {
+        await page.getByRole("button", { name: /Command palette/ }).click();
+        await page.locator(".palette-input").first().fill("Switch vault");
+        await page.keyboard.press("Enter");
+        await page.locator(".vault-item", { hasText: which }).click();
+        await page.waitForTimeout(300);
+      }
+      await expect(page.locator(".tree-row.file", { hasText: "Welcome C" })).toBeVisible({ timeout: 15000 });
+      await expect(activeTab(page)).toHaveText(today, { timeout: 10000 });
+      await settle(page, 1500);
+      await expect(page.locator(".tree-row.file", { hasText: "Welcome C" })).toBeVisible();
+      expect(c.read(`Daily/${today}.md`)).toContain("from the template");
+      expect(b.exists(`Daily/${today}.md`)).toBe(false);
+      // Once the slow switch has answered too, the vault left open is the one on screen.
+      await settle(page, 4000);
+      expect(backend).toBe(c.url);
+    } finally {
+      await b.stop();
+      await c.stop();
+    }
+  });
+});
+
+test.describe("a vault that opens its daily note from a Templater template, with Templater Lite slow to start", () => {
+  test.use({ vaultFiles: templaterDaily });
+
+  test("says it was still waiting", async ({ page, vault }) => {
+    test.setTimeout(90000);
+    await openApp(page, vault);
+    await enable(page, "Templater Lite");
+    await page.close();
+    const next = await page.context().newPage();
+    // Templater Lite's onload reads Templater's settings; that read is slow.
+    await next.route("**/api/invoke", async (route) => {
+      const raw = route.request().postData() ?? "";
+      if (raw.includes("templater-obsidian/data.json") && !raw.includes("read_obsidian_config")) await new Promise((r) => setTimeout(r, 20000));
+      return route.fallback();
+    });
+    await next.goto(vault.url + "/");
+    await expect(next.locator(".notice", { hasText: "daily note" })).toContainText("still waiting", { timeout: 25000 });
+  });
+});
+
+test.describe("a vault that opens its daily note, left empty by a start that stopped", () => {
+  test.use({ vaultFiles: plainDaily });
+
+  test("fills it from the template the next time", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    let written!: () => void;
+    const writeSeen = new Promise<void>((r) => (written = r));
+    await page.route("**/api/invoke", async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      if (body.cmd === "write_note" && String(body.args?.path ?? "").includes(`Daily/${today}`)) {
+        written();
+        return; // never answered: the page goes before it lands
+      }
+      return route.fallback();
+    });
+    await page.goto(vault.url + "/");
+    await writeSeen;
+    const context = page.context();
+    await page.close();
+    expect(vault.read(`Daily/${today}.md`)).toBe("");
+    const again = await context.newPage();
+    await again.goto(vault.url + "/");
+    await expect(activeTab(again)).toHaveText(today);
+    await expect.poll(() => vault.read(`Daily/${today}.md`)).toContain("from the template");
+  });
+
+  test("fills it the next time after the write fails once", async ({ page, vault }) => {
+    let failed = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      if (!failed && body.cmd === "write_note" && String(body.args?.path ?? "").includes(`Daily/${today}`)) {
+        failed = true;
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({ error: "No space left on device (os error 28)" }) });
+      }
+      return route.fallback();
+    });
+    await page.goto(vault.url + "/");
+    await expect.poll(() => failed).toBe(true);
+    await settle(page, 800);
+    await page.reload();
+    await expect(activeTab(page)).toHaveText(today);
+    await expect.poll(() => vault.read(`Daily/${today}.md`)).toContain("from the template");
+  });
+});
+
+test.describe("a vault that opens its daily note, in a window opened for one note", () => {
+  test.use({ vaultFiles: plainDaily });
+
+  test("stays on that note when the window reloads without it", async ({ page, vault }) => {
+    const root = ((await (await fetch(`${vault.url}/api/vault-root`)).json()) as { root: string }).root;
+    await page.goto(`${vault.url}/?vault=${encodeURIComponent(root)}&note=Ideas.md`);
+    await expect(activeTab(page)).toHaveText("Ideas");
+    await settle(page, 1200);
+    // As a moved tab's window does when it reloads: the vault alone.
+    await page.goto(`${vault.url}/?vault=${encodeURIComponent(root)}`);
+    await expect(activeTab(page)).toHaveText("Ideas");
+    await settle(page, 1500);
+    await expect(activeTab(page)).toHaveText("Ideas");
+    expect(vault.exists(`Daily/${today}.md`)).toBe(false);
   });
 });
