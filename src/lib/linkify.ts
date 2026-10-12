@@ -788,6 +788,12 @@ export function keepsEmphasis(lines: string[], i: number, from: number, to: numb
 
 export const EMPHASIS_CHECK_LIMIT = 3000;
 
+/** Runs `pass` (which links what it can and says how many) until one links
+ * nothing, at most `limit` times. */
+export async function linkUntilSettled(pass: () => Promise<number>, limit = 100): Promise<void> {
+  for (let round = 0; round < limit; round++) if (!(await pass())) return;
+}
+
 // Which lines of a note start a list item, as found so far (each line kept
 // with its answer, so an edited line is looked at again). A caller passes the
 // same array only while the note is unchanged, as a scan does.

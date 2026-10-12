@@ -362,10 +362,10 @@ describe("2.9b review regressions", () => {
     ];
     expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => `${m.name} ${m.line}`)).toEqual(["S 1", "S 7", "T 3", "U 3", "V 3", "W 3", "X 4"]);
   });
-  it("scans a line of thousands of quote and list marks quickly", () => {
-    const notes = [note("Ideas.md"), note("S.md", "> ".repeat(20000) + "Ideas\n" + "-  ".repeat(20000) + "Ideas")];
+  it("scans a line of thousands of quote and list marks quickly, past 40 levels as text", () => {
+    const notes = [note("Ideas.md"), note("S.md", "> ".repeat(20000) + "Ideas\n" + "-  ".repeat(20000) + "Ideas\n\n" + "> ".repeat(40) + "Ideas")];
     const t0 = performance.now();
-    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes)).toHaveLength(2);
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([4]);
     expect(performance.now() - t0).toBeLessThan(1500);
   });
   it("leaves out a mention in raw HTML", () => {

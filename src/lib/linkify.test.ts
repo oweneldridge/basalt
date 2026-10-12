@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMPHASIS_CHECK_LIMIT, keepsEmphasis, linkifyMention, maskForMentions, mentionLines } from "./linkify";
+import { EMPHASIS_CHECK_LIMIT, keepsEmphasis, linkifyMention, linkUntilSettled, maskForMentions, mentionLines, mentionLinesFor } from "./linkify";
 import { setStrictLineBreaks } from "./render";
 
 describe("linkifyMention", () => {
@@ -187,6 +187,43 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
     expect(link('[r]: https://e.com "a Foo\nb"\n\nUse [r]', 0)).toBeNull();
     expect(link('[r]: https://e.com "a\nFoo b"\n\nUse [r]', 1)).toBeNull();
     expect(mentionLines("[x](\r\nFoo.md)\r\n")[1]).not.toContain("Foo");
+  });
+  it("links again while a pass links something, up to 100 passes", async () => {
+    let calls = 0;
+    await linkUntilSettled(async () => (++calls < 8 ? 1 : 0));
+    expect(calls).toBe(8);
+    calls = 0;
+    await linkUntilSettled(async () => ++calls);
+    expect(calls).toBe(100);
+  });
+  it("keeps each list item's length to itself when checking emphasis", () => {
+    const long = "- (**Foo**) " + "word ".repeat(700);
+    const short = "- (**Foo**) here";
+    const at = (l: string) => [l.indexOf("Foo"), l.indexOf("Foo") + 3] as const;
+    for (const lines of [[long, short], [short, long]]) {
+      const keeps = lines.map((l, i) => keepsEmphasis(lines, i, ...at(l)));
+      expect(keeps).toEqual(lines.map((l) => l === short));
+    }
+  });
+  it("skips mentions nested past Reading view's 40 levels, which show as their source", () => {
+    const has = (note: string) => mentionLines(note).join("\n").includes("Foo");
+    // Lists nested by tabs: two columns a level, four to a tab.
+    const tabbed = (n: number) =>
+      Array.from({ length: n + 1 }, (_, k) => "\t".repeat(Math.floor(k / 2)) + " ".repeat((2 * k) % 4) + "- " + (k === n ? "Foo" : "a")).join("\n");
+    expect(has(">".repeat(41) + " Foo")).toBe(false);
+    expect(has(">".repeat(40) + " Foo")).toBe(true);
+    expect(has("> ".repeat(41) + "# Foo")).toBe(false);
+    expect(has("> ".repeat(40) + "# Foo")).toBe(true);
+    expect(has("> ".repeat(41) + "| Foo | b |\n" + "> ".repeat(41) + "| - | - |")).toBe(false);
+    expect(has("- ".repeat(41) + "Foo\n<!-- x -->")).toBe(false);
+    expect(has("- ".repeat(40) + "Foo")).toBe(true);
+    expect(has("> a\n\n".repeat(41) + "Foo\n<!-- x -->")).toBe(true);
+    expect(has(tabbed(40))).toBe(false);
+    expect(has(tabbed(39))).toBe(true);
+    // Read without a parse, as a scan that skips indented code does.
+    expect(mentionLines(tabbed(40), false, false).join("\n")).not.toContain("Foo");
+    expect(mentionLines(tabbed(39), false, false).join("\n")).toContain("Foo");
+    expect(mentionLinesFor(">".repeat(41) + " Foo", /Foo/i).join("")).not.toContain("Foo");
   });
   it("stays quick on deeply nested brackets", () => {
     for (const note of ["[x\n".repeat(8000) + "]\n".repeat(8000), "[x ".repeat(30000) + "]".repeat(30000) + " Foo"]) {

@@ -14,7 +14,7 @@
 import { parser as baseParser, GFM } from "@lezer/markdown";
 import type { BlockContext, DelimiterType, InlineContext, Line, MarkdownConfig } from "@lezer/markdown";
 import type { SyntaxNode } from "@lezer/common";
-import { frontmatterEnd, mdImageTarget, proseMask, TAG_BEFORE, TAG_NAME, wikilinkLabel } from "./markdown";
+import { blockDepths, frontmatterEnd, mdImageTarget, proseMask, TAG_BEFORE, TAG_NAME, wikilinkLabel } from "./markdown";
 
 const TAG_AT = new RegExp(`^#(${TAG_NAME})`, "u");
 import { parseFm } from "./frontmatter";
@@ -1045,7 +1045,7 @@ export function rawRanges(md: string, indented: boolean, withHtml = true, depth 
   const code = indented && INDENTED_LINES.test(md);
   const html = withHtml && mayRunHtml(md);
   // What follows an HTML block is always read, for how deep it sits.
-  if (!code && !html && !depth) return [];
+  if (!code && !html && !depth) return mayNestDeep(md) ? tooDeep(md) : [];
   const out: [number, number][] = [];
   // Each quote and list a block sits in takes it a level deeper, as in Reading view.
   let nest = 0;
@@ -1054,12 +1054,12 @@ export function rawRanges(md: string, indented: boolean, withHtml = true, depth 
       if (NESTING.has(n.name)) nest--;
     },
     enter: (n) => {
-      if (NESTING.has(n.name)) nest++;
       // Too deep, Reading view shows a block as its source.
-      if ((n.name === "Paragraph" || n.name === "HTMLBlock") && depth + nest > MAX_DEPTH) {
+      if (depth + nest > MAX_DEPTH) {
         out.push([n.from, n.to]);
         return false;
       }
+      if (NESTING.has(n.name)) nest++;
       switch (n.name) {
         case "FencedCode":
           return false;
@@ -1097,6 +1097,39 @@ export function rawRanges(md: string, indented: boolean, withHtml = true, depth 
   });
   return out;
 }
+
+/** The lines of blocks nested past Reading view's limit, which show as their
+ * source, read without a parse: a line of thousands of markers makes one slow. */
+function tooDeep(md: string): [number, number][] {
+  const lines = md.split("\n");
+  const depths = blockDepths(lines);
+  const out: [number, number][] = [];
+  for (let k = 0, at = 0; k < lines.length; at += lines[k].length + 1, k++) if (depths[k] > MAX_DEPTH) out.push([at, at + lines[k].length]);
+  return out;
+}
+
+/** Whether a line's quote and list markers and indent are wide enough to put
+ * a block past Reading view's nesting limit: each level takes a column. */
+function mayNestDeep(md: string): boolean {
+  if (!DEEP_HINT.test(md)) return false;
+  for (let i = 0; i < md.length; ) {
+    let col = 0;
+    let k = i;
+    for (; k < md.length && col <= MAX_DEPTH; k++) {
+      const c = md.charCodeAt(k);
+      if (c === 9) col += 4 - (col % 4);
+      else if (c === 32 || c === 62 || c === 42 || c === 43 || c === 45 || c === 46 || c === 41 || (c >= 48 && c <= 57)) col++;
+      else break;
+    }
+    if (col > MAX_DEPTH) return true;
+    const next = md.indexOf("\n", k);
+    if (next < 0) return false;
+    i = next + 1;
+  }
+  return false;
+}
+// A tab is up to four columns, so a line needs at least this many of them.
+const DEEP_HINT = new RegExp(`(?:^|\\n)[ \\t>*+\\-.)0-9]{${Math.ceil((MAX_DEPTH + 1) / 4)}}`);
 
 /** `md` with its `%%comments%%` taken out, as Reading view takes them out, and
  * where each offset of that text was in `md`. */
