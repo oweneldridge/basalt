@@ -544,6 +544,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Accessibility
 
+- Placeholder text in the search and command boxes reaches 4.5:1 contrast in
+  both themes, and view tab names in light mode are no longer faded.
+- The Files panel's sort menu sits on its own row, so the panel no longer
+  scrolls sideways at its default width.
+- Side panel tabs are icons, named in their tooltips and to screen readers, so
+  every panel's tab stays in view; when there are more than fit, they wrap
+  onto another row. They close from their menu, a middle click or Delete.
 - Graph view and Slides are dialogs: focus stays inside, Escape returns it to
   where it was, and the rest of the app is inert. Slides announce "Slide 2 of
   5" as you move. The graph's filter, mode buttons and canvas have names.
