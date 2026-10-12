@@ -442,12 +442,16 @@ describe("CommonMark and Obsidian fidelity (Reading view hunt)", () => {
     expect(() => renderMarkdown("- ".repeat(5000) + "a")).not.toThrow();
   });
 
-  it("renders a callout's body from the quote's own blocks", () => {
-    expect(renderMarkdown("> > [!note] T\n> > body")).not.toContain("<blockquote><p>body");
+  it("reads a callout's body as a note of its own, past the quote's own markers", () => {
     expect(renderMarkdown("> > [!note] T\n> > body")).toContain('<div class="md-callout-body"><p>body</p></div>');
     expect(renderMarkdown("- - > [!note] T\n    > body")).toContain('<div class="md-callout-body"><p>body</p></div>');
-    expect(renderMarkdown("> [!note] T\n> 2. ```\n>    Foo")).not.toContain("<pre");
+    expect(renderMarkdown("> [!note] T\n> 2. ```\n>    Foo")).toContain("<pre");
     expect(renderMarkdown("> [!tip] Run\n> ```bash\n> x\n> ```\n> after")).toContain('<code class="language-bash">x</code></pre>\n<p>after</p>');
+    expect(renderMarkdown("> [!note] Title A\n> body text\n> ---")).toContain("<h2>body text</h2>");
+    expect(renderMarkdown("> [!warning] B\n> first\n> second\n> ===")).toContain("<h1>first");
+    expect(renderMarkdown("> [!info] Stats\n> | Metric | Value |\n> |---|---|\n> | Notes | 42 |")).toContain("<table");
+    expect(renderMarkdown("> [!tip]- C\n> folded body\n> ---\n> after rule")).toContain("folded body");
+    expect(renderMarkdown("> [!note] T\n> Body line one", { lines: true })).toMatch(/<p data-line="1">Body line one/);
   });
 
   it("survives absurdly deep blockquotes", () => {

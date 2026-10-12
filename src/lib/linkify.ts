@@ -3,7 +3,7 @@
 // + length-preserving masking so we splice into the ORIGINAL line by offset,
 // never touching a mention that sits inside inline code or an existing link.
 import { mdLinkRegexGlobal, tagRegex, proseMask, TAG_NAME } from "./markdown";
-import { commentRanges, INDENTED_RE, mayIndent, mayNestDeep, mayRunHtml, rawRangesBeyondComments, renderMarkdown, strictLineBreaksOn } from "./render";
+import { CALLOUT_LINE, commentRanges, INDENTED_RE, mayIndent, mayNestDeep, mayRunHtml, rawRangesBeyondComments, renderMarkdown, strictLineBreaksOn } from "./render";
 
 // A code span: a run of backticks, closed by a run of the same length.
 const INLINE_CODE_RE = /(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g;
@@ -611,8 +611,8 @@ export function mentionLines(content: string, indented = true, html = true, deep
 }
 
 /** `mentionLines` as a scan for the note `named` (a mention regex, not global)
- * runs it: indented code, raw HTML and nesting past Reading view's limit are
- * looked for only near a line naming the note, which skips a parse. The
+ * runs it: indented code, raw HTML, callouts and nesting past Reading view's
+ * limit are looked for only near a line naming the note, which skips a parse. The
  * Backlinks list and Link all both read a note this way, so they agree. */
 export function mentionLinesFor(content: string, named: RegExp): string[] {
   const code = mayIndent(content);
@@ -643,7 +643,7 @@ export function mentionLinesFor(content: string, named: RegExp): string[] {
     for (const l of content.slice(from, to).split("\n")) {
       if (code && !indented && INDENTED_RE.test(l)) indented = true;
       if (html && !raw && l.includes("<") && mayRunHtml(l + "\n")) raw = true;
-      if (!deep && mayNestDeep(l)) deep = true;
+      if (!deep && (mayNestDeep(l) || CALLOUT_LINE.test(l))) deep = true;
     }
     last = to;
     if ((indented || !code) && (raw || !html) && deep) break;

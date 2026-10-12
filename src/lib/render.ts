@@ -613,6 +613,43 @@ function lineEnd(doc: Doc, l: number): number {
   return l + 1 < doc.lineStarts.length ? doc.lineStarts[l + 1] - 1 : doc.src.length;
 }
 
+// A line that may start a callout, in a quote however deep or in a list item.
+export const CALLOUT_LINE = /(?:^|\n)[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]*)*>[ \t]*\[![\w-]+\]/;
+
+/** The callout title a quote `n` leads with (CALLOUT's match), if it is one. */
+function calloutOf(src: string, n: SyntaxNode): RegExpExecArray | null {
+  let lead = n.firstChild;
+  while (lead?.name === "QuoteMark") lead = lead.nextSibling;
+  if (!lead || !/^(?:Paragraph|SetextHeading[12])$/.test(lead.name)) return null;
+  const eol = src.indexOf("\n", lead.from);
+  return CALLOUT.exec(src.slice(lead.from, eol < 0 || eol > lead.to ? lead.to : eol).trim());
+}
+
+/** A callout's body as Reading view reads it, a note of its own: the quote's
+ * lines after its title, each cut past this quote's own `>` (and the quotes
+ * and indents around it). With the line each came from and how much was cut. */
+function calloutBody(doc: Doc, n: SyntaxNode): { text: string; lines: number[]; cut: number[] } {
+  let depth = 0;
+  for (let p: SyntaxNode | null = n; p; p = p.parent) if (p.name === "Blockquote") depth++;
+  const lines: number[] = [];
+  const cut: number[] = [];
+  const out: string[] = [];
+  for (let l = lineOf(doc, n.from) + 1, last = lineOf(doc, Math.max(n.from, n.to - 1)); l <= last; l++) {
+    const line = doc.src.slice(doc.lineStarts[l], Math.min(lineEnd(doc, l), n.to));
+    let k = 0;
+    let seen = 0;
+    while (k < line.length && seen < depth && " \t>".includes(line[k])) {
+      if (line[k++] === ">" && ++seen === depth && (line[k] === " " || line[k] === "\t")) k++;
+    }
+    // A lazy line, with fewer `>` than that, runs on as it is.
+    if (seen < depth) for (k = 0; k < line.length && " \t>".includes(line[k]); ) k++;
+    out.push(line.slice(k));
+    lines.push(l);
+    cut.push(k);
+  }
+  return { text: out.join("\n"), lines, cut };
+}
+
 /** Whether there's a blank line between `from` and `to`. */
 function blankBetween(doc: Doc, from: number, to: number): boolean {
   return /\n[ \t>]*\n/.test(doc.src.slice(from, to));
@@ -781,38 +818,22 @@ class Blocks {
   }
 
   private quote(n: SyntaxNode): string {
-    const inner = new Blocks(this.doc, this.ctx, this.depth + 1);
-    const blocks: SyntaxNode[] = [];
-    for (let c = n.firstChild; c; c = c.nextSibling) if (c.name !== "QuoteMark") blocks.push(c);
-    // A callout is a quote whose first line is `[!type] Title`: the rest of
-    // that paragraph and the blocks after it, as the quote holds them, are
-    // its body.
-    const lead = blocks[0];
-    const head = lead && /^(?:Paragraph|SetextHeading[12])$/.test(lead.name) ? this.src(lead).split("\n", 1)[0] : "";
-    const callout = CALLOUT.exec(head.trim());
-    if (!callout) return `<blockquote>${inner.children(n).join("\n")}</blockquote>`;
+    const callout = calloutOf(this.doc.src, n);
+    if (!callout) return `<blockquote>${new Blocks(this.doc, this.ctx, this.depth + 1).children(n).join("\n")}</blockquote>`;
     const type = callout[1].toLowerCase();
     const fold = callout[2]; // "", "+" (foldable-open) or "-" (foldable-closed)
     const titleText = callout[3].trim() || callout[1].charAt(0).toUpperCase() + callout[1].slice(1).toLowerCase();
     const icon = `<span class="md-callout-icon">${calloutIcon(type)}</span>`;
     const title = inlineOf(titleText, this.ctx);
-    const parts: string[] = [];
-    // The paragraph's next line, past its quote markers.
-    let rest = lead.from + head.length + 1;
-    while (rest < lead.to && " \t>".includes(this.doc.src[rest])) rest++;
-    if (lead.name === "Paragraph" && rest < lead.to && this.doc.src.slice(rest, lead.to).trim()) {
-      parts.push(this.depth + 1 > MAX_DEPTH ? `<p>${escapeHtml(this.doc.src.slice(rest, lead.to))}</p>` : `<p>${inlineNode(this.doc, this.ctx, lead, rest, lead.to)}</p>`);
-    }
-    for (const b of blocks.slice(1)) {
-      const html = inner.block(b);
-      if (html) parts.push(html);
-    }
-    const body = parts.length ? `<div class="md-callout-body">${parts.join("\n")}</div>` : "";
+    const { text, lines } = calloutBody(this.doc, n);
+    const map = lines.map((l) => this.doc.map[l] ?? l);
+    const body = text.trim() ? `<div class="md-callout-body">${renderDoc(text, map, this.ctx, this.depth + 1)}</div>` : "";
     const cls = `md-callout md-callout-${escapeHtml(type)} md-callout-color-${calloutColor(type)}`;
     if (fold)
       return `<details class="${cls} md-callout-foldable"${fold === "-" ? "" : " open"}><summary class="md-callout-title">${icon}${title}</summary>${body}</details>`;
     return `<div class="${cls}"><div class="md-callout-title">${icon}${title}</div>${body}</div>`;
   }
+
 
   private list(n: SyntaxNode): string {
     const items: SyntaxNode[] = [];
@@ -1053,14 +1074,17 @@ const NESTING = new Set(["Blockquote", "BulletList", "OrderedList"]);
 export function rawRanges(md: string, indented: boolean, withHtml = true, depth = 0, fences = false, deep = true): [number, number][] {
   const code = indented && INDENTED_LINES.test(md);
   const html = withHtml && mayRunHtml(md);
-  // What follows an HTML block is always read, for how deep it sits. With
-  // `deep` false the caller found no line nested past the limit.
-  if (!code && !html && !depth && !(deep && mayNestDeep(md))) return [];
+  // What follows an HTML block is always read, for how deep it sits, and a
+  // callout's body, which Reading view reads as a note of its own. With
+  // `deep` false the caller found no deep line or callout near what it needs.
+  const callouts = deep && !code && !html && !depth && CALLOUT_LINE.test(md);
+  if (!code && !html && !depth && !callouts && !(deep && mayNestDeep(md))) return [];
   // Reading view leaves frontmatter out before it reads the note (blanked
   // only now, as a blanked line would look indented).
   if (!depth && md.startsWith("---")) md = blankFrontmatter(md);
-  if (!code && !html && !depth) return tooDeep(md);
+  if (!code && !html && !depth && !callouts) return tooDeep(md);
   const out: [number, number][] = [];
+  let doc: Doc | undefined;
   // Each quote and list a block sits in takes it a level deeper, as in Reading view.
   let nest = 0;
   mdParser.parse(md).iterate({
@@ -1074,14 +1098,25 @@ export function rawRanges(md: string, indented: boolean, withHtml = true, depth 
         out.push([n.from, n.to]);
         return false;
       }
-      if (n.name === "Blockquote" && depth + nest === MAX_DEPTH) {
-        let lead = n.node.firstChild;
-        while (lead?.name === "QuoteMark") lead = lead.nextSibling;
-        const eol = lead ? md.indexOf("\n", lead.from) : -1;
-        if (lead && CALLOUT.test(md.slice(lead.from, eol < 0 ? n.to : Math.min(eol, n.to)).trim())) {
-          if (eol >= 0 && eol < n.to) out.push([eol + 1, n.to]);
+      if (n.name === "Blockquote" && calloutOf(md, n.node)) {
+        const eol = md.indexOf("\n", n.from);
+        if (eol < 0 || eol >= n.to) return false;
+        if (depth + nest === MAX_DEPTH) {
+          out.push([eol + 1, n.to]);
           return false;
         }
+        // Its body, read on its own, with each range taken back to the note.
+        doc ??= makeDoc(md, undefined);
+        const body = calloutBody(doc, n.node);
+        const starts = [0];
+        for (let i = body.text.indexOf("\n"); i !== -1; i = body.text.indexOf("\n", i + 1)) starts.push(i + 1);
+        const back = (x: number) => {
+          let k = starts.length - 1;
+          while (k > 0 && starts[k] > x) k--;
+          return doc!.lineStarts[body.lines[k]] + body.cut[k] + x - starts[k];
+        };
+        for (const [f, t] of rawRanges(body.text, indented, withHtml, depth + nest + 1, true)) out.push([back(f), back(t)]);
+        return false;
       }
       if (NESTING.has(n.name)) nest++;
       switch (n.name) {
