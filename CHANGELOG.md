@@ -517,6 +517,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and italics past a bullet between numbered items or a `#` and a tab, links a
   long chain of mentions in one go, stays quick on long lines, and leaves alone
   mentions nested past Reading view's depth limit inside quotes.
+- The index reads quotes, lists and code the way the editor's parser does, so
+  it finds code fences in a quote inside a list item, after a link reference
+  definition (`[a]: url`), after an HTML block in a list item and in notes
+  with CRLF line endings. What follows an HTML block's closing tag ends where
+  the block does, as Reading view renders it.
+- Unlinked mentions nested more than 40 quotes or lists deep, which Reading
+  view shows as plain text, aren't offered for linking, headings and tables
+  included. A line of thousands of quote or list markers scans in a moment.
+- Switching vaults several times quickly, when the later switches fail, leaves
+  you in the vault that opened, and a switch that never answers holds up the
+  next one for 10 seconds at most. A failed switch while today's daily note
+  loads its template no longer stops it opening.
+- A daily note you emptied yourself stays empty: only one left empty by a
+  start that stopped is filled from its template, and only if the template is
+  there. With Templater Lite off, today's empty note opens instead of a notice
+  that it wasn't made. A window opened for one note opens the daily note when
+  you pick its vault from the switcher.
 
 ### Security
 
@@ -544,13 +561,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Accessibility
 
-- Placeholder text in the search and command boxes reaches 4.5:1 contrast in
-  both themes, and view tab names in light mode are no longer faded.
+- Placeholder text in every text box reaches 4.5:1 contrast in both themes,
+  and view tab names in light mode are no longer faded.
 - The Files panel's sort menu sits on its own row, so the panel no longer
   scrolls sideways at its default width.
 - Side panel tabs are icons, named in their tooltips and to screen readers, so
   every panel's tab stays in view; when there are more than fit, they wrap
-  onto another row. They close from their menu, a middle click or Delete.
+  onto another row. A plugin's panel shows its name, and a note tab in a
+  narrow side panel shrinks to fit. They close from their menu, a middle click
+  or Delete, and focus stays on the panel's tabs. The Outline icon is drawn on
+  whole pixels, so it stays sharp on a 1x screen.
 - Graph view and Slides are dialogs: focus stays inside, Escape returns it to
   where it was, and the rest of the app is inert. Slides announce "Slide 2 of
   5" as you move. The graph's filter, mode buttons and canvas have names.
