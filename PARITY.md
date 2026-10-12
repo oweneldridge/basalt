@@ -100,7 +100,9 @@ Still different: Backlinks leaves out a mention Link all can't link without
 breaking it or changing the page, where Obsidian lists it and its Link does
 both: one in raw HTML, right after `[` (Obsidian writes `[[[Foo]]]`, a link to
 "[Foo"), after a `[[` nothing on its line closes, or whose brackets would undo
-or start bold, italics or a highlight around it. A `[[` inside a link's target
+or start bold, italics or a highlight around it (in a paragraph of more than
+3,000 characters, any mention right next to them, as checking each would be
+slow). A `[[` inside a link's target
 (`[[a [[b]]`) links to "a [[b" in Reading view but to "b" in the index and
 Live Preview; which one Obsidian reads hasn't been checked. Where the editor's
 parser and CommonMark disagree on a `#` and a tab or a backtick after an
