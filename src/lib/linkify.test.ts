@@ -373,6 +373,29 @@ describe("checking emphasis stays quick", () => {
     expect(keepsEmphasis(long, long.length - 1, 10 + String(long.length).length, 13 + String(long.length).length)).toBe(true);
   });
 
+  it("reads a `#` and a tab, a number after a bullet, and HTML inside a line as text", () => {
+    expect(keeps("*a\n#\tFoo*b")).toBe(false);
+    expect(keeps("1. a\n- b *x\n3. Foo*c")).toBe(false);
+    expect(keeps("*a %%\n- c%% Foo*b")).toBe(false);
+    const long = "- **x Foo**, y\n" + ("- " + "word ".repeat(15) + "\n").repeat(45) + "- 1 < 2";
+    expect(keeps(long)).toBe(true);
+  });
+
+  it("stays quick on a long line of mentions by emphasis", () => {
+    const line = "*Foo*a".repeat(25_000);
+    const t0 = performance.now();
+    const lines = [line];
+    for (let at = line.indexOf("Foo"); at >= 0; at = line.indexOf("Foo", at + 1)) keepsEmphasis(lines, 0, at, at + 3);
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+
+  it("looks again when a line of the same note changes", () => {
+    const lines = ["*a", "- Foo*b"];
+    expect(keepsEmphasis(lines, 1, 2, 5)).toBe(true);
+    lines[0] = "$$";
+    expect(keepsEmphasis(lines, 1, 2, 5)).toBe(false);
+  });
+
   it("checks a numbered list item by item, quickly", () => {
     const lines = Array.from({ length: 1600 }, (_, i) => `${i + 1}. item (*Foo*) [[Bar]]`);
     const t0 = performance.now();

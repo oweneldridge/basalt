@@ -4713,10 +4713,10 @@ export default function App() {
       // Snapshot the list; line numbers stay valid (linkify never adds lines).
       for (const m of [...mentions]) await linkifyInNote(m.path, m.line, target);
       // A link can make a mention near it linkable (`*Foo*Foo`, or `o*Foo` then
-      // `_*Foo` below), so the notes are read again, a few times at most.
+      // `_*Foo` below), so the notes are read again while that keeps happening.
       const names = [target.name, ...index.current.aliasesOf(target.path)];
       const touched = [...new Set(mentions.map((m) => m.path))];
-      for (let round = 0; round < 3; round++) {
+      for (let round = 0; round < 100; round++) {
         const fresh: VaultNote[] = [];
         for (const p of touched) {
           const note = notesRef.current.find((n) => n.path === p);

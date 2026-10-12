@@ -729,9 +729,11 @@ export function keepsEmphasis(lines: string[], i: number, from: number, to: numb
   while (b < lines.length - 1 && b - i < 50 && !ends(lines[b + 1])) b++;
   // Emphasis can't reach past a heading or into another list item, so the
   // check narrows to the mention's own, where nothing could make those lines
-  // read otherwise (comments, math, HTML, quotes).
-  if (!lines.slice(a, b + 1).some((l) => /%%|\$\$|<|^[ \t]*>/.test(l))) {
-    const heading = (k: number) => /^ {0,3}#{1,6}(?:[ \t]|$)/.test(lines[k]);
+  // read otherwise (comments, math, a line of HTML, quotes).
+  const wide = blockFacts(lines, a, b);
+  wide.plain ??= !lines.slice(a, b + 1).some((l) => /%%|\$\$|^[ \t]*>|^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*</.test(l));
+  if (wide.plain) {
+    const heading = (k: number) => HEADING_RE.test(lines[k]);
     let known = itemsKnown.get(lines);
     if (!known) itemsKnown.set(lines, (known = new Map()));
     const memo = known;
@@ -753,9 +755,12 @@ export function keepsEmphasis(lines: string[], i: number, from: number, to: numb
           is = !!m;
           break;
         }
+        // The nearest item above at this indent or less: a number continues
+        // a numbered list, a bullet means it's in a bulleted one.
         let j = at - 1;
-        while (j > 0 && !ends(lines[j]) && !LIST_START_RE.exec(lines[j])?.[3]) j--;
-        if (ends(lines[j]) || !LIST_START_RE.exec(lines[j])?.[3]) break;
+        let p: RegExpExecArray | null = null;
+        for (; j >= 0 && !ends(lines[j]); j--) if ((p = LIST_START_RE.exec(lines[j])) && p[1].length <= m[1].length) break;
+        if (j < 0 || ends(lines[j]) || !p?.[3]) break;
         at = j;
       }
       for (const at of chain) memo.set(at, [lines[at], is]);
@@ -769,7 +774,9 @@ export function keepsEmphasis(lines: string[], i: number, from: number, to: numb
   // Each mention renders its paragraph, so a huge one would be slow to scan;
   // its mentions by emphasis are left alone instead. Links count as their
   // text, so linking one mention doesn't change the answer for the next.
-  if (para.join("\n").replace(/\[\[(?:[^\]|\n]*\|)?([^\]\n]*)\]\]/g, "$1").length > EMPHASIS_CHECK_LIMIT) return false;
+  const own = blockFacts(lines, a, b);
+  own.shown ??= para.join("\n").replace(/\[\[(?:[^\]|\n]*\|)?([^\]\n]*)\]\]/g, "$1").length;
+  if (own.shown > EMPHASIS_CHECK_LIMIT) return false;
   const cut = Math.min(...para.map((l) => /^[ \t]*/.exec(l)![0].length));
   const text = (ls: string[]) => ls.map((l) => l.slice(cut)).join("\n");
   const linked = [...para];
@@ -782,8 +789,24 @@ export function keepsEmphasis(lines: string[], i: number, from: number, to: numb
 export const EMPHASIS_CHECK_LIMIT = 3000;
 
 // Which lines of a note start a list item, as found so far (each line kept
-// with its answer, so an edited line is looked at again).
+// with its answer, so an edited line is looked at again). A caller passes the
+// same array only while the note is unchanged, as a scan does.
 const itemsKnown = new WeakMap<string[], Map<number, [string, boolean]>>();
+
+// What a stretch of a note's lines holds, worked out once for all the
+// mentions in it: whether nothing in it reads otherwise, and its length as
+// shown. Kept with the lines it was found for, so a changed one starts over.
+const blocksKnown = new WeakMap<string[], Map<string, { lines: string[]; plain?: boolean; shown?: number }>>();
+function blockFacts(lines: string[], a: number, b: number) {
+  let known = blocksKnown.get(lines);
+  if (!known) blocksKnown.set(lines, (known = new Map()));
+  let facts = known.get(`${a}:${b}`);
+  if (!facts || facts.lines.some((l, n) => l !== lines[a + n])) known.set(`${a}:${b}`, (facts = { lines: lines.slice(a, b + 1) }));
+  return facts;
+}
+
+// A heading, as the editor's parser reads one (`#` and a tab is text).
+const HEADING_RE = /^ {0,3}#{1,6}(?: |$)/;
 
 // A list item with text: its indent, bullet, or number and delimiter.
 const LIST_START_RE = /^( {0,3})(?:([-*+])|(\d{1,9})([.)]))[ \t]+\S/;

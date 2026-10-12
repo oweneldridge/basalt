@@ -141,7 +141,7 @@ test.describe("Link all", () => {
 });
 
 test.describe("Link all, where one link makes another mention linkable", () => {
-  test.use({ vaultFiles: { "Chain.md": "o*Ideas\n_*Ideas\nand *Ideas*Ideas stuck\n" } });
+  test.use({ vaultFiles: { "Chain.md": "o*Ideas\n_*Ideas\nand *Ideas*Ideas stuck\n", "Long.md": "*Ideas".repeat(16) + "* x\n" } });
 
   test("links those too, and leaves none listed", async ({ page, vault }) => {
     await openApp(page, vault);
@@ -152,6 +152,8 @@ test.describe("Link all, where one link makes another mention linkable", () => {
     await unlinked.locator(".link-all-btn").click();
     await expect.poll(() => vault.read("Chain.md")).toBe("o*[[Ideas]]\n_*[[Ideas]]\nand *[[Ideas]]*[[Ideas]] stuck\n");
     await expect(unlinked.locator(".ref-group", { hasText: "Chain" })).toHaveCount(0);
+    await expect(unlinked.locator(".ref-group", { hasText: "Long" })).toHaveCount(0);
+    expect(vault.read("Long.md")).toBe("*[[Ideas]]".repeat(16) + "* x\n");
   });
 });
 
