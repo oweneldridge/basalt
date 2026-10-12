@@ -363,7 +363,9 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
        * (file, oldPath). Pass the returned ref to plugin.registerEvent(). */
       on: (name: VaultEventName, cb: (...args: unknown[]) => void): EventRef => {
         const key = `${ctx.info.id}:${name}`;
-        const ref = subscribe(vaultListeners, name, cb);
+        // Its own handler each time, so subscribing twice runs it twice (as in
+        // Obsidian) and each off() ends one subscription.
+        const ref = subscribe(vaultListeners, name, (...args: unknown[]) => cb(...args));
         listening.set(key, (listening.get(key) ?? 0) + 1);
         let live = true;
         return {

@@ -252,6 +252,31 @@ describe("plugin events", () => {
     expect(listensFor("tpl", "create")).toBe(false);
   });
 
+  it("counts one callback subscribed twice as two subscriptions, as Obsidian runs it", async () => {
+    installHost(fakeHost().host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          const cb = () => { globalThis.__twice = (globalThis.__twice ?? 0) + 1; };
+          const a = this.app.vault.on("create", cb);
+          globalThis.__second = this.app.vault.on("create", cb);
+          a.off();
+        }
+      };
+    `;
+    (globalThis as any).__twice = 0;
+    await loadPlugin(info({ id: "twice", code }));
+    expect(listensFor("twice", "create")).toBe(true);
+    emitVaultEvent("create", { path: "A.md", name: "A" });
+    expect((globalThis as any).__twice).toBe(1);
+    (globalThis as any).__second.off();
+    expect(listensFor("twice", "create")).toBe(false);
+    emitVaultEvent("create", { path: "B.md", name: "B" });
+    expect((globalThis as any).__twice).toBe(1);
+    await unloadPlugin("twice");
+  });
+
   it("registerInterval + registerDomEvent are cleared on unload", async () => {
     const { host } = fakeHost();
     installHost(host);
