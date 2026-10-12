@@ -147,3 +147,61 @@ describe("proseMask reads lists as the editor's parser does", () => {
     expect(mask("   - b\n    - ```\n      [[Foo]] #t")).toEqual([true, true, true]);
   });
 });
+
+describe("proseMask reads HTML blocks as Reading view shows them", () => {
+  const mask = (md: string) => proseMask(md.split("\n"));
+
+  it("reads a fence after a line that closes its tag as code", () => {
+    expect(mask('<p align="center">hi</p>\n~~~\nFoo\n~~~')).toEqual([true, false, false, false]);
+    expect(mask("<div>x</div>\n```\nFoo")).toEqual([true, false, false]);
+    expect(mask("</div>\n~~~\nFoo")).toEqual([true, false, false]);
+    expect(mask("<div>\nx\n</div>\n```\nFoo")).toEqual([true, true, true, false, false]);
+  });
+
+  it("opens no HTML block where the editor's parser doesn't", () => {
+    for (const open of ["<br/>", "<br />", '<img src="a.png"/>', "<x a:b>", "<!doctype html>"]) {
+      expect(mask(`${open}\n\`\`\`\n[[L]] #t\n\`\`\``), open).toEqual([true, false, false, false]);
+    }
+  });
+
+  it("opens one where it does, and in a list item", () => {
+    for (const open of ["<a_b>", "<source>", "<search>", "<pre>", "<!DOCTYPE html"]) expect(mask(`${open}\n\`\`\`\nx`), open).toEqual([true, true, true]);
+    expect(mask("- <div>\n  ```\n  x")).toEqual([true, true, true]);
+    expect(mask("<textarea>\n\n```\nx\n```")).toEqual([true, true, false, false, false]);
+    expect(mask("<pre>\n\n```\nx\n```\n</pre>")).toEqual([true, true, true, true, true, true]);
+    expect(mask("<!-- a -->\n```\nx")).toEqual([true, false, false]);
+    expect(mask("text\n<source>\n```\nx")).toEqual([true, true, true, true]);
+    expect(mask("text\n<search>\n```\nx")).toEqual([true, true, false, false]);
+    expect(mask("<!x\n```\nfoo")).toEqual([true, false, false]);
+  });
+});
+
+describe("proseMask reads list lines as Reading view does", () => {
+  const mask = (md: string) => proseMask(md.split("\n"));
+
+  it("reads a spaced thematic break as one, not as list items", () => {
+    expect(mask("- - -\n2. ```\n   [[L]] #t\n   ```")).toEqual([true, false, false, false]);
+    expect(mask("text\n01. ```\nx")).toEqual([true, true, true]);
+    expect(mask("text\n1. ```\n   x")).toEqual([true, false, false]);
+    expect(mask("* **\n2. ```> Foo")).toEqual([true, false]);
+  });
+
+  it("leaves no paragraph open after an item that starts with code or HTML", () => {
+    expect(mask("-     code\n2. ```\n   [[L]] #t\n   ```")).toEqual([true, false, false, false]);
+  });
+
+  it("reads a lazy dash as more of the paragraph, keeping its list open", () => {
+    expect(mask("0. a\n  -\n     ```\n     [[L]] #t\n     ```")).toEqual([true, true, false, false, false]);
+  });
+
+  it("remembers the lists a quote held after the quote ends", () => {
+    expect(mask("> 1. a\n2. ```\n   [[L]] #t\n   ```")).toEqual([true, false, false, false]);
+  });
+
+  it("stays quick on one line of many markers", () => {
+    const t0 = performance.now();
+    mask("- ".repeat(20_000) + "a\n" + "  x\n".repeat(20_000));
+    mask("1. ".repeat(20_000) + "a\n" + "  x\n".repeat(20_000));
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+});
