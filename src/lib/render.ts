@@ -1050,11 +1050,12 @@ export function mayRunHtml(md: string): boolean {
  * apart from it here, where the note's own mask doesn't split it. */
 const NESTING = new Set(["Blockquote", "BulletList", "OrderedList"]);
 
-export function rawRanges(md: string, indented: boolean, withHtml = true, depth = 0, fences = false): [number, number][] {
+export function rawRanges(md: string, indented: boolean, withHtml = true, depth = 0, fences = false, deep = true): [number, number][] {
   const code = indented && INDENTED_LINES.test(md);
   const html = withHtml && mayRunHtml(md);
-  // What follows an HTML block is always read, for how deep it sits.
-  if (!code && !html && !depth && !mayNestDeep(md)) return [];
+  // What follows an HTML block is always read, for how deep it sits. With
+  // `deep` false the caller found no line nested past the limit.
+  if (!code && !html && !depth && !(deep && mayNestDeep(md))) return [];
   // Reading view leaves frontmatter out before it reads the note (blanked
   // only now, as a blanked line would look indented).
   if (!depth && md.startsWith("---")) md = blankFrontmatter(md);
@@ -1148,7 +1149,7 @@ function blankFrontmatter(md: string): string {
 
 /** Whether a line's quote and list markers and indent are wide enough to put
  * a block past Reading view's nesting limit: each level takes a column. */
-function mayNestDeep(md: string): boolean {
+export function mayNestDeep(md: string): boolean {
   if (!DEEP_HINT.test(md)) return false;
   for (let i = 0; i < md.length; ) {
     let col = 0;
@@ -1198,9 +1199,9 @@ function withoutComments(md: string): { text: string; at: (p: number) => number 
 
 /** `rawRanges` as Reading view sees the note: with its `%%comments%%` taken
  * out first. The ranges are offsets into `md`. */
-export function rawRangesBeyondComments(md: string, indented: boolean, withHtml = true): [number, number][] {
+export function rawRangesBeyondComments(md: string, indented: boolean, withHtml = true, deep = true): [number, number][] {
   const { text, at } = withoutComments(md);
-  return rawRanges(text, indented, withHtml).map(([f, t]) => [at(f), t > f ? at(t - 1) + 1 : at(f)]);
+  return rawRanges(text, indented, withHtml, 0, false, deep).map(([f, t]) => [at(f), t > f ? at(t - 1) + 1 : at(f)]);
 }
 
 /** The code and comments in `md`, in order: `code` is true for code (left as

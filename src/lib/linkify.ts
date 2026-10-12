@@ -3,7 +3,7 @@
 // + length-preserving masking so we splice into the ORIGINAL line by offset,
 // never touching a mention that sits inside inline code or an existing link.
 import { mdLinkRegexGlobal, tagRegex, proseMask, TAG_NAME } from "./markdown";
-import { commentRanges, INDENTED_RE, mayIndent, mayRunHtml, rawRangesBeyondComments, renderMarkdown, strictLineBreaksOn } from "./render";
+import { commentRanges, INDENTED_RE, mayIndent, mayNestDeep, mayRunHtml, rawRangesBeyondComments, renderMarkdown, strictLineBreaksOn } from "./render";
 
 // A code span: a run of backticks, closed by a run of the same length.
 const INLINE_CODE_RE = /(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g;
@@ -594,10 +594,10 @@ function blankCodeAcross(code: string[], lines: string[], content: string, skip:
 /** Each line of a note as `maskForMentions` leaves it, with what spans lines
  * blanked too: frontmatter, fenced and indented code, `%%comments%%`, `$$`
  * math and HTML comments. What's left is where a mention can be linked. */
-export function mentionLines(content: string, indented = true, html = true): string[] {
+export function mentionLines(content: string, indented = true, html = true, deep = true): string[] {
   const lines = content.split("\n");
   const prose = proseMask(lines);
-  const shape = blank(content, hiddenSpans(content, indented, lines, prose, html));
+  const shape = blank(content, hiddenSpans(content, indented, lines, prose, html, deep));
   const text = shape.split("\n").map((l, i) => (prose[i] ? l : " ".repeat(l.length)));
   const { labels: refs, taken } = content.includes("]:") ? definitions(text, lines) : { labels: new Set<string>(), taken: new Set<number>() };
   // Code spans and links are found across lines: either may run on. Code
@@ -611,19 +611,19 @@ export function mentionLines(content: string, indented = true, html = true): str
 }
 
 /** `mentionLines` as a scan for the note `named` (a mention regex, not global)
- * runs it: indented code and raw HTML are looked for only near a line naming
- * the note, which skips a parse. The Backlinks list and Link all both read a
- * note this way, so they agree. */
+ * runs it: indented code, raw HTML and nesting past Reading view's limit are
+ * looked for only near a line naming the note, which skips a parse. The
+ * Backlinks list and Link all both read a note this way, so they agree. */
 export function mentionLinesFor(content: string, named: RegExp): string[] {
   const code = mayIndent(content);
   const html = mayRunHtml(content);
-  if (!code && !html) return mentionLines(content, false, false);
   // Read only the blocks (the lines between blank ones) that name the note. A
   // line of `>` alone doesn't end an HTML block, so it doesn't count here.
   const blank = (from: number, to: number) => /^[ \t\r]*$/.test(content.slice(from, to));
   const re = new RegExp(named.source, named.flags.replace("g", "") + "g");
   let indented = false;
   let raw = false;
+  let deep = false;
   let last = -1; // the end of the last block read
   for (let m; (m = re.exec(content)); ) {
     if (m.index < last) continue;
@@ -643,21 +643,22 @@ export function mentionLinesFor(content: string, named: RegExp): string[] {
     for (const l of content.slice(from, to).split("\n")) {
       if (code && !indented && INDENTED_RE.test(l)) indented = true;
       if (html && !raw && l.includes("<") && mayRunHtml(l + "\n")) raw = true;
+      if (!deep && mayNestDeep(l)) deep = true;
     }
     last = to;
-    if ((indented || !code) && (raw || !html)) break;
+    if ((indented || !code) && (raw || !html) && deep) break;
   }
   // A `<!`, `<?` or `<script`, `<pre` or `<style` above can run on past blank lines.
   if (html && !raw && last >= 0) raw = /<[!?]|<(?:script|pre|style)\b/i.test(content.slice(0, last));
-  return mentionLines(content, indented, raw);
+  return mentionLines(content, indented, raw, deep);
 }
 
 /** Where a note's text isn't prose though its lines are: `%%comments%%`, `$$`
  * math, HTML comments, raw HTML (unless `html` is false) and indented code
  * (unless `indented` is false). Frontmatter and fenced code are `proseMask`'s. */
-export function hiddenSpans(content: string, indented = true, lines = content.split("\n"), prose = proseMask(lines), html = true): [number, number][] {
+export function hiddenSpans(content: string, indented = true, lines = content.split("\n"), prose = proseMask(lines), html = true, deep = true): [number, number][] {
   const spans: [number, number][] = content.includes("%%") ? commentRanges(content) : [];
-  spans.push(...rawRangesBeyondComments(content, indented, html));
+  spans.push(...rawRangesBeyondComments(content, indented, html, deep));
   if (content.includes("$$") || content.includes("<!--")) {
     // Paired outside code and comments, so a `$$` in them can't shift the pairs.
     const outside = blank(content, spans)
