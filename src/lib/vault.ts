@@ -27,8 +27,9 @@ export interface VaultNote extends Note, FileStats {
   content: string;
 }
 
-/** A note reported changed by the watcher: absolute path + vault-relative path. */
-export interface ChangedNote {
+/** A note reported changed by the watcher: absolute path + vault-relative
+ * path, and its stats as the change left them. */
+export interface ChangedNote extends FileStats {
   path: string;
   rel: string;
 }

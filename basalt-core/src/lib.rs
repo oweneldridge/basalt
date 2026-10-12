@@ -49,11 +49,15 @@ fn file_stats(md: Option<&fs::Metadata>) -> (u64, u64, u64) {
 }
 
 /// A changed note reported by the watcher: absolute path (for reading) plus the
-/// vault-relative path (the stable key the frontend matches on).
+/// vault-relative path (the stable key the frontend matches on), and its stats
+/// as the change left them (0 when unavailable).
 #[derive(Serialize, Clone)]
 pub struct ChangedNote {
     path: String,
     rel: String,
+    mtime: u64,
+    ctime: u64,
+    size: u64,
 }
 
 static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -292,12 +296,26 @@ fn create_whole(path: &Path, content: &[u8]) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(exists(e)),
         // No hard links here (some network and FAT drives).
-        Err(_) => {
-            let mut f = fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(exists)?;
-            f.write_all(content).map_err(|e| format!("write: {e}"))?;
-            f.sync_all().map_err(|e| format!("fsync: {e}"))
-        }
+        Err(_) => create_in_place(path, |f| f.write_all(content).and_then(|()| f.sync_all())),
     }
+}
+
+/// Make a new file at `path` and write it with `write`, taking it away again
+/// if that fails, so no empty or partial note is left.
+fn create_in_place(path: &Path, write: impl FnOnce(&mut fs::File) -> std::io::Result<()>) -> Result<(), String> {
+    let mut f = fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            "note already exists".to_string()
+        } else {
+            format!("create: {e}")
+        }
+    })?;
+    let written = write(&mut f).map_err(|e| format!("write: {e}"));
+    if written.is_err() {
+        drop(f);
+        let _ = fs::remove_file(path);
+    }
+    written
 }
 
 /// A server running as root (the Docker image) must not hand the note to root:
@@ -1685,9 +1703,13 @@ pub fn classify_change(root: &Path, metadata_only: bool, paths: &[PathBuf]) -> (
             continue;
         }
         if p.extension().and_then(|s| s.to_str()) == Some("md") {
+            let (mtime, ctime, size) = file_stats(fs::metadata(p).ok().as_ref());
             changed.push(ChangedNote {
                 path: p.to_string_lossy().to_string(),
                 rel,
+                mtime,
+                ctime,
+                size,
             });
         } else if p.extension().is_none() || is_attachment_ext(p) || p.is_dir() {
             // No extension, or an existing directory (a folder name can contain
@@ -2358,6 +2380,15 @@ mod tests {
         fs::write(&path, "theirs").unwrap();
         assert_eq!(create_whole(&path, b"ours").unwrap_err(), "note already exists");
         assert_eq!(fs::read_to_string(&path).unwrap(), "theirs");
+        // Made in place, a write that fails leaves nothing behind.
+        let half = root.join("Half.md");
+        let err = create_in_place(&half, |f| {
+            f.write_all(b"part")?;
+            Err(std::io::Error::other("disk full"))
+        });
+        assert!(err.unwrap_err().contains("disk full"));
+        assert!(!half.exists());
+        assert_eq!(create_in_place(&path, |_| Ok(())).unwrap_err(), "note already exists");
         let _ = fs::remove_dir_all(&root);
     }
 

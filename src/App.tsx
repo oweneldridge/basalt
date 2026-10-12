@@ -33,6 +33,7 @@ import {
   type Bookmark,
   type ChangedNote,
   type ObsidianConfig,
+  type FileStats,
   type VaultNote,
 } from "./lib/vault";
 import { VaultIndex } from "./lib/vaultIndex";
@@ -88,7 +89,7 @@ import { SlidesView } from "./components/SlidesView";
 import { StatusBar } from "./components/StatusBar";
 import { InlineTitle } from "./components/InlineTitle";
 import { EditorPane, editorCount, editorText, fixOpenEditors, showText, type EditorApi } from "./components/EditorPane";
-import { TabBar, type TabItem } from "./components/TabBar";
+import { refocusIfLost, TabBar, type TabItem } from "./components/TabBar";
 import { PaneTree } from "./components/PaneTree";
 import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec, type BuiltinView } from "./lib/leafViews";
 import { deepLinkVaultPolicy, parseBasaltUri, parseObsidianUri } from "./lib/deeplink";
@@ -207,9 +208,7 @@ function markOpenedForNote(root: string) {
     /* no session storage: a reload opens the daily note */
   }
 }
-// How long a vault switch's call may take before it counts as failed.
-const SWITCH_WAIT_MS = 10_000;
-const giveUpAfter = (ms: number) => new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the vault didn't answer")), ms));
+
 // Why it can't be made from a Templater template, said once a session too.
 const dailyNoticeKey = (root: string) => `basalt.dailyNotice.${root}`;
 function firstDailyNotice(root: string): boolean {
@@ -230,6 +229,14 @@ function templaterWontRun(cfg: ObsidianConfig | null, root: string, timedOut = f
   if (!cfg?.templaterOnCreate) return "Templater's \"Trigger Templater on new file creation\" is off in this vault";
   if (!listensFor("templater-lite", "create")) return "this copy of Templater Lite doesn't fill new notes, so update it";
   return null;
+}
+/** A note's stats as the watcher reported them (its size from `content` if
+ * they're missing), leaving out any it couldn't read. */
+function statsOf(c: FileStats, content: string): FileStats {
+  const out: FileStats = { size: c.size || new TextEncoder().encode(content).length };
+  if (c.mtime) out.mtime = c.mtime;
+  if (c.ctime) out.ctime = c.ctime;
+  return out;
 }
 // Bound on the self-write suppression map (rel -> last written content).
 const SELF_WRITES_MAX = 128;
@@ -659,17 +666,6 @@ export default function App() {
   const opening = useRef<Promise<void> | null>(null);
   // The latest switch whose call opened its vault: where a failed one leaves you.
   const openedGen = useRef(0);
-  const openedPath = useRef<string | null>(null);
-  // Puts the core back on that vault once any switch under way has settled:
-  // a call that answers after it was given up on has moved it.
-  const realign = useCallback(() => {
-    const prior = opening.current;
-    opening.current = (async () => {
-      await prior;
-      const path = openedPath.current;
-      if (path) await Promise.race([openVaultBackend(path), giveUpAfter(SWITCH_WAIT_MS)]).catch(() => {});
-    })();
-  }, []);
   // Whether `gen` is still the vault switched to, once any newer switch's
   // call has settled (a failed one leaves this vault open).
   const stillCurrent = useCallback(async (gen: number) => {
@@ -782,7 +778,7 @@ export default function App() {
   // arriving right after a save is never silently swallowed.
   const selfWrites = useRef<Map<string, string>>(new Map());
   // Accumulated external changes (rel -> absolute path), flushed after a debounce.
-  const changedBuf = useRef<Map<string, string>>(new Map());
+  const changedBuf = useRef<Map<string, ChangedNote>>(new Map());
   const watchTimer = useRef<number | undefined>(undefined);
   // Buffers changes and applies them after a short quiet spell (set up with
   // the watcher's listener below).
@@ -1854,18 +1850,13 @@ export default function App() {
       clearImageCache();
       const gen = ++vaultGen.current;
       // One switch's call at a time, so the vault asked for last is the one left
-      // open. A call that doesn't answer in time counts as failed.
+      // open. None is given up on: the desktop core answers one call at a time
+      // on its main thread, so a later call would only queue behind it anyway.
       const prior = opening.current;
       const call = (async () => {
         await prior;
-        let late = false;
-        const asked = openVaultBackend(path); // canonical; sets managed state
-        asked.then(() => late && realign(), () => {});
-        const root = await Promise.race([asked, giveUpAfter(SWITCH_WAIT_MS)]).catch((e) => {
-          late = true;
-          throw e;
-        });
-        if (gen > openedGen.current) (openedGen.current = gen), (openedPath.current = root);
+        const root = await openVaultBackend(path); // canonical; sets managed state
+        openedGen.current = Math.max(openedGen.current, gen);
         return root;
       })();
       opening.current = call.then(
@@ -1968,7 +1959,7 @@ export default function App() {
         });
       }
     },
-    [flushAll, loadVault, restoreWorkspace, openInPane, ensureWorkspace, stillCurrent, realign],
+    [flushAll, loadVault, restoreWorkspace, openInPane, ensureWorkspace, stillCurrent],
   );
 
   // Restore the last vault on launch (once — StrictMode double-mounts effects).
@@ -2222,9 +2213,9 @@ export default function App() {
           const existing = byRel.get(c.rel);
           const absPath = existing?.path ?? c.path;
           try {
-            return { rel: c.rel, path: absPath, content: await readNote(absPath), ok: true as const };
+            return { rel: c.rel, path: absPath, content: await readNote(absPath), ok: true as const, stats: c };
           } catch {
-            return { rel: c.rel, path: absPath, content: "", ok: false as const };
+            return { rel: c.rel, path: absPath, content: "", ok: false as const, stats: c };
           }
         }),
       );
@@ -2262,10 +2253,10 @@ export default function App() {
           const i = next.findIndex((n) => n.rel === r.rel);
           if (r.ok) {
             if (i === -1) {
-              next.push({ path: r.path, rel: r.rel, name: nameFromRel(r.rel), content: r.content });
+              next.push({ path: r.path, rel: r.rel, name: nameFromRel(r.rel), content: r.content, ...statsOf(r.stats, r.content) });
             } else {
               // Changed outside the app: its stats are new too.
-              next[i] = { ...next[i], content: r.content, size: new TextEncoder().encode(r.content).length, mtime: Date.now() };
+              next[i] = { ...next[i], content: r.content, ...statsOf(r.stats, r.content) };
             }
           } else if (i !== -1) {
             next = next.filter((n) => n.rel !== r.rel);
@@ -2474,7 +2465,7 @@ export default function App() {
     (async () => {
       try {
         queueChanges.current = (incoming) => {
-          for (const c of incoming) changedBuf.current.set(c.rel, c.path);
+          for (const c of incoming) changedBuf.current.set(c.rel, c);
           if (changedBuf.current.size === 0) return;
           window.clearTimeout(watchTimer.current);
           const flush = () => {
@@ -2484,7 +2475,7 @@ export default function App() {
               watchTimer.current = window.setTimeout(flush, 300);
               return;
             }
-            const changes = Array.from(changedBuf.current, ([rel, path]) => ({ rel, path }));
+            const changes = Array.from(changedBuf.current.values());
             changedBuf.current.clear();
             void processChanges(changes);
           };
@@ -2944,6 +2935,7 @@ export default function App() {
       if (v) localStorage.setItem(`basalt.reading.${v}`, next ? "1" : "0");
       return next;
     });
+    refocusIfLost(); // the editor or view that had it is gone
   }, []);
 
   // Cmd/Ctrl-E: edit ↔ Reading view (Obsidian's default hotkey).
@@ -6102,6 +6094,7 @@ export default function App() {
           const run = (fn: () => void) => {
             setTabMenu(null);
             fn();
+            refocusIfLost(); // the tab it came from may be gone
           };
           return (
             <ContextMenu x={tabMenu.x} y={tabMenu.y} label="Tab actions" onClose={() => setTabMenu(null)}>

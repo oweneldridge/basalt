@@ -37,10 +37,18 @@ test.describe("a vault that opens its daily note", () => {
   });
 
   test("opens today's note at startup, made from the template", async ({ page, vault }) => {
+    const calls: { cmd: string; content?: string }[] = [];
+    await page.route("**/api/invoke", async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      if (String(body.args?.name ?? body.args?.path ?? "").includes(`Daily/${today}`)) calls.push({ cmd: body.cmd, content: body.args?.content });
+      return route.fallback();
+    });
     await openApp(page, vault);
     await expect(activeTab(page)).toHaveText(today);
     await expect.poll(() => vault.exists(`Daily/${today}.md`)).toBe(true);
     await expect.poll(() => vault.read(`Daily/${today}.md`)).toBe("## Log\n");
+    // Made in one step with its template in, never empty first.
+    expect(calls.filter((c) => c.cmd === "create_note" || c.cmd === "write_note")).toEqual([{ cmd: "create_note", content: "## Log\n" }]);
   });
 });
 
@@ -675,139 +683,6 @@ test.describe("a vault switched away from three times, the first slow, the other
         await page.waitForTimeout(300);
       }
       await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 15000 });
-      expect(backend).toBe(a.url);
-    } finally {
-      await a.stop();
-    }
-  });
-});
-
-test.describe("a vault switch that never answers", () => {
-  test.use({ vaultFiles: { "Welcome X.md": "x\n" } });
-
-  test("holds the next switch back for a while only", async ({ page, vault }) => {
-    test.setTimeout(60000);
-    const b = await otherVault({ "Welcome B.md": "b\n" });
-    try {
-      let backend = vault.url;
-      await page.addInitScript(
-        ([rb]) =>
-          localStorage.setItem(
-            "basalt.recentVaults",
-            JSON.stringify([
-              { path: "/stale/hung", name: "Hung", ts: Date.now() },
-              { path: rb, name: "B", ts: Date.now() - 1 },
-            ]),
-          ),
-        [b.root],
-      );
-      await page.route("**/api/invoke", async (route) => {
-        const body = JSON.parse(route.request().postData() ?? "{}");
-        if (body.cmd === "open_vault" && body.args?.path === "/stale/hung") return; // never answered
-        if (body.cmd === "open_vault" && body.args?.path === b.root) {
-          backend = b.url;
-          return route.fulfill({ contentType: "application/json", body: JSON.stringify({ result: b.root }) });
-        }
-        return route.fulfill({ response: await route.fetch({ url: `${backend}/api/invoke` }) });
-      });
-      await openApp(page, vault);
-      await expect(page.locator(".tree-row.file", { hasText: "Welcome X" })).toBeVisible();
-      await settle(page, 800);
-      await switchTo(page, "hung");
-      await page.waitForTimeout(500);
-      await switchTo(page, b.root);
-      await expect(page.locator(".tree-row.file", { hasText: "Welcome B" })).toBeVisible({ timeout: 25000 });
-    } finally {
-      await b.stop();
-    }
-  });
-});
-
-test.describe("a vault switch that answers only after it was given up on", () => {
-  test.use({ vaultFiles: { "Welcome X.md": "x\n" } });
-
-  test("leaves the core on the vault the window shows", async ({ page, vault }) => {
-    test.setTimeout(90000);
-    const a = await otherVault({ "Welcome A.md": "a\n" });
-    const b = await otherVault({ "Welcome B.md": "b\n" });
-    try {
-      let backend = vault.url;
-      let aAnswered = false;
-      await page.addInitScript(
-        ([ra, rb]) =>
-          localStorage.setItem(
-            "basalt.recentVaults",
-            JSON.stringify([
-              { path: ra, name: "A", ts: Date.now() },
-              { path: rb, name: "B", ts: Date.now() - 1 },
-            ]),
-          ),
-        [a.root, b.root],
-      );
-      await page.route("**/api/invoke", async (route) => {
-        const body = JSON.parse(route.request().postData() ?? "{}");
-        if (body.cmd === "open_vault" && body.args?.path === a.root) {
-          await new Promise((r) => setTimeout(r, 12000));
-          backend = a.url;
-          aAnswered = true;
-          return route.fulfill({ contentType: "application/json", body: JSON.stringify({ result: a.root }) });
-        }
-        if (body.cmd === "open_vault" && body.args?.path === b.root) {
-          backend = b.url;
-          return route.fulfill({ contentType: "application/json", body: JSON.stringify({ result: b.root }) });
-        }
-        return route.fulfill({ response: await route.fetch({ url: `${backend}/api/invoke` }) });
-      });
-      await openApp(page, vault);
-      await expect(page.locator(".tree-row.file", { hasText: "Welcome X" })).toBeVisible();
-      await settle(page, 800);
-      await switchTo(page, a.root);
-      await page.waitForTimeout(500);
-      await switchTo(page, b.root);
-      await expect(page.locator(".tree-row.file", { hasText: "Welcome B" })).toBeVisible({ timeout: 20000 });
-      // A answers at 12 s, after B opened: the core goes back to B.
-      await expect.poll(() => aAnswered, { timeout: 15000 }).toBe(true);
-      await expect.poll(() => backend, { timeout: 5000 }).toBe(b.url);
-      await expect(page.locator(".tree-row.file", { hasText: "Welcome B" })).toBeVisible();
-    } finally {
-      await a.stop();
-      await b.stop();
-    }
-  });
-
-  test("a slow switch then one that never answers ends on the slow one", async ({ page, vault }) => {
-    test.setTimeout(90000);
-    const a = await otherVault({ "Welcome A.md": "a\n" });
-    try {
-      let backend = vault.url;
-      await page.addInitScript(
-        ([ra]) =>
-          localStorage.setItem(
-            "basalt.recentVaults",
-            JSON.stringify([
-              { path: ra, name: "A", ts: Date.now() },
-              { path: "/stale/hung", name: "Hung", ts: Date.now() - 1 },
-            ]),
-          ),
-        [a.root],
-      );
-      await page.route("**/api/invoke", async (route) => {
-        const body = JSON.parse(route.request().postData() ?? "{}");
-        if (body.cmd === "open_vault" && body.args?.path === "/stale/hung") return; // never answered
-        if (body.cmd === "open_vault" && body.args?.path === a.root) {
-          await new Promise((r) => setTimeout(r, 4000));
-          backend = a.url;
-          return route.fulfill({ contentType: "application/json", body: JSON.stringify({ result: a.root }) });
-        }
-        return route.fulfill({ response: await route.fetch({ url: `${backend}/api/invoke` }) });
-      });
-      await openApp(page, vault);
-      await expect(page.locator(".tree-row.file", { hasText: "Welcome X" })).toBeVisible();
-      await settle(page, 800);
-      await switchTo(page, a.root);
-      await page.waitForTimeout(500);
-      await switchTo(page, "hung");
-      await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 25000 });
       expect(backend).toBe(a.url);
     } finally {
       await a.stop();

@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { renameSync, statSync, utimesSync } from "node:fs";
 import { test, expect, openApp, openNote, settle } from "./fixture";
 
 const BASE = `# kept through edits
@@ -44,6 +44,25 @@ test.describe("bases on disk", () => {
     await expect(view.getByRole("listitem", { name: "Beta" })).toHaveCount(0);
     vault.write("Projects/Beta.md", "# Beta\n\n" + "word ".repeat(400));
     await expect(view.getByRole("listitem").filter({ hasText: "Beta" })).toHaveCount(1);
+  });
+
+  test("a note added outside the app is filtered by its size, and a synced one by its own time", async ({ page, vault }) => {
+    vault.write("Sizes.base", "views:\n  - type: list\n    name: Big\n    filters: 'file.size > 1000'\n");
+    vault.write("Old.base", "views:\n  - type: list\n    name: Old\n    filters: 'file.mtime.year < 2021'\n");
+    await openApp(page, vault);
+    await page.locator(".tree-row.attachment", { hasText: "Sizes" }).click();
+    const view = page.locator(".pane:not(.dock) .base-view");
+    await expect(view).toBeVisible();
+    vault.write("Projects/Gamma.md", "# Gamma\n\n" + "word ".repeat(400));
+    await expect(view.getByRole("listitem").filter({ hasText: "Gamma" })).toHaveCount(1);
+    await page.locator(".tree-row.attachment", { hasText: "Old" }).click();
+    await expect(page.locator(".pane:not(.dock) .base-view")).toBeVisible();
+    // As a sync tool brings a file in: written aside with its own time, then renamed.
+    vault.write("Projects/.Beta.sync", "# Beta\n\nsynced\n");
+    const then = new Date("2020-05-02T12:00:00Z");
+    utimesSync(vault.path("Projects/.Beta.sync"), then, then);
+    renameSync(vault.path("Projects/.Beta.sync"), vault.path("Projects/Beta.md"));
+    await expect(page.locator(".pane:not(.dock) .base-view").getByRole("listitem").filter({ hasText: "Beta" })).toHaveCount(1);
   });
 
   test("embedded bases render from disk and write nothing", async ({ page, vault }) => {
