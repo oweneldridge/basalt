@@ -471,6 +471,25 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reading view leaves a quote's marks and a list's indent out of inline code
   that runs over lines, reads a tag written over a quote's lines as a tag, and
   keeps the line breaks in text that only looks like a tag.
+- While today's daily note waits for Templater Lite at startup, switching
+  vaults makes nothing in the other vault, a click in the file tree or a side
+  panel no longer stops it opening, and typing in the note you're on keeps you
+  there. When a slow plugin keeps Templater Lite from loading in time, the
+  notice says so instead of saying it's off.
+- Link all and Backlinks keep a mention next to bold or italics when its
+  paragraph already holds a link, check each list item on its own, and pass
+  over mentions by emphasis in a paragraph of more than 3,000 characters
+  rather than slowing down. Raw HTML and indented code after an HTML block's
+  closing line are left alone, and HTML is read with comments taken out, as
+  Reading view reads it.
+- A long run of `[` or many tags that close late no longer slow the index,
+  renames or Backlinks, and the index builds about twice as fast. `>#tag`
+  counts only after a quote's own mark, not after inline code or HTML or in
+  indented text, and a code fence opened on a list marker's line, after a
+  heading's `-` underline, or in a quote right after a list item's fence is
+  read as code.
+- A plugin that subscribes one callback to an event twice has it run twice,
+  as in Obsidian, and each `off()` ends one subscription.
 
 ### Security
 
