@@ -414,7 +414,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       /** Subscribe to a workspace event: file-open → (file|null);
        * active-leaf-change → (file|null). */
       on: (name: WorkspaceEventName, cb: (...args: unknown[]) => void): EventRef =>
-        subscribe(workspaceListeners, name, cb),
+        subscribe(workspaceListeners, name, (...args: unknown[]) => cb(...args)), // each its own, as vault.on
     },
   };
 

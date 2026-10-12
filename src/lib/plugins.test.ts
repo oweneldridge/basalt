@@ -277,6 +277,26 @@ describe("plugin events", () => {
     await unloadPlugin("twice");
   });
 
+  it("runs a workspace callback subscribed twice twice, and each off() ends one", async () => {
+    installHost(fakeHost().host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          const cb = () => { globalThis.__opened = (globalThis.__opened ?? 0) + 1; };
+          const first = this.app.workspace.on("file-open", cb);
+          this.registerEvent(this.app.workspace.on("file-open", cb));
+          first.off();
+        }
+      };
+    `;
+    (globalThis as any).__opened = 0;
+    await loadPlugin(info({ id: "ws-twice", code }));
+    emitWorkspaceEvent("file-open", null);
+    expect((globalThis as any).__opened).toBe(1);
+    await unloadPlugin("ws-twice");
+  });
+
   it("registerInterval + registerDomEvent are cleared on unload", async () => {
     const { host } = fakeHost();
     installHost(host);
