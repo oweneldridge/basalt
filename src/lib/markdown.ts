@@ -34,157 +34,522 @@ export function proseMask(lines: string[]): boolean[] {
     for (let j = 1; j <= end; j++) mask[j] = false;
     i = end + 1;
   }
-  // Only a fence makes code here, so a note without one needs no closer look.
-  let fenced = false;
-  for (let j = i; j < lines.length && !fenced; j++) fenced = lines[j].includes("```") || lines[j].includes("~~~");
-  if (!fenced) return mask;
-  // A fence may sit inside a quote or callout (`> ```) or a list item, as far
-  // in as the item's text plus three spaces, and its code ends with them.
-  let fence: { char: string; len: number; depth: number; col: number } | null = null;
-  let items: number[] = []; // open list items' text columns, innermost last
-  let ordered: boolean[] = []; // whether each of those items is numbered
-  let listDepth = 0; // the quote depth those items are at
-  // The line before is paragraph text: its quote depth and items open (-1: not).
-  let paraDepth = -1;
-  let paraItems = 0;
-  // An open HTML block, where nothing opens: its container, what ends it (a
-  // line it matches; null: a blank line), and the tag Reading view ends it at.
-  let html: { depth: number; items: number; end: RegExp | null; close: RegExp | null } | null = null;
-  let lastDepth = 0;
-  for (; i < lines.length; i++) {
-    const line = lines[i];
-    const c0 = line[0];
-    const quote = c0 === ">" || c0 === " " ? QUOTE_PREFIX.exec(line)![0] : "";
-    const depth = quote ? (quote.match(/>/g) ?? []).length : 0;
-    if (fence && depth < fence.depth) fence = null;
-    const body: string = fence ? unquote(line, fence.depth) : quote ? line.slice(quote.length) : line;
-    // Lists this line is in, quotes it leaves included (an item may start
-    // within a list where it couldn't start one).
-    const lists = ordered;
-    if (depth !== listDepth) (items = []), (ordered = []), (listDepth = depth);
-    // The indent in columns (tabs to the next stop of 4) and the char after it.
-    // Four past the innermost item's text nothing opens, closes or ends here.
-    const limit = (items.length ? items[items.length - 1] : 0) + 4;
-    let indent = 0;
-    let k = 0;
-    for (; k < body.length && indent < limit; k++) {
-      const c = body.charCodeAt(k);
-      if (c === 32) indent++;
-      else if (c === 9) indent += 4 - (indent % 4);
-      else break;
-    }
-    const first: string | undefined = indent < limit ? body[k] : "";
-    const blank = first === undefined || ((first <= " " || first >= "\u00a0") && /\s/.test(first) && body.trim() === "");
-    const openItems = items;
-    const openOrdered = ordered;
-    if (!blank && items.length && indent < items[items.length - 1]) {
-      items = items.slice();
-      ordered = ordered.slice();
-      while (items.length && indent < items[items.length - 1]) items.pop(), ordered.pop();
-    }
-    if (fence && !blank && indent < fence.col) {
-      // Its list item ended: read the line again as if no fence were open.
-      fence = null;
-      i--;
-      continue;
-    }
-    const newQuote = depth > lastDepth;
-    lastDepth = depth;
-    // A paragraph on the line before, in this container or one this line could
-    // lazily continue: an item here would interrupt it.
-    const beforeDepth = paraDepth;
-    const beforeItems = paraItems;
-    const interrupts = beforeDepth >= 0 && depth <= beforeDepth && items.length <= beforeItems;
-    paraDepth = -1;
-    if (html && (depth < html.depth || items.length < html.items || (!html.end && line.trim() === ""))) html = null;
-    if (html) {
-      if (html.end?.test(line) || html.close?.test(line)) html = null;
-      continue;
-    }
-    FENCE_RE.lastIndex = k;
-    const m: RegExpExecArray | null = first === "`" || first === "~" ? FENCE_RE.exec(body) : null;
-    if (fence) {
-      mask[i] = false;
-      if (m && indent - fence.col <= 3 && m[1][0] === fence.char && m[1].length >= fence.len && m[2].trim() === "") {
-        fence = null; // closing fence (itself non-prose)
-      }
-      continue;
-    }
-    const base = items.length ? items[items.length - 1] : 0;
-    if (m && indent - base <= 3 && !(m[1][0] === "`" && m[2].includes("`"))) {
-      mask[i] = false;
-      fence = { char: m[1][0], len: m[1].length, depth, col: base };
-      continue;
-    }
-    if (first === "<" && indent - base <= 3) {
-      const opened = openHtml(body.slice(k), line, interrupts, depth, items.length);
-      if (opened !== undefined) {
-        html = opened;
-        continue;
-      }
-    }
-    // A thematic break (`---`, `* * *`) before any list item.
-    if ((first === "-" || first === "*" || first === "_") && isBreak(body, k)) continue;
-    LIST_ITEM_RE.lastIndex = k;
-    const item = indent - base <= 3 && (first === "-" || first === "*" || first === "+" || (first !== undefined && first >= "0" && first <= "9")) ? LIST_ITEM_RE.exec(body) : null;
-    // As the editor's parser reads it: in a paragraph, an item can start only
-    // inside a list of its kind, or with text (a numbered one from 1). So
-    // `text` then `-` is a heading, and `- a` then `2. b` is one paragraph.
-    const empty = item !== null && k + item[0].length === body.length;
-    const numbered = item !== null && item[1].length > 1;
-    const opens = item !== null && (!interrupts || (numbered ? lists.includes(true) || (!empty && item[1].length === 2 && item[1][0] === "1") : lists.includes(false) || !empty));
-    // A `-` under a paragraph in its own container underlines it as a heading;
-    // a lazy one is more of the paragraph.
-    const underline = depth === beforeDepth && items.length === beforeItems && !opens && empty && item?.[1] === "-";
-    if (opens && item) {
-      // Each marker on the line opens an item (`1. - x` is a list in a list).
-      let at = k;
-      let col = indent;
-      let gap = 0;
-      for (let mark: RegExpExecArray | null = item; mark && items.length < MAX_ITEMS; ) {
-        col += mark[1].length;
-        const from = col;
-        for (let g = 0; g < mark[2].length; g++) col += mark[2][g] === "\t" ? 4 - (col % 4) : 1;
-        gap = col - from;
-        // Nothing after the marker: the editor's parser takes the text to start
-        // right after it.
-        items.push(from + (gap === 0 ? 0 : gap > 4 ? 1 : gap));
-        ordered.push(mark[1].length > 1);
-        at += mark[0].length;
-        col = items[items.length - 1];
-        LIST_ITEM_RE.lastIndex = at;
-        mark = gap >= 1 && gap <= 4 && at < body.length ? LIST_ITEM_RE.exec(body) : null;
-      }
-      // A fence, HTML or indented code can start on the marker's line; only
-      // text, or nothing, leaves a paragraph open to read on into.
-      FENCE_RE.lastIndex = at;
-      const f = gap >= 1 && gap <= 4 && (body[at] === "`" || body[at] === "~") ? FENCE_RE.exec(body) : null;
-      if (f && !(f[1][0] === "`" && f[2].includes("`"))) {
-        mask[i] = false;
-        fence = { char: f[1][0], len: f[1].length, depth, col: items[items.length - 1] };
-        continue;
-      }
-      const opened = gap >= 1 && gap <= 4 && body[at] === "<" ? openHtml(body.slice(at), line, false, depth, items.length) : undefined;
-      if (opened !== undefined) html = opened;
-      else if (gap <= 4) (paraDepth = depth), (paraItems = items.length);
-    } else if (blank && newQuote) {
-      (paraDepth = depth), (paraItems = items.length); // as for an empty item
-    } else if (!blank && !underline && (first !== "" || interrupts) && !(first === "#" && /^#{1,6}(?:[ \t]|$)/.test(body.slice(k))) && !((first === "-" || first === "*" || first === "_") && isBreak(body, k))) {
-      // A line an item couldn't start goes on with the paragraph before it,
-      // and leaves the list items it's in open.
-      if (interrupts) (paraDepth = beforeDepth), (paraItems = beforeItems), (items = openItems), (ordered = openOrdered);
-      else (paraDepth = depth), (paraItems = items.length);
-    }
-  }
+  maskFrom(lines, i, mask, 0);
   return mask;
 }
 
-// Past this many nested list items a line's markers are read as text.
-const MAX_ITEMS = 64;
+/** How deep in quotes and lists the block each line is part of sits, as
+ * Reading view counts it (past 100 the markers are read as text). */
+export function blockDepths(lines: string[]): number[] {
+  const depths = new Array<number>(lines.length);
+  maskFrom(lines, 0, new Array<boolean>(lines.length), 0, depths);
+  for (let k = 1; k < depths.length; k++) depths[k] ??= depths[k - 1];
+  return depths.map((d) => d ?? 0);
+}
 
-// HTML blocks as the editor's parser (@lezer/markdown) starts them: what ends
-// each (a line it matches), or null for a blank line. The last kind, a lone
-// tag, can't break into a paragraph.
+/** proseMask's work from line `start` on, for a note or, `depth` deep, for what
+ * follows an HTML block's closing line, which Reading view reads as a note of
+ * its own. Blocks are read as the editor's parser (@lezer/markdown) reads them,
+ * line by line through the quotes and list items they sit in. With `depths`,
+ * the depth of each block is set at its first line. */
+function maskFrom(lines: string[], start: number, mask: boolean[], depth: number, depths?: number[]): void {
+  // Only a fence makes code here, so a note without one needs no closer look.
+  let fenced = !!depths;
+  for (let j = start; j < lines.length && !fenced; j++) fenced = lines[j].includes("```") || lines[j].includes("~~~");
+  if (!fenced) return;
+  const n = lines.length;
+  const stack: Container[] = [];
+  const line = new Line();
+  // Reads line `i` through the open containers, as far as it goes on with them.
+  const read = (i: number) => {
+    line.reset(lines[i]);
+    while (line.depth < stack.length) {
+      const c = stack[line.depth];
+      const goesOn = c === QUOTE ? line.skipQuote() : line.indent >= line.baseIndent + c.value || line.next < 0;
+      if (goesOn && c !== QUOTE) line.moveBaseColumn(line.baseIndent + c.value);
+      line.forward();
+      if (!goesOn) break;
+      line.depth++;
+    }
+  };
+  // An HTML block from line `i`. Reading view ends it at the line closing its
+  // first tag and reads the rest as a note of its own. Returns the line after.
+  const html = (i: number, kind: number): number => {
+    const rest = line.text.slice(line.pos);
+    const end = HTML_STARTS[kind][1] ?? BLANK_LINE;
+    const tag = rest.includes(">") ? /^\s*<\/?([a-zA-Z][a-zA-Z0-9-]*)/.exec(rest)?.[1] : undefined;
+    const close = tag ? new RegExp(`</${tag}\\s*>`, "i") : null;
+    let closed = close?.test(rest) ? i : -1;
+    let last = i;
+    let after = n;
+    for (;;) {
+      if (end.test(lines[last])) {
+        if (end === BLANK_LINE) after = last--;
+        else if ((after = last + 1) < n) read(after);
+        break;
+      }
+      if (last + 1 === n) break;
+      read(last + 1);
+      if (line.depth < stack.length) {
+        after = last + 1;
+        break;
+      }
+      last++;
+      if (closed < 0 && close?.test(lines[last])) closed = last;
+    }
+    // Past Reading view's nesting limit the rest shows as its source.
+    const at = depth + stack.length + 1;
+    if (closed >= 0 && at <= MAX_DEPTH) {
+      const sub = new Array<boolean>(last - closed).fill(true);
+      const subDepths = depths && new Array<number>(last - closed);
+      maskFrom(lines.slice(closed + 1, last + 1), 0, sub, at, subDepths);
+      for (let k = 0; k < sub.length; k++) mask[closed + 1 + k] = sub[k];
+      if (subDepths) for (let k = 0; k < subDepths.length; k++) depths![closed + 1 + k] = subDepths[k];
+    } else if (closed >= 0 && depths) for (let k = closed + 1; k <= last; k++) depths[k] = at;
+    return after;
+  };
+  let i = start;
+  if (i < n) read(i);
+  next: while (i < n) {
+    if (stack.length > line.depth) stack.length = line.depth;
+    if (line.pos === line.text.length) {
+      if (++i < n) read(i);
+      continue;
+    }
+    // Containers this line opens, then the block inside them.
+    for (;;) {
+      if (depths) depths[i] = depth + stack.length;
+      if (line.indent >= line.baseIndent + 4) {
+        // Indented code, to a line that isn't (blank lines in between are).
+        const base = line.baseIndent + 4;
+        while (++i < n) {
+          read(i);
+          if (line.depth < stack.length || (line.pos < line.text.length && line.indent < base)) break;
+        }
+        continue next;
+      }
+      const c = line.next;
+      const run = c === 96 || c === 126 ? fenceAt(line) : 0;
+      if (run) {
+        const char = line.next;
+        mask[i] = false;
+        while (++i < n) {
+          read(i);
+          if (line.depth < stack.length) continue next;
+          mask[i] = false;
+          let k = line.pos;
+          if (line.indent - line.baseIndent < 4) while (k < line.text.length && line.text.charCodeAt(k) === char) k++;
+          if (k - line.pos >= run && skipSpace(line.text, k) === line.text.length) {
+            if (++i < n) read(i);
+            continue next;
+          }
+        }
+        continue next;
+      }
+      if (c === 62 /* > */ && stack.length < MAX_CONTAINERS) {
+        stack.push(QUOTE);
+        line.moveBase(line.pos + (line.text.charCodeAt(line.pos + 1) === 32 ? 2 : 1));
+        line.forward();
+        continue;
+      }
+      if ((c === 42 || c === 45 || c === 95) && breakAt(line)) {
+        if (++i < n) read(i);
+        continue next;
+      }
+      const marker =
+        stack.length >= MAX_CONTAINERS ? 0 : c === 42 || c === 43 || c === 45 ? bulletAt(line, false, stack) : c >= 48 && c <= 57 ? orderedAt(line, false, stack) : 0;
+      if (marker) {
+        const col = listIndent(line, line.pos + marker);
+        stack.push({ value: col - line.baseIndent, ordered: marker > 1 });
+        line.moveBaseColumn(col);
+        line.forward();
+        continue;
+      }
+      if (c === 35 && headingAt(line)) {
+        if (++i < n) read(i);
+        continue next;
+      }
+      const kind = c === 60 ? htmlAt(line, false) : -1;
+      if (kind >= 0) {
+        i = html(i, kind);
+        continue next;
+      }
+      break;
+    }
+    // A paragraph, or the empty one a quote or list marker leaves with nothing
+    // after it: to a blank line, a line that starts a block (a table too, unless
+    // the paragraph may be one), the line after a link reference definition, or
+    // an underline.
+    const ref = line.next === 91 /* [ */ ? new LinkRef(line.text.slice(line.pos)) : null;
+    const head = i;
+    const headPos = line.pos;
+    while (++i < n) {
+      read(i);
+      if (line.pos === line.text.length) continue next;
+      if (line.indent < line.baseIndent + 4 && (interrupts(line, stack) || (tableAt(line, lines[i + 1]) && !hasPipe(lines[head], headPos)))) continue next;
+      if (ref?.nextLine(line.baseIndent ? " ".repeat(line.basePos) + line.text.slice(line.basePos) : line.text)) continue next;
+      if (line.depth === stack.length && underlineAt(line)) {
+        if (++i < n) read(i);
+        continue next;
+      }
+    }
+  }
+}
+
+// A quote, or a list item: its text's column past its container's, and
+// whether it's numbered.
+interface Container {
+  value: number;
+  ordered: boolean;
+}
+const QUOTE: Container = { value: 0, ordered: false };
+
+// Past this many containers in one another a line's markers are read as text.
+const MAX_CONTAINERS = 100;
+
+// A line as the editor's parser walks it: past the containers it goes on with
+// (`depth` of them), where their text starts (`basePos`, column `baseIndent`),
+// and the next character that isn't a space (`next`, -1 for none) and its column.
+class Line {
+  text = "";
+  pos = 0;
+  basePos = 0;
+  baseIndent = 0;
+  indent = 0;
+  next = -1;
+  depth = 0;
+
+  reset(text: string) {
+    if (text.charCodeAt(text.length - 1) === 13) text = text.slice(0, -1);
+    const p = skipSpace(text, 0);
+    this.text = text;
+    this.basePos = this.baseIndent = this.depth = 0;
+    this.pos = p;
+    this.indent = p && columnAt(text, p, 0, 0);
+    this.next = p === text.length ? -1 : text.charCodeAt(p);
+  }
+
+  forward() {
+    const to = skipSpace(this.text, this.basePos);
+    this.indent = columnAt(this.text, to, this.pos, this.indent);
+    this.pos = to;
+    this.next = to === this.text.length ? -1 : this.text.charCodeAt(to);
+  }
+
+  moveBase(to: number) {
+    this.basePos = to;
+    this.baseIndent = columnAt(this.text, to, this.pos, this.indent);
+  }
+
+  moveBaseColumn(col: number) {
+    this.baseIndent = col;
+    let i = 0;
+    for (let c = 0; i < this.text.length && c < col; i++) c += this.text.charCodeAt(i) === 9 ? 4 - (c % 4) : 1;
+    this.basePos = i;
+  }
+
+  skipQuote(): boolean {
+    if (this.next !== 62) return false;
+    this.moveBase(this.pos + (isSpace(this.text.charCodeAt(this.pos + 1)) ? 2 : 1));
+    return true;
+  }
+}
+
+function isSpace(c: number): boolean {
+  return c === 32 || c === 9 || c === 10 || c === 13;
+}
+
+// Long runs of spaces, as in indented code, are quicker to skip with a regex.
+const NOT_SPACE = /[^ \t\n\r]/g;
+function skipSpace(text: string, i: number): number {
+  if (i >= text.length || !isSpace(text.charCodeAt(i))) return i;
+  NOT_SPACE.lastIndex = i;
+  return NOT_SPACE.test(text) ? NOT_SPACE.lastIndex - 1 : text.length;
+}
+
+/** The column at `to`, counting from `from` at column `col` (tabs to the next
+ * stop of 4). */
+function columnAt(text: string, to: number, from: number, col: number): number {
+  if (to - from > 8 && text.lastIndexOf("\t", to - 1) < from) return col + to - from;
+  for (let i = from; i < to; i++) col += text.charCodeAt(i) === 9 ? 4 - (col % 4) : 1;
+  return col;
+}
+
+/** The length of the fence the line starts with, or 0. */
+function fenceAt(line: Line): number {
+  const c = line.next;
+  if (c !== 96 && c !== 126) return 0;
+  let p = line.pos + 1;
+  while (p < line.text.length && line.text.charCodeAt(p) === c) p++;
+  if (p < line.pos + 3 || (c === 96 && line.text.indexOf("`", p) >= 0)) return 0;
+  return p - line.pos;
+}
+
+/** Whether the line is a thematic break (`---`, `* * *`). */
+function breakAt(line: Line): boolean {
+  const c = line.next;
+  if (c !== 42 && c !== 45 && c !== 95) return false;
+  let count = 1;
+  for (let p = line.pos + 1; p < line.text.length; p++) {
+    const d = line.text.charCodeAt(p);
+    if (d === c) count++;
+    else if (!isSpace(d)) return false;
+  }
+  return count >= 3;
+}
+
+/** Whether the line underlines a paragraph as a heading (`===`, `---`). */
+function underlineAt(line: Line): boolean {
+  const c = line.next;
+  if ((c !== 45 && c !== 61) || line.indent >= line.baseIndent + 4) return false;
+  let p = line.pos + 1;
+  while (p < line.text.length && line.text.charCodeAt(p) === c) p++;
+  return skipSpace(line.text, p) === line.text.length;
+}
+
+function inList(stack: Container[], ordered: boolean): boolean {
+  return stack.some((c) => c !== QUOTE && c.ordered === ordered);
+}
+
+/** The length of the bullet the line starts with, or 0. In a paragraph one
+ * needs text after it, or a bullet list around it. */
+function bulletAt(line: Line, inParagraph: boolean, stack: Container[]): number {
+  const c = line.next;
+  if (c !== 45 && c !== 43 && c !== 42) return 0;
+  if (line.pos < line.text.length - 1 && !isSpace(line.text.charCodeAt(line.pos + 1))) return 0;
+  if (inParagraph && skipSpace(line.text, line.pos + 2) >= line.text.length && !inList(stack, false)) return 0;
+  return 1;
+}
+
+/** The length of the number and `.` or `)` the line starts with, or 0. In a
+ * paragraph only a `1` with text after it starts a list, unless a numbered
+ * list is around it. */
+function orderedAt(line: Line, inParagraph: boolean, stack: Container[]): number {
+  const t = line.text;
+  let p = line.pos;
+  let c = line.next;
+  while (c >= 48 && c <= 57) {
+    if (++p === t.length) return 0;
+    c = t.charCodeAt(p);
+  }
+  if (p === line.pos || p > line.pos + 9 || (c !== 46 && c !== 41) || (p < t.length - 1 && !isSpace(t.charCodeAt(p + 1)))) return 0;
+  if (inParagraph && (skipSpace(t, p + 1) === t.length || p > line.pos + 1 || line.next !== 49) && !inList(stack, true)) return 0;
+  return p + 1 - line.pos;
+}
+
+/** The column a list item's text starts at, its marker ending at `pos`: past
+ * the spaces after it, or one past the marker when that's five or more. */
+function listIndent(line: Line, pos: number): number {
+  const after = columnAt(line.text, pos, line.pos, line.indent);
+  const text = columnAt(line.text, skipSpace(line.text, pos), pos, after);
+  return text >= after + 5 ? after + 1 : text;
+}
+
+/** Whether the line is an ATX heading (`# x`). */
+function headingAt(line: Line): boolean {
+  if (line.next !== 35) return false;
+  let p = line.pos + 1;
+  while (p < line.text.length && line.text.charCodeAt(p) === 35) p++;
+  return (p === line.text.length || line.text.charCodeAt(p) === 32) && p - line.pos <= 6;
+}
+
+/** The kind of HTML block the line starts (an index into HTML_STARTS), or -1. */
+function htmlAt(line: Line, inParagraph: boolean): number {
+  if (line.next !== 60) return -1;
+  const rest = line.text.slice(line.pos);
+  for (let k = 0; k < HTML_STARTS.length - (inParagraph ? 1 : 0); k++) if (HTML_STARTS[k][0].test(rest)) return k;
+  return -1;
+}
+
+/** Whether the line ends the paragraph before it by starting a block. */
+function interrupts(line: Line, stack: Container[]): boolean {
+  switch (line.next) {
+    case 35:
+      return headingAt(line);
+    case 96:
+    case 126:
+      return fenceAt(line) > 0;
+    case 62:
+      return true;
+    case 60:
+      return htmlAt(line, true) >= 0;
+    case 42:
+    case 45:
+      return bulletAt(line, true, stack) > 0 || breakAt(line);
+    case 43:
+      return bulletAt(line, true, stack) > 0;
+    case 95:
+      return breakAt(line);
+    default:
+      return line.next >= 48 && line.next <= 57 && orderedAt(line, true, stack) > 0;
+  }
+}
+
+/** Whether the line starts a table: it has a `|` and the line after it is a
+ * delimiter row (`--|--`) with as many cells. */
+function tableAt(line: Line, after: string | undefined): boolean {
+  if (after === undefined) return false;
+  const c = after.charCodeAt(0);
+  if (c !== 124 && c !== 45 && c !== 58 && c !== 32 && c !== 9) return false;
+  if (!hasPipe(line.text, line.basePos)) return false;
+  if (after.endsWith("\r")) after = after.slice(0, -1);
+  return DELIMITER_ROW.test(after) && cellsOf(line.text, line.basePos) === cellsOf(after, line.basePos);
+}
+const DELIMITER_ROW = /^\|?(\s*:?-+:?\s*\|)+(\s*:?-+:?\s*)?$/;
+
+function hasPipe(text: string, from: number): boolean {
+  for (let i = from; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 124) return true;
+    if (c === 92) i++;
+  }
+  return false;
+}
+
+/** How many cells a table row has, from `from`. */
+function cellsOf(text: string, from: number): number {
+  let count = 0;
+  let first = true;
+  let cell = false;
+  let escaped = false;
+  for (let i = from; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 124 && !escaped) {
+      if (!first || cell) count++;
+      first = false;
+      cell = false;
+    } else if (escaped || (c !== 32 && c !== 9)) cell = true;
+    escaped = !escaped && c === 92;
+  }
+  return cell ? count + 1 : count;
+}
+
+// A link reference definition (`[a]: url "title"`) a paragraph starts with, read
+// as the editor's parser reads one: a line at a time, as far as it gets. The
+// paragraph ends where the definition does.
+class LinkRef {
+  stage = 0; // the label, the URL, after the URL, after the title, or -1: not one
+  pos = 0;
+  content: string;
+
+  constructor(first: string) {
+    this.content = first;
+    this.advance();
+  }
+
+  /** Reads another line; true when the definition ended on the line before. */
+  nextLine(text: string): boolean {
+    if (this.stage < 0) return false;
+    this.content += "\n" + text;
+    if (this.content.length > LINK_REF_LIMIT) {
+      this.stage = -1;
+      return false;
+    }
+    return this.advance() > -1;
+  }
+
+  // Where the definition ends, or -1 for not yet (or not one).
+  advance(): number {
+    const c = this.content;
+    for (;;) {
+      if (this.stage < 0) return -1;
+      if (this.stage === 0) {
+        const end = labelEnd(c, this.pos);
+        if (end === PENDING && c.length < this.pos + 1000) return -1;
+        if (end < 0 || c.charCodeAt(end) !== 58 /* : */) return (this.stage = -1);
+        this.pos = end + 1;
+        this.stage = 1;
+      } else if (this.stage === 1) {
+        const end = urlEnd(c, skipSpace(c, this.pos));
+        if (end === PENDING) return -1;
+        if (end < 0) return (this.stage = -1);
+        this.pos = end;
+        this.stage = 2;
+      } else if (this.stage === 2) {
+        const at = skipSpace(c, this.pos);
+        let end = 0;
+        if (at > this.pos) {
+          const title = titleEnd(c, at);
+          const after = title < 0 ? -1 : lineEnd(c, title);
+          if (after > 0) (this.stage = 3), (this.pos = title), (end = after);
+        }
+        if (!end) end = lineEnd(c, this.pos);
+        return end > 0 && end < c.length ? end : -1;
+      } else return lineEnd(c, this.pos);
+    }
+  }
+}
+// Past this length a link reference definition still open is read as text.
+const LINK_REF_LIMIT = 10_000;
+// A part of a link reference definition that may go on to the next line.
+const PENDING = -2;
+
+function labelEnd(text: string, start: number): number {
+  let blank = true;
+  let escaped = false;
+  for (let p = start + 1, end = Math.min(text.length, p + 999); p < end; p++) {
+    const c = text.charCodeAt(p);
+    if (escaped) escaped = false;
+    else if (c === 93) return blank ? -1 : p + 1;
+    else {
+      if (!isSpace(c)) blank = false;
+      if (c === 91) return -1;
+      if (c === 92) escaped = true;
+    }
+  }
+  return PENDING;
+}
+
+function urlEnd(text: string, start: number): number {
+  if (text.charCodeAt(start) === 60) {
+    for (let p = start + 1; p < text.length; p++) {
+      const c = text.charCodeAt(p);
+      if (c === 62) return p + 1;
+      if (c === 60 || c === 10) return -1;
+    }
+    return PENDING;
+  }
+  let depth = 0;
+  let p = start;
+  for (let escaped = false; p < text.length; p++) {
+    const c = text.charCodeAt(p);
+    if (isSpace(c)) break;
+    if (escaped) escaped = false;
+    else if (c === 40) depth++;
+    else if (c === 41) {
+      if (!depth) break;
+      depth--;
+    } else if (c === 92) escaped = true;
+  }
+  return p > start ? p : p === text.length ? PENDING : -1;
+}
+
+function titleEnd(text: string, start: number): number {
+  const open = text.charCodeAt(start);
+  if (open !== 39 && open !== 34 && open !== 40) return -1;
+  const close = open === 40 ? 41 : open;
+  for (let p = start + 1, escaped = false; p < text.length; p++) {
+    const c = text.charCodeAt(p);
+    if (escaped) escaped = false;
+    else if (c === close) return p + 1;
+    else if (c === 92) escaped = true;
+  }
+  return PENDING;
+}
+
+/** Where the line from `pos` ends, if only spaces are left on it, else -1. */
+function lineEnd(text: string, pos: number): number {
+  for (; pos < text.length; pos++) {
+    const c = text.charCodeAt(pos);
+    if (c === 10) break;
+    if (!isSpace(c)) return -1;
+  }
+  return pos;
+}
+
+// HTML blocks as the editor's parser starts them, and what ends each (a line it
+// matches), or null for a blank line. The last kind, a lone tag, can't break
+// into a paragraph.
 const HTML_STARTS: [RegExp, RegExp | null][] = [
   [/^<(?:script|pre|style)(?:\s|>|$)/i, /<\/(?:script|pre|style)>/i],
   [/^\s*<!--/, /-->/],
@@ -197,40 +562,10 @@ const HTML_STARTS: [RegExp, RegExp | null][] = [
   ],
   [/^\s*(?:<\/[a-z][\w-]*\s*>|<[a-z][\w-]*(\s+[a-z:_][\w-.]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*\s*>)\s*$/i, null],
 ];
+const BLANK_LINE = /^[ \t\r]*$/;
 
-/** The HTML block `rest` (a line's text past its markers) opens, or undefined.
- * Reading view also ends one at the line that closes its first tag, and reads
- * what follows as a note of its own; a block whose first line has no `>` it
- * shows as text. Null when the block ends on its own first line. */
-function openHtml(rest: string, line: string, inParagraph: boolean, depth: number, items: number) {
-  const kind = HTML_STARTS.findIndex(([start], n) => (n < HTML_STARTS.length - 1 || !inParagraph) && start.test(rest));
-  if (kind < 0) return undefined;
-  const end = HTML_STARTS[kind][1];
-  const tag = rest.includes(">") ? /^\s*<\/?([a-zA-Z][a-zA-Z0-9-]*)/.exec(rest)?.[1] : undefined;
-  const close = tag ? new RegExp(`</${tag}\\s*>`, "i") : null;
-  return end?.test(line) || close?.test(line) ? null : { depth, items, end, close };
-}
-
-// A thematic break (`---`, `* * *`) from `at`, which ends a paragraph and its lists.
-const BREAK_RE = /([-*_])(?:[ \t]*\1){2,}[ \t]*$/y;
-function isBreak(text: string, at: number): boolean {
-  BREAK_RE.lastIndex = at;
-  return BREAK_RE.test(text);
-}
-
-// The `>` markers a line starts with, however deep.
-const QUOTE_PREFIX = /^(?: {0,3}>[ \t]?)*/;
-// A list item's marker, and the spaces between it and the item's text.
-const LIST_ITEM_RE = /([-*+]|\d{1,9}[.)])([ \t]+|$)/y;
-// A fence's marker run and what follows it.
-const FENCE_RE = /(`{3,}|~{3,})(.*)$/y;
-
-/** `line` without its first `depth` quote markers. */
-function unquote(line: string, depth: number): string {
-  let rest = line;
-  for (let k = 0; k < depth; k++) rest = rest.replace(/^ {0,3}>[ \t]?/, "");
-  return rest;
-}
+// Reading view's nesting limit: deeper, a block shows as its source.
+const MAX_DEPTH = 40;
 
 /** Index of the line closing a leading `---` frontmatter block, or -1. */
 export function frontmatterEnd(lines: string[]): number {

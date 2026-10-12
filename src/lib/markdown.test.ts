@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { internalLinkTarget, proseMask, tagRegex, wikilinkRegex } from "./markdown";
+import { blockDepths, internalLinkTarget, proseMask, tagRegex, wikilinkRegex } from "./markdown";
 
 describe("internalLinkTarget", () => {
   it("reads any href that isn't a URL as a vault link, decoded", () => {
@@ -200,8 +200,134 @@ describe("proseMask reads list lines as Reading view does", () => {
 
   it("stays quick on one line of many markers", () => {
     const t0 = performance.now();
-    mask("- ".repeat(20_000) + "a\n" + "  x\n".repeat(20_000));
-    mask("1. ".repeat(20_000) + "a\n" + "  x\n".repeat(20_000));
+    mask("- ".repeat(20_000) + "a\n" + "  x\n".repeat(20_000) + "```");
+    mask("1. ".repeat(20_000) + "a\n" + "  x\n".repeat(20_000) + "```");
+    mask("> ".repeat(20_000) + "a\n" + "\n".repeat(20_000) + "```");
+    mask("- ".repeat(20_000) + "```\n" + "\n".repeat(20_000));
     expect(performance.now() - t0).toBeLessThan(1500);
+  });
+});
+
+describe("proseMask reads containers as the editor's parser does", () => {
+  const mask = (md: string) => proseMask(md.split("\n")).map(Number);
+
+  it("reads a quote inside a list item as part of it", () => {
+    expect(mask("+ a\n  > a\n001. a\n     ~~~")).toEqual([1, 1, 1, 0]);
+    expect(mask("- - ```\n  > a\n    <div>\n<search>\n- ```js")).toEqual([0, 1, 1, 1, 1]);
+    expect(mask("- a\n  > ```\n  > [[L]]\n  > ```\n  ```\n  x")).toEqual([1, 0, 0, 0, 0, 0]);
+  });
+
+  it("keeps an HTML block in its container, whatever its lines start with", () => {
+    expect(mask("</div>\n- <!--\n  > ```\n  > [[L]]")).toEqual([1, 1, 1, 1]);
+    expect(mask("> <div>\n>\n> ```\n> [[L]]")).toEqual([1, 1, 1, 1]);
+    expect(mask("<textarea>\n\u00a0\n~~~\n[[L]]")).toEqual([1, 1, 1, 1]);
+  });
+
+  it("keeps the lists and quote a lazy line goes on in", () => {
+    expect(mask("> 1. a\n  -\n2. ```\n   [[L]]")).toEqual([1, 1, 0, 0]);
+    expect(mask(">\n001. a\n> \n01. a\n     ```\n     [[L]]")).toEqual([1, 1, 1, 1, 0, 0]);
+    expect(mask("> a\n      > ```\n      > [[L]]")).toEqual([1, 0, 0]);
+  });
+
+  it("reads indented code where a list item ended", () => {
+    expect(mask("   - </div>\n    - c\n  -\n     ```\n     [[L]]")).toEqual([1, 1, 1, 0, 0]);
+  });
+
+  it("ends a paragraph after a link reference definition", () => {
+    expect(mask("[a]: b\n2. ```\n   [[L]]")).toEqual([1, 0, 0]);
+    expect(mask('[a]: <b>\n"t"\n2. ```\n   [[L]]')).toEqual([1, 1, 0, 0]);
+    expect(mask("1. [a]: b\n</pre></div>\n     ~~~\n     [[L]]")).toEqual([1, 1, 1, 1]);
+  });
+
+  it("ends a paragraph where a table starts", () => {
+    expect(mask("- a\nb | c\n--|--\n     ~~~\n     [[L]]")).toEqual([1, 1, 1, 1, 1]);
+    expect(mask("- a\nb | c\n--\n     ~~~\n     [[L]]")).toEqual([1, 1, 1, 0, 0]);
+  });
+
+  it("reads a note with CRLF line endings as one with LF", () => {
+    expect(mask("- a\r\n  ```\r\n  [[L]]\r\n  ```\r\n[[M]]")).toEqual([1, 0, 0, 0, 1]);
+    expect(mask("#\r\n2. ```\r\n   [[L]]\r")).toEqual([1, 0, 0]);
+    expect(mask("- a\r\n|b|c|\r\n|-|-|\r\n     ~~~\r\n     [[L]]\r")).toEqual([1, 1, 1, 1, 1]);
+  });
+
+  const cases = (rows: [string, number[]][]) => {
+    for (const [md, want] of rows) expect(mask(md), JSON.stringify(md)).toEqual(want);
+  };
+
+  it("reads quote markers and the columns after them", () => {
+    cases([
+      ["> -\n>  ```\n> a", [1, 0, 1]],
+      ["> 1) a\n>\t\t```\n>\t\t[[L]]", [1, 0, 0]],
+      [">     x\n>\n\t> ```\n\t> [[L]]", [1, 1, 1, 1]],
+      ["> > > > ```\n> > > > [[L]]", [0, 0]],
+      ["> ".repeat(100) + "```\n" + "> ".repeat(100) + "[[L]]", [0, 0]],
+      // Past 100 containers in one another the markers are read as text.
+      ["> ".repeat(101) + "```\n" + "> ".repeat(101) + "[[L]]", [1, 1]],
+    ]);
+  });
+
+  it("reads list markers, breaks and headings as the editor's parser does", () => {
+    cases([
+      ["> -\n*\n    ```\n    [[L]]", [1, 1, 0, 0]],
+      [" > - a\n  -\n\t```", [1, 1, 0]],
+      ["> > a\n+ ```\n  [[L]]", [1, 0, 0]],
+      ["1234567890. ```\n[[L]]", [1, 1]],
+      ["1.```\n[[L]]", [1, 1]],
+      ["- a\n---\n     ```\n     [[L]]", [1, 1, 1, 1]],
+      ["a\n    ===\n2. ```\n   [[L]]", [1, 1, 1, 1]],
+      ["- [ ] a\n===\n-->\n     ~~~", [1, 1, 1, 0]],
+      ["#\t```\n2. ```\n   [[L]]", [1, 1, 1]],
+      ["####### a\n2. ```\n   [[L]]", [1, 1, 1]],
+      ["  ```\n    ```\n> <!X", [0, 0, 0]],
+    ]);
+  });
+
+  it("ends an HTML block where its container ends, and splits it to Reading view's depth", () => {
+    cases([
+      ["> <div>\n- \t```\n  [[L]]", [1, 0, 1]],
+      ["- [x] ```\n<a_b>\n````", [1, 1, 0]],
+      // A first line with no `>` shows the whole block as text, unsplit.
+      ["<div\n</div>\n```\nx", [1, 1, 1, 1]],
+    ]);
+    const deep = (n: number) => mask("<div>x</div>\n".repeat(n) + "```\n[[L]]").slice(n);
+    expect(deep(39)).toEqual([0, 0]);
+    expect(deep(41)).toEqual([1, 1]);
+  });
+
+  it("reads link reference definitions as the editor's parser does", () => {
+    cases([
+      ["[ ]: b\n2. ```\n   [[L]]", [1, 1, 1]],
+      ["[a[b]: c\n2. ```\n   [[L]]", [1, 1, 1]],
+      ["[a]:\n\"t\"\n2. ```\n   [[L]]", [1, 1, 0, 0]],
+      ["[a]: b(c)d\n2. ```\n   [[L]]", [1, 0, 0]],
+      ["[a]: <b\n]]>\n*\n   <!--\n1. ```", [1, 1, 1, 1, 1]],
+      ["1. [a]: b\n(t)\n    ```\n    [[L]]", [1, 1, 0, 0]],
+      ["[a]: b (t\n<span>\n> - ```\n>   [[L]]", [1, 1, 0, 0]],
+    ]);
+  });
+
+  it("starts a table only where the editor's parser does", () => {
+    cases([
+      ["- a|b\nc | d\n--|--\n     ~~~\n     [[L]]", [1, 1, 1, 0, 0]],
+      ["- a\nb \\| c\n|--|\n     ~~~\n     [[L]]", [1, 1, 1, 0, 0]],
+      ["- [x] ```\n| a |\n|-|-|\n     ~~~", [1, 1, 1, 0]],
+      ["1.\ta\n--- | ---\n|---|\n \t```\n \t[[L]]", [1, 1, 1, 0, 0]],
+    ]);
+  });
+});
+
+describe("blockDepths", () => {
+  const depths = (md: string) => blockDepths(md.split("\n"));
+
+  it("counts the quotes and lists around each line's block, lazy lines too", () => {
+    expect(depths("> a\nlazy\n- b\n  > c\n    d")).toEqual([1, 1, 1, 2, 2]);
+    expect(depths("1. a\n   1. b\n\n      c")).toEqual([1, 2, 2, 2]);
+  });
+
+  it("reads what follows an HTML block's closing line a level deeper, as Reading view renders it", () => {
+    expect(depths("<div>x</div>\n- d\n  > e")).toEqual([0, 2, 3]);
+    expect(depths("> <div>x</div>\n> - y\n\nz")).toEqual([1, 4, 4, 0]);
+    expect(depths("- ".repeat(39) + "<div>x</div>\n" + "  ".repeat(39) + "y")).toEqual([39, 40]);
+    expect(depths("- ".repeat(40) + "<div>x</div>\n" + "  ".repeat(40) + "y")).toEqual([40, 41]);
   });
 });
