@@ -259,6 +259,47 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
     result
 }
 
+/// Write a new file at `path` in one step: a temp file linked into place, which
+/// fails if anything is there. Where hard links aren't supported it's created
+/// in place instead, still never over an existing file.
+fn create_whole(path: &Path, content: &[u8]) -> Result<(), String> {
+    let exists = |e: std::io::Error| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            "note already exists".to_string()
+        } else {
+            format!("create: {e}")
+        }
+    };
+    let parent = path.parent().ok_or("invalid path")?;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let n = WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let temp = parent.join(format!(".basalt-tmp-{nanos}-{n}.tmp"));
+    let written = (|| -> Result<(), String> {
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|e| format!("temp: {e}"))?;
+        f.write_all(content).map_err(|e| format!("write: {e}"))?;
+        f.sync_all().map_err(|e| format!("fsync: {e}"))
+    })();
+    let linked = written.map(|()| fs::hard_link(&temp, path));
+    let _ = fs::remove_file(&temp);
+    match linked? {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(exists(e)),
+        // No hard links here (some network and FAT drives).
+        Err(_) => {
+            let mut f = fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(exists)?;
+            f.write_all(content).map_err(|e| format!("write: {e}"))?;
+            f.sync_all().map_err(|e| format!("fsync: {e}"))
+        }
+    }
+}
+
 /// A server running as root (the Docker image) must not hand the note to root:
 /// a sync tool running as the vault's owner, like unison, could no longer read
 /// a 0600 note. Anyone else can't change owners, and doesn't need to.
@@ -625,9 +666,10 @@ fn occupied(path: &Path) -> bool {
             .unwrap_or(false)
 }
 
-/// Create a new empty note, returning its canonical path. `name` may be folder-
-/// qualified (`sub/New`); parent folders are created.
-pub fn create_note(root: &Path, name: String) -> Result<String, String> {
+/// Create a new note holding `content`, returning its canonical path. `name`
+/// may be folder-qualified (`sub/New`); parent folders are created. The note
+/// appears whole, and never in place of a file already there.
+pub fn create_note(root: &Path, name: String, content: &str) -> Result<String, String> {
     let path = build_note_path(root, &name)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
@@ -635,7 +677,7 @@ pub fn create_note(root: &Path, name: String) -> Result<String, String> {
     if occupied(&path) {
         return Err("note already exists".into());
     }
-    atomic_write(&path, b"")?;
+    create_whole(&path, to_lf(content).as_bytes())?;
     let canonical = fs::canonicalize(&path).map_err(|e| e.to_string())?;
     if !canonical.starts_with(root) {
         let _ = fs::remove_file(&canonical);
@@ -2298,6 +2340,25 @@ mod tests {
         let far = read_image(&root, "/Far/x/assets/two.png".into(), "".into()).unwrap();
         assert_eq!(read_image(&root, "assets/two.png".into(), "B/N.md".into()).unwrap(), far);
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn create_note_writes_its_content_whole_and_never_over_a_file() {
+        let root = scratch_vault("create");
+        let made = create_note(&root, "Daily/Today".into(), "# Today\r\nfrom the template\r\n").unwrap();
+        assert_eq!(fs::read_to_string(&made).unwrap(), "# Today\nfrom the template\n");
+        fs::write(&made, "mine").unwrap();
+        assert_eq!(create_note(&root, "Daily/Today".into(), "again").unwrap_err(), "note already exists");
+        assert_eq!(fs::read_to_string(&made).unwrap(), "mine");
+        // No temp file is left behind either way.
+        let left: Vec<_> = fs::read_dir(root.join("Daily")).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name()).collect();
+        assert_eq!(left.len(), 1);
+        // Nor over a file that turns up between the check and the write.
+        let path = root.join("Raced.md");
+        fs::write(&path, "theirs").unwrap();
+        assert_eq!(create_whole(&path, b"ours").unwrap_err(), "note already exists");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "theirs");
+        let _ = fs::remove_dir_all(&root);
     }
 
     fn scratch_vault(tag: &str) -> PathBuf {

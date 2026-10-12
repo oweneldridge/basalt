@@ -122,8 +122,8 @@ export function writeBase(path: string, content: string, expected?: string): Pro
   return tracked(path, content, invoke<void>("write_base", { path, content, expected: expected ?? null }));
 }
 
-export function createNote(name: string): Promise<string> {
-  return invoke<string>("create_note", { name });
+export function createNote(name: string, content = ""): Promise<string> {
+  return invoke<string>("create_note", { name, content });
 }
 
 /** Move a note to the vault's .trash/ (recoverable, Obsidian-compatible). */

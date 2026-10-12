@@ -363,7 +363,7 @@ fn dispatch(root: &Path, cmd: &str, a: &Value) -> Result<Value, String> {
         "write_note" => basalt_core::write_note(root, s("path")?, s("content")?, opt("expected")).map(|_| Value::Null),
         "write_canvas" => basalt_core::write_canvas(root, s("path")?, s("content")?, opt("expected")).map(|_| Value::Null),
         "write_base" => basalt_core::write_base(root, s("path")?, s("content")?, opt("expected")).map(|_| Value::Null),
-        "create_note" => basalt_core::create_note(root, s("name")?).map(|x| json!(x)),
+        "create_note" => basalt_core::create_note(root, s("name")?, &opt("content").unwrap_or_default()).map(|x| json!(x)),
         "delete_note" => basalt_core::delete_note(root, s("path")?).map(|_| Value::Null),
         "rename_note" => basalt_core::rename_note(root, s("path")?, s("newName")?).map(|x| json!(x)),
         "rename_attachment" => basalt_core::rename_attachment(root, s("path")?, s("newName")?).map(|x| json!(x)),

@@ -35,6 +35,17 @@ test.describe("bases on disk", () => {
     await expect(view.locator("ol.base-list").getByRole("listitem")).toHaveCount(2);
   });
 
+  test("a note changed outside the app is filtered by its new size", async ({ page, vault }) => {
+    vault.write("Sizes.base", "views:\n  - type: list\n    name: Big\n    filters: 'file.size > 1000'\n");
+    await openApp(page, vault);
+    await page.locator(".tree-row.attachment", { hasText: "Sizes" }).click();
+    const view = page.locator(".pane:not(.dock) .base-view");
+    await expect(view).toBeVisible();
+    await expect(view.getByRole("listitem", { name: "Beta" })).toHaveCount(0);
+    vault.write("Projects/Beta.md", "# Beta\n\n" + "word ".repeat(400));
+    await expect(view.getByRole("listitem").filter({ hasText: "Beta" })).toHaveCount(1);
+  });
+
   test("embedded bases render from disk and write nothing", async ({ page, vault }) => {
     const before = { hub: vault.read("Hub.md"), base: vault.read("Projects.base") };
     const mtimes = () => ["Hub.md", "Projects.base"].map((f) => statSync(vault.path(f)).mtimeMs);

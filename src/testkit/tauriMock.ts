@@ -76,7 +76,7 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
     case "create_note": {
       const name = String(a.name);
       const rel = name.endsWith(".md") ? name : `${name}.md`;
-      seed(rel, ""); // empty, as the core creates it
+      seed(rel, a.content === undefined ? "" : String(a.content));
       return ok(`${VAULT}/${rel}`);
     }
     case "rename_note":

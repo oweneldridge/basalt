@@ -687,8 +687,8 @@ test.describe("today's daily note from a template", () => {
     let held = false;
     await page.route("**/api/invoke", async (route) => {
       const body = route.request().postData() ?? "";
-      // The template's write waits, before it reaches the disk.
-      if (!held && body.includes('"cmd":"write_note"') && body.includes("## Log")) {
+      // Making the note with its template waits, before it reaches the disk.
+      if (!held && body.includes('"cmd":"create_note"') && body.includes("## Log")) {
         held = true;
         await new Promise<void>((r) => (release = r));
       }

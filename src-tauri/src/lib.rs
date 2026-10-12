@@ -176,12 +176,13 @@ fn write_base(
     basalt_core::write_base(&root, path, content, expected)
 }
 
-/// Create a new empty note, returning its canonical path. `name` may be folder-
-/// qualified (`sub/New`); parent folders are created.
+/// Create a new note holding `content` (empty if none), returning its
+/// canonical path. `name` may be folder-qualified (`sub/New`); parent folders
+/// are created.
 #[tauri::command]
-fn create_note(name: String, window: tauri::Window, state: State<VaultState>) -> Result<String, String> {
+fn create_note(name: String, content: Option<String>, window: tauri::Window, state: State<VaultState>) -> Result<String, String> {
     let root = current_root(&state, window.label())?;
-    basalt_core::create_note(&root, name)
+    basalt_core::create_note(&root, name, content.as_deref().unwrap_or(""))
 }
 
 /// Move a note to `<vault>/.trash/` (Obsidian-compatible, recoverable). A name
