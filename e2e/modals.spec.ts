@@ -249,3 +249,28 @@ test("buttons, tabs and checkboxes are at least 24 by 24 pixels", async ({ page 
   );
   expect(small).toEqual([]);
 });
+
+test("focus goes to the note, not the page, when the last tab of a panel closes or the view switches", async ({ page }) => {
+  await page.goto("/app-harness.html");
+  await page.evaluate(() => {
+    Object.keys(localStorage).filter((k) => k.includes("workspace") || k.includes("reading")).forEach((k) => localStorage.removeItem(k));
+  });
+  await page.reload();
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+  const onPage = () => page.evaluate(() => document.activeElement === document.body);
+  // Cmd-E from the editor, both ways.
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await page.keyboard.press("ControlOrMeta+e");
+  await expect(page.locator(".pane:not(.dock) .reading-view").first()).toBeVisible();
+  await expect.poll(onPage).toBe(false);
+  await page.keyboard.press("ControlOrMeta+e");
+  await expect(page.locator(".pane:not(.dock) .cm-content").first()).toBeFocused();
+  // The left panel's tabs, closed one by one from the keyboard.
+  const bar = page.locator(".pane.dock-left [role='tablist']").first();
+  while ((await bar.getByRole("tab").count()) > 0) {
+    await bar.getByRole("tab").first().focus();
+    await page.keyboard.press("Delete");
+    await page.waitForTimeout(100);
+    expect(await onPage()).toBe(false);
+  }
+});

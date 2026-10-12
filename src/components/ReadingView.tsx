@@ -300,5 +300,5 @@ export function ReadingView({
     if (e.key === "Enter" && (e.target as HTMLElement).matches(".md-wikilink, .md-link")) onClick(e);
   };
 
-  return <div className="reading-view" data-self-rel={selfRel} ref={host} onClick={onClick} onKeyDown={onKeyDown} />;
+  return <div className="reading-view" tabIndex={-1} data-self-rel={selfRel} ref={host} onClick={onClick} onKeyDown={onKeyDown} />;
 }

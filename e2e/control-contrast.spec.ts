@@ -115,10 +115,16 @@ for (const scheme of ["light", "dark"] as const) {
       for (const tab of await bar.locator(".tab").all()) {
         const t = await tab.boundingBox();
         expect(t!.x + t!.width).toBeLessThanOrEqual(box!.x + box!.width + 0.5);
-        // A tooltip names it, on its name or icon rather than the tab, so the
-        // name isn't read out twice.
-        expect(await tab.locator("[title], svg title").count()).toBeGreaterThan(0);
+        // A tooltip names it wherever the pointer rests, from a label filling
+        // the tab rather than the tab itself, so the name isn't read out twice.
         expect(await tab.getAttribute("title")).toBeNull();
+        const tip = await tab.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          const at = (x: number) => document.elementFromPoint(x, r.top + r.height / 2)?.closest("[title]")?.getAttribute("title") ?? null;
+          return [at(r.left + 3), at(r.left + r.width / 2)];
+        });
+        expect(tip[0], await tab.textContent() ?? "").toBeTruthy();
+        expect(tip[1]).toBeTruthy();
       }
     }
     // A note tab in a narrow dock shrinks to fit, its name cut short.

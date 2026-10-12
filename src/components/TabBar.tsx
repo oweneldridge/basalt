@@ -38,6 +38,19 @@ interface Props {
   dock?: boolean;
 }
 
+/** When focus was left on the page (its tab or view gone), give it to the
+ * focused pane's note or Reading view, else to an open note's tab. */
+export function refocusIfLost() {
+  requestAnimationFrame(() => {
+    const at = document.activeElement;
+    if (at && at !== document.body) return;
+    const to =
+      document.querySelector<HTMLElement>(".pane.focused .cm-content, .pane.focused .reading-view") ??
+      document.querySelector<HTMLElement>(".pane:not(.dock) .cm-content, .pane:not(.dock) .reading-view, .pane:not(.dock) [role='tab'][tabindex='0']");
+    to?.focus({ preventScroll: true });
+  });
+}
+
 // A tab drag carries "<paneId>\n<path>" under this private MIME type.
 const TAB_MIME = "application/x-basalt-tab";
 
@@ -127,7 +140,11 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
             else if (e.key === "Home") go(0);
             else if (e.key === "End") go(list.length - 1);
             else if (e.key === "Enter" || e.key === " ") onSelect(t.path);
-            else if ((e.key === "Delete" || e.key === "Backspace") && !t.pinned) onClose(t.path);
+            else if ((e.key === "Delete" || e.key === "Backspace") && !t.pinned) {
+              onClose(t.path);
+              // Its bar may go with it (a split pane's last tab).
+              if (tabs.length === 1) refocusIfLost();
+            }
             else {
               const at = menuKeyOpens(e);
               if (at) onContextMenu(t.path, at.x, at.y);
@@ -173,6 +190,7 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
             <button
               className="tab-pin"
               tabIndex={-1}
+              aria-hidden="true"
               aria-label={`Unpin ${t.name}`}
               title="Unpin"
               onMouseDown={(e) => {
@@ -184,11 +202,12 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
               📌
             </button>
           )}
-          {/* The tooltip sits on the name (or the icon), not the tab, so it
+          {/* The tooltip sits on a label filling the tab, not on the tab, so it
               isn't read out again as the tab's description. */}
-          {iconOnly && <ViewIcon path={t.path} title={t.name} />}
-          <span className={iconOnly ? "tab-name sr-only" : "tab-name"} title={iconOnly ? undefined : t.pinned ? `${t.name} (pinned)` : t.name}>
-            {t.name}
+          <span className="tab-label" title={t.pinned ? `${t.name} (pinned)` : t.name}>
+            {iconOnly && <ViewIcon path={t.path} />}
+            <span className={iconOnly ? "tab-name sr-only" : "tab-name"}>{t.name}</span>
+            {t.pinned && <span className="sr-only"> (pinned)</span>}
           </span>
           {!t.pinned && !(dock && t.view) && (
             <button
