@@ -26,4 +26,11 @@ describe("bufferChange", () => {
     bufferChange(buf, { path: "/v/B.md", rel: "B.md", mtime: 4 });
     expect(buf.get("B.md")?.statsOnly).toBeUndefined();
   });
+
+  it("keeps two changes of a note's time alone as a change of time alone", () => {
+    const buf = new Map<string, ChangedNote>();
+    bufferChange(buf, { path: "/v/A.md", rel: "A.md", mtime: 1, statsOnly: true, seq: 1 });
+    bufferChange(buf, { path: "/v/A.md", rel: "A.md", mtime: 2, statsOnly: true, seq: 2 });
+    expect(buf.get("A.md")).toEqual({ path: "/v/A.md", rel: "A.md", mtime: 2, statsOnly: true, seq: 2 });
+  });
 });

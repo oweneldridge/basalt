@@ -50,7 +50,17 @@ for (const [rel, content] of Object.entries(extra)) {
   else files.set(`${VAULT}/${rel}`, content);
 }
 
+// A test can slow a command down or answer it itself, from the page:
+// window.__mockHook = async (cmd, args) => { ...; return { result } } (or nothing).
+type Hook = (cmd: string, args: Record<string, unknown>) => Promise<{ result: unknown } | void> | void;
+
 export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const hook = (globalThis as { __mockHook?: Hook }).__mockHook;
+  if (!hook) return invokeNow<T>(cmd, args);
+  return Promise.resolve(hook(cmd, args ?? {})).then((r) => (r ? (r.result as T) : invokeNow<T>(cmd, args)));
+}
+
+function invokeNow<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const a = args ?? {};
   const ok = <R>(v: R) => Promise.resolve(v as unknown as T);
   switch (cmd) {
@@ -137,6 +147,7 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
             '    this.addCommand({ id: "meta", name: "Dump Ideas metadata", callback: () => { globalThis.__ideasMeta = this.app.metadataCache.getFileCache("Ideas.md"); } });',
             '    this.registerView("demo-view", "Demo View", (el) => { el.textContent = "demo-view-content"; return () => { globalThis.__demoViewClosed = true; }; });',
             '    this.addCommand({ id: "vrename", name: "Vault rename Ideas", callback: () => { this.app.vault.rename("Ideas.md", "IdeasViaPlugin"); } });',
+            '    this.addCommand({ id: "vcreate", name: "Vault create a note", callback: () => { this.app.vault.create("Made By Plugin.md", "é\\nx"); } });',
             '    this.registerEvent(this.app.vault.on("modify", () => {}));',
             "  }",
             "};",

@@ -34,6 +34,8 @@ export interface ChangedNote extends FileStats {
   rel: string;
   /** Only its times or attributes changed: its text needn't be read. */
   statsOnly?: boolean;
+  /** The order the change came in, so older stats never replace newer. */
+  seq?: number;
 }
 
 /** Add a watcher change to `buf` (one per note), where newer stats never

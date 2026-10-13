@@ -255,10 +255,14 @@ function withStats(notes: VaultNote[], list: ChangedNote[]): VaultNote[] {
   }
   return next ?? notes;
 }
+/** Stats for a note just written here: its ctime stays. */
+function writtenNow(content: string): FileStats {
+  return { mtime: Date.now(), size: new TextEncoder().encode(content).length };
+}
 /** Stats for a note just made here, as a save sets them. */
 function madeNow(content: string): FileStats {
-  const now = Date.now();
-  return { mtime: now, ctime: now, size: new TextEncoder().encode(content).length };
+  const stats = writtenNow(content);
+  return { ...stats, ctime: stats.mtime };
 }
 // Bound on the self-write suppression map (rel -> last written content).
 const SELF_WRITES_MAX = 128;
@@ -806,6 +810,9 @@ export default function App() {
   const selfWrites = useRef<Map<string, string>>(new Map());
   // Accumulated external changes (rel -> absolute path), flushed after a debounce.
   const changedBuf = useRef<Map<string, ChangedNote>>(new Map());
+  const changeSeq = useRef(0);
+  // Per note, the newest change whose stats it shows.
+  const statsSeq = useRef<Map<string, number>>(new Map());
   const watchTimer = useRef<number | undefined>(undefined);
   // Buffers changes and applies them after a short quiet spell (set up with
   // the watcher's listener below).
@@ -1073,8 +1080,7 @@ export default function App() {
           const updated: VaultNote = {
             ...meta,
             content: doc,
-            mtime: Date.now(),
-            size: new TextEncoder().encode(doc).length,
+            ...writtenNow(doc),
           };
           index.current.setNote(updated);
           setNotes((prev) => prev.map((n) => (n.path === path ? updated : n)));
@@ -1961,6 +1967,7 @@ export default function App() {
       saveTimers.current.forEach((t) => window.clearTimeout(t));
       saveTimers.current.clear();
       selfWrites.current.clear();
+      statsSeq.current.clear();
       // Empty the stale note list immediately — the old vault's entries must not
       // be clickable while the new vault loads.
       setNotes([]);
@@ -2266,8 +2273,15 @@ export default function App() {
     async (incoming: ChangedNote[]) => {
       if (!vaultRef.current) return;
       const shown = showHiddenRef.current ? incoming : incoming.filter((c) => !isHiddenRel(c.rel));
+      // A batch whose read was slow can land after a later change's stats.
+      const newest = (c: ChangedNote) => {
+        const seq = c.seq ?? 0;
+        if ((statsSeq.current.get(c.rel) ?? -1) > seq) return false;
+        statsSeq.current.set(c.rel, seq);
+        return true;
+      };
       // Only times changed: new dates, nothing to read.
-      const touched = shown.filter((c) => c.statsOnly);
+      const touched = shown.filter((c) => c.statsOnly && newest(c));
       if (touched.length > 0) setNotes((prev) => withStats(prev, touched));
       const changes = shown.filter((c) => !c.statsOnly);
       if (changes.length === 0) return;
@@ -2318,6 +2332,7 @@ export default function App() {
           if (ex) index.current.removeNote(ex.path);
         }
       }
+      const fresh = new Set(results.filter((r) => newest(r.stats)).map((r) => r.rel));
       setNotes((prev) => {
         let next = prev.slice();
         for (const r of results) {
@@ -2326,8 +2341,8 @@ export default function App() {
             if (i === -1) {
               next.push({ path: r.path, rel: r.rel, name: nameFromRel(r.rel), content: r.content, ...statsOf(r.stats, r.content) });
             } else {
-              // Changed outside the app: its stats are new too.
-              next[i] = { ...next[i], content: r.content, ...statsOf(r.stats, r.content) };
+              // Changed outside the app: its stats are new too, unless a later change's are in.
+              next[i] = { ...next[i], content: r.content, ...(fresh.has(r.rel) ? statsOf(r.stats, r.content) : {}) };
             }
           } else if (i !== -1) {
             next = next.filter((n) => n.rel !== r.rel);
@@ -2536,7 +2551,7 @@ export default function App() {
     (async () => {
       try {
         queueChanges.current = (incoming) => {
-          for (const c of incoming) bufferChange(changedBuf.current, c);
+          for (const c of incoming) bufferChange(changedBuf.current, { ...c, seq: c.seq ?? ++changeSeq.current });
           if (changedBuf.current.size === 0) return;
           window.clearTimeout(watchTimer.current);
           const flush = () => {
@@ -2851,7 +2866,7 @@ export default function App() {
       if (att) rememberSelfWrite(att.rel, doc);
       const meta = att ? undefined : notesRef.current.find((n) => n.path === path);
       if (meta && meta.content !== doc) {
-        const updated: VaultNote = { ...meta, content: doc };
+        const updated: VaultNote = { ...meta, content: doc, ...writtenNow(doc) };
         index.current.setNote(updated);
         notesRef.current = notesRef.current.map((n) => (n.path === path ? updated : n));
         setNotes((prev) => prev.map((n) => (n.path === path ? updated : n)));
@@ -3459,7 +3474,7 @@ export default function App() {
           const next = disk.split(placeholder).join(replacement);
           await writeNote(holder.path, next, disk);
           rememberSelfWrite(holder.rel, next);
-          const updated: VaultNote = { ...holder, content: next };
+          const updated: VaultNote = { ...holder, content: next, ...writtenNow(next) };
           index.current.setNote(updated);
           setNotes((prev) => prev.map((n) => (n.path === holder.path ? updated : n)));
           bumpIndex();
@@ -3638,8 +3653,7 @@ export default function App() {
           const updated: VaultNote = {
             ...cur,
             content: next,
-            mtime: Date.now(),
-            size: new TextEncoder().encode(next).length,
+            ...writtenNow(next),
           };
           index.current.setNote(updated);
           setNotes((p) => p.map((n) => (n.path === key ? updated : n)));
@@ -3800,8 +3814,7 @@ export default function App() {
       const updated: VaultNote = {
         ...note,
         content,
-        mtime: Date.now(),
-        size: new TextEncoder().encode(content).length,
+        ...writtenNow(content),
       };
       index.current.setNote(updated);
       setNotes((prev) => prev.map((n) => (n.path === note.path ? updated : n)));
@@ -4440,7 +4453,8 @@ export default function App() {
   // A link pass (note rename or folder move) writes rewritten links to disk.
   // Each rewrite is registered at once, in React state too so a re-render can't
   // undo it, and a save typed meanwhile compares against what's on disk.
-  const registerRewrite = useCallback((updated: VaultNote) => {
+  const registerRewrite = useCallback((written: VaultNote) => {
+    const updated: VaultNote = { ...written, ...writtenNow(written.content) };
     if (bigBase.current.has(updated.path)) setBigBase(updated.path, updated.content);
     // Like a save: a vault read in flight keeps this text over its listing.
     lastSave.current.set(updated.path, { seq: ++saveSeq.current, content: updated.content });
@@ -4816,7 +4830,7 @@ export default function App() {
       }
       const note = notesRef.current.find((n) => n.path === sourcePath);
       if (note) {
-        const updated: VaultNote = { ...note, content };
+        const updated: VaultNote = { ...note, content, ...writtenNow(content) };
         index.current.setNote(updated);
         rememberSelfWrite(note.rel, content);
         setNotes((prev) => prev.map((n) => (n.path === sourcePath ? updated : n)));
