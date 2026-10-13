@@ -557,6 +557,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A note added or changed outside the app has its size and dates from the
   file, so Bases filtering or sorting on them see the change at once, a synced
   note's own modified time included.
+- Renames and moves write links as Obsidian 1.14 does, checked against it by
+  hand: a relative link to the note's own folder or below has no `./`, a
+  `[text](<path>)` link keeps its angle brackets, and a canvas keeps
+  Obsidian's layout (one line per card) instead of being reformatted.
 
 ### Security
 

@@ -263,3 +263,16 @@ describe("empty text cards", () => {
     expect(parseCanvas(out)!.nodes.map((n) => n.id)).toEqual(["a"]);
   });
 });
+
+describe("canvas layout on disk", () => {
+  it("writes a canvas as Obsidian does: one line per node, no trailing newline", () => {
+    const before =
+      '{\n\t"nodes":[\n\t\t{"id":"n1","type":"file","file":"Target.md","x":0,"y":0,"width":300,"height":200},\n' +
+      '\t\t{"id":"n2","type":"text","text":"See [[Target]]","x":340,"y":0,"width":300,"height":120}\n\t],\n\t"edges":[]\n}';
+    const after = rewriteCanvasFileRefs(before, new Map([["Target.md", "Target Renamed.md"]]), (t) => t.replace("[[Target]]", "[[Target Renamed]]"));
+    expect(after).toBe(before.replace('"file":"Target.md"', '"file":"Target Renamed.md"').replace("[[Target]]", "[[Target Renamed]]"));
+    const saved = serializeCanvas(parseCanvas(before)!);
+    expect(saved.split("\n")).toHaveLength(7);
+    expect(saved.endsWith("\n}")).toBe(true);
+  });
+});

@@ -58,10 +58,9 @@ function rewriteMdLine(
     if (newPathPart === null) continue;
     // Note targets come back without `.md`; attachment targets keep their extension.
     const newPath = /\.md$/i.test(internal.path) ? `${newPathPart}.md` : newPathPart;
-    // A raw fragment with whitespace/parens is only valid inside <…>; keep the
-    // angle form there (raw path, the way angled hrefs are authored).
+    // An angled link stays angled, with the raw path, as Obsidian keeps it.
     urlToken =
-      angled && /[\s()]/.test(internal.fragment)
+      angled && !/[<>\n]/.test(newPath + internal.fragment)
         ? `<${newPath}${internal.fragment}>`
         : encodeMdPath(newPath) + internal.fragment;
     urlToken = yamlEscape(urlToken, ctx?.quote ?? null);
@@ -172,7 +171,8 @@ export function linkTargetFor(newRel: string, basenameTaken: boolean): string {
 
 export type LinkFormat = "shortest" | "relative" | "absolute";
 
-/** A `./`/`../` link from the note at `fromRel` (with .md) to `toRelNoExt`. */
+/** A relative link from the note at `fromRel` (with .md) to `toRelNoExt`:
+ * `../` to climb, and no `./` for its own folder or below, as Obsidian writes. */
 export function relativeLinkTarget(fromRel: string, toRelNoExt: string): string {
   const fromParts = fromRel.split("/").slice(0, -1);
   const toParts = toRelNoExt.split("/");
@@ -186,7 +186,6 @@ export function relativeLinkTarget(fromRel: string, toRelNoExt: string): string 
   }
   const ups = fromParts.length - common;
   const rest = toParts.slice(common);
-  if (ups === 0) return `./${rest.join("/")}`;
   return [...Array(ups).fill(".."), ...rest].join("/");
 }
 

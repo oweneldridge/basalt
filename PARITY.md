@@ -130,6 +130,24 @@ for unresolved links, to keep their contrast. A large pasted `data:` image is
 left out, where Obsidian saves it as an attachment. Bases show 300 rows with a
 button for the rest; Obsidian scrolls through all of them.
 
+### Rename parity run (2026-10-13, Obsidian 1.14.4)
+
+- The same four renames and moves were done by hand in Obsidian and by
+  Basalt, in three vaults (shortest, relative and absolute links), and the
+  files compared (`parity/rename.md`).
+- Brought in line: relative links to the note's own folder or below have no
+  `./`, `[text](<path>)` links keep their angle brackets, and canvases are
+  written in Obsidian's layout, one line per card.
+- Still different, on purpose: Obsidian rewrote a link in a Latin-1 note and
+  turned its `é` into a replacement character; Basalt leaves notes that
+  aren't UTF-8 untouched, so the link there goes stale.
+- Still different: after moving a note under relative links, Obsidian wrote
+  `[[Sub/Leaf]]` (relative to where the note was, and found only by its path's
+  end), where Basalt writes the note's real relative path,
+  `[[../Folder2/Sub/Leaf]]`.
+- Not covered: this run's vaults predate `Notes/Blocks.md`, so whether
+  Obsidian counts links in HTML blocks is still open.
+
 ## Fixed since this audit (2026-07-07)
 
 The four **HIGH**-severity items — the data-safety/interop holes and the one

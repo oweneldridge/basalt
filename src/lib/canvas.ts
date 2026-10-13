@@ -113,7 +113,16 @@ export function serializeCanvas(data: CanvasData): string {
   const top: Record<string, unknown> = { ...(data.topRaw ?? {}) };
   top.nodes = [...nodes, ...(data.passNodes ?? [])];
   top.edges = [...edges, ...(data.passEdges ?? [])];
-  return JSON.stringify(top, null, "\t");
+  return canvasText(top);
+}
+
+/** A canvas's JSON laid out as Obsidian writes it: a tab per level, each node
+ * and edge on a line of its own, no newline at the end. */
+export function canvasText(top: Record<string, unknown>): string {
+  const entry = ([key, value]: [string, unknown]) =>
+    `\t${JSON.stringify(key)}:` +
+    (Array.isArray(value) && value.length ? `[\n${value.map((v) => "\t\t" + JSON.stringify(v)).join(",\n")}\n\t]` : JSON.stringify(value));
+  return `{\n${Object.entries(top).map(entry).join(",\n")}\n}`;
 }
 
 function num(v: unknown, fallback = 0): number {
@@ -131,7 +140,7 @@ function end(v: unknown): End | undefined {
 
 /** Rewrite `file:` references in a canvas's file-nodes using `relMap`
  * (oldRel → newRel), for keeping canvas embeds pointing at a renamed/moved
- * note. This is a MINIMAL edit of the raw JSON — it changes only matched `file`
+ * note. This is a MINIMAL edit of the raw JSON: it changes only matched `file`
  * fields and re-stringifies, so it never rounds geometry or drops fields the
  * canvas modeler doesn't understand (unlike serializeCanvas). Returns the new
  * JSON, or null if nothing changed / the JSON is unparseable. A file-node's
@@ -173,7 +182,7 @@ export function rewriteCanvasFileRefs(
       changed = true;
     }
   }
-  return changed ? JSON.stringify(data, null, "\t") : null;
+  return changed ? canvasText(data as Record<string, unknown>) : null;
 }
 
 /** Parse JSON Canvas text. Returns null only if the JSON itself is unparseable;

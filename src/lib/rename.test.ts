@@ -147,7 +147,7 @@ describe("markdown-style link rewriting", () => {
     const map = (raw: string) =>
       targetPathPart(raw).toLowerCase() === "old note.md" ? "Renamed" : null;
     expect(rewriteLinks("[x](Old%20Note.md)", map)).toBe("[x](Renamed.md)");
-    expect(rewriteLinks("[x](<Old Note.md>)", map)).toBe("[x](Renamed.md)");
+    expect(rewriteLinks("[x](<Old Note.md>)", map)).toBe("[x](<Renamed.md>)");
   });
   it("rewrites image-embed form and leaves externals/code spans alone", () => {
     const map = (raw: string) =>
@@ -169,17 +169,20 @@ describe("markdown-style link rewriting", () => {
     expect(rewriteLinks("[see [1]](Old.md)", map)).toBe("[see [1]](New.md)");
     expect(rewriteLinks("[![alt](img.png)](Old.md)", map)).toBe("[![alt](img.png)](New.md)");
   });
-  it("keeps the angle form when the fragment needs it (spaces/parens)", () => {
+  it("keeps the angle form, with the raw path, as Obsidian does", () => {
     const map = (raw: string) =>
       targetPathPart(raw).toLowerCase() === "old.md" ? "New" : null;
     expect(rewriteLinks("see [t](<Old.md#My Heading>) here", map)).toBe(
       "see [t](<New.md#My Heading>) here",
     );
     expect(rewriteLinks("[t](<Old.md#a(b)>)", map)).toBe("[t](<New.md#a(b)>)");
-    // A safe fragment still un-angles and percent-encodes like Obsidian.
     const spaced = (raw: string) =>
-      targetPathPart(raw).toLowerCase() === "old note.md" ? "Renamed" : null;
-    expect(rewriteLinks("[x](<Old Note.md#Sec>)", spaced)).toBe("[x](Renamed.md#Sec)");
+      targetPathPart(raw).toLowerCase() === "old note.md" ? "Renamed Note" : null;
+    expect(rewriteLinks("[x](<Old Note.md#Sec>)", spaced)).toBe("[x](<Renamed Note.md#Sec>)");
+    expect(rewriteLinks("[x](Old%20Note.md)", spaced)).toBe("[x](Renamed%20Note.md)");
+    // A path an angled link can't hold is encoded instead.
+    const odd = (raw: string) => (targetPathPart(raw).toLowerCase() === "old.md" ? "a>b" : null);
+    expect(rewriteLinks("[x](<Old.md>)", odd)).toBe("[x](a%3Eb.md)");
   });
 });
 
