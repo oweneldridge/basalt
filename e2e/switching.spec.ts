@@ -8,6 +8,7 @@ async function slowSwitch(page: Page, ms = 4000) {
   }, ms);
   await page.keyboard.press("ControlOrMeta+p");
   await page.locator(".palette-input").first().fill("Switch vault");
+  await expect(page.locator(".palette-item").first()).toContainText("Switch vault");
   await page.keyboard.press("Enter");
   await page.locator(".vault-item", { hasText: "/mock/other" }).first().click();
   await expect(page.locator("main.main")).toHaveAttribute("inert", "");
@@ -133,6 +134,7 @@ test("a switch the unsaved-changes question cancels lets go at once", async ({ p
   });
   await page.keyboard.press("ControlOrMeta+p");
   await page.locator(".palette-input").first().fill("Switch vault");
+  await expect(page.locator(".palette-item").first()).toContainText("Switch vault");
   await page.keyboard.press("Enter");
   await page.locator(".vault-item", { hasText: "/mock/other" }).first().click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { __asked: number }).__asked)).toBe(1);
@@ -150,6 +152,7 @@ test("a switch closes the graph, menus and prompts of the vault that's going", a
   const pick = async () => {
     await page.keyboard.press("ControlOrMeta+p");
     await page.locator(".palette-input").first().fill("Switch vault");
+    await expect(page.locator(".palette-item").first()).toContainText("Switch vault");
     await page.keyboard.press("Enter");
     await page.locator(".vault-item", { hasText: "/mock/other" }).first().click();
     await expect(page.locator(".switch-status")).toHaveText("");

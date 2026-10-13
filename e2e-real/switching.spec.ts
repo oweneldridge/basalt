@@ -96,6 +96,7 @@ async function switchTo(page: Page, root: string, fromKeyboard = false) {
   if (fromKeyboard) await page.keyboard.press("ControlOrMeta+p");
   else await page.getByRole("button", { name: /Command palette/ }).click();
   await page.locator(".palette-input").first().fill("Switch vault");
+  await expect(page.locator(".palette-item").first()).toContainText("Switch vault");
   await page.keyboard.press("Enter");
   await page.locator(".vault-item", { hasText: root }).first().click();
 }
