@@ -1,8 +1,10 @@
 // Tests for vault-wide link rewriting on rename — the riskiest text surgery in
 // the app: it edits OTHER notes' content, so every preserved detail matters.
 import { describe, expect, it } from "vitest";
-import { linkTargetFor, rewriteLinks } from "./rename";
-import { targetPathPart, yamlValueLines } from "./markdown";
+import { linkTargetFor, linkTargetForFormat, relativeLinkTarget, rewriteLinks } from "./rename";
+import { internalFileHref, targetPathPart, yamlValueLines } from "./markdown";
+import { VaultIndex } from "./vaultIndex";
+import type { VaultNote } from "./vault";
 
 // A mapper that renames targets whose path part matches `oldName` (markdown
 // links arrive with their .md extension).
@@ -183,6 +185,56 @@ describe("markdown-style link rewriting", () => {
     // A path an angled link can't hold is encoded instead.
     const odd = (raw: string) => (targetPathPart(raw).toLowerCase() === "old.md" ? "a>b" : null);
     expect(rewriteLinks("[x](<Old.md>)", odd)).toBe("[x](a%3Eb.md)");
+    const nl = (raw: string) => (targetPathPart(raw).toLowerCase() === "old.md" ? "a\nb" : null);
+    expect(rewriteLinks("[x](<Old.md>)", nl)).toBe("[x](a%0Ab.md)");
+    const spacedOld = (raw: string) => (targetPathPart(raw).toLowerCase() === "old.md" ? "New Note" : null);
+    expect(rewriteLinks("[a](<Old.md#a\\>b>)", spacedOld)).toBe("[a](New%20Note.md#a\\>b)");
+  });
+
+  it("encodes a path that wouldn't read back as itself in angle brackets", () => {
+    const hrefOf = (out: string | null) => internalFileHref(/\]\(<?([^>)]*)>?\)/.exec(out ?? "")![1]);
+    // A file named with # (linked as %23) stays one file name.
+    const lit = (raw: string, literal?: boolean) => (literal && raw === "a#b.png" ? "c#d.png" : null);
+    const a = rewriteLinks("[x](<a%23b.png>)", lit);
+    expect(a).toBe("[x](c%23d.png)");
+    expect(hrefOf(a)).toEqual({ path: "c#d.png", fragment: "" });
+    const toHash = (raw: string) => (targetPathPart(raw) === "pic.png" ? "a#b.png" : null);
+    expect(hrefOf(rewriteLinks("[x](<pic.png>)", toHash))).toEqual({ path: "a#b.png", fragment: "" });
+    // A name that looks like an escape isn't decoded into another name.
+    const pct = (raw: string) => (targetPathPart(raw) === "Old.md" ? "Rate %41" : null);
+    const b = rewriteLinks("[x](<Old.md>)", pct);
+    expect(b).toBe("[x](Rate%20%2541.md)");
+    expect(hrefOf(b)?.path).toBe("Rate %41.md");
+    // A bare % that isn't an escape reads back fine, so it stays angled.
+    const bare = (raw: string) => (targetPathPart(raw) === "Old.md" ? "100% done" : null);
+    expect(rewriteLinks("[x](<Old.md#Sec>)", bare)).toBe("[x](<100% done.md#Sec>)");
+  });
+});
+
+describe("relative links that a vault path would capture", () => {
+  const vnote = (rel: string): VaultNote => ({ path: `/v/${rel}`, rel, name: rel.split("/").pop()!.replace(/\.md$/, ""), content: "" });
+  const at = (rels: string[]) => {
+    const i = new VaultIndex();
+    i.build(rels.map(vnote));
+    return (from: string, to: string) => (text: string) => i.resolveFromRel(text, from) === `/v/${to}`;
+  };
+
+  it("keeps ./ when a root note has the bare path, as the link must still find its note", () => {
+    const reaches = at(["projects/A.md", "projects/Done.md", "Done.md", "projects/sub/Leaf.md", "sub/Leaf.md"]);
+    expect(relativeLinkTarget("projects/A.md", "projects/Done", reaches("projects/A.md", "projects/Done.md"))).toBe("./Done");
+    expect(relativeLinkTarget("projects/A.md", "projects/sub/Leaf", reaches("projects/A.md", "projects/sub/Leaf.md"))).toBe("./sub/Leaf");
+    expect(linkTargetForFormat("relative", "projects/Done", false, "projects/A.md", reaches("projects/A.md", "projects/Done.md"))).toBe("./Done");
+  });
+
+  it("writes the bare path, as Obsidian 1.14 does, when it finds the note", () => {
+    const reaches = at(["projects/A.md", "projects/Done.md", "projects/sub/Leaf.md", "other/Done.md", "x/sub/Leaf.md"]);
+    expect(relativeLinkTarget("projects/A.md", "projects/Done", reaches("projects/A.md", "projects/Done.md"))).toBe("Done");
+    expect(relativeLinkTarget("projects/A.md", "projects/sub/Leaf", reaches("projects/A.md", "projects/sub/Leaf.md"))).toBe("sub/Leaf");
+  });
+
+  it("climbs to a root note named like the note's own folder", () => {
+    expect(relativeLinkTarget("p/A.md", "p")).toBe("../p");
+    expect(relativeLinkTarget("p/q/A.md", "p/q")).toBe("../q");
   });
 });
 

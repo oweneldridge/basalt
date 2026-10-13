@@ -4650,7 +4650,7 @@ export default function App() {
             const last = normalizeName(targetPathPart(raw).split(/[/\\]/).pop() ?? "");
             if (selfAliases.has(last) && last !== normalizeName(newBase) && last !== normalizeName(oldNote.name))
               return null;
-            return linkTargetForFormat(fmt, newRelNoExt, taken, newRel); // self-link
+            return linkTargetForFormat(fmt, newRelNoExt, taken, newRel, (t) => index.current.resolveFromRel(t, newRel) === newPath); // self-link
           }
           if (dest) {
             // A link whose name is now this note's own may resolve to itself.
@@ -4662,12 +4662,12 @@ export default function App() {
             const destTaken =
               shadowed ||
               preNotes.some((n) => n.path !== dest && normalizeName(n.name) === normalizeName(destNote.name));
-            return linkTargetForFormat(fmt, destNote.rel.replace(/\.md$/i, ""), destTaken, newRel);
+            return linkTargetForFormat(fmt, destNote.rel.replace(/\.md$/i, ""), destTaken, newRel, (t) => index.current.resolveFromRel(t, newRel) === dest);
           }
           const att = resolveAttachment(atts, raw, oldNote.rel, literal);
           if (!att || resolveAttachment(atts, raw, newRel, literal)?.path === att.path) return null;
           const attTaken = atts.some((a) => a.path !== att.path && normalizeName(a.name) === normalizeName(att.name));
-          return linkTargetForFormat(fmt, att.rel, attTaken, newRel);
+          return linkTargetForFormat(fmt, att.rel, attTaken, newRel, (t) => resolveAttachment(atts, t, newRel, literal)?.path === att.path);
         };
         // Fix the note's own links on disk, unless it's being typed into; either
         // way reconcileRewrites then makes sure the newest text, typed or
@@ -4709,7 +4709,7 @@ export default function App() {
         // By the linking file's place, so a canvas's text cards resolve too.
         const sourceMap = (_path: string, noteRel: string): LinkMapper => (raw, literal) =>
           !literal && preIndex.resolveFromRel(raw, noteRel) === oldPath && !viaAlias(raw)
-            ? linkTargetForFormat(fmt, newRelNoExt, taken, noteRel)
+            ? linkTargetForFormat(fmt, newRelNoExt, taken, noteRel, (t) => index.current.resolveFromRel(t, noteRel) === newPath)
             : null;
         const { failures, written } = await rewriteNoteLinks(
           preNotes.filter((n) => n.path !== oldPath),
@@ -4801,7 +4801,7 @@ export default function App() {
       const linkText =
         fmt === "shortest" && bareWorks
           ? target.name
-          : linkTargetForFormat(fmt, target.rel.replace(/\.md$/i, ""), !bareWorks, srcRel);
+          : linkTargetForFormat(fmt, target.rel.replace(/\.md$/i, ""), !bareWorks, srcRel, (t) => index.current.resolveFromRel(t, srcRel) === target.path);
       const names = [target.name, ...index.current.aliasesOf(target.path)];
       const masked = mentionLinesFor(disk, mentionRegex(names))[idx];
       const next = linkifyMention(lines[idx], names, linkText, masked, lines, idx);
@@ -5282,7 +5282,7 @@ export default function App() {
         return (raw, literal = false) => {
           if ((!literal && preIndex.resolveFromRel(raw, was)) || resolveAttachment(preAtts, raw, was, literal)?.path !== path)
             return others(raw, literal);
-          const next = linkTargetForFormat(fmt, newRel, taken, rel);
+          const next = linkTargetForFormat(fmt, newRel, taken, rel, (t) => resolveAttachment(postAtts, t, rel, literal)?.path === newPath);
           return next === (literal ? raw : targetPathPart(raw)) ? null : next;
         };
       };

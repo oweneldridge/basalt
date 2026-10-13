@@ -58,10 +58,13 @@ function rewriteMdLine(
     if (newPathPart === null) continue;
     // Note targets come back without `.md`; attachment targets keep their extension.
     const newPath = /\.md$/i.test(internal.path) ? `${newPathPart}.md` : newPathPart;
-    // An angled link stays angled, with the raw path, as Obsidian keeps it.
+    // An angled link stays angled, with the raw path, as Obsidian keeps it,
+    // when that path reads back as itself (no `#` in the name, no `%XX`).
+    const raw = newPath + internal.fragment;
+    const back = angled && !/[<>\n]/.test(raw) ? internalFileHref(raw) : null;
     urlToken =
-      angled && !/[<>\n]/.test(newPath + internal.fragment)
-        ? `<${newPath}${internal.fragment}>`
+      back?.path === newPath
+        ? `<${raw}>`
         : encodeMdPath(newPath) + internal.fragment;
     urlToken = yamlEscape(urlToken, ctx?.quote ?? null);
     // `parts` matched the code-MASKED copy: splice the prefix (link text) and
@@ -172,8 +175,9 @@ export function linkTargetFor(newRel: string, basenameTaken: boolean): string {
 export type LinkFormat = "shortest" | "relative" | "absolute";
 
 /** A relative link from the note at `fromRel` (with .md) to `toRelNoExt`:
- * `../` to climb, and no `./` for its own folder or below, as Obsidian writes. */
-export function relativeLinkTarget(fromRel: string, toRelNoExt: string): string {
+ * `../` to climb, and no `./` for its own folder or below, as Obsidian writes,
+ * unless `reaches` says that bare path finds another file (a vault path wins). */
+export function relativeLinkTarget(fromRel: string, toRelNoExt: string, reaches?: (text: string) => boolean): string {
   const fromParts = fromRel.split("/").slice(0, -1);
   const toParts = toRelNoExt.split("/");
   let common = 0;
@@ -186,18 +190,21 @@ export function relativeLinkTarget(fromRel: string, toRelNoExt: string): string 
   }
   const ups = fromParts.length - common;
   const rest = toParts.slice(common);
-  return [...Array(ups).fill(".."), ...rest].join("/");
+  const text = [...Array(ups).fill(".."), ...rest].join("/");
+  return ups === 0 && reaches && !reaches(text) ? `./${text}` : text;
 }
 
-/** The link text to write for `toRelNoExt` under an Obsidian newLinkFormat. */
+/** The link text to write for `toRelNoExt` under an Obsidian newLinkFormat.
+ * `reaches` tells whether a link text written in `fromRel` finds the target. */
 export function linkTargetForFormat(
   format: LinkFormat,
   toRelNoExt: string,
   basenameTaken: boolean,
   fromRel: string | null,
+  reaches?: (text: string) => boolean,
 ): string {
   if (format === "absolute") return toRelNoExt;
-  if (format === "relative" && fromRel) return relativeLinkTarget(fromRel, toRelNoExt);
+  if (format === "relative" && fromRel) return relativeLinkTarget(fromRel, toRelNoExt, reaches);
   return linkTargetFor(toRelNoExt, basenameTaken);
 }
 
@@ -262,6 +269,7 @@ export function folderMoveMapper(
         dest.rel.replace(/\.md$/i, ""),
         ctx.nameTaken(dest.name, destPost),
         sourcePostRel,
+        (text) => ctx.resolvePost(text, sourcePostPath) === destPost,
       );
     }
     // Not a note target — maybe an attachment (image/PDF/audio/video) that moved.
@@ -279,7 +287,9 @@ export function folderMoveMapper(
       const att = ctx.attAt(attPost);
       if (!att) return null;
       // Attachments keep their extension — pass the full rel as the "toRel".
-      return linkTargetForFormat(ctx.format, att.rel, ctx.attNameTaken(att.name, attPost), sourcePostRel);
+      return linkTargetForFormat(ctx.format, att.rel, ctx.attNameTaken(att.name, attPost), sourcePostRel, (text) =>
+        ctx.resolveAttPost?.(text, sourcePostPath, literal) === attPost,
+      );
     }
     return null;
   };

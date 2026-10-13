@@ -130,6 +130,18 @@ describe("folder-move link rewrite (shortest format)", () => {
 
 });
 
+describe("folder-move link rewrite (relative format)", () => {
+  it("keeps ./ when the bare relative path would reach a root note", () => {
+    const notes = [note("projects/A.md", "see [[../old/Leaf]]"), note("old/Leaf.md"), note("sub/Leaf.md")];
+    expect(moveAndRewrite(notes, "old", "projects/sub", "projects/A.md", "relative")).toBe("see [[./sub/Leaf]]");
+  });
+
+  it("writes the bare relative path when nothing else has it", () => {
+    const notes = [note("projects/A.md", "see [[../old/Leaf]]"), note("old/Leaf.md"), note("x/sub/Leaf.md")];
+    expect(moveAndRewrite(notes, "old", "projects/sub", "projects/A.md", "relative")).toBe("see [[sub/Leaf]]");
+  });
+});
+
 describe("folder-move link rewrite (absolute format)", () => {
   it("rewrites a broken root-anchored link to the moved note's full path", () => {
     const notes = [note("top.md", "see [[/proj/b]]"), note("proj/b.md")];
@@ -145,6 +157,7 @@ function moveWithAtts(
   from: string,
   to: string,
   sourceRel: string,
+  format: LinkFormat = "shortest",
 ): string {
   const swap = (rel: string) => (rel.startsWith(`${from}/`) ? to + rel.slice(from.length) : rel);
   const preAtts = atts.map((a) => ({ path: `/v/${a.rel}`, rel: a.rel, name: a.rel.split("/").pop()! }));
@@ -167,7 +180,7 @@ function moveWithAtts(
     movedNewPathByOld: new Map(),
     noteAt: () => undefined,
     nameTaken: () => false,
-    format: "shortest",
+    format,
     resolveAttPre: (raw, f, lit) =>
       resolveAttachment(preAtts, raw, preNotes.find((n) => n.path === f)?.rel ?? null, lit)?.path ?? null,
     resolveAttPost: (raw, f, lit) =>
@@ -207,6 +220,17 @@ describe("folder-move attachment link rewrite", () => {
       "top.md",
     );
     expect(out).toBe("![[proj/pic.png]]");
+  });
+
+  it("keeps ./ on a relative embed when a root file has the bare path", () => {
+    const atts = [{ rel: "old/pic.png" }, { rel: "sub/pic.png" }];
+    expect(moveWithAtts([note("projects/A.md", "![[../old/pic.png]]")], atts, "old", "projects/sub", "projects/A.md", "relative")).toBe(
+      "![[./sub/pic.png]]",
+    );
+    const alone = [{ rel: "old/pic.png" }];
+    expect(moveWithAtts([note("projects/A.md", "![[../old/pic.png]]")], alone, "old", "projects/sub", "projects/A.md", "relative")).toBe(
+      "![[sub/pic.png]]",
+    );
   });
 
   const pic = [{ rel: "proj/pic.png" }];

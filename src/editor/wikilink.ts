@@ -23,6 +23,7 @@ import {
 import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { internalLinkTarget, mdLinkRegexGlobal, normalizeName, parseMarkdownLink, wikilinkLabel, wikilinkRegex } from "../lib/markdown";
 import { linkTargetForFormat, type LinkFormat } from "../lib/rename";
+import { linkpathDest } from "../lib/linkpath";
 import { isInExcludedRegion, treeChanged } from "./regions";
 import { notePathFacet } from "./query";
 import { linkResolves } from "../lib/transclude";
@@ -185,9 +186,13 @@ function wikilinkCompletions(opts: WikilinkCompletionOptions) {
         // compute the link per the vault's newLinkFormat (read at apply time).
         const relNoExt = note.rel.replace(/\.md$/i, "");
         const taken = notes.filter((n) => normalizeName(n.name) === normalizeName(note.name)).length > 1;
+        const here = opts.getActiveRel();
+        const files = notes.filter((n) => !n.alias);
         const target = note.alias
           ? note.name
-          : linkTargetForFormat(opts.getLinkFormat(), relNoExt, taken, opts.getActiveRel());
+          : linkTargetForFormat(opts.getLinkFormat(), relNoExt, taken, here, (t) =>
+              linkpathDest(t, here, files, (n) => n.rel, ".md")?.rel === note.rel,
+            );
         insert(target)(view, _completion, from, to);
       },
     }));
