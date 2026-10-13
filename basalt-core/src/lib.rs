@@ -58,6 +58,9 @@ pub struct ChangedNote {
     mtime: u64,
     ctime: u64,
     size: u64,
+    /// Only its times or attributes changed, so its text needn't be read.
+    #[serde(rename = "statsOnly", skip_serializing_if = "std::ops::Not::not")]
+    stats_only: bool,
 }
 
 static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -267,6 +270,10 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
 /// fails if anything is there. Where hard links aren't supported it's created
 /// in place instead, still never over an existing file.
 fn create_whole(path: &Path, content: &[u8]) -> Result<(), String> {
+    create_whole_with(path, content, |from, to| fs::hard_link(from, to))
+}
+
+fn create_whole_with(path: &Path, content: &[u8], link: impl FnOnce(&Path, &Path) -> std::io::Result<()>) -> Result<(), String> {
     let exists = |e: std::io::Error| {
         if e.kind() == std::io::ErrorKind::AlreadyExists {
             "note already exists".to_string()
@@ -290,7 +297,7 @@ fn create_whole(path: &Path, content: &[u8]) -> Result<(), String> {
         f.write_all(content).map_err(|e| format!("write: {e}"))?;
         f.sync_all().map_err(|e| format!("fsync: {e}"))
     })();
-    let linked = written.map(|()| fs::hard_link(&temp, path));
+    let linked = written.map(|()| link(&temp, path));
     let _ = fs::remove_file(&temp);
     match linked? {
         Ok(()) => Ok(()),
@@ -1681,18 +1688,13 @@ fn toggle_bookmark_in_value(
 }
 
 /// Classify a filesystem watch event into changed Markdown notes plus whether a
-/// full rescan is needed — the pure core of the vault watcher. `metadata_only`
-/// events (mtime/xattr/ownership; iCloud emits them constantly) change nothing.
-/// Otherwise each path is made vault-relative (ignored components skipped), `.md`
-/// files become ChangedNotes, and directory-level (no-extension) or attachment
-/// paths trigger a rescan.
+/// full rescan is needed: the pure core of the vault watcher. Each path is made
+/// vault-relative (ignored components skipped), `.md` files become ChangedNotes,
+/// and directory-level (no-extension) or attachment paths trigger a rescan.
+/// `metadata_only` events (times, xattrs, ownership; iCloud sends them
+/// constantly) can't change text: a note's comes through as stats only, so its
+/// dates update without a read, and nothing is rescanned for them.
 pub fn classify_change(root: &Path, metadata_only: bool, paths: &[PathBuf]) -> (Vec<ChangedNote>, bool) {
-    // Pure metadata events (mtime/xattr/ownership) can't change content, and
-    // iCloud emits them constantly — skip them entirely or every cloud touch
-    // costs a read+compare (and a root-metadata touch a full vault rescan).
-    if metadata_only {
-        return (vec![], false);
-    }
     let mut changed: Vec<ChangedNote> = Vec::new();
     let mut rescan = false;
     for p in paths {
@@ -1710,8 +1712,9 @@ pub fn classify_change(root: &Path, metadata_only: bool, paths: &[PathBuf]) -> (
                 mtime,
                 ctime,
                 size,
+                stats_only: metadata_only,
             });
-        } else if p.extension().is_none() || is_attachment_ext(p) || p.is_dir() {
+        } else if !metadata_only && (p.extension().is_none() || is_attachment_ext(p) || p.is_dir()) {
             // No extension, or an existing directory (a folder name can contain
             // a dot): a directory event (folder create/rename/delete). An attachment (.canvas/image/pdf…)
             // created/edited/deleted/renamed: the file tree, the attachment
@@ -2389,6 +2392,15 @@ mod tests {
         assert!(err.unwrap_err().contains("disk full"));
         assert!(!half.exists());
         assert_eq!(create_in_place(&path, |_| Ok(())).unwrap_err(), "note already exists");
+        // Without hard links (FAT, some network drives) it's made in place, whole.
+        let fat = root.join("Fat.md");
+        let unsupported = |_: &Path, _: &Path| Err(std::io::Error::from(std::io::ErrorKind::Unsupported));
+        create_whole_with(&fat, b"all of it", unsupported).unwrap();
+        assert_eq!(fs::read(&fat).unwrap(), b"all of it");
+        assert_eq!(create_whole_with(&fat, b"again", unsupported).unwrap_err(), "note already exists");
+        assert_eq!(fs::read(&fat).unwrap(), b"all of it");
+        let left = fs::read_dir(&root).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().contains("basalt-tmp")).count();
+        assert_eq!(left, 0);
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -2605,6 +2617,21 @@ mod tests {
         let names: Vec<String> = fs::read_dir(root.join(".trash")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into()).collect();
         assert_eq!(names.len(), 2);
         assert!(names.iter().all(|n| n.ends_with(".canvas")), "{names:?}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_change_to_a_notes_times_comes_through_as_stats_only() {
+        let root = scratch_vault("touch");
+        let note = root.join("Old.md");
+        fs::write(&note, "x").unwrap();
+        let (changed, rescan) = classify_change(&root, true, &[note.clone(), root.join("Folder"), root.join("pic.png")]);
+        assert!(!rescan);
+        assert_eq!(changed.len(), 1);
+        assert!(changed[0].stats_only && changed[0].size == 1 && changed[0].mtime > 0);
+        let (changed, _) = classify_change(&root, false, &[note]);
+        assert!(!changed[0].stats_only);
+        assert!(!serde_json::to_string(&changed[0]).unwrap().contains("statsOnly"));
         fs::remove_dir_all(&root).unwrap();
     }
 

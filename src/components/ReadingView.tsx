@@ -300,5 +300,18 @@ export function ReadingView({
     if (e.key === "Enter" && (e.target as HTMLElement).matches(".md-wikilink, .md-link")) onClick(e);
   };
 
-  return <div className="reading-view" tabIndex={-1} data-self-rel={selfRel} ref={host} onClick={onClick} onKeyDown={onKeyDown} />;
+  // A Tab stop, so the view scrolls from the keyboard, named for its note.
+  const name = selfRel.split("/").pop()?.replace(/\.md$/i, "");
+  return (
+    <div
+      className="reading-view"
+      tabIndex={0}
+      role="region"
+      aria-label={name ? `Reading view: ${name}` : "Reading view"}
+      data-self-rel={selfRel}
+      ref={host}
+      onClick={onClick}
+      onKeyDown={onKeyDown}
+    />
+  );
 }

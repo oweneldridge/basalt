@@ -467,8 +467,22 @@ button.primary:hover {
   color: var(--text);
   box-shadow: inset 0 -2px 0 var(--accent);
 }
-/* Takes focus only when what had it went away, not from Tab. */
-.reading-view:focus { outline: none; }
+/* The ring sits inside the tab, so the bar doesn't clip it, in the tab's own
+   text colour, which Dark Reader keeps readable. An icon tab shows its name
+   while it has keyboard focus, as a tooltip only shows on hover. */
+.tab:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+.tab:focus-visible .tab-name.sr-only {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: nowrap;
+}
+/* An outline only for keyboard focus. */
+.reading-view:focus:not(:focus-visible) { outline: none; }
+.reading-view:focus-visible { outline-offset: -2px; }
 /* Fills the tab, so its tooltip shows wherever the pointer rests on it. */
 .tab-label {
   display: flex;

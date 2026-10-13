@@ -32,6 +32,7 @@ import {
   type Attachment,
   type Bookmark,
   type ChangedNote,
+  bufferChange,
   type ObsidianConfig,
   type FileStats,
   type VaultNote,
@@ -89,7 +90,8 @@ import { SlidesView } from "./components/SlidesView";
 import { StatusBar } from "./components/StatusBar";
 import { InlineTitle } from "./components/InlineTitle";
 import { EditorPane, editorCount, editorText, fixOpenEditors, showText, type EditorApi } from "./components/EditorPane";
-import { refocusIfLost, TabBar, type TabItem } from "./components/TabBar";
+import { TabBar, type TabItem } from "./components/TabBar";
+import { refocusIfLost } from "./lib/focus";
 import { PaneTree } from "./components/PaneTree";
 import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec, type BuiltinView } from "./lib/leafViews";
 import { deepLinkVaultPolicy, parseBasaltUri, parseObsidianUri } from "./lib/deeplink";
@@ -237,6 +239,26 @@ function statsOf(c: FileStats, content: string): FileStats {
   if (c.mtime) out.mtime = c.mtime;
   if (c.ctime) out.ctime = c.ctime;
   return out;
+}
+/** `notes` with each listed note's stats from the watcher, a new array only
+ * if any changed. */
+function withStats(notes: VaultNote[], list: ChangedNote[]): VaultNote[] {
+  let next: VaultNote[] | null = null;
+  for (const c of list) {
+    const i = notes.findIndex((n) => n.rel === c.rel);
+    if (i === -1) continue;
+    const was = (next ?? notes)[i];
+    const now = statsOf(c, was.content);
+    if (was.mtime === (now.mtime ?? was.mtime) && was.ctime === (now.ctime ?? was.ctime) && was.size === now.size) continue;
+    next ??= notes.slice();
+    next[i] = { ...was, ...now };
+  }
+  return next ?? notes;
+}
+/** Stats for a note just made here, as a save sets them. */
+function madeNow(content: string): FileStats {
+  const now = Date.now();
+  return { mtime: now, ctime: now, size: new TextEncoder().encode(content).length };
 }
 // Bound on the self-write suppression map (rel -> last written content).
 const SELF_WRITES_MAX = 128;
@@ -666,6 +688,11 @@ export default function App() {
   const opening = useRef<Promise<void> | null>(null);
   // The latest switch whose call opened its vault: where a failed one leaves you.
   const openedGen = useRef(0);
+  // A switch under way, from its call to the new vault's workspace: the notes
+  // take no edits and only another switch can run meanwhile, and work for
+  // "this vault" waits.
+  const switching = useRef<Promise<void> | null>(null);
+  const [switchingVault, setSwitchingVault] = useState(false);
   // Whether `gen` is still the vault switched to, once any newer switch's
   // call has settled (a failed one leaves this vault open).
   const stillCurrent = useCallback(async (gen: number) => {
@@ -1026,7 +1053,7 @@ export default function App() {
           // its next saves compare against what's on disk.
           const root = vaultRef.current ?? "";
           const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
-          const back: VaultNote = { path, rel, name: nameFromRel(rel), content: doc };
+          const back: VaultNote = { path, rel, name: nameFromRel(rel), content: doc, ...madeNow(doc) };
           const byRel = (a: VaultNote, b: VaultNote) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase());
           notesRef.current = [...notesRef.current, back].sort(byRel);
           setNotes((prev) => (prev.some((n) => n.path === path) ? prev : [...prev, back].sort(byRel)));
@@ -1534,7 +1561,7 @@ export default function App() {
     }
   }, []);
 
-  const closeTab = useCallback(
+  const closeTabNow = useCallback(
     async (id: string, path: string) => {
       const pane = panesRef.current[id];
       if (!pane) return;
@@ -1584,6 +1611,16 @@ export default function App() {
       patchPane(id, { tabs, active, doc, scrollToLine: undefined });
     },
     [flushPath, patchPane, removePaneFromWorkspace],
+  );
+  const closeTab = useCallback(
+    async (id: string, path: string) => {
+      try {
+        await closeTabNow(id, path);
+      } finally {
+        refocusIfLost(); // the tab or note that had focus may be gone
+      }
+    },
+    [closeTabNow],
   );
 
   // Drag a tab to reorder it within its pane, or move it to another pane. A
@@ -1719,7 +1756,7 @@ export default function App() {
         const copyPath = await createNote(`${dir}${note.name} copy`);
         await writeNote(copyPath, content, "");
         const rel = copyPath.startsWith(root) ? copyPath.slice(root.length).replace(/^[/\\]+/, "") : copyPath;
-        const copy: VaultNote = { path: copyPath, rel, name: nameFromRel(rel), content };
+        const copy: VaultNote = { path: copyPath, rel, name: nameFromRel(rel), content, ...madeNow(content) };
         index.current.setNote(copy);
         setNotes((prev) => [...prev, copy].sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())));
         rememberSelfWrite(rel, content);
@@ -1843,10 +1880,8 @@ export default function App() {
     [],
   );
 
-  const openVault = useCallback(
+  const switchTo = useCallback(
     async (path: string, openNoteRel?: string, restoring = false) => {
-      await flushAll();
-      if (!(await okToDropUnsaved("Switch vaults"))) return;
       clearImageCache();
       const gen = ++vaultGen.current;
       // One switch's call at a time, so the vault asked for last is the one left
@@ -1959,8 +1994,40 @@ export default function App() {
         });
       }
     },
-    [flushAll, loadVault, restoreWorkspace, openInPane, ensureWorkspace, stillCurrent],
+    [loadVault, restoreWorkspace, openInPane, ensureWorkspace, stillCurrent],
   );
+  const openVault = useCallback(
+    async (path: string, openNoteRel?: string, restoring = false) => {
+      await flushAll();
+      if (!(await okToDropUnsaved("Switch vaults"))) return;
+      let settle = () => {};
+      const mine = new Promise<void>((resolve) => (settle = resolve));
+      switching.current = mine;
+      setSwitchingVault(true);
+      try {
+        await switchTo(path, openNoteRel, restoring);
+      } finally {
+        settle();
+        if (switching.current === mine) {
+          switching.current = null;
+          setSwitchingVault(false);
+        }
+      }
+    },
+    [flushAll, switchTo],
+  );
+  useEffect(() => {
+    if (!switchingVault) return;
+    // Shortcuts wait too, but for the command palette, to switch again.
+    const palette = (e: KeyboardEvent) => (isMac ? e.metaKey : e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "p";
+    const hold = (e: KeyboardEvent) => {
+      if ((!e.metaKey && !e.ctrlKey && !e.altKey) || palette(e)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    window.addEventListener("keydown", hold, true);
+    return () => window.removeEventListener("keydown", hold, true);
+  }, [switchingVault]);
 
   // Restore the last vault on launch (once — StrictMode double-mounts effects).
   const restoredRef = useRef(false);
@@ -2198,7 +2265,11 @@ export default function App() {
   const processChanges = useCallback(
     async (incoming: ChangedNote[]) => {
       if (!vaultRef.current) return;
-      const changes = showHiddenRef.current ? incoming : incoming.filter((c) => !isHiddenRel(c.rel));
+      const shown = showHiddenRef.current ? incoming : incoming.filter((c) => !isHiddenRel(c.rel));
+      // Only times changed: new dates, nothing to read.
+      const touched = shown.filter((c) => c.statsOnly);
+      if (touched.length > 0) setNotes((prev) => withStats(prev, touched));
+      const changes = shown.filter((c) => !c.statsOnly);
       if (changes.length === 0) return;
       const byRel = new Map(notesRef.current.map((n) => [n.rel, n]));
       const prevByRel = new Map(notesRef.current.map((n) => [n.rel, knownText(n.path) ?? n.content]));
@@ -2224,7 +2295,7 @@ export default function App() {
       // that save: read it again once the save has settled.
       const reads = all.filter((r, i) => !(before[i].writing || isWriting(r.path) || seqOf(r.path) !== before[i].seq));
       if (reads.length < all.length) {
-        queueChanges.current(all.filter((r) => !reads.includes(r)).map((r) => ({ rel: r.rel, path: r.path })));
+        queueChanges.current(all.filter((r) => !reads.includes(r)).map((r) => ({ ...r.stats, rel: r.rel, path: r.path })));
       }
 
       // Drop echoes of our own writes: disk content equals what we last wrote
@@ -2465,7 +2536,7 @@ export default function App() {
     (async () => {
       try {
         queueChanges.current = (incoming) => {
-          for (const c of incoming) changedBuf.current.set(c.rel, c);
+          for (const c of incoming) bufferChange(changedBuf.current, c);
           if (changedBuf.current.size === 0) return;
           window.clearTimeout(watchTimer.current);
           const flush = () => {
@@ -2929,13 +3000,16 @@ export default function App() {
 
   const toggleReading = useCallback(() => {
     commitFieldEdit();
+    // A note's tab keeps focus; focus in the note goes to the new view.
+    const tab = document.activeElement instanceof HTMLElement && document.activeElement.matches('[role="tab"]') ? document.activeElement : null;
     setReadingMode((on) => {
       const next = !on;
       const v = vaultRef.current;
       if (v) localStorage.setItem(`basalt.reading.${v}`, next ? "1" : "0");
       return next;
     });
-    refocusIfLost(); // the editor or view that had it is gone
+    if (tab) requestAnimationFrame(() => requestAnimationFrame(() => tab.isConnected && tab.focus({ preventScroll: true })));
+    else refocusIfLost(); // the editor or view that had it is gone
   }, []);
 
   // Cmd/Ctrl-E: edit ↔ Reading view (Obsidian's default hotkey).
@@ -3130,6 +3204,8 @@ export default function App() {
    * Templater tags, makes no note if nothing here would fill them, and opens
    * nothing once you've opened something else meanwhile. */
   const openDailyNote = useCallback(async (date: Date = new Date(), folderIfUnset?: string, atStartup = false): Promise<boolean> => {
+    // A switch under way decides which vault this is.
+    while (switching.current) await switching.current;
     const cfg = obsConfigRef.current;
     const root = vaultRef.current ?? "";
     const gen = vaultGen.current;
@@ -3208,7 +3284,7 @@ export default function App() {
       }
       if (await switched()) return false;
       const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
-      const note: VaultNote = { path, rel, name: nameFromRel(rel), content };
+      const note: VaultNote = { path, rel, name: nameFromRel(rel), content, ...madeNow(content) };
       index.current.setNote(note);
       rememberSelfWrite(rel, content);
       setNotes((prev) =>
@@ -3407,7 +3483,7 @@ export default function App() {
       if (!root) return;
       const path = await createNote(name);
       const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
-      const note: VaultNote = { path, rel, name: nameFromRel(rel), content: "" };
+      const note: VaultNote = { path, rel, name: nameFromRel(rel), content: "", ...madeNow("") };
       index.current.setNote(note);
       setNotes((prev) =>
         [...prev, note].sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
@@ -3776,7 +3852,7 @@ export default function App() {
           ? abs.slice((vaultRef.current ?? "").length).replace(/^[/\\]+/, "")
           : abs;
         rememberSelfWrite(vrel, content); // AFTER the note is made
-        const note: VaultNote = { path: abs, rel: vrel, name: nameFromRel(vrel), content };
+        const note: VaultNote = { path: abs, rel: vrel, name: nameFromRel(vrel), content, ...madeNow(content) };
         index.current.setNote(note);
         setNotes((prev) =>
           [...prev, note].sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
@@ -5728,7 +5804,7 @@ export default function App() {
             />
           )
         ) : (
-          <div className="placeholder">Select a note, or press + to create one.</div>
+          <div className="placeholder" tabIndex={-1}>Select a note, or press + to create one.</div>
         )}
         {tabDragging && (
           <div
@@ -5771,7 +5847,7 @@ export default function App() {
       <Ribbon
         pluginVersion={pluginVersion}
         onToggleSidebar={() => toggleLeftDock()}
-        onQuickSwitcher={() => setModal("switcher")}
+        onQuickSwitcher={() => !switching.current && setModal("switcher")}
         onSearch={() => {
           setSearchSeed("");
           setModal("search");
@@ -5780,7 +5856,7 @@ export default function App() {
         onGraph={() => setGraphOpen(true)}
         onSettings={() => setModal("settings")}
       />
-      <main className="main">
+      <main className="main" inert={switchingVault || undefined}>
         <div className="toolbar">
           <button className="link-btn" onClick={openVaultSwitcher} title="Switch vault (recent / open a folder)">
             Vault…
@@ -5872,7 +5948,7 @@ export default function App() {
             }
           />
         ) : (
-          <div className="placeholder">Select a note, or press + to create one.</div>
+          <div className="placeholder" tabIndex={-1}>Select a note, or press + to create one.</div>
         )}
       </main>
       </div>
@@ -5906,8 +5982,8 @@ export default function App() {
           }
           onSelect={(n) => {
             setModal(null);
-            if (n.path === SWITCHER_CREATE) void createAndOpen(n.name);
-            else openNoteByPath(n.path);
+            // In Reading view the note's view is new, so focus goes to it.
+            void (n.path === SWITCHER_CREATE ? createAndOpen(n.name) : openNoteByPath(n.path)).finally(refocusIfLost);
           }}
           onClose={() => setModal(null)}
           emptyText="No notes"
@@ -5943,7 +6019,9 @@ export default function App() {
       {modal === "commands" && (
         <Palette<AppCommand>
           placeholder="Run command…"
-          getItems={(q) => fuzzyRank(q, commands, (c) => [c.label])}
+          // While a vault opens, only another switch can run: anything else
+          // would act on a vault that's going.
+          getItems={(q) => fuzzyRank(q, switchingVault ? commands.filter((c) => c.id === "switch-vault") : commands, (c) => [c.label])}
           itemKey={(c) => c.id}
           renderItem={(c) => (
             <>

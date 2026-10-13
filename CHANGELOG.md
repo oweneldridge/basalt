@@ -557,6 +557,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A note added or changed outside the app has its size and dates from the
   file, so Bases filtering or sorting on them see the change at once, a synced
   note's own modified time included.
+- Notes Basalt makes (today's daily note, New note, a plugin's) have a date and
+  size at once, so Bases filtering on them see the note before a reload. A note
+  whose time alone changes outside the app (a sync tool setting it) updates in
+  Bases too, and a synced change that lands during one of Basalt's own saves
+  keeps its time.
+- While another vault opens, the notes take no typing and only another switch
+  can run (the command palette offers just that), so nothing typed, and no
+  daily note asked for, lands in the wrong vault.
 - Renames and moves write links as Obsidian 1.14 does, checked against it by
   hand: a relative link to the note's own folder or below has no `./`, a
   `[text](<path>)` link keeps its angle brackets, and a canvas keeps
@@ -604,6 +612,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   description; a pinned tab is named as pinned. Closing a panel's last tab, or
   switching to and from Reading view with Cmd-E, leaves focus in the note
   rather than nowhere.
+- Reading view is a Tab stop, so it scrolls from the keyboard, with a focus
+  outline and a name ("Reading view: Welcome"). Closing a note with Cmd-W, a
+  middle click, Delete or the tab menu, or opening one from the quick switcher
+  in Reading view, leaves focus in the note or on its tabs, and an empty pane's
+  message takes it when no note is left. Cmd-E keeps focus on a note's tab when
+  it's there. A tab's focus ring sits inside the tab in its own text colour, so
+  the bar doesn't clip it and Dark Reader keeps it visible; an icon tab shows
+  its name while it has keyboard focus, and the close button has a tooltip.
 - Graph view and Slides are dialogs: focus stays inside, Escape returns it to
   where it was, and the rest of the app is inert. Slides announce "Slide 2 of
   5" as you move. The graph's filter, mode buttons and canvas have names.

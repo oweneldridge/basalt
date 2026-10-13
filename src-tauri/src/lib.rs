@@ -379,9 +379,9 @@ fn start_watching(
         let Ok(event) = res else {
             return;
         };
-        // Pure metadata events (mtime/xattr/ownership) can't change content, and
-        // iCloud emits them constantly — classify_change drops them so every
-        // cloud touch doesn't cost a read+compare (or a full vault rescan).
+        // Pure metadata events (times, xattrs, ownership; iCloud sends them
+        // constantly) can't change text: classify_change reports a note's as
+        // stats only, with no read and no rescan.
         let metadata_only = matches!(
             event.kind,
             notify::EventKind::Modify(notify::event::ModifyKind::Metadata(_))

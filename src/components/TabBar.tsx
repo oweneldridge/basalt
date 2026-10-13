@@ -38,19 +38,6 @@ interface Props {
   dock?: boolean;
 }
 
-/** When focus was left on the page (its tab or view gone), give it to the
- * focused pane's note or Reading view, else to an open note's tab. */
-export function refocusIfLost() {
-  requestAnimationFrame(() => {
-    const at = document.activeElement;
-    if (at && at !== document.body) return;
-    const to =
-      document.querySelector<HTMLElement>(".pane.focused .cm-content, .pane.focused .reading-view") ??
-      document.querySelector<HTMLElement>(".pane:not(.dock) .cm-content, .pane:not(.dock) .reading-view, .pane:not(.dock) [role='tab'][tabindex='0']");
-    to?.focus({ preventScroll: true });
-  });
-}
-
 // A tab drag carries "<paneId>\n<path>" under this private MIME type.
 const TAB_MIME = "application/x-basalt-tab";
 
@@ -142,8 +129,6 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
             else if (e.key === "Enter" || e.key === " ") onSelect(t.path);
             else if ((e.key === "Delete" || e.key === "Backspace") && !t.pinned) {
               onClose(t.path);
-              // Its bar may go with it (a split pane's last tab).
-              if (tabs.length === 1) refocusIfLost();
             }
             else {
               const at = menuKeyOpens(e);
@@ -215,6 +200,7 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
               tabIndex={-1}
               aria-hidden="true"
               aria-label={`Close ${t.name}`}
+              title={`Close ${t.name}`}
               onMouseDown={(e) => {
                 e.stopPropagation();
                 e.preventDefault();

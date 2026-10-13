@@ -188,10 +188,15 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
   }
 }
 
-// @tauri-apps/api/event
-export function listen(): Promise<() => void> {
-  return Promise.resolve(() => {});
+// @tauri-apps/api/event. A test sends an event (a watcher change, say) with
+// window.__mockEmit("vault-changed", [...]).
+const listeners = new Map<string, ((e: { payload: unknown }) => void)[]>();
+export function listen(name: string, cb: (e: { payload: unknown }) => void): Promise<() => void> {
+  listeners.set(name, [...(listeners.get(name) ?? []), cb]);
+  return Promise.resolve(() => listeners.set(name, (listeners.get(name) ?? []).filter((f) => f !== cb)));
 }
+(globalThis as { __mockEmit?: (name: string, payload: unknown) => void }).__mockEmit = (name, payload) =>
+  (listeners.get(name) ?? []).forEach((f) => f({ payload }));
 
 // @tauri-apps/api/window
 export function getCurrentWindow() {

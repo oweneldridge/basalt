@@ -32,6 +32,15 @@ export interface VaultNote extends Note, FileStats {
 export interface ChangedNote extends FileStats {
   path: string;
   rel: string;
+  /** Only its times or attributes changed: its text needn't be read. */
+  statsOnly?: boolean;
+}
+
+/** Add a watcher change to `buf` (one per note), where newer stats never
+ * cancel a pending read of the note's text. */
+export function bufferChange(buf: Map<string, ChangedNote>, c: ChangedNote): void {
+  const had = buf.get(c.rel);
+  buf.set(c.rel, had && !had.statsOnly && c.statsOnly ? { ...c, statsOnly: false } : c);
 }
 
 /** A non-Markdown vault file (image/PDF/audio/video) — no content shipped. */
