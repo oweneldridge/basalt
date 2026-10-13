@@ -231,6 +231,9 @@ const blockParser = mdParser.configure({
     ObsidianSyntax.parseInline!.map((p) => p.name),
   ),
 });
+// With every inline parser removed, the inline parse finds nothing but still
+// walks each character, a table cell's included.
+blockParser.parseInline = () => [];
 
 // ---------------------------------------------------------------------------
 // Render state for one document.
@@ -1530,6 +1533,10 @@ export function commentRanges(md: string): [number, number][] {
 
 export function stripCommentsMapped(md: string): { text: string; map: number[] } {
   const map = [0];
+  if (!md.includes("%%")) {
+    for (let p = md.indexOf("\n"); p !== -1; p = md.indexOf("\n", p + 1)) map.push(map.length);
+    return { text: md, map };
+  }
   let text = "";
   let src = 0; // source line at the current position
   const copy = (chunk: string) => {
@@ -1553,6 +1560,7 @@ export function stripCommentsMapped(md: string): { text: string; map: number[] }
  * its own line) — they're anchors, not content, and Obsidian hides them. Only
  * in prose lines, so a `^id` inside a code block is left intact. */
 export function stripBlockIds(md: string): string {
+  if (!md.includes("^")) return md;
   const lines = md.split("\n");
   const mask = proseMask(lines);
   return lines
@@ -1565,6 +1573,7 @@ export function stripBlockIds(md: string): string {
 /** Pull footnote definitions (`[^id]: text` + indented continuations, in prose)
  * out of the doc, blanking their lines so line numbers hold. */
 function extractFootnoteDefs(md: string): { text: string; defs: Map<string, string> } {
+  if (!md.includes("[^")) return { text: md, defs: new Map() };
   const raw = md.split("\n");
   const mask = proseMask(raw);
   const defs = new Map<string, string>();

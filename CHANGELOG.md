@@ -638,6 +638,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Backlinks, and long lines of unclosed `[!` or `[^`, or a line nested a
   thousand deep with a definition under it, are read in time linear in
   their length.
+- Reading view and the mention scans skip the passes for comments, block ids
+  and footnotes in a note that has none, which makes rendering about a tenth
+  faster. Finding a note's link definitions no longer reads its inline text.
+  A rename or Link all rebuilds the file tree only when it's sorted by
+  modified time.
 
 ### Security
 

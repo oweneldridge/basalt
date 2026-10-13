@@ -672,7 +672,7 @@ function proseLines(content: string, lines: string[]): boolean[] {
     }
     shown = out + text.slice(at);
   }
-  const mask = proseMask(shown.split("\n"));
+  const mask = proseMask(shown === content ? lines : shown.split("\n"));
   if (!map) return mask;
   // Each line of the note is as prose as the line its text ends up on.
   const out: boolean[] = [];
