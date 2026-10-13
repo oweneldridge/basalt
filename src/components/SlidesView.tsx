@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Modal } from "./Modal";
 import { ReadingView } from "./ReadingView";
 
@@ -37,6 +37,15 @@ export function SlidesView({ doc, selfRel, dark, onOpenInternal, onOpenUrl, reso
   const slides = splitSlides(doc);
   const [i, setI] = useState(0);
   const idx = Math.min(i, slides.length - 1);
+  const content = useRef<HTMLDivElement | null>(null);
+  const shown = useRef(idx);
+  // A slide had focus when it was replaced by the next: the new one takes it.
+  useEffect(() => {
+    if (shown.current === idx) return;
+    shown.current = idx;
+    const at = document.activeElement;
+    if (!at || at === document.body) content.current?.querySelector<HTMLElement>(".reading-view")?.focus({ preventScroll: true });
+  }, [idx]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -71,7 +80,7 @@ export function SlidesView({ doc, selfRel, dark, onOpenInternal, onOpenUrl, reso
         <button className="slides-nav prev" title="Previous (←)" aria-label="Previous (←)" disabled={idx === 0} onClick={() => setI((n) => Math.max(n - 1, 0))}>
           ‹
         </button>
-        <div className="slides-content">
+        <div className="slides-content" ref={content}>
           <ReadingView
             key={idx}
             doc={slides[idx]}

@@ -467,22 +467,32 @@ button.primary:hover {
   color: var(--text);
   box-shadow: inset 0 -2px 0 var(--accent);
 }
-/* The ring sits inside the tab, so the bar doesn't clip it, in the tab's own
-   text colour, which Dark Reader keeps readable. An icon tab shows its name
-   while it has keyboard focus, as a tooltip only shows on hover. */
-.tab:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+/* The ring sits inside the tab, so the bar doesn't clip it, above the active
+   tab's underline, in the tab's own text colour, which Dark Reader keeps
+   readable. An icon tab shows its name under the bar while it has keyboard
+   focus, as a tooltip only shows on hover, without moving the tabs. */
+.tab:focus-visible { outline: 2px solid currentColor; outline-offset: -4px; }
 .tab:focus-visible .tab-name.sr-only {
-  position: static;
+  top: 36px;
+  left: 4px;
   width: auto;
   height: auto;
+  max-width: calc(100% - 8px);
   margin: 0;
-  overflow: visible;
+  padding: 2px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   clip: auto;
   white-space: nowrap;
+  z-index: 20;
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
 }
-/* An outline only for keyboard focus. */
+/* An outline only for keyboard focus, in the text's colour like the tabs'. */
 .reading-view:focus:not(:focus-visible) { outline: none; }
-.reading-view:focus-visible { outline-offset: -2px; }
+.reading-view:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 /* Fills the tab, so its tooltip shows wherever the pointer rests on it. */
 .tab-label {
   display: flex;
@@ -598,6 +608,7 @@ button.primary:hover {
   background: var(--accent);
 }
 .pane {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -709,6 +720,7 @@ button.primary:hover {
 .reading-view table.md-table th { background: var(--bg-elev); font-weight: 700; }
 .reading-view table.md-properties th { color: var(--text-muted); font-weight: 600; }
 .reading-view .md-callout {
+  overflow-wrap: anywhere; /* a long link wraps, not the whole view sideways */
   border-left: 3px solid var(--cg, var(--accent));
   background: var(--cgbg, var(--accent-soft));
   border-radius: 4px;

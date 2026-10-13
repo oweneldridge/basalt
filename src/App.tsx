@@ -91,7 +91,7 @@ import { StatusBar } from "./components/StatusBar";
 import { InlineTitle } from "./components/InlineTitle";
 import { EditorPane, editorCount, editorText, fixOpenEditors, showText, type EditorApi } from "./components/EditorPane";
 import { TabBar, type TabItem } from "./components/TabBar";
-import { refocusIfLost } from "./lib/focus";
+import { focusNote, refocusIfLost } from "./lib/focus";
 import { PaneTree } from "./components/PaneTree";
 import { isViewPath, parseViewPath, viewLabel, viewPath, type ViewSpec, type BuiltinView } from "./lib/leafViews";
 import { deepLinkVaultPolicy, parseBasaltUri, parseObsidianUri } from "./lib/deeplink";
@@ -1333,7 +1333,8 @@ export default function App() {
     const cur = focusedIdRef.current;
     // Notes must never open into a sidebar dock — only into an editor pane.
     if (cur && panesRef.current[cur] && !panesRef.current[cur].dock) return cur;
-    const editor = Object.values(panesRef.current).find((p) => !p.dock);
+    const last = lastNotePane.current ? panesRef.current[lastNotePane.current] : undefined;
+    const editor = last && !last.dock ? last : Object.values(panesRef.current).find((p) => !p.dock);
     if (editor) {
       focusedIdRef.current = editor.id;
       setFocusedId(editor.id);
@@ -1356,21 +1357,30 @@ export default function App() {
     return id;
   }, []);
 
+  // The note pane focused last, where a note opened from a side panel goes.
+  const lastNotePane = useRef<string | null>(null);
+  useEffect(() => {
+    if (focusedId && panes[focusedId] && !panes[focusedId].dock) lastNotePane.current = focusedId;
+  }, [focusedId, panes]);
+  // The pane to focus in `lay`: the note pane focused last, else the first one.
+  const notePaneIn = (lay: LayoutNode, ps: Record<string, Pane>): string | null => {
+    const ids = leafIds(lay).filter((i) => ps[i] && !ps[i].dock);
+    return ids.find((i) => i === lastNotePane.current) ?? ids[0] ?? firstLeafId(lay);
+  };
   const focusPane = useCallback((id: string) => {
     if (focusedIdRef.current === id) return;
     focusedIdRef.current = id;
     setFocusedId(id);
   }, []);
 
-  // Remove a pane from the layout (its last tab closed). Focus a neighbor.
+  // Remove a pane from the layout (its last tab closed). Focus a note pane.
   const removePaneFromWorkspace = useCallback((id: string) => {
     const next = layoutRef.current ? removeLeaf(layoutRef.current, id) : null;
-    const nextFocus =
-      focusedIdRef.current === id ? (next ? firstLeafId(next) : null) : focusedIdRef.current;
-    layoutRef.current = next;
-    focusedIdRef.current = nextFocus;
     const np = { ...panesRef.current };
     delete np[id];
+    const nextFocus = focusedIdRef.current === id ? (next ? notePaneIn(next, np) : null) : focusedIdRef.current;
+    layoutRef.current = next;
+    focusedIdRef.current = nextFocus;
     panesRef.current = np;
     setLayout(next);
     setFocusedId(nextFocus);
@@ -2292,7 +2302,7 @@ export default function App() {
       if (lay) lay = removeLeaf(lay, id);
     }
     let focus = focusedIdRef.current;
-    if (focus && !nextPanes[focus]) focus = lay ? firstLeafId(lay) : null;
+    if (focus && !nextPanes[focus]) focus = lay ? notePaneIn(lay, nextPanes) : null;
     panesRef.current = nextPanes;
     layoutRef.current = lay;
     focusedIdRef.current = focus;
@@ -5656,6 +5666,11 @@ export default function App() {
 
   // Render one pane's content: a tab bar + the live editor for its active note.
   // Mousedown anywhere in the pane focuses it (so it drives the right panel).
+  // "pane 2" when another note pane shows the same note, so their names differ.
+  const sameNoteAt = (id: string, path: string): string | undefined => {
+    const ids = layout ? leafIds(layout).filter((i) => panes[i] && !panes[i].dock) : [];
+    return ids.some((i) => i !== id && panes[i].active === path) ? `pane ${ids.indexOf(id) + 1}` : undefined;
+  };
   const renderPane = (id: string) => {
     const pane = panes[id];
     if (!pane) return null;
@@ -5665,7 +5680,9 @@ export default function App() {
     return (
       <div
         className={`pane${focused ? " focused" : ""}${pane.dock ? ` dock dock-${pane.dock}` : ""}`}
-        onMouseDownCapture={() => focusPane(id)}
+        data-pane={id}
+        // A middle click closes a tab and leaves focus where it is.
+        onMouseDownCapture={(e) => e.button !== 1 && focusPane(id)}
         onFocusCapture={() => focusPane(id)}
       >
         {pane.tabs.length > 0 && (
@@ -5804,6 +5821,7 @@ export default function App() {
               key={`${id}:${path}:read`}
               doc={docFor(pane)}
               selfRel={rel}
+              where={sameNoteAt(id, path)}
               dark={dark}
               scrollToLine={pane.scrollToLine}
               scrollRev={pane.scrollRev}
@@ -6041,8 +6059,8 @@ export default function App() {
           }
           onSelect={(n) => {
             setModal(null);
-            // In Reading view the note's view is new, so focus goes to it.
-            void (n.path === SWITCHER_CREATE ? createAndOpen(n.name) : openNoteByPath(n.path)).finally(refocusIfLost);
+            // Focus goes into the note opened, from wherever it was.
+            void (n.path === SWITCHER_CREATE ? createAndOpen(n.name) : openNoteByPath(n.path)).finally(() => focusNote(lastNotePane.current));
           }}
           onClose={() => setModal(null)}
           emptyText="No notes"
@@ -6376,7 +6394,19 @@ export default function App() {
               onClick={() => {
                 const path = fileMenu.path;
                 setFileMenu(null);
-                void handleDeleteNote(path);
+                // Focus stays in the file tree, on the row next to the note's.
+                const rows = [...document.querySelectorAll<HTMLElement>(".sidebar .tree-row")];
+                const at = rows.findIndex((r) => r.dataset.path === path);
+                const near = at === -1 ? undefined : (rows[at + 1] ?? rows[at - 1]);
+                void handleDeleteNote(path).finally(() =>
+                  requestAnimationFrame(() =>
+                    requestAnimationFrame(() => {
+                      if (document.activeElement !== document.body) return;
+                      if (near?.isConnected) near.focus({ preventScroll: true });
+                      else refocusIfLost();
+                    }),
+                  ),
+                );
               }}
             >
               Delete

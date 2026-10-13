@@ -20,6 +20,8 @@ interface Props {
   /** Toggle the task checkbox on the given 0-based source line (interactive
    * checkboxes in reading mode, like Obsidian). */
   onToggleTask: (line: number) => void;
+  /** Which pane this is, when another shows the same note ("pane 2"). */
+  where?: string;
   /** Re-render (e.g. mermaid theme) when the appearance flips. */
   dark: boolean;
   /** 1-based source line to scroll to (a heading or block link). */
@@ -62,6 +64,7 @@ export function ReadingView({
   dark,
   scrollToLine,
   scrollRev,
+  where,
 }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
   // The app passes a new resolver on every render; rendering again for each
@@ -302,12 +305,13 @@ export function ReadingView({
 
   // A Tab stop, so the view scrolls from the keyboard, named for its note.
   const name = selfRel.split("/").pop()?.replace(/\.md$/i, "");
+  const label = (name ? `Reading view: ${name}` : "Reading view") + (where ? `, ${where}` : "");
   return (
     <div
       className="reading-view"
       tabIndex={0}
       role="region"
-      aria-label={name ? `Reading view: ${name}` : "Reading view"}
+      aria-label={label}
       data-self-rel={selfRel}
       ref={host}
       onClick={onClick}
