@@ -206,6 +206,14 @@ describe("proseMask reads list lines as Reading view does", () => {
     mask("- ".repeat(20_000) + "```\n" + "\n".repeat(20_000));
     expect(performance.now() - t0).toBeLessThan(1500);
   });
+
+  it("stays quick on a link definition whose title runs on for thousands of lines", () => {
+    const note = '[a]: /u "title\n' + "alpha beta gamma delta notes vault index render search editor quote\n".repeat(12_000) + 'end"\n```\nx';
+    const t0 = performance.now();
+    expect(mask(note).slice(-2)).toEqual([false, false]);
+    expect(blockDepths(note.split("\n")).length).toBe(12_004);
+    expect(performance.now() - t0).toBeLessThan(200);
+  });
 });
 
 describe("proseMask reads containers as the editor's parser does", () => {

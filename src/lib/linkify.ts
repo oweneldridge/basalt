@@ -967,7 +967,8 @@ function blank(text: string, spans: [number, number][]): string {
 }
 
 /** `content` with the text of its `%%` comments and math blocks turned to
- * `%`, so a fence inside one opens nothing while the lines keep their shape;
+ * `%`, so a fence inside one opens nothing while the lines keep their shape
+ * (and their quotes);
  * undefined if nothing changes. */
 function fencesOnly(content: string): string | undefined {
   if (!content.includes("```") && !content.includes("~~~")) return undefined;
@@ -978,7 +979,7 @@ function fencesOnly(content: string): string | undefined {
   let at = 0;
   for (const [from, to] of spans.sort((a, b) => a[0] - b[0])) {
     if (to <= at) continue;
-    out += content.slice(at, Math.max(from, at)) + content.slice(Math.max(from, at), to).replace(/[^\s]/g, "%");
+    out += content.slice(at, Math.max(from, at)) + content.slice(Math.max(from, at), to).replace(/[^\s>]/g, "%");
     at = to;
   }
   return out + content.slice(at);

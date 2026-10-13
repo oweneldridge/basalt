@@ -460,6 +460,41 @@ describe("CommonMark and Obsidian fidelity (Reading view hunt)", () => {
     expect(renderMarkdown("> [!note] T\n> a\n2. b", { lines: true })).toContain("<p data-line=\"1\">a<br>\n2. b</p>");
   });
 
+  it("renders a callout's body as its lines read on their own", () => {
+    const body = (html: string) => html.slice(html.indexOf('md-callout-body">') + 17, html.lastIndexOf("</div></div>"));
+    for (const [note, lines] of [
+      ["> [!note] T\n> plain text\n> - item\n>\n> more", "plain text\n- item\n\nmore"],
+      ["> [!note] T *a\n> b* c", "b* c"],
+      ["> [!note] T `a\n> b` c", "b` c"],
+      ["> [!note] T\n>     indented", "    indented"],
+      ["> [!note] T\n> 2. two", "2. two"],
+      ["> [!note] T\n> -\n> x", "-\nx"],
+      ["> [!note] T\n> a\n    indented", "a\n    indented"],
+      ["- > [!bug] L\n  > a\n  > *", "a\n*"],
+      ["> > [!bug] L\n> > \t- item\n> > b* c", "\t- item\nb* c"],
+      ["> [!note] T\n> $$ x\n>   - nested", "$$ x\n  - nested"],
+      ["> [!note] T\n> <span>x</span>\n> b**", "<span>x</span>\nb**"],
+      ["[a]: /u\n\n> [!note] T\n> see [a]", "[a]: /u\n\nsee [a]"],
+      ["> [!note] T\n> | a | b |\n> | - | - |\n> | x | y |", "| a | b |\n| - | - |\n| x | y |"],
+    ] as const)
+      expect(body(renderMarkdown(note)), note).toBe(renderMarkdown(lines));
+    expect(renderMarkdown("> [!note] T\n> a\n> b", { lines: true })).toContain('<p data-line="1">a<br>');
+    // A tab after a `>` gives it one column, as in CommonMark.
+    expect(body(renderMarkdown("> [!bug] L\n> \t- item"))).toBe("<ul><li>item</li></ul>");
+    // Tabs inside the body's own quotes are left to the parser.
+    expect(renderMarkdown("> [!bug] L\n> > \tx\n> > > [!info] deeper\n> >\nafter")).toContain('<div class="md-callout-body"><blockquote><p>x</p>');
+    // A lazy line keeps its indent in the body of a callout inside another.
+    expect(renderMarkdown("> > [!info]+ T\n> > > > [!info] deeper\n    indented\n> > `a\n> > ```")).toContain(
+      '<div class="md-callout-body"><pre class="md-code"><code>indented</code></pre>\n<p>`a</p></div>',
+    );
+    // And its definitions are the note's.
+    expect(renderMarkdown("> [!note] T\n> [a]: /u\n\nsee [a]")).toMatch(/<p>see <a [^>]*>a<\/a><\/p>/);
+  });
+  it("ends a heading's text before its underline's quote marks", () => {
+    expect(renderMarkdown("> a\n> ===")).toBe("<blockquote><h1>a</h1></blockquote>");
+    expect(renderMarkdown("> > a\n> > b\n> > ---")).toBe("<blockquote><blockquote><h2>a<br>\nb</h2></blockquote></blockquote>");
+    expect(renderMarkdown("a\n===")).toBe("<h1>a</h1>");
+  });
   it("starts nothing on a quote's or an item's empty first line", () => {
     expect(renderMarkdown("> \n> x")).toBe("<blockquote><p>x</p></blockquote>");
     expect(renderMarkdown(">\n> [a]: b 'T'\n\n[x][a]")).not.toContain("[a]:");

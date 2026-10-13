@@ -452,6 +452,10 @@ class LinkRef {
   // A title still open: where it starts, how far it's been read, and whether
   // that stopped after a backslash. Each line goes on from there.
   title = { from: -1, at: 0, escaped: false };
+  // Once a title runs on past its line, the lines after are read on their own
+  // (joining them again each line would be slow): its length so far and the
+  // mark that closes it.
+  open = { length: -1, close: 0 };
 
   constructor(first: string) {
     this.content = first;
@@ -461,10 +465,31 @@ class LinkRef {
   /** Reads another line; true when the definition ended on the line before. */
   nextLine(text: string): boolean {
     if (this.stage < 0) return false;
+    if (this.open.length >= 0) return this.titleLine(text);
     this.content += "\n" + text;
     if (this.advance() > -1) return true;
     // Only an open title runs on line after line.
-    if (this.stage === 2 && this.title.from >= 0 && this.content.length > LINK_REF_LIMIT) this.stage = -1;
+    if (this.stage === 2 && this.title.from >= 0 && this.title.at === this.content.length) {
+      this.open = { length: this.content.length, close: this.content.charCodeAt(this.title.from) === 40 ? 41 : this.content.charCodeAt(this.title.from) };
+      if (this.open.length > LINK_REF_LIMIT) this.stage = -1;
+    }
+    return false;
+  }
+
+  // A line of a title still open: it closes there, with nothing after it on
+  // the line (and the definition ends with the line), or it runs on.
+  private titleLine(text: string): boolean {
+    if (this.stage === 3) return true;
+    this.open.length += 1 + text.length;
+    for (let p = 0, escaped = false; p < text.length; p++) {
+      const c = text.charCodeAt(p);
+      if (escaped) escaped = false;
+      else if (c === this.open.close) {
+        this.stage = lineEnd(text, p + 1) < 0 ? -1 : 3;
+        return false;
+      } else if (c === 92) escaped = true;
+    }
+    if (this.open.length > LINK_REF_LIMIT) this.stage = -1;
     return false;
   }
 

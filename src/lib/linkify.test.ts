@@ -692,6 +692,9 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
       // A definition doesn't run onto hidden text.
       ["[a]: b '\n- <div>\nFoo'", true],
       ["[a]: b '\n* <div>\nFoo'", true],
+      // A callout's body nested past the limit shows as its source.
+      ["> [!note] T\n> " + "- ".repeat(45) + "Foo", false],
+      ["> [!tip] x\n> ```\n> ```\n\n> [!note] T\n> " + "- ".repeat(45) + "Foo", false],
       ["> [!note] T\n> [a]:\n> $$$$ Foo", true],
       ["> [!note] T\n> [a]:\n> <i>Foo", true],
       ['[a]:\n- "Foo"', true],

@@ -223,6 +223,13 @@ const ObsidianSyntax: MarkdownConfig = {
 };
 
 const mdParser = baseParser.configure([GFM, ObsidianTasks, ObsidianTables, ObsidianSyntax]);
+// The same blocks with no inline parse, for scans that only need blocks: most
+// of a parse's time goes on inline content.
+const blockParser = mdParser.configure({
+  remove: ["Escape", "Entity", "InlineCode", "HTMLTag", "Emphasis", "Strikethrough", "HardBreak", "Link", "Image", "Autolink", "LinkEnd"].concat(
+    ObsidianSyntax.parseInline!.map((p) => p.name),
+  ),
+});
 
 // ---------------------------------------------------------------------------
 // Render state for one document.
@@ -632,11 +639,12 @@ function calloutOf(src: string, n: SyntaxNode): RegExpExecArray | null {
 /** A callout's body as Reading view reads it, a note of its own: the quote's
  * lines after its title, each cut past this quote's own `>` (and the quotes
  * and indents around it). With the line each came from and how much was cut. */
-function calloutBody(doc: Doc, n: SyntaxNode): { text: string; lines: number[]; cut: number[] } {
+function calloutBody(doc: Doc, n: SyntaxNode): { text: string; lines: number[]; cut: number[]; pad: number[] } {
   let depth = 0;
   for (let p: SyntaxNode | null = n; p; p = p.parent) if (p.name === "Blockquote") depth++;
   const lines: number[] = [];
   const cut: number[] = [];
+  const pad: number[] = []; // spaces a line's text starts with that stand for part of a tab
   const out: string[] = [];
   for (let l = lineOf(doc, n.from) + 1, last = lineOf(doc, Math.max(n.from, n.to - 1)); l <= last; l++) {
     const line = doc.src.slice(doc.lineStarts[l], Math.min(lineEnd(doc, l), n.to));
@@ -648,11 +656,31 @@ function calloutBody(doc: Doc, n: SyntaxNode): { text: string; lines: number[]; 
     // A lazy line, with fewer `>` than that, is cut past its own `>`s only:
     // its indent stays, so `    # x` after a paragraph is still its text.
     if (seen < depth) k = /^(?:[ \t]*>[ \t]?)*/.exec(line)![0].length;
+    // A tab after the last `>` cut gives it one column: the rest is the
+    // text's indent.
+    let j = k;
+    while (line[j] === " " || line[j] === "\t") j++;
+    const mark = line.lastIndexOf(">", k - 1);
+    if (mark >= 0 && line.lastIndexOf("\t", j - 1) > mark) {
+      let col = 0;
+      let from = 0; // the column the text's indent counts from
+      for (let i = 0; i < j; i++) {
+        if (i === mark + 1) from = col + 1;
+        col += line[i] === "\t" ? 4 - (col % 4) : 1;
+      }
+      const indent = Math.max(0, col - from);
+      out.push(" ".repeat(indent) + line.slice(j));
+      lines.push(l);
+      cut.push(j);
+      pad.push(indent);
+      continue;
+    }
     out.push(line.slice(k));
     lines.push(l);
     cut.push(k);
+    pad.push(0);
   }
-  return { text: out.join("\n"), lines, cut };
+  return { text: out.join("\n"), lines, cut, pad };
 }
 
 /** Whether there's a blank line between `from` and `to`. */
@@ -728,8 +756,12 @@ class Blocks {
           const last = marks[marks.length - 1];
           if (last && last !== marks[0] && last.to === n.to) to = last.from;
         } else if (marks.length) {
-          to = marks[marks.length - 1].from;
-          while (to > from && /\s/.test(this.doc.src.charAt(to - 1))) to--; // the line break before the underline
+          // The text ends on the line before the underline (past that line's
+          // quote marks, in a quote).
+          const under = marks[marks.length - 1].from;
+          const eol = this.doc.src.lastIndexOf("\n", under - 1);
+          to = eol > from ? eol : under;
+          while (to > from && /\s/.test(this.doc.src.charAt(to - 1))) to--;
         }
         return `<h${level}>${inlineNode(this.doc, this.ctx, n, from, to).trim()}</h${level}>`;
       }
@@ -834,10 +866,15 @@ class Blocks {
     const titleText = callout[3].trim() || callout[1].charAt(0).toUpperCase() + callout[1].slice(1).toLowerCase();
     const icon = `<span class="md-callout-icon">${calloutIcon(type)}</span>`;
     const title = inlineOf(titleText, this.ctx);
-    const { text, lines } = calloutBody(this.doc, n);
-    const map = lines.map((l) => this.doc.map[l] ?? l);
     this.ctx.callouts++;
-    const body = text.trim() ? `<div class="md-callout-body">${renderDoc(text, map, this.ctx, this.depth + 1)}</div>` : "";
+    const inPlace = this.bodyInPlace(n);
+    let body: string;
+    if (inPlace !== null) body = inPlace ? `<div class="md-callout-body">${inPlace}</div>` : "";
+    else {
+      const { text, lines } = calloutBody(this.doc, n);
+      const map = lines.map((l) => this.doc.map[l] ?? l);
+      body = text.trim() ? `<div class="md-callout-body">${renderDoc(text, map, this.ctx, this.depth + 1, this.doc.links)}</div>` : "";
+    }
     this.ctx.callouts--;
     const cls = `md-callout md-callout-${escapeHtml(type)} md-callout-color-${calloutColor(type)}`;
     if (fold)
@@ -845,6 +882,61 @@ class Blocks {
     return `<div class="${cls}"><div class="md-callout-title">${icon}${title}</div>${body}</div>`;
   }
 
+
+  /** A callout's body rendered from the note's own parse, where that reads
+   * as the body read on its own would (most bodies: plain text, lists and
+   * links, every line in the quote), or null where it might not. A list around the callout changes how the parser reads lines
+   * in it, so then it's read again too. */
+  private bodyInPlace(n: SyntaxNode): string | null {
+    let lead = n.firstChild;
+    while (lead?.name === "QuoteMark") lead = lead.nextSibling;
+    if (lead?.name !== "Paragraph") return null;
+    const src = this.doc.src.slice(n.from, n.to);
+    if (/[\t<]|\$\$/.test(src)) return null;
+    let depth = 0;
+    for (let p: SyntaxNode | null = n; p; p = p.parent) {
+      if (p.name === "Blockquote") depth++;
+      else if (p.name === "ListItem") return null;
+    }
+    // Every line after the title in this quote, with room under the limit.
+    const first = lineOf(this.doc, n.from);
+    for (let l = first + 1, last = lineOf(this.doc, n.to - 1); l <= last; l++) {
+      const line = this.doc.src.slice(this.doc.lineStarts[l], lineEnd(this.doc, l));
+      let k = 0;
+      let seen = 0;
+      while (k < line.length && " >".includes(line[k])) if (line[k++] === ">") seen++;
+      if (seen < depth) return null;
+      // Quotes and list markers past this callout's, each a level at most.
+      let m = k;
+      while (m < line.length && "-*+.)0123456789 ".includes(line[m])) m++;
+      if (this.depth + 1 + seen - depth + m - k > MAX_DEPTH) return null;
+    }
+    const titleEnd = lineEnd(this.doc, first);
+    const parts: string[] = [];
+    if (lead.to > titleEnd) {
+      // The title's paragraph runs on: into plain text, with nothing inline
+      // across the title's end.
+      // Past this quote's marks (each with a space after it, if any) and no
+      // further: an indent would make code.
+      let rest = titleEnd + 1;
+      for (let q = 0; q < depth; q++) {
+        while (this.doc.src[rest] === " ") rest++;
+        if (this.doc.src[rest] === ">") rest++;
+        if (this.doc.src[rest] === " ") rest++;
+      }
+      if (!/^(?!\d+[.)])[\p{L}\p{N}]/u.test(this.doc.src.slice(rest, rest + 12))) return null;
+      for (let c = lead.firstChild; c; c = c.nextSibling) if (c.from < titleEnd && c.to > titleEnd) return null;
+      const at = lineOf(this.doc, rest);
+      const attr = this.ctx.lines ? ` data-line="${this.doc.map[at] ?? at}"` : "";
+      parts.push(`<p${attr}>${inlineNode(this.doc, this.ctx, lead, rest, lead.to)}</p>`);
+    }
+    const inner = new Blocks(this.doc, this.ctx, this.depth + 1);
+    for (let c = lead.nextSibling; c; c = c.nextSibling) {
+      const html = inner.block(c);
+      if (html) parts.push(html);
+    }
+    return parts.join("\n");
+  }
 
   private list(n: SyntaxNode): string {
     const items: SyntaxNode[] = [];
@@ -954,9 +1046,11 @@ function collectLinks(doc: Doc, top: SyntaxNode) {
   }
 }
 
-function renderDoc(text: string, map: number[] | undefined, ctx: Ctx, depth: number): string {
+function renderDoc(text: string, map: number[] | undefined, ctx: Ctx, depth: number, links?: Doc["links"]): string {
   const doc = makeDoc(text, map);
   const tree = mdParser.parse(text);
+  // A callout's body sees the note's link definitions, as the rest does.
+  if (links) doc.links = links;
   collectLinks(doc, tree.topNode);
   return new Blocks(doc, ctx, depth).children(tree.topNode).join("\n");
 }
@@ -1012,7 +1106,7 @@ export function quoteMarkOffsets(md: string): Set<number> {
   const prepared = lines.map((l, i) => (i <= fm || (kept[i] === "" && l !== "") ? " ".repeat(l.length) : l)).join("\n");
   const out = new Set<number>();
   const collect = (doc: string, offset: number, depth: number) => {
-    mdParser.parse(doc).iterate({
+    blockParser.parse(doc).iterate({
       enter: (n) => {
         if (n.name === "QuoteMark") out.add(at(offset + n.from));
         if (n.name !== "HTMLBlock") return;
@@ -1036,7 +1130,7 @@ export function quoteMarkOffsets(md: string): Set<number> {
 export function indentedCodeRanges(md: string): [number, number][] {
   if (!INDENTED_LINES.test(md)) return [];
   const out: [number, number][] = [];
-  mdParser.parse(md).iterate({
+  blockParser.parse(md).iterate({
     enter: (n) => {
       if (n.name === "CodeBlock") out.push([n.from, n.to]);
       return n.name !== "CodeBlock";
@@ -1124,7 +1218,7 @@ export function rawRanges(
   const hasCallout = md.includes("[!");
   // Each quote and list a block sits in takes it a level deeper, as in Reading view.
   let nest = 0;
-  mdParser.parse(md).iterate({
+  (html ? mdParser : blockParser).parse(md).iterate({
     leave: (n) => {
       if (NESTING.has(n.name)) nest--;
     },
@@ -1142,6 +1236,7 @@ export function rawRanges(
           out.push([eol + 1, n.to]);
           return false;
         }
+        if (!bodyMayHide(md.slice(eol + 1, n.to), MAX_DEPTH - depth - nest - 1)) return false;
         // Its body, read on its own, with each range taken back to the note.
         doc ??= makeDoc(md, undefined);
         const body = calloutBody(doc, n.node);
@@ -1155,7 +1250,7 @@ export function rawRanges(
             if (starts[mid] <= x) lo = mid;
             else hi = mid - 1;
           }
-          return doc!.lineStarts[body.lines[lo]] + body.cut[lo] + x - starts[lo];
+          return doc!.lineStarts[body.lines[lo]] + body.cut[lo] + Math.max(0, x - starts[lo] - body.pad[lo]);
         };
         const sub: [number, number][] = [];
         for (const [f, t] of rawRanges(body.text, indented, withHtml, depth + nest + 1, true, true, sub, inCallouts + 1)) out.push([back(f), back(t)]);
@@ -1211,6 +1306,20 @@ export function rawRanges(
   return out;
 }
 
+/** Whether a callout's body (`src`, its lines as written) may hold anything
+ * `rawRanges` finds: code, math or HTML, an indented line, or markers that
+ * could nest a block more than `room` deeper. Most bodies don't, and then
+ * reading them again is skipped. */
+function bodyMayHide(src: string, room: number): boolean {
+  if (/[`~<\t]|\$\$| {4}/.test(src)) return true;
+  for (let k = 0; k < src.length; k = src.indexOf("\n", k) + 1 || src.length) {
+    let i = k;
+    while (i < src.length && i - k <= room && " >*+-.)0123456789".includes(src[i])) i++;
+    if (i - k > room) return true;
+  }
+  return false;
+}
+
 /** The lines of blocks nested past Reading view's limit, which show as their
  * source, read without a parse: a line of thousands of markers makes one slow.
  * A note with a callout is parsed instead, as a callout's title at the limit
@@ -1257,7 +1366,7 @@ const FRONTMATTER_START = /^\s*---/;
 export function mathBlocks(md: string): Map<number, number> {
   const { text, at } = withoutComments(md);
   const out = new Map<number, number>();
-  mdParser.parse(FRONTMATTER_START.test(text) ? blankFrontmatter(text) : text).iterate({
+  blockParser.parse(FRONTMATTER_START.test(text) ? blankFrontmatter(text) : text).iterate({
     enter: (n) => {
       if (n.name === "MathBlock") out.set(at(n.from), n.to > n.from ? at(n.to - 1) + 1 : at(n.from));
       return n.type.isTop || NESTING.has(n.name) || n.name === "ListItem";

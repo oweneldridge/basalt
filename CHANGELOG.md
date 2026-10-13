@@ -585,7 +585,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and a note with a link definition and a line of thousands of list markers
   no longer stalls Link all.
 - Reading view shows callouts more than four inside one another as quotes,
-  so a long chain of nested callouts can't stall it.
+  so a long chain of nested callouts can't stall it. A callout's body sees
+  the note's link definitions, a tab after a `>` in it counts as CommonMark
+  counts it, and a heading underlined with `===` or `---` inside a quote no
+  longer shows the underline's `>` in its text.
+- A note with a link definition whose title runs on for thousands of lines
+  is read in a single pass, and Reading view, Backlinks and Link all read
+  notes full of callouts about as fast as before callout bodies were read
+  on their own.
 
 ### Security
 
