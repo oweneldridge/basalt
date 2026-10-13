@@ -488,6 +488,8 @@ describe("CommonMark and Obsidian fidelity (Reading view hunt)", () => {
     expect(body(renderMarkdown("> [!bug] L\n> \t- item"))).toBe("<ul><li>item</li></ul>");
     // Tabs inside the body's own quotes are left to the parser.
     expect(renderMarkdown("> [!bug] L\n> > \tx\n> > > [!info] deeper\n> >\nafter")).toContain('<div class="md-callout-body"><blockquote><p>x</p>');
+    // Right under the title too, so a tab-indented line is code, as Obsidian shows it.
+    expect(body(renderMarkdown("> [!note] Title\n\t- item"))).toBe('<pre class="md-code"><code>- item</code></pre>');
     // A lazy line keeps its indent in the body of a callout inside another.
     expect(renderMarkdown("> > [!info]+ T\n> > > > [!info] deeper\n    indented\n> > `a\n> > ```")).toContain(
       '<div class="md-callout-body"><pre class="md-code"><code>indented</code></pre>\n<p>`a</p></div>',

@@ -121,7 +121,9 @@ Link all reads an HTML comment opened inside a line as closing at the next
 that Reading view shows as plain text (a title that reads as a heading or a
 link definition) is offered. Reading
 view shows callouts more than four inside one another as quotes, to keep long
-chains quick; whether Obsidian has a limit hasn't been checked. Past 1,000 quotes and lists inside one another, the index reads
+chains quick; whether Obsidian has a limit hasn't been checked. A line under a
+callout's title with no `>` keeps its own indent, so a tab-indented one is
+code, as Obsidian 1.14 shows it (checked by hand). Past 1,000 quotes and lists inside one another, the index reads
 further markers as text, where the editor's parser keeps nesting. The index counts links and
 tags inside HTML blocks, which Reading view shows as raw HTML; whether Obsidian
 counts them is what `Notes/Blocks.md` in the rename parity run shows. A table
