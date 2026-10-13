@@ -114,17 +114,15 @@ but linking one leaves the other unlinkable, so Link all links one of them. A
 to "b" in the index and Live Preview; which one Obsidian reads hasn't been
 checked. Where the editor's parser and CommonMark disagree on a `#` and a tab
 or a backtick after an escaped one, Link all leaves alone what either reads as
-code. Three rare gaps are left: after a link whose address holds a backtick
-(`[](a`b)`), Link all can still write into a code span that follows; a `%%`
-comment over lines joins what's either side of it in Reading view (a `[a]:`
-above one and text after it make a link definition), where Link all reads
-the lines on their own; and Link all reads an HTML comment opened inside a
-line as closing at the next `-->`, even past the end of its paragraph. Reading
+code. Two rare gaps are left: after a link whose address holds a backtick
+(`[](a`b)`), Link all can still write into a code span that follows; and
+Link all reads an HTML comment opened inside a line as closing at the next
+`-->`, even past the end of its paragraph. A mention in a callout's title
+that Reading view shows as plain text (a title that reads as a heading or a
+link definition) is offered. Reading
 view shows callouts more than four inside one another as quotes, to keep long
 chains quick; whether Obsidian has a limit hasn't been checked. Past 1,000 quotes and lists inside one another, the index reads
-further markers as text, where the editor's parser keeps nesting. Link all
-reads a link reference definition's title over at most ten lines, so a mention
-on the eleventh line of a longer one is offered. The index counts links and
+further markers as text, where the editor's parser keeps nesting. The index counts links and
 tags inside HTML blocks, which Reading view shows as raw HTML; whether Obsidian
 counts them is what `Notes/Blocks.md` in the rename parity run shows. A table
 whose header and delimiter rows have different cell counts isn't read as a

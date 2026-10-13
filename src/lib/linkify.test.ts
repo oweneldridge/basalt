@@ -374,6 +374,12 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
       "- >".repeat(30000) + " b\n[a]: Foo",
       "- ".repeat(30000) + "b\n[a]: Foo",
       "- - ".repeat(20000) + "- - b\n[a]: Foo",
+      '$$\n$$\n\n[a]: b "\n' + "Foo text text\n".repeat(32000),
+      "```\n```\n[a]: b 'x\n" + ("Foo ' y " + "z".repeat(50) + "\n").repeat(30000),
+      "[!a ".repeat(40000) + "Foo",
+      "[^a ".repeat(40000) + "Foo",
+      "[a]: b" + " ".repeat(160000) + "c\n",
+      ">".repeat(45) + " x\n\n> " + "x [!a] ".repeat(80000),
       // Callouts 40 deep, none at the limit: nothing to parse for.
       Array.from({ length: 40 }, (_, i) => "> ".repeat(i + 1) + "[!note] T").join("\n") + "\n" + ("> ".repeat(40) + "line\n").repeat(12000),
     ];
@@ -540,6 +546,12 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
     ] as const)
       expect(at(note), note.slice(-40)).toEqual([want, want]);
   });
+  it("reads a note with more math blocks or tags than a call takes arguments", () => {
+    for (const note of ["```\n```\n" + "$$\n$$\n".repeat(110000) + "Foo", "<b>x</b> ".repeat(120000) + "\nFoo"]) {
+      expect(mentionLines(note).at(-1)).toBe("Foo");
+      expect(mentionLinesFor(note, /Foo/i).at(-1)).toBe("Foo");
+    }
+  });
   it("reads definitions, paragraphs, callout titles and math blocks as Reading view does", () => {
     // Whether the mention "Foo" (wherever it is) is offered, by both scans.
     const offered = (note: string) => {
@@ -551,6 +563,48 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
     for (const [note, want] of [
       // A definition's title stops at a block that starts by its indent.
       ['[a]: b "x\n    - Foo"', false],
+      // Definitions are where Reading view finds them: inside a list item's
+      // quote, past an empty item, under a quote a paragraph runs on from.
+      ['- > [ref]: https://example.com\n  > "Foo title"', false],
+      [" [a]:\n1.\n'Foo'", false],
+      ["- [a]:\n1.\n'Foo'", false],
+      ["> - [a]:\n> 1.\n> 'Foo'", false],
+      ["- [a]: b 'x\n1.\nFoo'", false],
+      ["Intro line\n> quoted text\n> [!note] not a title\n[a]: Foo", true],
+      ["'\n>=\n>[!e]\n[a]:Foo", true],
+      ["o\n>#\t\n>[!e]\n[a]:b '\nFoo'", true],
+      ["> [!note] Title\nBody line\n===\n[a]:\nFoo", false],
+      ["Text\n2. > # Head\n[a]: /u (\nFoo)", true],
+      ["><div></div>\n>-\n>[a]:\nFoo", true],
+      [">|\n\t>\n>[a]:b '\nFoo'", false],
+      ['>"\n    >\n>[a]:\nFoo', false],
+      ["-\n  >#\t\n>[a]:\nFoo", false],
+      ["- ***\r\n[a]:Foo", false],
+      ["- - x\n      ***\n[a]:Foo", false],
+      [">[!e]\n>>=\n[a]:Foo", true],
+      [">o\n-\to\n>[a]:Foo", false],
+      ["- <b><b>\n      ---\n[a]:Foo", true],
+      // Fences and math as Reading view finds them: with comments taken out,
+      // after an empty item, and past an HTML block's own HTML.
+      ["1.\n  o\n$$\n```\n$$\n  ~~~\n#\tFoo", false],
+      ["%%\n%%```\nFoo", false],
+      ["%%\n```\n%%```\nFoo", false],
+      [">~~~\n>%%\n```\n%%\n>Foo", false],
+      [">%%%%\n2. ```\n\n\tFoo", false],
+      ["</n>\n$$\n```\n$$\nFoo", true],
+      ["---\n$$\n---\n$$\nFoo", false],
+      [">[!e]\n>\t\tFoo", false],
+      [">[!e]\n\tFoo", false],
+      ["%%c%%[a]: b 'Foo'", false],
+      // A comment over lines joins them, into a definition too, at any length.
+      ["[a]:%%c\n%%b 'Foo'", false],
+      ["[a]: b%%\n%% 'Foo'", false],
+      ["[a]: b 'x\n" + "l\n".repeat(12) + "Foo'", false],
+      // Under a line a thousand items deep, cut short to be read.
+      ["1. ".repeat(400) + "\n[a]: b 'Foo'", false],
+      // A `[!` or `[^` that nothing closes is text.
+      ["a [!a Foo [!b] c", true],
+      ["x [^a Foo [^1] y\n\n[^1]: n", true],
       ['[a]: b "x\n    # Foo"', false],
       ['- [a]: b "x\n      - Foo"', false],
       ['[a]: b "x\n- Foo"', true],

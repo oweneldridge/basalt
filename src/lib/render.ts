@@ -21,6 +21,7 @@ import { parseFm } from "./frontmatter";
 import { calloutColor, calloutIcon } from "./callouticons";
 import { ObsidianTasks } from "./mdTasks";
 import { ObsidianTables } from "./mdTables";
+import { LinearParsers } from "./mdLinear";
 
 export function escapeHtml(s: string): string {
   return s
@@ -222,7 +223,7 @@ const ObsidianSyntax: MarkdownConfig = {
   ],
 };
 
-const mdParser = baseParser.configure([GFM, ObsidianTasks, ObsidianTables, ObsidianSyntax]);
+const mdParser = baseParser.configure([GFM, ObsidianTasks, ObsidianTables, ObsidianSyntax, LinearParsers]);
 // The same blocks with no inline parse, for scans that only need blocks: most
 // of a parse's time goes on inline content.
 const blockParser = mdParser.configure({
@@ -245,6 +246,14 @@ interface Ctx {
   inlineSeq: number;
   lines: boolean; // mark blocks with their source line (data-line)
   callouts: number; // callouts the block being rendered sits in
+  // Set to read only where link definitions are: the lines Reading view hides
+  // as one and the labels it knows, with no text rendered.
+  seen?: Definitions;
+}
+
+export interface Definitions {
+  lines: Set<number>;
+  labels: Set<string>;
 }
 const newCtx = (defs = new Map<string, string>(), lines = false): Ctx => ({
   defs,
@@ -579,6 +588,7 @@ class Inline {
 }
 
 function inlineNode(doc: Doc, ctx: Ctx, node: SyntaxNode, from = node.from, to = node.to): string {
+  if (ctx.seen) return "";
   const r = new Inline(doc, ctx);
   r.range(node, from, to);
   return r.out;
@@ -586,6 +596,7 @@ function inlineNode(doc: Doc, ctx: Ctx, node: SyntaxNode, from = node.from, to =
 
 /** Inline Markdown in `text`, rendered on its own (a title, a footnote). */
 function inlineOf(text: string, ctx: Ctx): string {
+  if (ctx.seen) return "";
   const doc = makeDoc(text, undefined);
   const tree = mdParser.parse(text);
   const para = tree.topNode.getChild("Paragraph");
@@ -683,9 +694,34 @@ function calloutBody(doc: Doc, n: SyntaxNode): { text: string; lines: number[]; 
   return { text: out.join("\n"), lines, cut, pad };
 }
 
-/** Whether there's a blank line between `from` and `to`. */
-function blankBetween(doc: Doc, from: number, to: number): boolean {
-  return /\n[ \t>]*\n/.test(doc.src.slice(from, to));
+/** Whether a line is blank inside `quotes` quotes: nothing on it but their marks. */
+function blankIn(line: string, quotes: number): boolean {
+  return /^[ \t>\r]*$/.test(line) && line.split(">").length - 1 <= quotes;
+}
+
+/** The last line of an HTML block's (or tag-led paragraph's) own HTML, the
+ * line closing its first tag, when Markdown follows it; -1 when it's all HTML. */
+function htmlLines(lines: string[]): number {
+  const tag = /^\s*<\/?([a-zA-Z][a-zA-Z0-9-]*)/.exec(lines[0])?.[1];
+  const close = tag ? new RegExp(`</${tag}\\s*>`, "i") : null;
+  const k = close ? lines.findIndex((l) => close.test(l)) : -1;
+  return k === lines.length - 1 ? -1 : k;
+}
+
+/** Whether there's a blank line between `from` and `to`, inside `quotes` quotes. */
+function blankBetween(doc: Doc, from: number, to: number, quotes: number): boolean {
+  const lines = doc.src.slice(from, to).split("\n");
+  return lines.slice(1, -1).some((l) => blankIn(l, quotes));
+}
+
+/** Where a node's text ends: in a quote its range can run on over blank lines. */
+function textEnd(doc: Doc, n: SyntaxNode, quotes: number): number {
+  let end = n.to;
+  for (;;) {
+    const ls = doc.src.lastIndexOf("\n", end - 1);
+    if (ls < n.from || !blankIn(doc.src.slice(ls + 1, end), quotes)) return end;
+    end = ls;
+  }
 }
 
 const CALLOUT = /^\[!([\w-]+)\]([+-]?)[ \t]*(.*)$/;
@@ -790,6 +826,8 @@ class Blocks {
         return tail ? `<div class="raw-html" data-basalt-html="${escapeHtml(tail)}"></div>` : "";
       }
       case "LinkReference":
+        if (this.ctx.seen) for (let l = lineOf(this.doc, n.from), last = lineOf(this.doc, n.to - 1); l <= last; l++) this.ctx.seen.lines.add(this.doc.map[l] ?? l);
+        return "";
       case "QuoteMark":
       case "ListMark":
         return "";
@@ -817,10 +855,8 @@ class Blocks {
     const lines = src.split("\n");
     if (!lines[0].includes(">")) return `<p>${escapeHtml(src)}</p>`;
     const raw = (h: string) => `<div class="raw-html" data-basalt-html="${escapeHtml(h)}"></div>`;
-    const tag = /^\s*<\/?([a-zA-Z][a-zA-Z0-9-]*)/.exec(lines[0])?.[1];
-    const close = tag ? new RegExp(`</${tag}\\s*>`, "i") : null;
-    const k = close ? lines.findIndex((l) => close.test(l)) : -1;
-    if (k < 0 || k === lines.length - 1) return raw(src);
+    const k = htmlLines(lines);
+    if (k < 0) return raw(src);
     const at = lineOf(this.doc, n.from) + k + 1;
     const restLines = lines.slice(k + 1);
     const map = restLines.map((_, i) => this.doc.map[at + i] ?? at + i);
@@ -873,7 +909,8 @@ class Blocks {
     else {
       const { text, lines } = calloutBody(this.doc, n);
       const map = lines.map((l) => this.doc.map[l] ?? l);
-      body = text.trim() ? `<div class="md-callout-body">${renderDoc(text, map, this.ctx, this.depth + 1, this.doc.links)}</div>` : "";
+      const inner = text.trim() ? renderDoc(text, map, this.ctx, this.depth + 1, this.doc.links) : "";
+      body = inner ? `<div class="md-callout-body">${inner}</div>` : "";
     }
     this.ctx.callouts--;
     const cls = `md-callout md-callout-${escapeHtml(type)} md-callout-color-${calloutColor(type)}`;
@@ -900,15 +937,20 @@ class Blocks {
     }
     // Every line after the title in this quote, with room under the limit.
     const first = lineOf(this.doc, n.from);
+    // A table's rows are read past the first row's quote marks, so marks
+    // laid out another way read differently on their own.
+    const table = src.includes("|");
+    let marks: string | undefined;
     for (let l = first + 1, last = lineOf(this.doc, n.to - 1); l <= last; l++) {
       const line = this.doc.src.slice(this.doc.lineStarts[l], lineEnd(this.doc, l));
       let k = 0;
       let seen = 0;
       while (k < line.length && " >".includes(line[k])) if (line[k++] === ">") seen++;
       if (seen < depth) return null;
+      if (table && (marks ??= line.slice(0, k)) !== line.slice(0, k)) return null;
       // Quotes and list markers past this callout's, each a level at most.
       let m = k;
-      while (m < line.length && "-*+.)0123456789 ".includes(line[m])) m++;
+      while (m < line.length && "-*+.)0123456789 >".includes(line[m])) m++;
       if (this.depth + 1 + seen - depth + m - k > MAX_DEPTH) return null;
     }
     const titleEnd = lineEnd(this.doc, first);
@@ -942,12 +984,15 @@ class Blocks {
     const items: SyntaxNode[] = [];
     for (let c = n.firstChild; c; c = c.nextSibling) if (c.name === "ListItem") items.push(c);
     // Loose (paragraphs in <p>) when items, or blocks inside one, are apart.
-    let loose = items.some((it, i) => i > 0 && blankBetween(this.doc, items[i - 1].to, it.from));
+    let quotes = 0;
+    for (let p = n.parent; p; p = p.parent) if (p.name === "Blockquote") quotes++;
+    const apart = (a: SyntaxNode, b: SyntaxNode) => blankBetween(this.doc, textEnd(this.doc, a, quotes), b.from, quotes);
+    let loose = items.some((it, i) => i > 0 && apart(items[i - 1], it));
     if (!loose) {
       loose = items.some((it) => {
         const blocks: SyntaxNode[] = [];
-        for (let c = it.firstChild; c; c = c.nextSibling) if (c.name !== "ListMark") blocks.push(c);
-        return blocks.some((b, i) => i > 0 && blankBetween(this.doc, blocks[i - 1].to, b.from));
+        for (let c = it.firstChild; c; c = c.nextSibling) if (c.name !== "ListMark" && c.name !== "QuoteMark") blocks.push(c);
+        return blocks.some((b, i) => i > 0 && apart(blocks[i - 1], b));
       });
     }
     const ordered = n.name === "OrderedList";
@@ -1048,10 +1093,12 @@ function collectLinks(doc: Doc, top: SyntaxNode) {
 
 function renderDoc(text: string, map: number[] | undefined, ctx: Ctx, depth: number, links?: Doc["links"]): string {
   const doc = makeDoc(text, map);
-  const tree = mdParser.parse(text);
+  // Where definitions are doesn't hang on inline syntax.
+  const tree = (ctx.seen ? blockParser : mdParser).parse(text);
   // A callout's body sees the note's link definitions, as the rest does.
   if (links) doc.links = links;
   collectLinks(doc, tree.topNode);
+  if (ctx.seen) for (const key of doc.links.keys()) ctx.seen.labels.add(key);
   return new Blocks(doc, ctx, depth).children(tree.topNode).join("\n");
 }
 
@@ -1176,8 +1223,7 @@ export function mayRunHtml(md: string): boolean {
  * is false). With `indented`, indented code too. One parse, and only when a
  * line is indented or HTML could run past what a line's own mask sees. With
  * `fences`, fenced code too: what follows a paragraph led by a tag is read
- * apart from it here, where the note's own mask doesn't split it. The ranges
- * inside a line (a tag, a comment) go in `inline` as well. */
+ * apart from it here, where the note's own mask doesn't split it. */
 const NESTING = new Set(["Blockquote", "BulletList", "OrderedList"]);
 
 export function rawRanges(
@@ -1187,7 +1233,6 @@ export function rawRanges(
   depth = 0,
   fences = false,
   deep = true,
-  inline?: [number, number][],
   inCallouts = 0,
 ): [number, number][] {
   const code = indented && INDENTED_LINES.test(md);
@@ -1252,9 +1297,7 @@ export function rawRanges(
           }
           return doc!.lineStarts[body.lines[lo]] + body.cut[lo] + Math.max(0, x - starts[lo] - body.pad[lo]);
         };
-        const sub: [number, number][] = [];
-        for (const [f, t] of rawRanges(body.text, indented, withHtml, depth + nest + 1, true, true, sub, inCallouts + 1)) out.push([back(f), back(t)]);
-        for (const [f, t] of sub) inline?.push([back(f), back(t)]);
+        for (const [f, t] of rawRanges(body.text, indented, withHtml, depth + nest + 1, true, true, inCallouts + 1)) out.push([back(f), back(t)]);
         return false;
       }
       if (NESTING.has(n.name)) nest++;
@@ -1275,7 +1318,7 @@ export function rawRanges(
         case "HTMLTag":
         case "Comment":
         case "ProcessingInstruction":
-          if (html) out.push([n.from, n.to]), inline?.push([n.from, n.to]);
+          if (html) out.push([n.from, n.to]);
           return false;
         case "HTMLBlock":
         case "Paragraph": {
@@ -1293,9 +1336,7 @@ export function rawRanges(
           if (end < n.to) {
             if (at > MAX_DEPTH) out.push([end + 1, n.to]);
             else {
-              const sub: [number, number][] = [];
-              for (const [f, t] of rawRanges(md.slice(end + 1, n.to), indented, withHtml, at, fences || n.name === "Paragraph", true, sub)) out.push([f + end + 1, t + end + 1]);
-              for (const [f, t] of sub) inline?.push([f + end + 1, t + end + 1]);
+              for (const [f, t] of rawRanges(md.slice(end + 1, n.to), indented, withHtml, at, fences || n.name === "Paragraph", true)) out.push([f + end + 1, t + end + 1]);
             }
           }
           return false;
@@ -1339,8 +1380,12 @@ const CALLOUT_FENCE = /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*>[^\n]*(?:```|~~~|
  * where it still shows: its line's quote and list markers, and its indent
  * (two columns a level), reach that deep. */
 function mayTitleAtLimit(md: string): boolean {
-  for (let i = md.indexOf("[!"); i >= 0; i = md.indexOf("[!", i + 2)) {
-    const lead = md.slice(md.lastIndexOf("\n", i) + 1, i);
+  for (let i = md.indexOf("[!"); i >= 0; ) {
+    const start = md.lastIndexOf("\n", i) + 1;
+    const lead = md.slice(start, i);
+    // Only a line's first `[!` has nothing but markers before it.
+    const eol = md.indexOf("\n", i);
+    i = eol < 0 ? -1 : md.indexOf("[!", eol);
     if (!lead.includes(">") || !/^(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])[ \t])*$/.test(lead)) continue;
     let levels = 0;
     let indent = 0;
@@ -1366,12 +1411,23 @@ const FRONTMATTER_START = /^\s*---/;
 export function mathBlocks(md: string): Map<number, number> {
   const { text, at } = withoutComments(md);
   const out = new Map<number, number>();
-  blockParser.parse(FRONTMATTER_START.test(text) ? blankFrontmatter(text) : text).iterate({
-    enter: (n) => {
-      if (n.name === "MathBlock") out.set(at(n.from), n.to > n.from ? at(n.to - 1) + 1 : at(n.from));
-      return n.type.isTop || NESTING.has(n.name) || n.name === "ListItem";
-    },
-  });
+  const read = (src: string, from: number) =>
+    blockParser.parse(src).iterate({
+      enter: (n) => {
+        if (n.name === "MathBlock") out.set(at(from + n.from), n.to > n.from ? at(from + n.to - 1) + 1 : at(from + n.from));
+        // What follows an HTML block's own HTML reads as a note of its own.
+        else if (n.name === "HTMLBlock") {
+          const lines = src.slice(n.from, n.to).split("\n");
+          const k = lines[0].includes(">") ? htmlLines(lines) : -1;
+          if (k >= 0) {
+            const rest = n.from + lines.slice(0, k + 1).join("\n").length + 1;
+            read(src.slice(rest, n.to), from + rest);
+          }
+        }
+        return n.type.isTop || NESTING.has(n.name) || n.name === "ListItem";
+      },
+    });
+  read(FRONTMATTER_START.test(text) ? blankFrontmatter(text) : text, 0);
   return out;
 }
 
@@ -1441,13 +1497,10 @@ function withoutComments(md: string): { text: string; at: (p: number) => number 
 
 /** `rawRanges` as Reading view sees the note: with its `%%comments%%` taken
  * out first. The ranges are offsets into `md`. */
-export function rawRangesBeyondComments(md: string, indented: boolean, withHtml = true, deep = true, inline?: [number, number][]): [number, number][] {
+export function rawRangesBeyondComments(md: string, indented: boolean, withHtml = true, deep = true): [number, number][] {
   const { text, at } = withoutComments(md);
   const back = ([f, t]: [number, number]): [number, number] => [at(f), t > f ? at(t - 1) + 1 : at(f)];
-  const sub: [number, number][] = [];
-  const out = rawRanges(text, indented, withHtml, 0, false, deep, sub).map(back);
-  inline?.push(...sub.map(back));
-  return out;
+  return rawRanges(text, indented, withHtml, 0, false, deep).map(back);
 }
 
 /** The code and comments in `md`, in order: `code` is true for code (left as
@@ -1475,7 +1528,7 @@ export function commentRanges(md: string): [number, number][] {
   return out;
 }
 
-function stripCommentsMapped(md: string): { text: string; map: number[] } {
+export function stripCommentsMapped(md: string): { text: string; map: number[] } {
   const map = [0];
   let text = "";
   let src = 0; // source line at the current position
@@ -1504,7 +1557,7 @@ export function stripBlockIds(md: string): string {
   const mask = proseMask(lines);
   return lines
     .map((l, i) =>
-      mask[i] ? l.replace(/[ \t]+\^[A-Za-z0-9-]+\s*$/, "").replace(/^\^[A-Za-z0-9-]+[ \t]*$/, "") : l,
+      mask[i] ? l.replace(/(?<![ \t])[ \t]+\^[A-Za-z0-9-]+\s*$/, "").replace(/^\^[A-Za-z0-9-]+[ \t]*$/, "") : l,
     )
     .join("\n");
 }
@@ -1569,6 +1622,38 @@ function propertyValue(v: string): string {
 /** Render a full Markdown document to an HTML string. With `lines`, each block
  * carries the source line it starts on as `data-line`, for Reading view. */
 export function renderMarkdown(src: string, opts: { lines?: boolean } = {}): string {
+  return render(src, opts);
+}
+
+/** The lines Reading view hides as link reference definitions, and the labels
+ * the note defines, as rendering it finds them. */
+export function linkDefinitions(src: string): Definitions {
+  const seen: Definitions = { lines: new Set(), labels: new Set() };
+  const md = HUGE_NESTING.test(src) ? src.split("\n").map(shallower).join("\n") : src;
+  render(md, {}, seen);
+  if (!md.includes("%%")) return seen;
+  // A comment over lines joins them into one, all of it the definition's.
+  const { map } = stripCommentsMapped(md);
+  const lines = md.split("\n").length;
+  for (let s = 0; s < map.length; s++) {
+    if (!seen.lines.has(map[s])) continue;
+    for (let l = map[s] + 1, end = s + 1 < map.length ? map[s + 1] : lines; l < end; l++) seen.lines.add(l);
+  }
+  return seen;
+}
+
+/** A line nested a thousand deep or more, cut to that depth (the parse takes
+ * long over each level past it): blocks past the nesting limit show as their
+ * source whatever their depth, and a line under it can't reach further. */
+function shallower(line: string): string {
+  const lead = /^[ \t>*+\-.)0-9]*/.exec(line)![0].length;
+  if (lead < 1000) return line;
+  let cut = 1000;
+  while (cut > 0 && !" \t>".includes(line[cut - 1])) cut--;
+  return line.slice(0, cut) + line.slice(lead);
+}
+
+function render(src: string, opts: { lines?: boolean }, seen?: Definitions): string {
   const { text: stripped, map } = stripCommentsMapped(src);
   let md = stripBlockIds(stripped);
   const parts: string[] = [];
@@ -1591,6 +1676,7 @@ export function renderMarkdown(src: string, opts: { lines?: boolean } = {}): str
 
   const { text, defs } = extractFootnoteDefs(md);
   const ctx = newCtx(defs, opts.lines);
+  ctx.seen = seen;
   const body = renderDoc(text, map, ctx, 0);
   if (body) parts.push(body);
   return parts.join("\n") + emitFootnotes(ctx);

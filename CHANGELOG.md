@@ -593,6 +593,26 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is read in a single pass, and Reading view, Backlinks and Link all read
   notes full of callouts about as fast as before callout bodies were read
   on their own.
+- Unlinked mentions and Link all take a note's link definitions from Reading
+  view itself, so a definition is hidden exactly where Reading view hides it:
+  in a list item's quote, after an empty item, in a callout's body, after an
+  HTML block, over a `%%` comment that joins lines, and with a title of any
+  length. A code fence is found as Reading view finds it, with comments taken
+  out and after an empty list item (whose text starts a column past its
+  marker, as the editor's parser now reads it), and a math block after an
+  HTML block hides what it holds. A `[!` or `[^` that nothing closes no
+  longer hides the mentions after it on its line.
+- A list in a quote or callout whose items, or the paragraphs in one, are
+  parted by a line of `>` alone is loose, as CommonMark reads it, so an
+  item's two paragraphs no longer run together in Reading view. A callout
+  whose body shows nothing has no empty body under its title.
+- Opening a note, Reading view and the mention scans no longer slow down on
+  a link definition whose title never closes or on a long run of spaces,
+  which the editor's Markdown parser read again from the start on each line
+  or space. A note with a hundred thousand math blocks no longer stops
+  Backlinks, and long lines of unclosed `[!` or `[^`, or a line nested a
+  thousand deep with a definition under it, are read in time linear in
+  their length.
 
 ### Security
 

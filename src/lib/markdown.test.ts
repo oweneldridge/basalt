@@ -264,7 +264,7 @@ describe("proseMask reads containers as the editor's parser does", () => {
 
   it("reads quote markers and the columns after them", () => {
     cases([
-      ["> -\n>  ```\n> a", [1, 0, 1]],
+      ["> -\n>  ```\n> a", [1, 0, 0]],
       ["> 1) a\n>\t\t```\n>\t\t[[L]]", [1, 0, 0]],
       [">     x\n>\n\t> ```\n\t> [[L]]", [1, 1, 1, 1]],
       ["> > > > ```\n> > > > [[L]]", [0, 0]],
@@ -397,6 +397,16 @@ describe("proseMask and blockDepths on inputs that tell near misses apart", () =
     const t1 = performance.now();
     proseMask((("- ".repeat(300) + "a\n").repeat(3000) + "```").split("\n"));
     expect(performance.now() - t1).toBeLessThan(300);
+  });
+
+  it("puts an empty item's text a column past its marker, as the editor's parser does", () => {
+    for (const [md, mask] of [
+      ["1.\n  o\n  ~~~\nFoo", [1, 1, 0, 0]],
+      ["1. -\n\t\t```\nFoo", [1, 0, 1]],
+      ["-\n     ```\nFoo", [1, 0, 1]],
+      ["- 1.\n\t<div>\n  > ```\nFoo", [1, 1, 1, 1]],
+    ] as const)
+      expect(proseMask(md.split("\n")).map(Number), md).toEqual(mask);
   });
 
   it("reads a table and a long link reference as the editor's parser does", () => {

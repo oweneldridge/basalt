@@ -1,5 +1,6 @@
 // Pure Markdown/wikilink helpers shared by the editor and the index, so the two
 // can never disagree about what a link is or what it points to.
+import { RefScan } from "./mdLinear";
 
 /**
  * Returns a fresh global wikilink regex each call. Group 1 = target, group 2 =
@@ -185,7 +186,7 @@ function maskFrom(lines: string[], start: number, mask: boolean[], depth: number
     // A paragraph: to a blank line, a line that starts a block (a table too,
     // unless the paragraph may be one), the line after a link reference
     // definition, or an underline.
-    const ref = line.next === 91 /* [ */ ? new LinkRef(line.text.slice(line.pos)) : null;
+    const ref = line.next === 91 /* [ */ ? new RefScan(line.text.slice(line.pos)) : null;
     const head = i;
     const headPos = line.pos;
     while (++i < n) {
@@ -359,8 +360,10 @@ function orderedAt(line: Line, inParagraph: boolean, stack: Container[]): number
  * the spaces after it, or one past the marker when that's five or more. */
 function listIndent(line: Line, pos: number): number {
   const after = columnAt(line.text, pos, line.pos, line.indent);
-  const text = columnAt(line.text, skipSpace(line.text, pos), pos, after);
-  return text >= after + 5 ? after + 1 : text;
+  const skipped = skipSpace(line.text, pos);
+  const text = columnAt(line.text, skipped, pos, after);
+  // An item with nothing after its marker puts its text a column past it.
+  return text >= after + 5 || skipped === line.text.length ? after + 1 : text;
 }
 
 /** Whether the line is an ATX heading (`# x`). */
@@ -408,12 +411,12 @@ function interrupts(line: Line, stack: Container[]): boolean {
 function tableAt(line: Line, after: string | undefined): boolean {
   if (after === undefined) return false;
   const c = after.charCodeAt(0);
-  if ((c >= 48 && c <= 57) || ((c | 32) >= 97 && (c | 32) <= 122) || !/^[|:\-\s]/.test(after)) return false;
+  if ((c >= 48 && c <= 57) || ((c | 32) >= 97 && (c | 32) <= 122) || !/^[|:\-\s>]/.test(after)) return false;
   if (!hasPipe(line.text, line.basePos)) return false;
   if (after.endsWith("\r")) after = after.slice(0, -1);
   return DELIMITER_ROW.test(after) && cellsOf(line.text, line.basePos) === cellsOf(after, line.basePos);
 }
-const DELIMITER_ROW = /^\|?(\s*:?-+:?\s*\|)+(\s*:?-+:?\s*)?$/;
+const DELIMITER_ROW = /^[>\s]*\|?(\s*:?-+:?\s*\|)+(\s*:?-+:?\s*)?$/;
 
 function hasPipe(text: string, from: number): boolean {
   for (let i = from; i < text.length; i++) {
@@ -440,158 +443,6 @@ function cellsOf(text: string, from: number): number {
     escaped = !escaped && c === 92;
   }
   return cell ? count + 1 : count;
-}
-
-// A link reference definition (`[a]: url "title"`) a paragraph starts with, read
-// as the editor's parser reads one: a line at a time, as far as it gets. The
-// paragraph ends where the definition does.
-class LinkRef {
-  stage = 0; // the label, the URL, after the URL, after the title, or -1: not one
-  pos = 0;
-  content: string;
-  // A title still open: where it starts, how far it's been read, and whether
-  // that stopped after a backslash. Each line goes on from there.
-  title = { from: -1, at: 0, escaped: false };
-  // Once a title runs on past its line, the lines after are read on their own
-  // (joining them again each line would be slow): its length so far and the
-  // mark that closes it.
-  open = { length: -1, close: 0 };
-
-  constructor(first: string) {
-    this.content = first;
-    this.advance();
-  }
-
-  /** Reads another line; true when the definition ended on the line before. */
-  nextLine(text: string): boolean {
-    if (this.stage < 0) return false;
-    if (this.open.length >= 0) return this.titleLine(text);
-    this.content += "\n" + text;
-    if (this.advance() > -1) return true;
-    // Only an open title runs on line after line.
-    if (this.stage === 2 && this.title.from >= 0 && this.title.at === this.content.length) {
-      this.open = { length: this.content.length, close: this.content.charCodeAt(this.title.from) === 40 ? 41 : this.content.charCodeAt(this.title.from) };
-      if (this.open.length > LINK_REF_LIMIT) this.stage = -1;
-    }
-    return false;
-  }
-
-  // A line of a title still open: it closes there, with nothing after it on
-  // the line (and the definition ends with the line), or it runs on.
-  private titleLine(text: string): boolean {
-    if (this.stage === 3) return true;
-    this.open.length += 1 + text.length;
-    for (let p = 0, escaped = false; p < text.length; p++) {
-      const c = text.charCodeAt(p);
-      if (escaped) escaped = false;
-      else if (c === this.open.close) {
-        this.stage = lineEnd(text, p + 1) < 0 ? -1 : 3;
-        return false;
-      } else if (c === 92) escaped = true;
-    }
-    if (this.open.length > LINK_REF_LIMIT) this.stage = -1;
-    return false;
-  }
-
-  // Where the definition ends, or -1 for not yet (or not one).
-  advance(): number {
-    const c = this.content;
-    for (;;) {
-      if (this.stage < 0) return -1;
-      if (this.stage === 0) {
-        const end = labelEnd(c, this.pos);
-        if (end === PENDING && c.length < this.pos + 1000) return -1;
-        if (end < 0 || c.charCodeAt(end) !== 58 /* : */) return (this.stage = -1);
-        this.pos = end + 1;
-        this.stage = 1;
-      } else if (this.stage === 1) {
-        const end = urlEnd(c, skipSpace(c, this.pos));
-        if (end === PENDING) return -1;
-        if (end < 0) return (this.stage = -1);
-        this.pos = end;
-        this.stage = 2;
-      } else if (this.stage === 2) {
-        const at = skipSpace(c, this.pos);
-        let end = 0;
-        if (at > this.pos) {
-          const title = this.titleEnd(c, at);
-          const after = title < 0 ? -1 : lineEnd(c, title);
-          if (after > 0) (this.stage = 3), (this.pos = title), (end = after);
-        }
-        if (!end) end = lineEnd(c, this.pos);
-        return end > 0 && end < c.length ? end : -1;
-      } else return lineEnd(c, this.pos);
-    }
-  }
-
-  titleEnd(text: string, start: number): number {
-    const open = text.charCodeAt(start);
-    if (open !== 39 && open !== 34 && open !== 40) return -1;
-    const close = open === 40 ? 41 : open;
-    let { at: p, escaped } = this.title.from === start ? this.title : { at: start + 1, escaped: false };
-    for (; p < text.length; p++) {
-      const c = text.charCodeAt(p);
-      if (escaped) escaped = false;
-      else if (c === close) return p + 1;
-      else if (c === 92) escaped = true;
-    }
-    this.title = { from: start, at: p, escaped };
-    return PENDING;
-  }
-}
-// Past this length a link reference definition whose title is still open is read as text.
-const LINK_REF_LIMIT = 1_000_000;
-// A part of a link reference definition that may go on to the next line.
-const PENDING = -2;
-
-function labelEnd(text: string, start: number): number {
-  let blank = true;
-  let escaped = false;
-  for (let p = start + 1, end = Math.min(text.length, p + 999); p < end; p++) {
-    const c = text.charCodeAt(p);
-    if (escaped) escaped = false;
-    else if (c === 93) return blank ? -1 : p + 1;
-    else {
-      if (!isSpace(c)) blank = false;
-      if (c === 91) return -1;
-      if (c === 92) escaped = true;
-    }
-  }
-  return PENDING;
-}
-
-function urlEnd(text: string, start: number): number {
-  if (text.charCodeAt(start) === 60) {
-    for (let p = start + 1; p < text.length; p++) {
-      const c = text.charCodeAt(p);
-      if (c === 62) return p + 1;
-      if (c === 60 || c === 10) return -1;
-    }
-    return PENDING;
-  }
-  let depth = 0;
-  let p = start;
-  for (let escaped = false; p < text.length; p++) {
-    const c = text.charCodeAt(p);
-    if (isSpace(c)) break;
-    if (escaped) escaped = false;
-    else if (c === 40) depth++;
-    else if (c === 41) {
-      if (!depth) break;
-      depth--;
-    } else if (c === 92) escaped = true;
-  }
-  return p > start ? p : p === text.length ? PENDING : -1;
-}
-
-/** Where the line from `pos` ends, if only spaces are left on it, else -1. */
-function lineEnd(text: string, pos: number): number {
-  for (; pos < text.length; pos++) {
-    const c = text.charCodeAt(pos);
-    if (c === 10) break;
-    if (!isSpace(c)) return -1;
-  }
-  return pos;
 }
 
 // HTML blocks as the editor's parser starts them, and what ends each (a line it

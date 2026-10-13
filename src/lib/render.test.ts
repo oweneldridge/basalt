@@ -476,6 +476,11 @@ describe("CommonMark and Obsidian fidelity (Reading view hunt)", () => {
       ["> [!note] T\n> <span>x</span>\n> b**", "<span>x</span>\nb**"],
       ["[a]: /u\n\n> [!note] T\n> see [a]", "[a]: /u\n\nsee [a]"],
       ["> [!note] T\n> | a | b |\n> | - | - |\n> | x | y |", "| a | b |\n| - | - |\n| x | y |"],
+      ["> [!note] Steps\n> - First step\n>\n>   More about it", "- First step\n\n  More about it"],
+      ["> [!tip] L\n> 1. one\n>\n> 2. two", "1. one\n\n2. two"],
+      ["> [!note] T\n> a|b\n  >|-|-", "a|b\n|-|-"],
+      ["> [!note] T\n> b\n>a|b\n >|-|", "b\na|b\n|-|"],
+      [">> [!note] T\n>>x|\n>>a|b\n> >|-|", "x|\na|b\n|-|"],
     ] as const)
       expect(body(renderMarkdown(note)), note).toBe(renderMarkdown(lines));
     expect(renderMarkdown("> [!note] T\n> a\n> b", { lines: true })).toContain('<p data-line="1">a<br>');
@@ -487,8 +492,25 @@ describe("CommonMark and Obsidian fidelity (Reading view hunt)", () => {
     expect(renderMarkdown("> > [!info]+ T\n> > > > [!info] deeper\n    indented\n> > `a\n> > ```")).toContain(
       '<div class="md-callout-body"><pre class="md-code"><code>indented</code></pre>\n<p>`a</p></div>',
     );
+    // Near the nesting limit too, where each list and quote in the body counts.
+    expect(renderMarkdown("> [!note] T\n> " + "- > ".repeat(20) + "x Foo\n> b")).toContain("<p>x Foo\nb</p>");
     // And its definitions are the note's.
     expect(renderMarkdown("> [!note] T\n> [a]: /u\n\nsee [a]")).toMatch(/<p>see <a [^>]*>a<\/a><\/p>/);
+  });
+  it("shows an HTML block that closes on its last line as HTML alone", () => {
+    expect(renderMarkdown("<div>\nx\n</div>")).toBe('<div class="raw-html" data-basalt-html="&lt;div&gt;\nx\n&lt;/div&gt;"></div>');
+  });
+  it("shows no body for a callout whose body shows nothing", () => {
+    expect(renderMarkdown(">[!e]\n>\n>[1]:e")).not.toContain("md-callout-body");
+    expect(renderMarkdown("> [!e] T\n> [a]: /u")).not.toContain("md-callout-body");
+  });
+  it("reads a list in a quote as loose where a line of its quote marks alone parts it", () => {
+    expect(renderMarkdown("> * a\n>\n>   x")).toBe("<blockquote><ul><li><p>a</p>\n<p>x</p></li></ul></blockquote>");
+    expect(renderMarkdown("> > - a\n> >\n> > - b")).toContain("<li><p>a</p></li><li><p>b</p></li>");
+    expect(renderMarkdown("- a\r\n\r\n- b")).toMatch(/^<ul><li><p>a\s*<\/p><\/li><li><p>b<\/p><\/li><\/ul>$/);
+    // A quote's own empty line inside an item doesn't part the list's items.
+    expect(renderMarkdown("- > a\n  >\n- b")).toBe("<ul><li><blockquote><p>a</p></blockquote></li><li>b</li></ul>");
+    expect(renderMarkdown("> - a\n> - b")).toBe("<blockquote><ul><li>a</li><li>b</li></ul></blockquote>");
   });
   it("ends a heading's text before its underline's quote marks", () => {
     expect(renderMarkdown("> a\n> ===")).toBe("<blockquote><h1>a</h1></blockquote>");
