@@ -227,8 +227,10 @@ export function open() {
 export function save() {
   return Promise.resolve(`${VAULT}/export.md`);
 }
+// A test answers with window.__mockConfirm = () => false.
 export function confirm() {
-  return Promise.resolve(true);
+  const answer = (globalThis as { __mockConfirm?: () => boolean }).__mockConfirm;
+  return Promise.resolve(answer ? answer() : true);
 }
 export function ask() {
   return Promise.resolve(true);

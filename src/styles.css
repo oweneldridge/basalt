@@ -1855,6 +1855,27 @@ button.primary:hover {
   color: var(--text);
 }
 
+/* A vault opening: says so, outside the notes it holds. */
+.switch-status {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  max-width: calc(100vw - 32px);
+}
+.switch-status:not(:empty) {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  box-shadow: 0 6px 20px var(--shadow);
+  font-size: 13px;
+  color: var(--text);
+}
+.switch-status:focus { outline: none; }
+.switch-status:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+
 /* ------- Plugin settings + blocks ------- */
 .plugin-list {
   display: flex;
@@ -2346,6 +2367,10 @@ button.primary:hover {
   cursor: pointer;
 }
 .ribbon-btn:hover { background: var(--hover, rgba(127,127,127,0.15)); color: var(--text); }
+/* Waits while a vault opens; it stays focusable and says it's unavailable. */
+.ribbon-btn[aria-disabled="true"],
+.rec-indicator button[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.ribbon-btn[aria-disabled="true"]:hover { background: none; }
 
 /* ------- %% comments (Live Preview) ------- */
 .cm-comment { color: var(--text-faint, var(--text-muted)); }

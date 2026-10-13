@@ -9,13 +9,15 @@ interface Props {
   counts: { words: number; chars: number } | null;
   /** Bumps when the plugin registry changes, so mounted items refresh. */
   pluginVersion: number;
+  /** A vault is opening: plugin items, which act on this one, wait. */
+  held?: boolean;
 }
 
 const plural = (n: number, noun: string) => `${n.toLocaleString()} ${noun}${n === 1 ? "" : "s"}`;
 
 /** The bottom status bar: caret position, word/char count, and any plugin
  * status-bar items (mounted from their owning plugins). */
-export function StatusBar({ cursor, counts, pluginVersion }: Props) {
+export function StatusBar({ cursor, counts, pluginVersion, held = false }: Props) {
   const pluginMount = useRef<HTMLDivElement | null>(null);
 
   // Re-mount the current plugin status items whenever the registry changes.
@@ -28,7 +30,7 @@ export function StatusBar({ cursor, counts, pluginVersion }: Props) {
 
   return (
     <div className="status-bar">
-      <div className="status-bar-plugins" ref={pluginMount} />
+      <div className="status-bar-plugins" ref={pluginMount} inert={held || undefined} />
       <div className="status-bar-spacer" />
       {cursor && (
         <span className="status-bar-item">

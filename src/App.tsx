@@ -264,6 +264,8 @@ function madeNow(content: string): FileStats {
   const stats = writtenNow(content);
   return { ...stats, ctime: stats.mtime };
 }
+// Keys that edit text in a field, with Cmd or Ctrl.
+const EDIT_KEYS = new Set(["a", "c", "v", "x", "z", "y", "arrowleft", "arrowright", "arrowup", "arrowdown", "backspace", "delete", "home", "end"]);
 // Bound on the self-write suppression map (rel -> last written content).
 const SELF_WRITES_MAX = 128;
 
@@ -692,11 +694,15 @@ export default function App() {
   const opening = useRef<Promise<void> | null>(null);
   // The latest switch whose call opened its vault: where a failed one leaves you.
   const openedGen = useRef(0);
-  // A switch under way, from its call to the new vault's workspace: the notes
-  // take no edits and only another switch can run meanwhile, and work for
-  // "this vault" waits.
+  // While any switch is under way, from its flush to the new vault's
+  // workspace: the notes take no edits and only another switch can run, and
+  // work for "this vault" waits. Settles when the last switch in flight does.
   const switching = useRef<Promise<void> | null>(null);
-  const [switchingVault, setSwitchingVault] = useState(false);
+  const switchesInFlight = useRef(0);
+  const switchesDone = useRef(() => {});
+  // The vault being opened, announced while it loads.
+  const [switchingVault, setSwitchingVault] = useState<string | null>(null);
+  const switchStatusRef = useRef<HTMLDivElement | null>(null);
   // Whether `gen` is still the vault switched to, once any newer switch's
   // call has settled (a failed one leaves this vault open).
   const stillCurrent = useCallback(async (gen: number) => {
@@ -2005,35 +2011,69 @@ export default function App() {
   );
   const openVault = useCallback(
     async (path: string, openNoteRel?: string, restoring = false) => {
-      await flushAll();
-      if (!(await okToDropUnsaved("Switch vaults"))) return;
-      let settle = () => {};
-      const mine = new Promise<void>((resolve) => (settle = resolve));
-      switching.current = mine;
-      setSwitchingVault(true);
+      if (switchesInFlight.current++ === 0) {
+        switching.current = new Promise<void>((resolve) => (switchesDone.current = resolve));
+        // Menus and views of the vault that's going would act on it.
+        setGraphOpen(false);
+        setSlidesOpen(false);
+        setTabMenu(null);
+        setEditorMenu(null);
+        setFileMenu(null);
+        setAttMenu(null);
+        setFolderMenu(null);
+        setSubfolderParent(null);
+        setRenameFolderTarget(null);
+        setRenameTarget(null);
+        setTemplatePrompt(null);
+      }
+      setSwitchingVault(vaultName(path) || path);
       try {
+        // Held from here, so nothing typed during a slow save is left unsaved.
+        await flushAll();
+        if (!(await okToDropUnsaved("Switch vaults"))) return;
         await switchTo(path, openNoteRel, restoring);
       } finally {
-        settle();
-        if (switching.current === mine) {
+        if (--switchesInFlight.current === 0) {
           switching.current = null;
-          setSwitchingVault(false);
+          setSwitchingVault(null);
+          switchesDone.current();
+          if (document.activeElement === switchStatusRef.current) switchStatusRef.current?.blur();
+          refocusIfLost();
         }
       }
     },
     [flushAll, switchTo],
   );
   useEffect(() => {
-    if (!switchingVault) return;
-    // Shortcuts wait too, but for the command palette, to switch again.
+    if (switchingVault === null) return;
+    const at = document.activeElement;
+    // What had focus is held or gone: the message saying why takes it.
+    if (!at || at === document.body || at.closest("main.main")) switchStatusRef.current?.focus({ preventScroll: true });
     const palette = (e: KeyboardEvent) => (isMac ? e.metaKey : e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "p";
+    // Text editing in the palette or the vault picker, not app shortcuts.
+    const editing = (e: KeyboardEvent) => {
+      if (!(e.target instanceof Element) || !e.target.closest("dialog")) return false;
+      if (!e.metaKey && !e.ctrlKey) return true;
+      if (e.getModifierState("AltGraph")) return true;
+      return (isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && EDIT_KEYS.has(e.key.toLowerCase());
+    };
+    // Shortcuts wait, but for the command palette, to switch again.
     const hold = (e: KeyboardEvent) => {
-      if ((!e.metaKey && !e.ctrlKey && !e.altKey) || palette(e)) return;
+      if (palette(e) || editing(e) || (!e.metaKey && !e.ctrlKey && !e.altKey)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
     };
+    // What's let through reaches no shortcut on the window (F-key hotkeys, a
+    // canvas's Delete) but the palette's.
+    const after = (e: KeyboardEvent) => {
+      if (!palette(e)) e.stopImmediatePropagation();
+    };
     window.addEventListener("keydown", hold, true);
-    return () => window.removeEventListener("keydown", hold, true);
+    document.addEventListener("keydown", after);
+    return () => {
+      window.removeEventListener("keydown", hold, true);
+      document.removeEventListener("keydown", after);
+    };
   }, [switchingVault]);
 
   // Restore the last vault on launch (once — StrictMode double-mounts effects).
@@ -5860,8 +5900,9 @@ export default function App() {
       <div className="workspace">
       <Ribbon
         pluginVersion={pluginVersion}
+        held={switchingVault !== null}
         onToggleSidebar={() => toggleLeftDock()}
-        onQuickSwitcher={() => !switching.current && setModal("switcher")}
+        onQuickSwitcher={() => setModal("switcher")}
         onSearch={() => {
           setSearchSeed("");
           setModal("search");
@@ -5870,7 +5911,7 @@ export default function App() {
         onGraph={() => setGraphOpen(true)}
         onSettings={() => setModal("settings")}
       />
-      <main className="main" inert={switchingVault || undefined}>
+      <main className="main" inert={switchingVault !== null || undefined}>
         <div className="toolbar">
           <button className="link-btn" onClick={openVaultSwitcher} title="Switch vault (recent / open a folder)">
             Vault…
@@ -5965,11 +6006,15 @@ export default function App() {
           <div className="placeholder" tabIndex={-1}>Select a note, or press + to create one.</div>
         )}
       </main>
+      <div ref={switchStatusRef} className="switch-status" role="status" tabIndex={-1}>
+        {switchingVault !== null ? `Opening ${switchingVault}…` : ""}
+      </div>
       </div>
       <StatusBar
         cursor={editing ? cursor : null}
         counts={docStats && (editing && selStats ? selStats : docStats)}
         pluginVersion={pluginVersion}
+        held={switchingVault !== null}
       />
       {modal === "switcher" && (
         <Palette<VaultNote>
@@ -6035,7 +6080,7 @@ export default function App() {
           placeholder="Run command…"
           // While a vault opens, only another switch can run: anything else
           // would act on a vault that's going.
-          getItems={(q) => fuzzyRank(q, switchingVault ? commands.filter((c) => c.id === "switch-vault") : commands, (c) => [c.label])}
+          getItems={(q) => fuzzyRank(q, switchingVault !== null ? commands.filter((c) => c.id === "switch-vault") : commands, (c) => [c.label])}
           itemKey={(c) => c.id}
           renderItem={(c) => (
             <>
@@ -6518,10 +6563,10 @@ export default function App() {
         <div className="rec-indicator" role="status">
           <span className="rec-dot" aria-hidden />
           Recording {Math.floor(recSeconds / 60)}:{String(recSeconds % 60).padStart(2, "0")}
-          <button className="rec-stop" onClick={() => void stopRecording(true)}>
+          <button className="rec-stop" aria-disabled={switchingVault !== null || undefined} onClick={() => switchingVault === null && void stopRecording(true)}>
             Stop &amp; insert
           </button>
-          <button className="rec-discard" onClick={() => void stopRecording(false)}>
+          <button className="rec-discard" aria-disabled={switchingVault !== null || undefined} onClick={() => switchingVault === null && void stopRecording(false)}>
             Discard
           </button>
         </div>
