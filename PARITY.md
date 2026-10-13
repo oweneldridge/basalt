@@ -17,16 +17,17 @@ Basalt clears the bar for a credible core-app foundation but not for full core-a
 ## October 2026 update
 
 A second audit (2026-10-03) checked Obsidian's changelog from 1.9.0 through
-1.14.4 (latest public release 1.13.7; 1.14.x is early access) against the code,
-and ran security, data-loss, write-path and accessibility reviews with a new
-real-disk end-to-end suite (`npm run test:e2e:real`).
+1.14.4 against the code, and ran security, data-loss, write-path and
+accessibility reviews with a new real-disk end-to-end suite
+(`npm run test:e2e:real`). Obsidian 1.14 went public on 2026-10-05; the table
+below is current to it.
 
 Two earlier claims here were wrong and are corrected:
 
-- **Link resolution.** Obsidian does prefer the linking note's folder. Its
-  resolver (1.13.7 `getLinkpathDest`) takes an exact or relative path first,
-  then candidates under the source note's folder, then the rest, each group by
-  shortest path. Basalt now ports that algorithm (`src/lib/linkpath.ts`).
+- **Link resolution.** Obsidian does prefer the linking note's folder. It
+  takes an exact or relative path first, then candidates under the source
+  note's folder, then the rest, each group by shortest path. Basalt now
+  resolves links the same way (`src/lib/linkpath.ts`).
 - **"The parity backlog is cleared."** Obsidian has shipped a lot since July;
   see the table below.
 
@@ -37,21 +38,26 @@ Obsidian features since 1.9 and where Basalt stands:
 | 1.11.0 | Links in properties rewritten on rename; markdown links in properties | Done (whole quoted values, as Obsidian counts them) |
 | 1.9 to 1.10 | Embedded bases: `![[x.base#View]]`, `base` code blocks, `this` | Done, read-only (view changes aren't saved back yet) |
 | 1.10 | Bases list layout | Done: bullets, numbers or none, indented properties, custom separator, editable in the view editor |
-| 1.14 (early access) | Bases kanban layout, collapsible groups, group order | Missing (a stale `groupOrder` is dropped when the group-by changes) |
+| 1.14 | Bases kanban layout; groups you can reorder, hide, add and collapse | Missing (a stale `groupOrder` is dropped when the group-by changes) |
 | 1.9 to 1.10 | `file.backlinks`, `file.embeds`, `median`/`stddev` list methods | Done |
 | 1.12.0 | Canvas files count as backlinks and graph links | Missing |
 | 1.11 | `obsidian://` URI actions with `paneType` | Missing (Basalt has `basalt://open`) |
 | 1.11 to 1.12 | Files & links: default file to open, attachment cleanup on delete | Missing |
 | 1.12 to 1.13 | Image drag-resize and lightbox | Partial (reads `\|width` only) |
 | 1.13.0 | Mermaid needs a one-time opt-in per vault | Missing |
-| 1.14 (early access) | Colour highlights (`==🔴text==`) | Missing |
+| 1.14 | Colour highlights (`==🔴text==`), suggested after typing `==` | Missing |
+| 1.14 | Open a Markdown file from outside the vault, and be the default app for `.md` | Missing (Basalt opens vault folders only) |
+| 1.14 | Math rendered with MathJax 4 | Partial (Basalt renders math with KaTeX, so some macros and spacing differ) |
+| 1.14 | Fuzzy matching in link suggestions and the quick switcher | Done (Basalt's own ranking; results can order differently) |
+| 1.14 | File explorer search matches full paths; `-term` hides matches | Partial (name or path match; no `-term`) |
+| 1.14 | Fix: `![](` no longer swallows the rest of the note | Not affected (Basalt reads `![](` as text in the editor and Reading view) |
 | 1.12 | Obsidian CLI | Partial (Basalt's own CLI, seven commands, works without the app) |
 
 ### Second pass on real notes (2026-10-07)
 
 Notes from a copy of Owen's vault were checked in Basalt. Obsidian itself
-wasn't run; where its behaviour was unclear, its own bundled code (1.14.4
-`app.js` and `app.css`, read only) settled it. Brought in line:
+wasn't run for this pass; the parity runs in `parity/` check these against
+Obsidian in use. Brought in line:
 
 - Word count: frontmatter left out, Obsidian's word pattern, the selection
   counted on its own, hidden for anything but a note.
