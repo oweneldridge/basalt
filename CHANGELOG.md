@@ -557,18 +557,43 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A note added or changed outside the app has its size and dates from the
   file, so Bases filtering or sorting on them see the change at once, a synced
   note's own modified time included.
-- Notes Basalt makes (today's daily note, New note, a plugin's) have a date and
-  size at once, so Bases filtering on them see the note before a reload. A note
-  whose time alone changes outside the app (a sync tool setting it) updates in
-  Bases too, and a synced change that lands during one of Basalt's own saves
-  keeps its time.
+- Notes Basalt makes (today's daily note, New note, Make a copy, a plugin's,
+  one written back with Keep mine) have a date and size at once, so Bases
+  filtering on them see the note before a reload. So do notes Basalt changes
+  itself: a mention linked from Backlinks, a link fixed by a rename, a pasted
+  image's link filled in after you left the note, and a note reloaded after a
+  save conflict. A note whose time alone changes outside the app (a sync tool
+  setting it) updates in Bases too, and a synced change that lands during one
+  of Basalt's own saves keeps its time. When a note changes twice in quick
+  succession, the later change's time is the one kept, even if reading the
+  first change's text is slow.
 - While another vault opens, the notes take no typing and only another switch
   can run (the command palette offers just that), so nothing typed, and no
-  daily note asked for, lands in the wrong vault.
+  daily note asked for, lands in the wrong vault. This holds until every
+  switch under way has finished, even when a second switch fails while the
+  first is still loading. Hotkeys wait too, bare F-keys and Option ones
+  included, as do the ribbon's Quick switcher, Search, Graph and Settings
+  buttons, plugin ribbon icons and status bar items, a selected canvas card's
+  Delete key, and the recorder's buttons; the waiting buttons say they're
+  unavailable. A message ("Opening Work…") says what's happening and holds
+  focus until the vault is open, then focus goes back to the note. The graph,
+  context menus and rename prompts of the vault being left close. Typing in
+  the command palette and the vault picker works as usual meanwhile: Option
+  and AltGr characters, select all, copy and paste. Typing while a slow save
+  finishes before a switch no longer asks whether to drop unsaved changes.
+  A plugin asking for today's daily note during a switch gets it in the vault
+  that opens, made with that vault's settings.
 - Renames and moves write links as Obsidian 1.14 does, checked against it by
   hand: a relative link to the note's own folder or below has no `./`, a
   `[text](<path>)` link keeps its angle brackets, and a canvas keeps
-  Obsidian's layout (one line per card) instead of being reformatted.
+  Obsidian's layout (one line per card) instead of being reformatted. A
+  relative link keeps its `./` when the bare path would open another note
+  (a note at the vault root with that path), for renames, moves and links
+  picked from the suggestions alike. An angled link whose new path has a `#`
+  or something like `%41` in it is written encoded, so it still opens the
+  same file. Saving a canvas keeps the order of its top-level keys, a
+  `__proto__` key included, and only its cards and connections are laid out
+  one per line.
 - A quote or list item whose first line is empty no longer opens with a blank
   line in Reading view, and what's under it reads as in Obsidian: a link
   definition there is hidden and an indented line is code. This comes with
@@ -664,6 +689,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it's there. A tab's focus ring sits inside the tab in its own text colour, so
   the bar doesn't clip it and Dark Reader keeps it visible; an icon tab shows
   its name while it has keyboard focus, and the close button has a tooltip.
+- Focus lands in a note pane when one closes, even next to a canvas, and a
+  side panel never becomes the pane Cmd-W acts on. The quick switcher puts
+  focus in the note it opens, in Reading view too, from a tab or a side panel.
+  A note opened from the file tree goes to the note pane you used last. A
+  middle click on a tab in the other split leaves your pane focused. Deleting
+  a note from the file tree's menu leaves focus in the tree. Reading view's
+  focus ring is in the text's colour, as the tabs' is, so Dark Reader keeps it
+  visible, and a tab's ring no longer hides the active tab's underline. An
+  icon tab's name shows under the tab bar on keyboard focus without moving the
+  tabs. Moving between slides keeps focus on the slide, and the same note open
+  in two panes in Reading view has two names ("Reading view: Ideas, pane 2").
+  A long link in a callout wraps instead of scrolling Reading view sideways.
 - Graph view and Slides are dialogs: focus stays inside, Escape returns it to
   where it was, and the rest of the app is inert. Slides announce "Slide 2 of
   5" as you move. The graph's filter, mode buttons and canvas have names.

@@ -144,6 +144,12 @@ button for the rest; Obsidian scrolls through all of them.
 - Still different, on purpose: Obsidian rewrote a link in a Latin-1 note and
   turned its `é` into a replacement character; Basalt leaves notes that
   aren't UTF-8 untouched, so the link there goes stale.
+- Not covered by the run: where the bare relative path would open another
+  note (a note at the vault root with that path, which the resolver prefers),
+  Basalt keeps the `./` so the link still opens the note it was written for;
+  whether Obsidian does too is unchecked. Likewise an angled link whose new
+  path has a `#` or a `%XX` in its name is written encoded, since the raw
+  path would read back as another file.
 - Still different: after moving a note under relative links, Obsidian wrote
   `[[Sub/Leaf]]` (relative to where the note was, and found only by its path's
   end), where Basalt writes the note's real relative path,
