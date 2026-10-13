@@ -370,6 +370,12 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
       "-  ".repeat(20000) + "b\n",
       "`a\n" + "``".repeat(20000) + "\n`",
       "[x\n".repeat(20000) + "]: y\n",
+      "1. ".repeat(30000) + "> [!a] Foo",
+      "- >".repeat(30000) + " b\n[a]: Foo",
+      "- ".repeat(30000) + "b\n[a]: Foo",
+      "- - ".repeat(20000) + "- - b\n[a]: Foo",
+      // Callouts 40 deep, none at the limit: nothing to parse for.
+      Array.from({ length: 40 }, (_, i) => "> ".repeat(i + 1) + "[!note] T").join("\n") + "\n" + ("> ".repeat(40) + "line\n").repeat(12000),
     ];
     for (const note of slow) {
       const t0 = performance.now();
@@ -466,7 +472,7 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
       ["1. ".repeat(39) + "-|-\n" + " ".repeat(42) + "</pre>\n[a]: b 'Foo'", false],
       ["> - ".repeat(20) + "<div>x</div>\n[a]: b 'Foo'", false],
       ["  Foo\r\n" + ">\t".repeat(42) + "<center>x</center>\n[a]: b 'Foo'", false],
-      ["1) ".repeat(20) + "> \n[a]: b 'Foo'", true],
+      ["1) ".repeat(20) + "> \n[a]: b 'Foo'", false],
       ["> [!note] Foo\n> [a]: b 'Foo'", false],
       ["> > [!tip] Foo\n[a]: b 'Foo'", false],
       ["===\n[a]: b 'Foo'", true],
@@ -480,7 +486,7 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
       ["<b>\n[a]: b 'Foo'", false],
       ["</b >\n[a]: b 'Foo'", false],
       ["$$x$$\n[a]: b 'Foo'", false],
-      ["-\t-\t\n" + " ".repeat(78) + "[a]: b 'Foo'", true],
+      ["-\t-\t\n" + " ".repeat(78) + "[a]: b 'Foo'", false],
       ["- x\n    > [!note] T\n[a]: b 'Foo'", false],
       ["> - ".repeat(20) + "> <pre>\n" + " ".repeat(40) + "> [!note] Foo\n" + " ".repeat(90) + "[a]: b 'Foo'", true],
       [">".repeat(41) + " <!--\n" + "> ".repeat(39) + "[!note]- T\n" + "\t".repeat(50) + "[a]: b 'Foo'", true],
@@ -512,12 +518,16 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
       [">".repeat(43) + " ---\nFoo", true],
       ["- ".repeat(99) + "```\nFoo | b", true],
       ["1) ".repeat(43) + "---\nFoo", true],
-      ["> ".repeat(21) + "\n" + " ".repeat(78) + "</details>\n[a]: b 'Foo'", true],
-      ["- ".repeat(41) + "a b\n" + " ".repeat(76) + ">\n" + " ".repeat(82) + "<script>\n" + " ".repeat(90) + "[a]: b 'Foo'", true],
+      ["> ".repeat(21) + "\n" + " ".repeat(78) + "</details>\n[a]: b 'Foo'", false],
+      ["- ".repeat(41) + "a b\n" + " ".repeat(76) + ">\n" + " ".repeat(82) + "<script>\n" + " ".repeat(90) + "[a]: b 'Foo'", false],
       ["   %% x\n" + "* ".repeat(38) + "%% Foo", false],
       ["a\n<b>x</b>\n[a]: b 'Foo'", true],
       ["> [!note] T\n> x\n\n```\ncode\n```\n" + "> ".repeat(41) + "Foo", false],
-      ["> [!note] T\n2. ```\n   Foo", true],
+      // A lazy line after the title starts the body; later ones run on its text.
+      ["> [!note] T\n2. ```\n   Foo", false],
+      ["> [!note] T\n> a\n2. ```\n   Foo", true],
+      ["> [!note] T\n> a\n    # Foo", true],
+      ["> [!note] T\n> a\n    ```\n> Foo", true],
       ["a\n- $$x$$\n[a]: b 'Foo'", false],
       ["<b></b>\n   ---\n[a]: b 'Foo'", false],
       ["> ".repeat(45) + "<center>\n" + ">".repeat(41) + " <!--\n" + "> ".repeat(39) + "[!note]- T\n" + "\t".repeat(50) + "[a]: b 'Foo'", true],
@@ -529,6 +539,176 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
       ["a\n    $$x$$\n[a]: b 'Foo'", true],
     ] as const)
       expect(at(note), note.slice(-40)).toEqual([want, want]);
+  });
+  it("reads definitions, paragraphs, callout titles and math blocks as Reading view does", () => {
+    // Whether the mention "Foo" (wherever it is) is offered, by both scans.
+    const offered = (note: string) => {
+      const lines = note.split("\n");
+      const i = lines.findIndex((l) => l.includes("Foo"));
+      const c = lines[i].indexOf("Foo");
+      return [mentionLines(note), mentionLinesFor(note, /Foo/i)].map((ls) => ls[i].slice(c, c + 3) === "Foo");
+    };
+    for (const [note, want] of [
+      // A definition's title stops at a block that starts by its indent.
+      ['[a]: b "x\n    - Foo"', false],
+      ['[a]: b "x\n    # Foo"', false],
+      ['- [a]: b "x\n      - Foo"', false],
+      ['[a]: b "x\n- Foo"', true],
+      ['- [a]: b "x\n  - Foo"', true],
+      // A paragraph's own indent isn't its container's.
+      [' a\n    ---\n[a]: b "Foo"', true],
+      ['  a\n    ===\n[a]: b "Foo"', true],
+      ['<b>b</b> a\n    ---\n[a]: b "Foo"', true],
+      [' a\n    > [!note] T\n[a]: b "Foo"', true],
+      ['-   x\n      ---\n[a]: b "Foo"', false],
+      // Under a callout's title, `=` underlines it for what's outside.
+      ["> [!e]\n> =\n[a]:Foo", false],
+      ["> [!e]\n> =\n> [a]:Foo", true],
+      ["> [!note] T\n> ===\n> [a]: b 'Foo'", true],
+      // A definition's title stops at an underline in its own quote, or a
+      // callout's body, and at an empty item outside its list.
+      ["[a]:b '\n-\nFoo'", true],
+      ["- [a]: b '\n-\nFoo'", true],
+      ["- [a]: b '\n*\nFoo'", true],
+      ["- [a]: b '\n=\nFoo'", false],
+      ["[a]: b '\n*\nFoo'", false],
+      ["> [a]: b '\n-\nFoo'", false],
+      ["> [!e]\n> [a]: b '\n-\nFoo'", true],
+      ["1. >[!e]\n[a]:b '\n-\nFoo'", true],
+      // An underline outside a callout's quote is a break, not the title's.
+      ["1. >[!e]\n---\n[a]:Foo", false],
+      ["- > [!e]\n  > =\n    > [a]:Foo", true],
+      // Lazy text stays in its quote's paragraph, unless it starts a block.
+      ["> x\n|\n> [a]: b 'Foo'", true],
+      ["> x\n- \n[a]: b 'Foo'", true],
+      ["> x\n- y\n> [!e]\n[a]:Foo", false],
+      ["> x\n|\n>> [!e]\n[a]:Foo", false],
+      [">- \n|\n>[!e]\n[a]:Foo", false],
+      ["> x\n|\n>[!e]\n[a]:Foo", true],
+      ["x\n- \n[a]: b 'Foo'", false],
+      ["- \n[a]: b 'Foo'", false],
+      // A callout's title opens its own quote, not one a list item holds that
+      // it doesn't reach.
+      ["- >\n>[!e]\n[a]:Foo", false],
+      [">\n- >[!e]\n[a]:Foo", false],
+      ["- > a\n> [!e]\n[a]:Foo", false],
+      ["- > a\n  > [!e]\n[a]:Foo", true],
+      ["-\t> a\n\t> [!e]\n[a]:Foo", true],
+      ["-\t> a\n > [!e]\n[a]:Foo", false],
+      [">     > a\n> > [!e]\n[a]:Foo", false],
+      ["- > > a\n  > - > [!e]\n[a]:Foo", false],
+      // Text under a title starts its body, which a lazy line runs on.
+      [">>[!e]\n'\n>[a]:Foo", true],
+      // A lone marker under a title keeps the quotes open, though the body
+      // reads it as an empty item.
+      [">>>[!e]\n-\n>>[!e]\n>>[a]:\nFoo", true],
+      [">>>[!e]\n-\no\n>>[a]:\nFoo", true],
+      ["> - a\n-\n> [!e]\n[a]:Foo", false],
+      ["> x\n\n> [!e]\n[a]:Foo", false],
+      // A table's header ends a definition's title.
+      ["[a]:\n-|-\n-|-\n[a]:Foo", false],
+      ["[a]: b '\nx|y\n-|-\nFoo'", true],
+      ["[a]: b '\nx|y|z\n-|-\nFoo'", false],
+      // A lazy line's indent counts from its own start, so four columns make
+      // it text, not a block.
+      [">- [a]:b '\n\t# Foo'", false],
+      [">- $\n    ---\n[a]:Foo", true],
+      [">>]\nT\n>1. >[!e]\n[a]:Foo", false],
+      ["> x\n    - y\n> [!e]\n[a]:Foo", true],
+      // An item holding only an empty item starts a list, with no paragraph.
+      ["$\n- -\n[a]:Foo", false],
+      ["$\n- >\n[a]:Foo", false],
+      ["> $\n- -\n[a]:Foo", false],
+      ["$\n2. -\n[a]:Foo", true],
+      ["x\n* \n[a]: b 'Foo'", true],
+      // A lone marker starts an item in a list of its kind, and an underline
+      // only underlines from inside the paragraph's item.
+      ["- a\n-\n[a]: b 'Foo'", false],
+      ["* a\n-\n[a]: b 'Foo'", false],
+      ["1. a\n2.\n[a]: b 'Foo'", false],
+      ["> - a\n-\n[a]: b 'Foo'", false],
+      ["1. a\n-\n[a]: b 'Foo'", true],
+      ["- a\n2.\n[a]: b 'Foo'", true],
+      ["- a\n=\n[a]: b 'Foo'", true],
+      ["1. a\n   -\n[a]: b 'Foo'", false],
+      ["a\n-\n[a]: b 'Foo'", false],
+      ["- a\n\t\t-\n[a]: b 'Foo'", true],
+      // A new item starts a new paragraph, at its own column.
+      ["- o\n - '\n      =\n[a]:Foo", false],
+      ["1. a\n2. b\n      =\n[a]:Foo", false],
+      ["1. a\n10. b\n       =\n[a]:Foo", false],
+      // A title's quote is read against the paragraph's first line.
+      ["- >o\n=\n  >[!e]\n[a]:Foo", true],
+      ["- >[!e]\n    1. >[!e]\n[a]:Foo", false],
+      // A definition run on lazily in a callout's body is read there.
+      [">>[!e]\n[a]:b (\n= =\n>Foo)", false],
+      // Text after an HTML block's first lines is part of it to the parser,
+      // so a line outside its quote doesn't run that text on.
+      ["></v>\n>>g\n)\n>[a]:Foo", false],
+      ["></v>\n>>g\n>[a]:Foo", true],
+      ["></n>\n>[!e]\n[a]:Foo", false],
+      ["><div></div>\n>[!p]\n[a]:Foo", false],
+      ["><div></div>\n>\n>[!p]\n[a]:Foo", false],
+      ["><div></div>\n\n>x\n[a]:Foo", true],
+      ["><!-->\n>->\n[a]:Foo", true],
+      ["><pre>\n>x\n)\n>[a]:Foo", false],
+      ["><pre></pre>\n>x\n)\n>[a]:Foo", true],
+      // A line reads as it does with its comments taken out.
+      ["(\n1.%%%%\n[a]:Foo", true],
+      ["%%x%% [a]: b 'Foo'", false],
+      [">$$x$$\n>g\n)\n>[a]:Foo", true],
+      // A break or heading in a list item's quote isn't a paragraph.
+      ["- >***\n[a]:Foo", false],
+      ["- > # h\n[a]:Foo", false],
+      ["- > x\n[a]:Foo", true],
+      ["- * * *\n[a]:Foo", false],
+      ["- -x- - -\n[a]:Foo", true],
+      ["- _ _\n[a]:Foo", true],
+      ["- _ _ _\n[a]:Foo", false],
+      ["`a\r\n#\r\nFoo`", false],
+      ["- - * *\n[a]:Foo", false],
+      ["1. ######\n[a]:Foo", false],
+      ["1. #######\n[a]:Foo", true],
+      // `#` and a tab or a carriage return is text to the parser.
+      ["- #\r\n[a]:Foo", true],
+      ["a\n#\tb\n[a]: b 'Foo'", true],
+      ["a\r\n#\r\n[a]: b 'Foo'", true],
+      ["[a]: b '\n#\tx\nFoo'", false],
+      ["a\n# \n[a]: b 'Foo'", false],
+      [">>>[!e]\n-\n[a]:b (\n= =\n>Foo)", false],
+      ["- o\n=\n  >[!e]\n[a]:Foo", false],
+      // A quote's empty first line starts nothing.
+      ["> \n> [a]: b 'Foo'", false],
+      ["> \n[a]: b 'Foo'", false],
+      // A fence inside a comment opens nothing.
+      ["%%\n~~~\n%%Foo", true],
+      ["%%\n~~~\n%%\nFoo", true],
+      ["%%x%%\n~~~\nFoo", false],
+      ["$$\n```\n$$\nFoo", true],
+      ["```\n$$\n```\nFoo", true],
+      ["-\t".repeat(50) + "2. ```\n" + " ".repeat(100) + "%%\n" + " ".repeat(200) + "%% Foo", true],
+      // Math inside a title's line is its text.
+      [">[a]:b \"\n$$$$o\nFoo\"", false],
+      // A definition doesn't run onto hidden text.
+      ["[a]: b '\n- <div>\nFoo'", true],
+      ["[a]: b '\n* <div>\nFoo'", true],
+      ["> [!note] T\n> [a]:\n> $$$$ Foo", true],
+      ["> [!note] T\n> [a]:\n> <i>Foo", true],
+      ['[a]:\n- "Foo"', true],
+      // Math over lines is a block that opens its line, as parsed.
+      ["Cost $$ high\n> $$\n> x\n\nFoo\n$$", true],
+      ["x $$\n\t$$ Foo\ny $$", true],
+      ["o $$\n1.$$\nFoo\n$$", true],
+      ["a $$\nFoo\n$$", true],
+      ["- $$\n> [!note]\n\n- > $$ Foo", false],
+      ["%%x%%$$\nFoo", false],
+      [">[!e]\n$$x$$\nFoo", true],
+      // Past four callouts inside one another the next is a quote, its text
+      // read in place.
+      [Array.from({ length: 5 }, (_, i) => "> ".repeat(i + 1) + "[!note] T").join("\n") + "\n" + "> ".repeat(5) + "2. ```\n" + "> ".repeat(5) + "   Foo", true],
+      [Array.from({ length: 4 }, (_, i) => "> ".repeat(i + 1) + "[!note] T").join("\n") + "\n" + "> ".repeat(4) + "2. ```\n" + "> ".repeat(4) + "   Foo", false],
+    ] as const)
+      expect(offered(note), note).toEqual([want, want]);
   });
   it("stays quick on deep quotes around a paragraph, and long marker runs before HTML", () => {
     for (const note of [

@@ -177,10 +177,14 @@ function maskFrom(lines: string[], start: number, mask: boolean[], depth: number
       }
       break;
     }
-    // A paragraph, or the empty one a quote or list marker leaves with nothing
-    // after it: to a blank line, a line that starts a block (a table too, unless
-    // the paragraph may be one), the line after a link reference definition, or
-    // an underline.
+    // A quote or list marker with nothing after it starts no paragraph.
+    if (line.pos === line.text.length) {
+      if (++i < n) read(i);
+      continue;
+    }
+    // A paragraph: to a blank line, a line that starts a block (a table too,
+    // unless the paragraph may be one), the line after a link reference
+    // definition, or an underline.
     const ref = line.next === 91 /* [ */ ? new LinkRef(line.text.slice(line.pos)) : null;
     const head = i;
     const headPos = line.pos;

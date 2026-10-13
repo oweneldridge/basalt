@@ -237,6 +237,7 @@ interface Ctx {
   order: string[];
   inlineSeq: number;
   lines: boolean; // mark blocks with their source line (data-line)
+  callouts: number; // callouts the block being rendered sits in
 }
 const newCtx = (defs = new Map<string, string>(), lines = false): Ctx => ({
   defs,
@@ -244,6 +245,7 @@ const newCtx = (defs = new Map<string, string>(), lines = false): Ctx => ({
   order: [],
   inlineSeq: 0,
   lines,
+  callouts: 0,
 });
 
 /** One parsed piece of Markdown: its text, link definitions, and the source
@@ -620,7 +622,8 @@ export const CALLOUT_LINE = /(?:^|\n)[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]
 function calloutOf(src: string, n: SyntaxNode): RegExpExecArray | null {
   let lead = n.firstChild;
   while (lead?.name === "QuoteMark") lead = lead.nextSibling;
-  if (!lead) return null;
+  // The title is the quote's first line: one under an empty `>` isn't.
+  if (!lead || src.slice(n.from, lead.from).includes("\n")) return null;
   // Whatever the first line reads as (`[!note]: x` is a link definition).
   const eol = src.indexOf("\n", lead.from);
   return CALLOUT.exec(src.slice(lead.from, eol < 0 || eol > lead.to ? lead.to : eol).trim());
@@ -642,8 +645,9 @@ function calloutBody(doc: Doc, n: SyntaxNode): { text: string; lines: number[]; 
     while (k < line.length && seen < depth && " \t>".includes(line[k])) {
       if (line[k++] === ">" && ++seen === depth && (line[k] === " " || line[k] === "\t")) k++;
     }
-    // A lazy line, with fewer `>` than that, runs on as it is.
-    if (seen < depth) for (k = 0; k < line.length && " \t>".includes(line[k]); ) k++;
+    // A lazy line, with fewer `>` than that, is cut past its own `>`s only:
+    // its indent stays, so `    # x` after a paragraph is still its text.
+    if (seen < depth) k = /^(?:[ \t]*>[ \t]?)*/.exec(line)![0].length;
     out.push(line.slice(k));
     lines.push(l);
     cut.push(k);
@@ -657,6 +661,8 @@ function blankBetween(doc: Doc, from: number, to: number): boolean {
 }
 
 const CALLOUT = /^\[!([\w-]+)\]([+-]?)[ \t]*(.*)$/;
+// Callouts inside one another past this many read as quotes.
+const CALLOUTS_MAX = 4;
 
 class Blocks {
   constructor(
@@ -819,7 +825,9 @@ class Blocks {
   }
 
   private quote(n: SyntaxNode): string {
-    const callout = calloutOf(this.doc.src, n);
+    // Each callout reads its body again, so past a few inside one another the
+    // rest are quotes: this way a deep chain can't take time by its depth.
+    const callout = this.ctx.callouts < CALLOUTS_MAX ? calloutOf(this.doc.src, n) : null;
     if (!callout) return `<blockquote>${new Blocks(this.doc, this.ctx, this.depth + 1).children(n).join("\n")}</blockquote>`;
     const type = callout[1].toLowerCase();
     const fold = callout[2]; // "", "+" (foldable-open) or "-" (foldable-closed)
@@ -828,7 +836,9 @@ class Blocks {
     const title = inlineOf(titleText, this.ctx);
     const { text, lines } = calloutBody(this.doc, n);
     const map = lines.map((l) => this.doc.map[l] ?? l);
+    this.ctx.callouts++;
     const body = text.trim() ? `<div class="md-callout-body">${renderDoc(text, map, this.ctx, this.depth + 1)}</div>` : "";
+    this.ctx.callouts--;
     const cls = `md-callout md-callout-${escapeHtml(type)} md-callout-color-${calloutColor(type)}`;
     if (fold)
       return `<details class="${cls} md-callout-foldable"${fold === "-" ? "" : " open"}><summary class="md-callout-title">${icon}${title}</summary>${body}</details>`;
@@ -1076,7 +1086,16 @@ export function mayRunHtml(md: string): boolean {
  * inside a line (a tag, a comment) go in `inline` as well. */
 const NESTING = new Set(["Blockquote", "BulletList", "OrderedList"]);
 
-export function rawRanges(md: string, indented: boolean, withHtml = true, depth = 0, fences = false, deep = true, inline?: [number, number][]): [number, number][] {
+export function rawRanges(
+  md: string,
+  indented: boolean,
+  withHtml = true,
+  depth = 0,
+  fences = false,
+  deep = true,
+  inline?: [number, number][],
+  inCallouts = 0,
+): [number, number][] {
   const code = indented && INDENTED_LINES.test(md);
   const html = withHtml && mayRunHtml(md);
   // What follows an HTML block is always read, for how deep it sits, and a
@@ -1086,7 +1105,13 @@ export function rawRanges(md: string, indented: boolean, withHtml = true, depth 
   let nested: boolean | undefined;
   const isNested = () => (nested ??= deep && mayNestDeep(md));
   const callouts =
-    deep && !code && !html && !depth && md.includes("[!") && (((md.includes("```") || md.includes("~~~") || md.includes("$$")) && CALLOUT_FENCE.test(md)) || isNested()) && CALLOUT_LINE.test(md);
+    deep &&
+    !code &&
+    !html &&
+    !depth &&
+    md.includes("[!") &&
+    (((md.includes("```") || md.includes("~~~") || md.includes("$$")) && CALLOUT_FENCE.test(md)) || (isNested() && !HUGE_NESTING.test(md) && mayTitleAtLimit(md))) &&
+    CALLOUT_LINE.test(md);
   if (!code && !html && !depth && !callouts && !isNested()) return [];
   // Reading view leaves frontmatter out before it reads the note (blanked
   // only now, as a blanked line would look indented).
@@ -1110,7 +1135,7 @@ export function rawRanges(md: string, indented: boolean, withHtml = true, depth 
         out.push([n.from, n.to]);
         return false;
       }
-      if (n.name === "Blockquote" && hasCallout && calloutOf(md, n.node)) {
+      if (n.name === "Blockquote" && hasCallout && inCallouts < CALLOUTS_MAX && calloutOf(md, n.node)) {
         const eol = md.indexOf("\n", n.from);
         if (eol < 0 || eol >= n.to) return false;
         if (depth + nest === MAX_DEPTH) {
@@ -1123,12 +1148,17 @@ export function rawRanges(md: string, indented: boolean, withHtml = true, depth 
         const starts = [0];
         for (let i = body.text.indexOf("\n"); i !== -1; i = body.text.indexOf("\n", i + 1)) starts.push(i + 1);
         const back = (x: number) => {
-          let k = starts.length - 1;
-          while (k > 0 && starts[k] > x) k--;
-          return doc!.lineStarts[body.lines[k]] + body.cut[k] + x - starts[k];
+          // The body line holding x: the last that starts at or before it.
+          let lo = 0;
+          for (let hi = starts.length - 1; lo < hi; ) {
+            const mid = (lo + hi + 1) >> 1;
+            if (starts[mid] <= x) lo = mid;
+            else hi = mid - 1;
+          }
+          return doc!.lineStarts[body.lines[lo]] + body.cut[lo] + x - starts[lo];
         };
         const sub: [number, number][] = [];
-        for (const [f, t] of rawRanges(body.text, indented, withHtml, depth + nest + 1, true, true, sub)) out.push([back(f), back(t)]);
+        for (const [f, t] of rawRanges(body.text, indented, withHtml, depth + nest + 1, true, true, sub, inCallouts + 1)) out.push([back(f), back(t)]);
         for (const [f, t] of sub) inline?.push([back(f), back(t)]);
         return false;
       }
@@ -1196,20 +1226,40 @@ function tooDeep(md: string): [number, number][] {
 // A fence or math in a quote, or on the line after a callout's title (which
 // its body takes in even without a `>`).
 const CALLOUT_FENCE = /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*>[^\n]*(?:```|~~~|\$\$)|\[![\w-]+\][^\n]*\n[^\n]*(?:```|~~~|\$\$)/m;
+/** Whether a callout's title may sit just past Reading view's nesting limit,
+ * where it still shows: its line's quote and list markers, and its indent
+ * (two columns a level), reach that deep. */
+function mayTitleAtLimit(md: string): boolean {
+  for (let i = md.indexOf("[!"); i >= 0; i = md.indexOf("[!", i + 2)) {
+    const lead = md.slice(md.lastIndexOf("\n", i) + 1, i);
+    if (!lead.includes(">") || !/^(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])[ \t])*$/.test(lead)) continue;
+    let levels = 0;
+    let indent = 0;
+    for (let k = 0; k < lead.length; k++) {
+      const c = lead[k];
+      if (c === ">" || c === "-" || c === "*" || c === "+" || c === "." || c === ")") levels++;
+      else if ((c === " " || c === "\t") && lead[k - 1] !== ">") indent += c === "\t" ? 4 : 1;
+    }
+    if (levels + (indent >> 1) > MAX_DEPTH) return true;
+  }
+  return false;
+}
+// A line of a thousand quote or list markers, which a parse takes long over
+// and whose blocks show as their source anyway.
+const HUGE_NESTING = /(?:^|\n)[ \t>*+\-.)0-9]{1000}/;
 // A line that may open a math block, past its quote and list markers.
 const MATH_LINE = /^(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])[ \t])*\$\$/m;
 // A note that may open with frontmatter (after a byte order mark or spaces).
 const FRONTMATTER_START = /^\s*---/;
 
-/** The math blocks that a `$$` at one of `starts` opens, as Reading view reads
- * the note. */
-export function mathBlocksAt(md: string, starts: number[]): [number, number][] {
-  if (FRONTMATTER_START.test(md)) md = blankFrontmatter(md);
-  const at = new Set(starts);
-  const out: [number, number][] = [];
-  mdParser.parse(md).iterate({
+/** Every math block in `md`, by where it starts, to where it ends, as Reading
+ * view reads the note (comments out, frontmatter blanked). */
+export function mathBlocks(md: string): Map<number, number> {
+  const { text, at } = withoutComments(md);
+  const out = new Map<number, number>();
+  mdParser.parse(FRONTMATTER_START.test(text) ? blankFrontmatter(text) : text).iterate({
     enter: (n) => {
-      if (n.name === "MathBlock" && at.has(n.from)) out.push([n.from, n.to]);
+      if (n.name === "MathBlock") out.set(at(n.from), n.to > n.from ? at(n.to - 1) + 1 : at(n.from));
       return n.type.isTop || NESTING.has(n.name) || n.name === "ListItem";
     },
   });

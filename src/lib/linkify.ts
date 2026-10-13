@@ -3,7 +3,7 @@
 // + length-preserving masking so we splice into the ORIGINAL line by offset,
 // never touching a mention that sits inside inline code or an existing link.
 import { mdLinkRegexGlobal, tagRegex, proseMask, TAG_NAME } from "./markdown";
-import { CALLOUT_LINE, commentRanges, INDENTED_RE, mathBlocksAt, mayIndent, mayNestDeep, mayRunHtml, rawRangesBeyondComments, renderMarkdown, strictLineBreaksOn } from "./render";
+import { CALLOUT_LINE, commentRanges, INDENTED_RE, mathBlocks, mayIndent, mayNestDeep, mayRunHtml, rawRangesBeyondComments, renderMarkdown, strictLineBreaksOn } from "./render";
 
 // A code span: a run of backticks, closed by a run of the same length.
 const INLINE_CODE_RE = /(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g;
@@ -174,14 +174,48 @@ const quotes = (line: string) => (QUOTE_RE.exec(line)![0].match(/>/g) ?? []).len
 const LEAD_RE = /^(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])[ \t])*/;
 const quoteMarks = (line: string) => (LEAD_RE.exec(line)![0].match(/>/g) ?? []).length;
 // A line that ends a paragraph: blank, a heading or a thematic break.
-const ENDS_RE = /^[ \t>]*(?:\r?$|#{1,6}(?:[ \t]|\r?$)|([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$)/;
-// A line that starts a block a paragraph can't run into: a list item with
-// text, a heading, a break or a fence.
-const STARTS_BLOCK_RE = /^[ \t>]*(?:(?:[-*+]|1[.)])[ \t]+\S|#{1,6}(?:[ \t]|\r?$)|([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$|```|~~~)/;
+const ENDS_RE = /^[ \t>]*(?:\r?$|#{1,6}(?: |$)|([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$)/;
+// Text that starts a block a paragraph can't run into: a list item with text,
+// a heading or a break (fences are already blanked).
+const STARTS_BLOCK_RE = /^(?:(?:[-*+]|1[.)])[ \t]+\S|#{1,6}(?: |$)|([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$)/;
 // A heading's underline, which ends a paragraph in its own quote.
 const UNDERLINE_RE = /^[ \t>]*(?:=+|-+)[ \t]*\r?$/;
-// A heading or a thematic break inside a list item, which isn't a paragraph.
-const ITEM_BLOCK_RE = /^[ \t>]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)+(?:#{1,6}(?:[ \t]|\r?$)|([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$)/;
+// An HTML block that runs to a blank line: one led by a tag, but not a
+// script, pre, style or textarea (or a comment), which end at their close.
+const HTML_RUNS_RE = /^[ \t>]*<\/?(?!(?:script|pre|style|textarea)\b)[a-zA-Z]/i;
+const MARK_AT_RE = /(?:[-*+]|\d{1,9}[.)])(?=[ \t])/y;
+/** Whether a line is a heading or a thematic break past its quote and list
+ * markers, which isn't a paragraph. In one pass, as a run of markers
+ * thousands long would make a pattern slow. */
+function itemBlock(line: string): boolean {
+  let end = line.length;
+  if (line.charCodeAt(end - 1) === 13) end--;
+  // The run at the end a break can be: one mark of `-*_`, spaces and tabs.
+  let run = end;
+  let mark = "";
+  let marks = 0;
+  for (let k = end - 1; k >= 0; k--) {
+    const ch = line[k];
+    if (ch !== " " && ch !== "\t") {
+      if (!mark && (ch === "-" || ch === "*" || ch === "_")) mark = ch;
+      if (ch !== mark) break;
+      marks++;
+    }
+    run = k;
+  }
+  // The first mark the markers reach in that run starts the break, if any.
+  for (let i = 0; ; ) {
+    while (line[i] === " " || line[i] === "\t" || line[i] === ">") i++;
+    let h = i;
+    while (line[h] === "#" && h - i < 7) h++;
+    if (h > i && h - i <= 6 && (h === line.length || line[h] === " ")) return true;
+    if (i >= run && line[i] === mark) return marks >= 3;
+    MARK_AT_RE.lastIndex = i;
+    const m = MARK_AT_RE.exec(line);
+    if (!m) return false;
+    i += m[0].length;
+  }
+}
 // A table's delimiter row, read with its quote marks and spaces trimmed.
 const DELIM_RE = /^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?$/;
 const isDelim = (line: string) => line.includes("-") && DELIM_RE.test(line.replace(QUOTE_RE, "").trim());
@@ -222,7 +256,7 @@ function lead(line: string): { cols: number; rest: string } {
 // After a line's indent: a list marker before text, a heading, a thematic
 // break and a heading's underline.
 const ITEM_MARK_RE = /^([-*+]|\d{1,9}[.)])([ \t]+)(?=\S)/;
-const HEAD_RE = /^#{1,6}(?: |\r?$)/; // not a tab: the editor's parser reads `#\t` as text
+const HEAD_RE = /^#{1,6}(?: |$)/; // not a tab or CR: the editor's parser reads `#\t` as text
 const BREAK_RE = /^([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$/;
 const SETEXT_RE = /^(?:=+|-+)[ \t]*\r?$/;
 
@@ -425,7 +459,7 @@ function addressEnd(text: string, at: number, dead: { scan: DeadScan | null }): 
  * list item holds it, and its last line (its label may run over up to ten
  * lines, its address sit on the next line, and its title on the line after or
  * over up to ten). */
-function definitionAt(lines: string[], k: number): { label: string; item: boolean; end: number } | null {
+function definitionAt(lines: string[], k: number, written = lines, kept = written, inside = quotes(lines[k])): { label: string; item: boolean; end: number } | null {
   let m = DEF_HEAD_RE.exec(lines[k]);
   let head = k; // the line the label closes on
   if (!m && LABEL_OPEN_RE.test(lines[k])) {
@@ -440,7 +474,31 @@ function definitionAt(lines: string[], k: number): { label: string; item: boolea
     }
   }
   if (!m || !m[2].trim()) return null;
-  const lineAfter = (n: number) => (n < lines.length ? lines[n].replace(QUOTE_RE, "").trim() : null);
+  // A line the definition can't run onto: one in a deeper quote, one a block
+  // hides, or one that starts a block by its indent from the definition's
+  // text: an underline in its own quote (or lazily in a callout, whose body
+  // reads as a note), or an empty item outside its list. What's hidden inside
+  // a line (a tag, math) is text to it.
+  const col = textColumn(lines[k], true);
+  let callout: boolean | undefined;
+  const inCallout = () => {
+    let n = k;
+    while (n > 0 && quotes(lines[n - 1]) >= inside) n--;
+    return (callout ??= n < k && lines[n].includes("[!") && CALLOUT_LINE.test(lines[n]));
+  };
+  const breaks = (n: number) => {
+    if (quotes(lines[n]) > inside || (BARE_RE.test(kept[n]) && !BARE_RE.test(written[n]))) return true;
+    const at = textColumn(kept[n], false);
+    const text = kept[n].replace(QUOTE_RE, "").trimStart();
+    // A lazy line's indent counts from its own start.
+    if (at - (quotes(lines[n]) < inside ? 0 : col) >= 4) return false;
+    if (STARTS_BLOCK_RE.test(text)) return true;
+    // A table's header, which a paragraph doesn't run into.
+    if (kept[n].includes("|") && isDelim(lines[n + 1] ?? "") && cells(lines[n + 1]) === cells(kept[n])) return true;
+    const own = quotes(lines[n]) === inside || (quotes(lines[n]) < inside && SETEXT_RE.test(text) && inCallout());
+    return own && (at >= col ? SETEXT_RE.test(text) : EMPTY_ITEM_RE.test(text));
+  };
+  const lineAfter = (n: number) => (n < lines.length && !breaks(n) ? kept[n].replace(QUOTE_RE, "").trim() : null);
   let end = head;
   let rest = m[3].trim();
   if (!rest) {
@@ -463,11 +521,30 @@ function definitionAt(lines: string[], k: number): { label: string; item: boolea
   for (let n = end; n - def.end <= 10; n++) {
     if (DEF_TITLE_RE.test(title)) return { ...def, end: n };
     const next = lineAfter(n + 1);
-    if (!next || STARTS_BLOCK_RE.test(lines[n + 1]) || quotes(lines[n + 1]) > quotes(lines[k])) break;
+    if (!next) break;
     title += "\n" + next;
   }
   return rest.slice(dest).trim() ? null : def;
 }
+
+/** How many quotes of the line before `line` goes on with: its own leading
+ * ones, as many as the line before has outside a list item (or `held` open,
+ * lazily), and those inside one only when `line` reaches the item's text. */
+function quotesOn(prev: string, line: string, held = -1): number {
+  const own = /^[ \t>]*/.exec(line)![0];
+  const at = [...own.matchAll(/>/g)].map((m) => m.index!);
+  const q = Math.max(quotes(prev), held);
+  if (at.length <= q) return at.length;
+  const lead = LEAD_RE.exec(prev)![0];
+  const item = /(?:[-*+]|\d{1,9}[.)])[ \t]+/.exec(lead);
+  if (!item) return q;
+  return columnOf(own, at[q]) >= columnOf(lead, item.index + item[0].length) ? Math.min(at.length, quoteMarks(prev)) : q;
+}
+const columnOf = (s: string, to: number) => {
+  let c = 0;
+  for (let i = 0; i < to; i++) c += s[i] === "\t" ? 4 - (c % 4) : 1;
+  return c;
+};
 
 /** The column a line's text starts at past its quote marks, and past its list
  * markers too with `items`, or -1 if it has none. */
@@ -483,13 +560,36 @@ function textColumn(line: string, items: boolean): number {
   }
 }
 const LIST_MARK_RE = /^(?:[-*+]|\d{1,9}[.)])(?=[ \t])/;
+const EMPTY_ITEM_RE = /^(?:[-*+]|\d{1,9}[.)])[ \t]*\r?$/;
+const ITEM_TEXT_RE = /^([-*+]|\d{1,9}[.)])[ \t]+\S/;
+const LONE_MARK_RE = /^[ \t]{0,3}([-*+]|\d{1,9}[.)])[ \t]*\r?$/;
+/** The column a line's innermost list item puts its text at, past its quote
+ * marks (0 outside a list): the text's own indent doesn't count. */
+function containerColumn(line: string): number {
+  let k = QUOTE_RE.exec(line)![0].length;
+  let col = 0;
+  for (;;) {
+    let c = col;
+    let j = k;
+    for (; line[j] === " " || line[j] === "\t"; j++) c += line[j] === "\t" ? 4 - (c % 4) : 1;
+    const m = LIST_MARK_RE.exec(line.slice(j));
+    if (!m) return col;
+    j += m[0].length;
+    c += m[0].length;
+    // Its text starts past the spaces after it (more than four would make
+    // code, not a paragraph).
+    for (; line[j] === " " || line[j] === "\t"; j++) c += line[j] === "\t" ? 4 - (c % 4) : 1;
+    col = c;
+    k = j;
+  }
+}
 // A line of quote and list markers in any order, and nothing else.
 const BARE_RE = /^(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])(?=[ \t]|$))*$/;
 
 /** Whether `line` is paragraph text a definition can't break into (unless a
  * table holds it), with a paragraph in its own quote above or not (`===`
  * only underlines one). */
-const isParagraph = (line: string, after: boolean) => !ENDS_RE.test(line) && !(after && UNDERLINE_RE.test(line)) && !ITEM_BLOCK_RE.test(line);
+const isParagraph = (line: string, after: boolean) => !ENDS_RE.test(line) && !(after && UNDERLINE_RE.test(line)) && !itemBlock(line);
 
 /** The labels a note defines and the lines its definitions take, from
  * `lines` with what isn't prose blanked (`written` are the lines as the note
@@ -506,6 +606,14 @@ function definitions(
   let para = -1; // the quote depth of the paragraph the line before is in, if any
   let paraCol = 0; // the column that paragraph's text starts at
   let table = false; // whether a table holds the line
+  let titled = -1; // the quote marks of a callout title on the line before, if any
+  let sealed = -1; // the quote marks of a paragraph a lazy line can't run on, if any
+  let held = -1; // the depth of the quotes a lazy line before kept open, if any
+  let titledAt = -1; // the depth of a callout title on the line before, if any
+  let lists = ""; // the kinds of list ("-" bullets, "1" numbers) the paragraph's first line is in
+  let paraStart = 0; // the paragraph's first line
+  let html = -1; // the depth of an HTML block the line is in, if any
+  let paraHtml = -1; // the depth of an HTML block the paragraph is in, which no line outside runs on
   for (let k = 0; k < lines.length; k++) {
     const depth = quotes(lines[k]);
     // Text hidden whole: inside a line (a tag, inline math), or as a block. A
@@ -514,6 +622,22 @@ function definitions(
     const sure = bare && parsed !== lines && !BARE_RE.test(parsed[k]);
     const inLine = sure || (bare && kept !== lines && !BARE_RE.test(kept[k]));
     const asBlock = bare && !inLine && !BARE_RE.test(written[k]);
+    // The parser reads what follows an HTML block's first lines, to the end
+    // of its quote, as part of it (a bare `>` doesn't end it).
+    if (depth < html) html = -1;
+    if (asBlock && HTML_RUNS_RE.test(written[k])) html = depth;
+    if (para >= 0 && depth < paraHtml) para = -1;
+    // Right under a callout's title, `===` or `---` underlines it in the quote
+    // (so a line outside can't run on), while the body reads it as text.
+    const marks = quoteMarks(written[k]);
+    const underTitle = titled === marks && UNDERLINE_RE.test(lines[k]);
+    titled = -1;
+    const afterTitle = titledAt;
+    titledAt = -1;
+    const heldBefore = held;
+    held = -1;
+    const lazyShut = sealed >= 0 && marks < sealed;
+    sealed = -1;
     // A table starts at a header over a delimiter row with as many cells, and
     // runs while its lines have a `|`.
     if (!lines[k].includes("|")) table = false;
@@ -521,8 +645,8 @@ function definitions(
     // What a definition starts after has to be the note's own text, not a
     // comment, tag or the like blanked to spaces.
     const open = lines[k].indexOf("[");
-    const def = open >= 0 && lines[k].slice(0, open) === written[k].slice(0, open) ? definitionAt(lines, k) : null;
-    if (def && (def.item || para < 0 || depth > para)) {
+    const def = open >= 0 && lines[k].slice(0, open) === written[k].slice(0, open) ? definitionAt(lines, k, written, kept, Math.max(depth, afterTitle, heldBefore)) : null;
+    if (def && (def.item || para < 0 || depth > para || lazyShut)) {
       labels.add(def.label);
       for (let n = k; n <= def.end; n++) taken.add(n);
       k = def.end;
@@ -530,21 +654,51 @@ function definitions(
     } else if (inLine && para >= depth && textColumn(kept[k], true) === textColumn(kept[k], false)) {
       // Hidden inline, it runs on the paragraph.
     } else {
-      // Text indented four past the paragraph's own runs it on (`    ---` is
-      // text there, not a break or an underline).
-      const runsOn = para >= 0 && textColumn(lines[k], false) >= paraCol + 4;
+      // Text indented four past the paragraph's own (a lazy line's from its
+      // own start) runs it on: `    ---` is text there, not a break.
+      const runsOn = para >= 0 && textColumn(lines[k], false) >= (depth < para ? 0 : paraCol) + 4;
+      // A list item in a kind of list the paragraph is in starts a block too.
+      const text = lines[k].replace(QUOTE_RE, "").trimStart();
+      const sibling = para >= 0 ? ITEM_TEXT_RE.exec(text) : null;
+      const startsBlock = !runsOn && (STARTS_BLOCK_RE.test(text) || (!!sibling && lists.includes(/\d/.test(sibling[1]) ? "1" : "-")));
+      // An underline sets a heading only from inside the paragraph's list item.
+      const inItem = para === depth && textColumn(lines[k], false) >= paraCol;
       // Hidden inline, it starts a paragraph where the parse found one; hidden
       // by its marks alone (`$$x$$` on its own line), it's a block.
-      const next = !table && !asBlock && (inLine ? sure : isParagraph(lines[k], para === depth) || runsOn) ? depth : -1;
-      if (next >= 0 && para < 0) paraCol = textColumn(inLine ? kept[k] : lines[k], true);
+      let next = !table && !asBlock && (inLine ? sure : isParagraph(lines[k], inItem) || runsOn) ? depth : -1;
+      // A lone marker of a kind of list the paragraph is in starts an item.
+      const lone = para >= 0 && !runsOn ? LONE_MARK_RE.exec(lines[k].replace(QUOTE_RE, "")) : null;
+      const item = !!lone && lists.includes(/\d/.test(lone[1]) ? "1" : "-");
+      if (item) next = -1;
+      // An empty item or quote starts no paragraph, though one item alone
+      // runs one on.
+      if (next >= 0 && BARE_RE.test(written[k]) && (para < depth || startsBlock)) next = -1;
+      // Text outside the quote a paragraph is in runs on it, lazily, as does
+      // text under a callout's title, which starts its body.
+      const deeper = para >= 0 ? para : afterTitle >= 0 ? afterTitle : heldBefore;
+      const runsLazily = next >= 0 && deeper > depth && !startsBlock;
+      if (runsLazily) next = deeper;
+      // To the parser, text that starts no block keeps a deeper paragraph's
+      // quotes open, a lone marker included.
+      if (deeper > depth && !startsBlock && !item && !ENDS_RE.test(lines[k])) held = deeper;
+      const anchor = para >= 0 ? paraStart : k - 1;
+      if (next >= 0 && (para < 0 || startsBlock)) {
+        paraStart = k;
+        paraHtml = html;
+        paraCol = containerColumn(inLine ? kept[k] : lines[k]);
+        const lead = LEAD_RE.exec(lines[k])![0];
+        lists = (/[-*+][ \t]/.test(lead) ? "-" : "") + (/\d[.)][ \t]/.test(lead) ? "1" : "");
+      }
       // A callout's title, on the line its quote opens, is a line of its own:
       // its body reads as a note.
       const title =
         lines[k].includes("[!") &&
         CALLOUT_LINE.test(lines[k]) &&
-        quoteMarks(written[k]) > (k ? quoteMarks(written[k - 1]) : 0) &&
-        textColumn(lines[k], false) < (para >= 0 ? paraCol : 0) + 4;
+        marks > (k ? quotesOn(written[anchor], written[k], heldBefore) : 0) &&
+        textColumn(lines[k], false) < (para >= 0 ? paraCol : k ? containerColumn(written[k - 1]) : 0) + 4;
       para = title ? -1 : next;
+      if (title) (titled = marks), (titledAt = depth);
+      if (underTitle) sealed = marks;
     }
   }
   return { labels, taken };
@@ -655,7 +809,7 @@ function keptInline(content: string, hidden: [number, number][], inline: [number
  * math and HTML comments. What's left is where a mention can be linked. */
 export function mentionLines(content: string, indented = true, html = true, deep = true): string[] {
   const lines = content.split("\n");
-  const prose = proseMask(lines);
+  const prose = proseMask(fencesOnly(content)?.split("\n") ?? lines);
   // Hidden inside lines: tags and comments the parse found, and math and
   // comments found by their marks.
   const inline: [number, number][] = [];
@@ -668,7 +822,10 @@ export function mentionLines(content: string, indented = true, html = true, deep
   if (content.includes("]:")) {
     const parsed = inline.length ? keptInline(content, hidden, inline, prose) : text;
     const kept = inlineText.length ? keptInline(content, hidden, [...inline, ...inlineText], prose) : parsed;
-    ({ labels: refs, taken } = definitions(text, lines, kept, parsed));
+    // Comments are taken out before the parse, so the lines as written are
+    // read without them.
+    const shown = content.includes("%%") ? blank(content, commentRanges(content)).split("\n") : lines;
+    ({ labels: refs, taken } = definitions(text, shown, kept, parsed));
   }
   // Code spans and links are found across lines: either may run on. Code
   // first, as a backtick that opens one before a link or tag does wins.
@@ -753,30 +910,36 @@ export function hiddenSpans(
       .split("\n")
       .map((l, i) => (prose[i] ? l.replace(INLINE_CODE_RE, (m) => " ".repeat(m.length)) : " ".repeat(l.length)))
       .join("\n");
-    // A math block runs on to the end of its quote or list, or of the note,
-    // when nothing closes it: the last `$$` if nothing pairs it, or one whose
-    // closing `$$` has text after it on its line.
-    const runOn: number[] = [];
+    // A `$$` that starts its line may open a math block, which runs to its
+    // closing line or the end of its quote or list, as the parse finds it;
+    // one inside a line closes on that line or is text.
+    let blocks: Map<number, number> | undefined;
+    const blockAt = (at: number) => (leads(outside, at) ? (blocks ??= mathBlocks(content)).get(at) : undefined);
     // A comment as the editor's parser reads one: no `>` straight after `<!--`,
     // and no `--` inside.
     const re = /\$\$[\s\S]*?\$\$|<!--[^>](?:-[^-]|[^-])*?-->/g;
     for (let m; (m = re.exec(outside)); ) {
       const from = m.index;
       const to = from + m[0].length;
-      // Math over lines is a block, which opens its line; a `$$` inside a line
-      // closes on that line or is text.
-      if (m[0][0] === "$" && m[0].includes("\n") && !leads(outside, from)) {
-        re.lastIndex = from + 2;
-        continue;
+      if (m[0][0] === "$") {
+        const end = blockAt(from);
+        if (end !== undefined) {
+          spans.push([from, end]);
+          re.lastIndex = Math.max(end, from + 2);
+          continue;
+        }
+        if (m[0].includes("\n")) {
+          re.lastIndex = from + 2;
+          continue;
+        }
       }
       spans.push([from, to]);
       if (!m[0].includes("\n")) inlineText?.push([from, to]);
-      const eol = outside.indexOf("\n", to);
-      if (m[0][0] === "$" && m[0].includes("\n") && outside.slice(to, eol < 0 ? undefined : eol).trim() && leads(outside, from)) runOn.push(from);
     }
+    // And the last `$$`, if nothing paired it.
     const open = outside.lastIndexOf("$$");
-    if (open >= 0 && leads(outside, open) && !spans.some(([f, t]) => f <= open && open < t)) runOn.push(open);
-    if (runOn.length) spans.push(...mathBlocksAt(content, runOn));
+    const end = open >= 0 && !spans.some(([f, t]) => f <= open && open < t) ? blockAt(open) : undefined;
+    if (end !== undefined) spans.push([open, end]);
   }
   return spans;
 }
@@ -801,6 +964,24 @@ function blank(text: string, spans: [number, number][]): string {
     at = to;
   }
   return out + text.slice(at);
+}
+
+/** `content` with the text of its `%%` comments and math blocks turned to
+ * `%`, so a fence inside one opens nothing while the lines keep their shape;
+ * undefined if nothing changes. */
+function fencesOnly(content: string): string | undefined {
+  if (!content.includes("```") && !content.includes("~~~")) return undefined;
+  const spans: [number, number][] = content.includes("%%") ? commentRanges(content) : [];
+  if (content.includes("$$")) spans.push(...mathBlocks(content));
+  if (!spans.length) return undefined;
+  let out = "";
+  let at = 0;
+  for (const [from, to] of spans.sort((a, b) => a[0] - b[0])) {
+    if (to <= at) continue;
+    out += content.slice(at, Math.max(from, at)) + content.slice(Math.max(from, at), to).replace(/[^\s]/g, "%");
+    at = to;
+  }
+  return out + content.slice(at);
 }
 
 /** A note's names (longest first) as whole words, ignoring case. */

@@ -569,6 +569,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hand: a relative link to the note's own folder or below has no `./`, a
   `[text](<path>)` link keeps its angle brackets, and a canvas keeps
   Obsidian's layout (one line per card) instead of being reformatted.
+- A quote or list item whose first line is empty no longer opens with a blank
+  line in Reading view, and what's under it reads as in Obsidian: a link
+  definition there is hidden and an indented line is code. This comes with
+  the editor's Markdown parser updated to 1.7.2.
+- Unlinked mentions follow Reading view in more places. Lines that run on
+  lazily in a callout keep their own indent. A definition's open title stops
+  at an underline in its paragraph (or, lazily, in a callout) and at an empty
+  item outside its list, and math or a tag inside it is part of the title. A
+  lazy line stays in its quote's paragraph, so a `>` line after it doesn't
+  start a callout, a callout's title opens its own quote rather than one a
+  list item above holds, and a `$$` block is found where the parser finds
+  one. A code fence inside a `%%` comment or a math block no longer hides the
+  mentions after it, `#` followed by a tab is text, as the parser reads it,
+  and a note with a link definition and a line of thousands of list markers
+  no longer stalls Link all.
+- Reading view shows callouts more than four inside one another as quotes,
+  so a long chain of nested callouts can't stall it.
 
 ### Security
 

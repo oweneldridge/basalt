@@ -454,6 +454,24 @@ describe("CommonMark and Obsidian fidelity (Reading view hunt)", () => {
     expect(renderMarkdown("> [!note] T\n> Body line one", { lines: true })).toMatch(/<p data-line="1">Body line one/);
   });
 
+  it("runs a callout body's lazy lines on as text, as in a quote", () => {
+    expect(renderMarkdown("> [!note] T\n> a\n    # Foo")).toContain("<p>a<br>\n# Foo</p>");
+    expect(renderMarkdown("> [!note] T\n> a\n    ```\n> b")).not.toContain("<pre");
+    expect(renderMarkdown("> [!note] T\n> a\n2. b", { lines: true })).toContain("<p data-line=\"1\">a<br>\n2. b</p>");
+  });
+
+  it("starts nothing on a quote's or an item's empty first line", () => {
+    expect(renderMarkdown("> \n> x")).toBe("<blockquote><p>x</p></blockquote>");
+    expect(renderMarkdown(">\n> [a]: b 'T'\n\n[x][a]")).not.toContain("[a]:");
+    expect(renderMarkdown("> \nx")).toBe("<blockquote></blockquote>\n<p>x</p>");
+    expect(renderMarkdown(">\n> [!note] T\n> body")).toBe("<blockquote><p>[!note] T<br>\nbody</p></blockquote>");
+  });
+  it("reads callouts more than four inside one another as quotes", () => {
+    const nest = (n: number) => Array.from({ length: n }, (_, i) => "> ".repeat(i + 1) + "[!note] T" + i).join("\n");
+    expect(renderMarkdown(nest(4)).match(/md-callout-title/g)).toHaveLength(4);
+    expect(renderMarkdown(nest(6)).match(/md-callout-title/g)).toHaveLength(4);
+  });
+
   it("reads a callout title the first line holds, whatever block it starts", () => {
     expect(renderMarkdown("> [!note]: x")).toContain('<div class="md-callout-title"><span class="md-callout-icon">🗒️</span>: x</div>');
   });

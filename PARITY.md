@@ -114,11 +114,14 @@ but linking one leaves the other unlinkable, so Link all links one of them. A
 to "b" in the index and Live Preview; which one Obsidian reads hasn't been
 checked. Where the editor's parser and CommonMark disagree on a `#` and a tab
 or a backtick after an escaped one, Link all leaves alone what either reads as
-code. Two rare gaps are left: under an empty list item or quote line, the
-editor's parser keeps unindented lines in one paragraph where CommonMark
-doesn't, and Link all reads them the CommonMark way; and after a link whose
-address holds a backtick (`[](a`b)`), Link all can still write into a code span
-that follows. Past 1,000 quotes and lists inside one another, the index reads
+code. Three rare gaps are left: after a link whose address holds a backtick
+(`[](a`b)`), Link all can still write into a code span that follows; a `%%`
+comment over lines joins what's either side of it in Reading view (a `[a]:`
+above one and text after it make a link definition), where Link all reads
+the lines on their own; and Link all reads an HTML comment opened inside a
+line as closing at the next `-->`, even past the end of its paragraph. Reading
+view shows callouts more than four inside one another as quotes, to keep long
+chains quick; whether Obsidian has a limit hasn't been checked. Past 1,000 quotes and lists inside one another, the index reads
 further markers as text, where the editor's parser keeps nesting. Link all
 reads a link reference definition's title over at most ten lines, so a mention
 on the eleventh line of a longer one is offered. The index counts links and

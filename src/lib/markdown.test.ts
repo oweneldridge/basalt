@@ -124,9 +124,9 @@ describe("proseMask reads lists as the editor's parser does", () => {
     expect(mask("   - b\n---\n\t\t```")).toEqual([true, true, true]);
   });
 
-  it("reads on into an empty quote line or an empty item, as the parser does", () => {
-    expect(mask(">\n2. ```")).toEqual([true, true]);
-    expect(mask("> -\n2. ```")).toEqual([true, true]);
+  it("starts nothing on an empty quote line or an empty item, as the parser does", () => {
+    expect(mask(">\n2. ```")).toEqual([true, false]);
+    expect(mask("> -\n2. ```")).toEqual([true, false]);
     expect(mask(">\n1. ```")).toEqual([true, false]);
     expect(mask("-\nfoo\n     ~~~")).toEqual([true, true, true]);
     expect(mask("-\nfoo\n   ~~~")).toEqual([true, true, false]);
