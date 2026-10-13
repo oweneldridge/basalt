@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTree } from "./tree";
+import { buildTree, sameShape } from "./tree";
 
 
 describe("buildTree sort orders", () => {
@@ -37,5 +37,26 @@ describe("empty folders", () => {
     expect(tree.map((n) => n.name)).toEqual(["Empty", "Projects"]);
     const projects = tree[1] as { children: { name: string; type: string }[] };
     expect(projects.children.map((c) => `${c.type}:${c.name}`)).toEqual(["folder:Sub", "file:Alpha"]);
+  });
+});
+
+describe("sameShape", () => {
+  const note = (path: string, mtime: number, ctime: number) => ({ path, rel: path, name: path, content: "", mtime, ctime });
+  const was = [note("a.md", 1, 1), note("b.md", 2, 2)];
+  it("ignores the dates the order doesn't read", () => {
+    const edited = [note("a.md", 9, 1), was[1]];
+    expect(sameShape(was, edited, "name-asc")).toBe(true);
+    expect(sameShape(was, edited, "name-desc")).toBe(true);
+    expect(sameShape(was, edited, "ctime-desc")).toBe(true);
+    expect(sameShape(was, edited, "mtime-desc")).toBe(false);
+    const made = [note("a.md", 1, 9), was[1]];
+    expect(sameShape(was, made, "mtime-desc")).toBe(true);
+    expect(sameShape(was, made, "ctime-desc")).toBe(false);
+  });
+  it("sees a note added, removed or renamed", () => {
+    expect(sameShape(was, [...was, note("c.md", 3, 3)], "name-asc")).toBe(false);
+    expect(sameShape(was, [was[0]], "name-asc")).toBe(false);
+    expect(sameShape(was, [was[0], note("c.md", 2, 2)], "name-asc")).toBe(false);
+    expect(sameShape(was, was.map((n) => ({ ...n })), "mtime-desc")).toBe(true);
   });
 });

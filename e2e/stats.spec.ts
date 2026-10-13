@@ -136,3 +136,13 @@ test("a note a plugin makes has its creation time and byte size at once", async 
   await page.locator(".tree-row.attachment", { hasText: "New" }).click();
   await expect(view(page).getByRole("listitem").filter({ hasText: "Made By Plugin" })).toHaveCount(1);
 });
+
+test("sorting Files by modified time uses a time that changed under another sort", async ({ page }) => {
+  await load(page, { "Zzz.md": "z", "Aaa.md": "a" });
+  const order = async () => (await page.locator(".tree-row.file").allTextContents()).filter((t) => /Aaa|Zzz/.test(t));
+  await expect.poll(order).toEqual([expect.stringContaining("Aaa"), expect.stringContaining("Zzz")]);
+  await emit(page, { path: "/mock/vault/Zzz.md", rel: "Zzz.md", mtime: Date.now() + 86_400_000, ctime: 1_700_000_000_000, size: 1, statsOnly: true });
+  await page.waitForTimeout(1000);
+  await page.locator(".file-sort").selectOption("mtime-desc");
+  await expect.poll(order).toEqual([expect.stringContaining("Zzz"), expect.stringContaining("Aaa")]);
+});

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import type { Attachment, VaultNote } from "../lib/vault";
-import { ancestorFolders, buildTree, type TreeNode, type SortOrder } from "../lib/tree";
+import { ancestorFolders, buildTree, sameShape, type TreeNode, type SortOrder } from "../lib/tree";
 import { menuKeyOpens } from "./ContextMenu";
 
 interface Props {
@@ -83,14 +83,10 @@ export function Sidebar({ notes, attachments, folders = [], revealFolder = null,
   );
   useEffect(() => localStorage.setItem("basalt.fileSort", sort), [sort]);
 
-  // The tree only needs each note's path and dates: an edit to a note's text
-  // (a link fix across hundreds of notes, say) doesn't rebuild it.
+  // The tree only needs each note's path, and the date it's sorted by: an edit
+  // to a note (a link fix across hundreds of notes, say) doesn't rebuild it.
   const shapeRef = useRef<VaultNote[]>(notes);
-  const shape = useMemo(() => {
-    const prev = shapeRef.current;
-    const same = prev.length === notes.length && prev.every((n, i) => n.path === notes[i].path && n.mtime === notes[i].mtime && n.ctime === notes[i].ctime);
-    return (shapeRef.current = same ? prev : notes);
-  }, [notes]);
+  const shape = useMemo(() => (shapeRef.current = sameShape(shapeRef.current, notes, sort) ? shapeRef.current : notes), [notes, sort]);
   const tree = useMemo(() => buildTree(shape, attachments, sort, folders), [shape, attachments, sort, folders]);
 
   // Load persisted expansion when the vault changes.

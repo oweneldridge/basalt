@@ -90,6 +90,13 @@ export function buildTree(
   return root.children;
 }
 
+/** Whether `next` builds the same tree as `prev` in `order`: the same paths,
+ * with the same dates where the order reads them. */
+export function sameShape(prev: VaultNote[], next: VaultNote[], order: SortOrder): boolean {
+  const date = order === "mtime-desc" ? "mtime" : order === "ctime-desc" ? "ctime" : null;
+  return prev.length === next.length && prev.every((n, i) => n.path === next[i].path && (!date || n[date] === next[i][date]));
+}
+
 /** Folder paths (expand keys) of every ancestor of a vault-relative file path. */
 export function ancestorFolders(rel: string): string[] {
   const parts = rel.split(/[/\\]/).slice(0, -1);
