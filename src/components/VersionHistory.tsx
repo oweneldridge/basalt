@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Modal } from "./Modal";
 import type { Snapshot } from "../lib/snapshots";
 
 interface Props {
@@ -23,7 +24,7 @@ export function VersionHistory({ noteName, snapshots, onRestore, onClose }: Prop
   const current = snapshots[sel];
 
   return (
-    <div className="palette-overlay" onMouseDown={onClose}>
+    <Modal className="palette-overlay" label="Version history" onClose={onClose}>
       <div className="settings version-history" onMouseDown={(e) => e.stopPropagation()}>
         <div className="settings-head">
           <h2>Version history — {noteName}</h2>
@@ -63,6 +64,6 @@ export function VersionHistory({ noteName, snapshots, onRestore, onClose }: Prop
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }

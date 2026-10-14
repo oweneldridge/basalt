@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Modal } from "./Modal";
 import type { ReactNode } from "react";
 
 interface PaletteProps<T> {
@@ -12,6 +13,9 @@ interface PaletteProps<T> {
   emptyText?: string;
   /** Seed the query box (e.g. opening search pre-filled with a clicked tag). */
   initialQuery?: string;
+  /** A line above the results (a search's total), given every result and how
+   * many are shown. */
+  summary?: (all: T[], shown: number) => string;
 }
 
 const MAX_RENDER = 100;
@@ -25,12 +29,14 @@ export function Palette<T>({
   onClose,
   emptyText = "No results",
   initialQuery = "",
+  summary,
 }: PaletteProps<T>) {
   const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement | null>(null);
 
-  const items = useMemo(() => getItems(query).slice(0, MAX_RENDER), [query, getItems]);
+  const all = useMemo(() => getItems(query), [query, getItems]);
+  const items = useMemo(() => all.slice(0, MAX_RENDER), [all]);
 
   useEffect(() => {
     setActive(0);
@@ -59,21 +65,38 @@ export function Palette<T>({
     }
   };
 
+  const listId = useId();
+  const optionId = (i: number) => `${listId}-opt-${i}`;
   return (
-    <div className="palette-overlay" onMouseDown={onClose}>
+    <Modal className="palette-overlay" label={placeholder} onClose={onClose}>
       <div className="palette" onMouseDown={(e) => e.stopPropagation()}>
         <input
           className="palette-input"
           placeholder={placeholder}
+          aria-label={placeholder}
+          role="combobox"
+          aria-expanded={items.length > 0}
+          aria-controls={listId}
+          aria-autocomplete="list"
+          aria-activedescendant={items.length ? optionId(active) : undefined}
           value={query}
           autoFocus
           onChange={(e) => setQuery(e.currentTarget.value)}
           onKeyDown={onKeyDown}
         />
-        <div className="palette-list" ref={listRef}>
+        {summary && query.trim() && all.length > 0 && (
+          <div className="palette-summary" role="status">
+            {summary(all, items.length)}
+          </div>
+        )}
+        <div className="palette-list" ref={listRef} id={listId} role="listbox" aria-label={placeholder}>
           {items.map((item, i) => (
             <button
               key={itemKey(item, i)}
+              id={optionId(i)}
+              role="option"
+              aria-selected={i === active}
+              tabIndex={-1}
               className={`palette-item${i === active ? " active" : ""}`}
               onMouseEnter={() => setActive(i)}
               onClick={() => onSelect(item)}
@@ -84,6 +107,6 @@ export function Palette<T>({
           {items.length === 0 && <div className="palette-empty">{emptyText}</div>}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

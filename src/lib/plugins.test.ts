@@ -10,8 +10,12 @@ import {
   isLoaded,
   loadEnabled,
   saveEnabled,
+  rememberPluginCode,
+  vetEnabledPlugins,
   emitVaultEvent,
   emitWorkspaceEvent,
+  listensFor,
+  isStarted,
   pluginSettingTabs,
   pluginRightViews,
   type HostDeps,
@@ -228,6 +232,92 @@ describe("plugin events", () => {
     expect((globalThis as any).__events).toEqual([]);
   });
 
+  it("tells which plugins listen for a vault event, until they unload or let go", async () => {
+    installHost(fakeHost().host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          this.registerEvent(this.app.vault.on("create", () => {}));
+          const once = this.app.vault.on("modify", () => {});
+          once.off();
+          once.off();
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "tpl", code }));
+    expect(listensFor("tpl", "create")).toBe(true);
+    expect(listensFor("tpl", "modify")).toBe(false); // let go, and twice counts once
+    expect(listensFor("other", "create")).toBe(false);
+    await unloadPlugin("tpl");
+    expect(listensFor("tpl", "create")).toBe(false);
+  });
+
+  it("counts one callback subscribed twice as two subscriptions, as Obsidian runs it", async () => {
+    installHost(fakeHost().host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          const cb = () => { globalThis.__twice = (globalThis.__twice ?? 0) + 1; };
+          const a = this.app.vault.on("create", cb);
+          globalThis.__second = this.app.vault.on("create", cb);
+          a.off();
+        }
+      };
+    `;
+    (globalThis as any).__twice = 0;
+    await loadPlugin(info({ id: "twice", code }));
+    expect(listensFor("twice", "create")).toBe(true);
+    emitVaultEvent("create", { path: "A.md", name: "A" });
+    expect((globalThis as any).__twice).toBe(1);
+    (globalThis as any).__second.off();
+    expect(listensFor("twice", "create")).toBe(false);
+    emitVaultEvent("create", { path: "B.md", name: "B" });
+    expect((globalThis as any).__twice).toBe(1);
+    await unloadPlugin("twice");
+  });
+
+  it("runs a workspace callback subscribed twice twice, and each off() ends one", async () => {
+    installHost(fakeHost().host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          const cb = () => { globalThis.__opened = (globalThis.__opened ?? 0) + 1; };
+          globalThis.__first = this.app.workspace.on("file-open", cb);
+          this.registerEvent(this.app.workspace.on("file-open", cb));
+        }
+      };
+    `;
+    (globalThis as any).__opened = 0;
+    await loadPlugin(info({ id: "ws-twice", code }));
+    emitWorkspaceEvent("file-open", null);
+    expect((globalThis as any).__opened).toBe(2);
+    (globalThis as any).__first.off();
+    emitWorkspaceEvent("file-open", null);
+    expect((globalThis as any).__opened).toBe(3);
+    await unloadPlugin("ws-twice");
+  });
+
+  it("isn't started until its onload has finished", async () => {
+    installHost(fakeHost().host);
+    let finish = () => {};
+    (globalThis as any).__gate = new Promise<void>((r) => (finish = r));
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin { async onload() { await globalThis.__gate; } };
+    `;
+    const loading = loadPlugin(info({ id: "slow-start", code }));
+    await Promise.resolve();
+    expect(isStarted("slow-start")).toBe(false);
+    finish();
+    await loading;
+    expect(isStarted("slow-start")).toBe(true);
+    await unloadPlugin("slow-start");
+    expect(isStarted("slow-start")).toBe(false);
+  });
+
   it("registerInterval + registerDomEvent are cleared on unload", async () => {
     const { host } = fakeHost();
     installHost(host);
@@ -329,5 +419,55 @@ describe("plugin vault mutations", () => {
     `;
     await loadPlugin(info({ id: "vmut", code }));
     expect(calls).toEqual(["delete:A.md", "rename:A.md->B.md", "mkdir:Folder"]);
+  });
+
+  it("process writes only over the text it read, and not at all when unchanged", async () => {
+    const writes: [string, string, string | undefined][] = [];
+    const { host } = fakeHost({
+      readNote: async () => "old text",
+      modifyNote: async (pth, content, expected) => { writes.push([pth, content, expected]); },
+    });
+    installHost(host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        async onload() {
+          await this.app.vault.process("A.md", (s) => s.toUpperCase());
+          await this.app.vault.process("A.md", (s) => s);
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "vproc", code }));
+    expect(writes).toEqual([["A.md", "OLD TEXT", "old text"]]);
+  });
+});
+
+describe("enabled plugins are tied to their code", () => {
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    });
+  });
+  const plugin = (code: string): PluginInfo => ({ id: "p", name: "P", version: "1", description: "", author: "", minAppVersion: "", code, data: null });
+
+  it("runs the enabled code, and switches a plugin off when its code changes", async () => {
+    store.clear();
+    saveEnabled("/v", ["p"]);
+    await rememberPluginCode("/v", plugin("v1"));
+    expect((await vetEnabledPlugins("/v", [plugin("v1")])).run.map((p) => p.id)).toEqual(["p"]);
+    const swapped = await vetEnabledPlugins("/v", [plugin("v2 from a sync peer")]);
+    expect(swapped.run).toEqual([]);
+    expect(swapped.changed.map((p) => p.id)).toEqual(["p"]);
+    expect(loadEnabled("/v")).toEqual([]);
+  });
+
+  it("trusts a plugin enabled before hashes existed, once", async () => {
+    store.clear();
+    saveEnabled("/v", ["p"]);
+    expect((await vetEnabledPlugins("/v", [plugin("old")])).run).toHaveLength(1);
+    expect((await vetEnabledPlugins("/v", [plugin("new")])).changed).toHaveLength(1);
   });
 });

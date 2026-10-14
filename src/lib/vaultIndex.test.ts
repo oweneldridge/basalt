@@ -50,6 +50,81 @@ describe("proseMask", () => {
       false, false, false, true, false, false, false, true, false, false, false, true,
     ]);
   });
+  it("masks fenced code inside a quote or callout, which ends with the quote", () => {
+    const lines = [
+      "> [!example] Run", // 0
+      "> ```bash", // 1 opens inside the quote
+      "> ~/.cfg/x.sh [[Note]]", // 2 inside
+      ">", // 3 inside
+      "> ```", // 4 closes
+      "> after", // 5
+      "> > ```", // 6 opens two quotes deep
+      "> > code", // 7 inside
+      "> back to one", // 8 the inner quote ended, and the code with it
+      "plain", // 9
+      "> ```", // 10 opens
+      "> code", // 11 inside
+      "", // 12 the quote ended, so the code did
+      "text", // 13
+    ];
+    expect(proseMask(lines)).toEqual([true, false, false, false, false, true, false, false, true, true, false, false, true, true]);
+  });
+  it("masks fenced code indented under a list item, and ends it with the item", () => {
+    const lines = [
+      "1. Run it:", // 0
+      "", // 1
+      "    ```bash", // 2: in item 1, whose text starts at column 3
+      "    python3 ~/.claude/lib/x.py", // 3
+      "    ```", // 4
+      "", // 5
+      "10. Then:", // 6
+      "    ```", // 7: item 10's text starts at column 4
+      "    code [[x]]", // 8
+      "    ```", // 9
+      "- a", // 10
+      "  1. nested", // 11
+      "     ```", // 12: the nested item's text starts at column 5
+      "     inside", // 13
+      "     ```", // 14
+      "- b", // 15
+      "  ```", // 16
+      "  code", // 17
+      "after", // 18: the item ended, so its fence did
+      "",
+      "Para",
+      "        ```", // 21: under a paragraph, not a fence
+      "prose", // 22
+    ];
+    expect(proseMask(lines)).toEqual([
+      true, true, false, false, false, true, true, false, false, false, true, true, false, false, false, true, false, false, true, true, true, true, true,
+    ]);
+  });
+  it("reads a tab to the next stop of four, and opens no fence four past an item's text", () => {
+    const lines = [
+      "- a", // 0: text at column 2
+      "   \t```", // 1: the tab reaches column 4, so a fence in the item
+      "   \tcode", // 2
+      "   \t```", // 3
+      "- b", // 4
+      "          ```", // 5: eight past the text, so not a fence
+      "prose", // 6
+    ];
+    expect(proseMask(lines)).toEqual([true, false, false, false, true, true, true]);
+  });
+  it("doesn't open a fence on backticks with a backtick after them", () => {
+    const lines = [
+      "> [!tip] Shell", // 0
+      "> ```ls -la``` lists files", // 1 inline code, not a fence
+      "> See [[Old]]", // 2
+      "```ls``` too", // 3
+      "after", // 4
+      "~~~ a`b", // 5 a tilde fence may have backticks after it
+      "inside", // 6
+      "~~~", // 7
+      "end", // 8
+    ];
+    expect(proseMask(lines)).toEqual([true, true, true, true, true, false, false, false, true]);
+  });
   it("treats an unterminated frontmatter fence as prose-ish (no infinite mask)", () => {
     const mask = proseMask(["---", "a: b"]);
     // No closing --- : not frontmatter; first line also isn't a code fence.
@@ -79,9 +154,9 @@ describe("VaultIndex.resolve — Obsidian semantics", () => {
   it("relative ./ and ../ resolve against the source folder", () => {
     expect(idx.resolve("./A", "/v/Folder/B.md")).toBe("/v/Folder/A.md");
     expect(idx.resolve("../A", "/v/Folder/B.md")).toBe("/v/A.md");
-    expect(idx.resolve("../../A", "/v/Folder/B.md")).toBeNull(); // escapes root
+    expect(idx.resolve("../../A", "/v/Folder/B.md")).toBe("/v/A.md"); // Obsidian clamps at the root
   });
-  it("ambiguous bare link prefers shallower then alphabetical", () => {
+  it("ambiguous bare link from the root prefers the shortest path", () => {
     expect(idx.resolve("C", "/v/A.md")).toBe("/v/Other/C.md"); // depth 1 beats depth 2
   });
   it("heading/block suffixes are ignored for resolution", () => {
@@ -108,6 +183,27 @@ describe("VaultIndex link extraction", () => {
       note("S.md", ["---", "up: [[T]]", "---", "body"].join("\n")),
     ]);
     expect(idx.backlinksFor("/v/T.md")).toHaveLength(0);
+  });
+});
+
+describe("table-escaped links", () => {
+  it("resolves [[Note\\|alias]] inside a table row", () => {
+    const idx = indexOf([note("T.md"), note("S.md", "| a | b |\n|---|---|\n| [[T\\|tee]] | x |")]);
+    expect(idx.backlinksFor("/v/T.md").map((b) => b.path)).toEqual(["/v/S.md"]);
+  });
+});
+
+describe("links in frontmatter properties", () => {
+  it("indexes a property value that is entirely a quoted link", () => {
+    const idx = indexOf([
+      note("T.md"),
+      note("A.md", ["---", 'up: "[[T]]"', "---", "body"].join("\n")),
+      note("B.md", ["---", "rel:", '  - "[[T#H]]"', "---"].join("\n")),
+      note("C.md", ["---", "x: met [[T]] today", "---"].join("\n")),
+      note("D.md", ["---", "ref: \"[t](T.md)\"", "---"].join("\n")),
+      note("E.md", ["---", "# [[T]]", "y: 1 # [[T]]", "---"].join("\n")),
+    ]);
+    expect(idx.backlinksFor("/v/T.md").map((b) => b.path).sort()).toEqual(["/v/A.md", "/v/B.md", "/v/D.md"]);
   });
 });
 
@@ -176,6 +272,9 @@ describe("extractTags", () => {
   it("returns nothing for a note with no tags", () => {
     expect(extractTags("just prose, no tags here")).toEqual([]);
   });
+  it("finds tags in any script, and not numbers or escaped ones", () => {
+    expect(extractTags("#café and #日本, issue #42, \\#escaped").sort()).toEqual(["café", "日本"]);
+  });
 });
 
 describe("VaultIndex.allTags", () => {
@@ -228,6 +327,82 @@ describe("2.9b review regressions", () => {
     const notes2 = [note("y.md"), note("S2.md", "plain y here")];
     expect(indexOf(notes2).unlinkedMentionsFor("y", notes2)).toHaveLength(1);
   });
+  it("counts each mention on a line, as Obsidian counts matches", () => {
+    const notes = [note("Ideas.md"), note("S.md", "Ideas and more ideas, Ideas")];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes)).toHaveLength(3);
+  });
+  it("leaves out mentions in math, comments, indented code and HTML", () => {
+    const body = [
+      "Ideas in prose", // 1: listed
+      "math $Ideas^2$ here", // 2
+      "%% Ideas", // 3: comment over lines
+      "still Ideas %%", // 4
+      "",
+      "    Ideas in code", // 6
+      "",
+      '<span title="Ideas">x</span>', // 8
+      "<!-- Ideas -->", // 9
+      "$$",
+      "Ideas = 1", // 11
+      "$$",
+    ].join("\n");
+    const notes = [note("Ideas.md"), note("S.md", body)];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([1]);
+  });
+  it("leaves out indented code in a quote, in a list item and after spaces and a tab", () => {
+    const body = ["> Ideas in a quote", ">", ">     Ideas in quoted code", "", "  \tIdeas in code", "", "Ideas again"].join("\n");
+    const notes = [
+      note("Ideas.md"),
+      note("S.md", body),
+      note("T.md", "-     Ideas in an item's code\n\nIdeas again"),
+      note("U.md", "    -Ideas, code\n\nIdeas"),
+      note("V.md", "\t>Ideas, code\n\nIdeas"),
+      note("W.md", ">\t Ideas, code\n\nIdeas"),
+      note("X.md", "\t`\n[[`Ideas\n\nIdeas"), // the code above isn't a code span's start
+    ];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => `${m.name} ${m.line}`)).toEqual(["S 1", "S 7", "T 3", "U 3", "V 3", "W 3", "X 4"]);
+  });
+  it("scans a line of thousands of quote and list marks quickly, past 40 levels as text", () => {
+    const notes = [note("Ideas.md"), note("S.md", "> ".repeat(20000) + "Ideas\n" + "-  ".repeat(20000) + "Ideas\n\n" + "> ".repeat(40) + "Ideas")];
+    const t0 = performance.now();
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([4]);
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+  it("leaves out a mention in raw HTML", () => {
+    const notes = [note("Ideas.md"), note("S.md", "<div>\nIdeas here\n</div>\n\nIdeas\n\n<?x\n\nIdeas\n?>")];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([5]);
+  });
+  it("leaves out a mention its link would unbold or embolden around it", () => {
+    const notes = [note("Ideas.md"), note("S.md", "**Ideas**: one\na*Ideas*b\n=Ideas*-*")];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([1]);
+  });
+  it("leaves out callout types, footnotes, references, emails and code, and keeps prose with < in it", () => {
+    const body = [
+      "Run `echo $$` here", // 1
+      "",
+      "$$",
+      "Ideas + x = y", // 4: math
+      "$$",
+      "null<Date coerces Ideas to InputMaybe<Time>", // 6: listed
+      "> [!ideas] Title", // 7
+      "see ``code Ideas `x` here`` end", // 8
+      "a footnote[^Ideas] here", // 9
+      "",
+      "[Ideas]: https://x.com/a", // 11: a definition, after a blank line
+      "",
+      "mail ideas@x.com", // 13
+    ].join("\n");
+    const notes = [note("Ideas.md"), note("S.md", body)];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([6]);
+  });
+  it("lists only mentions the Link action can link, not tags or URLs", () => {
+    const notes = [note("Ideas.md"), note("S.md", "#ideas\nhttps://x.com/ideas\nsee ideas")];
+    expect(indexOf(notes).unlinkedMentionsFor("Ideas", notes).map((m) => m.line)).toEqual([3]);
+  });
+  it("counts a mention of an alias as an unlinked mention", () => {
+    const notes = [note("Kubernetes CLI Tools.md"), note("S.md", "See the kubectl reference here")];
+    expect(indexOf(notes).unlinkedMentionsFor(["Kubernetes CLI Tools", "kubectl reference"], notes)).toHaveLength(1);
+  });
 });
 
 describe("outgoingLinksFor", () => {
@@ -241,6 +416,16 @@ describe("outgoingLinksFor", () => {
     expect(out.resolved.map((r) => r.name).sort()).toEqual(["B", "C"]);
     expect(out.resolved.filter((r) => r.name === "B")).toHaveLength(1); // deduped
     expect(out.unresolved).toEqual(["Ghost"]);
+  });
+  it("reads an escaped \\[[ as no link, and one after an escaped backslash as one", () => {
+    const idx = indexOf([note("A.md", "\\[[B]] and \\\\[[C]] and \\[[[D]]"), note("B.md"), note("C.md"), note("D.md")]);
+    expect(idx.outgoingLinksFor("/v/A.md").resolved.map((r) => r.name).sort()).toEqual(["C", "D"]);
+  });
+  it("reads [[[B]]] as a link to \"[B\", as Obsidian does", () => {
+    const idx = indexOf([note("A.md", "see [[[B]]] and [[B]]]"), note("B.md")]);
+    const out = idx.outgoingLinksFor("/v/A.md");
+    expect(out.resolved.map((r) => r.name)).toEqual(["B"]);
+    expect(out.unresolved).toEqual(["[B"]);
   });
   it("is empty for a note with no links", () => {
     const idx = indexOf([note("Solo.md", "no links here")]);
@@ -307,5 +492,178 @@ describe("aliases — precedence and parsing (review fixes)", () => {
   it("skips aliases with wikilink-special chars from autocomplete", () => {
     const idx = indexOf([note("N.md", '---\naliases: ["a|b", "c#d", Good]\n---')]);
     expect(idx.allAliases().map((a) => a.alias)).toEqual(["Good"]);
+  });
+});
+
+describe("backlink and embed lists for Bases", () => {
+  it("lists linking notes and a note's embeds", () => {
+    const idx = indexOf([
+      note("T.md", "![[pic.png]] and ![[Other]] and [[Other]]"),
+      note("A.md", "[[T]]"),
+      note("Sub/B.md", "see [[T#h]]"),
+      note("Other.md"),
+    ]);
+    expect(idx.backlinkRels("/v/T.md")).toEqual(["A", "Sub/B"]);
+    expect(idx.embedsOf("/v/T.md")).toEqual(["pic.png", "Other"]);
+    idx.setNote({ path: "/v/A.md", rel: "A.md", name: "A", content: "no links now" });
+    expect(idx.backlinkRels("/v/T.md")).toEqual(["Sub/B"]);
+  });
+});
+
+describe("resolveFromRel", () => {
+  it("resolves a link as if written from another folder", () => {
+    const idx = new VaultIndex();
+    idx.build([note("A/Plan.md"), note("B/Plan.md"), note("A/Hub.md", "[[Plan]]")]);
+    const hub = idx.resolve("Plan", "/v/A/Hub.md");
+    expect(hub).toBe(idx.resolveFromRel("Plan", "A/Hub.md"));
+    expect(idx.resolveFromRel("Plan", "A/Hub.md")).toMatch(/A\/Plan\.md$/);
+    expect(idx.resolveFromRel("Plan", "B/Hub.md")).toMatch(/B\/Plan\.md$/);
+    expect(idx.resolveFromRel("./Plan", "B/Hub.md")).toMatch(/B\/Plan\.md$/);
+    expect(idx.resolveFromRel("../A/Plan", "B/Hub.md")).toMatch(/A\/Plan\.md$/);
+  });
+});
+
+describe("property links and block scalars", () => {
+  it("a quoted link inside a block scalar isn't a backlink", () => {
+    const idx = indexOf([
+      note("A.md"),
+      note("Quoted.md", '---\nsummary: |\n  "[[A]]"\n---\nBody\n'),
+      note("Linked.md", '---\nup: "[[A]]"\n---\nBody\n'),
+    ]);
+    expect(idx.backlinkRels("/v/A.md")).toEqual(["Linked"]);
+  });
+});
+
+describe("tags and raw HTML", () => {
+  it("doesn't read colours in HTML as tags", () => {
+    const note = [
+      "#real-tag in prose",
+      "",
+      '<svg viewBox="0 0 10 10">',
+      '<line stroke="#e8710a"/>',
+      '<text fill="#1a73e8">#notatag inside the block</text>',
+      "</svg>",
+      "",
+      'Inline <span style="color:#ff0000">red</span> and #second',
+    ].join("\n");
+    expect(extractTags(note)).toEqual(["real-tag", "second"]);
+  });
+  it("still reads tags after inline HTML on a line", () => {
+    expect(extractTags('<span style="color:red">Important</span> #todo')).toEqual(["todo"]);
+    expect(extractTags('<font color="red">Due</font> #deadline')).toEqual(["deadline"]);
+    expect(extractTags("<p>Para</p> #ptag")).toEqual(["ptag"]);
+    expect(extractTags("x<y and #between z>w")).toEqual(["between"]);
+  });
+});
+
+describe("resolvedLinks", () => {
+  it("counts each note's links by the notes they resolve to, as Obsidian does", () => {
+    const idx = new VaultIndex();
+    idx.build([
+      { path: "/v/A.md", rel: "A.md", name: "A", content: "[[B]] and [[B]] and [[Missing]] and [x](sub/C.md)" },
+      { path: "/v/B.md", rel: "B.md", name: "B", content: "no links" },
+      { path: "/v/sub/C.md", rel: "sub/C.md", name: "C", content: "[[A]]" },
+    ] as never);
+    expect(idx.resolvedLinks()).toEqual({ "A.md": { "B.md": 2, "sub/C.md": 1 }, "B.md": {}, "sub/C.md": { "A.md": 1 } });
+  });
+  it("counts links to attachments and links to nothing, as Obsidian's unresolvedLinks", () => {
+    const idx = new VaultIndex();
+    idx.build([{ path: "/v/A.md", rel: "A.md", name: "A", content: "![[pic.png]] [[Missing#h]] [[Missing]] [[B]]" }] as never);
+    const counts = idx.linkCounts((raw) => (raw === "pic.png" ? "img/pic.png" : null));
+    expect(counts.resolved).toEqual({ "A.md": { "img/pic.png": 1 } });
+    expect(counts.unresolved).toEqual({ "A.md": { Missing: 2, B: 1 } });
+  });
+});
+
+
+describe("tags after a `>`", () => {
+  it("count only where the `>` opens a quote line", () => {
+    expect(extractTags(">#a\n> >#b\n- >#c\n\n- a\n  - b\n    >#d")).toEqual(["a", "b", "c", "d"]);
+    expect(extractTags("para\n   >#e")).toEqual(["e"]);
+  });
+
+  it("aren't tags after code or HTML, or in paragraph text or indented code", () => {
+    for (const note of ["`x`>#four", "<br>>#b", "<span>>#a</span>", "- `x`>#f", "x\n`y`>#n", "para\n    >#x", "- a\n      >#y", "        >#seven"]) {
+      expect(extractTags(note), note).toEqual([]);
+    }
+  });
+
+  it("leave a mask passed in as it was", () => {
+    const content = '<svg>\n<text fill="#1a73e8">#x</text>\n</svg>\n#real';
+    const lines = content.split("\n");
+    const mask = proseMask(lines);
+    expect(extractTags(content, lines, mask)).toEqual(["real"]);
+    expect(mask).toEqual(proseMask(lines));
+  });
+
+  it("read the note as Reading view does when one is indented", () => {
+    expect(extractTags("<div>x</div>\n- a\n    >#b")).toEqual(["b"]);
+    expect(extractTags("[^1]: fn >#q\n2. two\n    >#r")).toEqual(["r"]);
+    expect(extractTags("---\nk: |\n  ```\n---\n- a\n    >#c")).toEqual(["c"]);
+    expect(extractTags("%% a\nb %%- a\n    >#d")).toEqual(["d"]);
+    expect(extractTags("<div>x</div>\n>#a")).toEqual(["a"]);
+    expect(extractTags("</details>\n> [!note]\n>#e")).toEqual(["e"]);
+    expect(extractTags(Array.from({ length: 5000 }, (_, i) => `<p>${i}</p>`).join("\n") + "\n- a\n    >#t")).toEqual([]);
+  });
+
+  it("aren't tags where Reading view shows the `>` as text", () => {
+    for (const note of ["- a\n2. >#u", "text\n2. >#u", "text\n10) >#u", "> - a\n> 2. >#u", "<div>\n>#a", "<!--\n>#a", "<span>\n>#a", "<br>\n>#a", "$$\n>#a\n$$", "text\n\t>#t"]) {
+      expect(extractTags(note), note).toEqual([]);
+    }
+    expect(extractTags("text\n- >#c")).toEqual(["c"]);
+  });
+
+  it("stay quick on deeply nested quote lines", () => {
+    const t0 = performance.now();
+    expect(extractTags("- > 1. ".repeat(1_000) + ">#a")).toEqual(["a"]);
+    expect(extractTags(">#a\n".repeat(100_000))).toEqual(["a"]);
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+
+  it("skip the parse when no line has one", () => {
+    expect(extractTags("> #quoted and #plain\n`code #no`")).toEqual(["quoted", "plain"]);
+  });
+});
+
+describe("mentions near raw HTML, as Reading view shows it", () => {
+  const count = (content: string) => new VaultIndex().unlinkedMentionsFor("Foo", [{ path: "/v/N.md", rel: "N.md", name: "N", content }] as never).length;
+
+  it("skip raw HTML and code after a block's closing line", () => {
+    expect(count("<div>Header</div>\n<div>Foo</div>")).toBe(0);
+    expect(count("<center>Title</center>\n<div align=center>Foo</div>")).toBe(0);
+    expect(count("<div>\n</div>\n    Foo")).toBe(0);
+    expect(count("<div>Header</div>\nFoo here")).toBe(1);
+  });
+
+  it("read a long run of closed HTML lines as Reading view does, quickly", () => {
+    const html = (n: number) => "Foo is here.\n" + Array.from({ length: n }, (_, i) => `<p>Paragraph ${i}.</p>`).join("\n") + "\nFoo at the end";
+    expect(count(html(30))).toBe(2);
+    const t0 = performance.now();
+    expect(count(html(5000))).toBe(1); // past the nesting limit the rest shows as its source
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+
+  it("count a quote's levels toward the nesting limit, as Reading view does", () => {
+    const quoted = (n: number) => Array.from({ length: n }, (_, i) => `> <div>x</div>\n> Foo ${i}`).join("\n");
+    expect(count(quoted(19))).toBe(19);
+    expect(count(quoted(20))).toBe(19);
+    expect(count(quoted(30))).toBe(19);
+  });
+
+  it("read HTML with the comments taken out", () => {
+    expect(count("%%\n<div>\nold\n%%\nFoo is here")).toBe(1);
+    expect(count("<div>\n%%note%% Foo\n</div>")).toBe(0);
+    expect(count("%% a %%\n<div>\nFoo\n</div>\nFoo after")).toBe(1);
+    expect(count(`%% ${"x".repeat(40)} %%\n<div>\nFoo\n</div>\nFoo after`)).toBe(1);
+    expect(count("%% c %%\n<b>x</b>Foo")).toBe(1);
+  });
+});
+
+describe("the index's prose mask", () => {
+  it("keeps tags and links in code out", () => {
+    const idx = new VaultIndex();
+    idx.build([{ path: "/v/A.md", rel: "A.md", name: "A", content: "#real [[B]]\n```\n#incode [[C]]\n```" }] as never);
+    expect(idx.allTags().map((t) => t.tag)).toEqual(["real"]);
+    expect(idx.outgoingLinksFor("/v/A.md").unresolved).toEqual(["B"]);
   });
 });

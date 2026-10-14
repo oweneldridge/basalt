@@ -8,12 +8,19 @@
 // of the source note's folder. `folder/Note`, `/Note` (root-anchored), and
 // `./`/`../` relative forms are all supported.
 import type { VaultNote } from "./vault";
+import { linkpathDest } from "./linkpath";
+import { htmlBlockRanges } from "./htmlBlocks";
+import { keepsEmphasis, mentionLinesFor, mentionRegex } from "./linkify";
+import { quoteMarkOffsets } from "./render";
 import {
   internalMdHref,
   mdLinkRegexGlobal,
   normalizeName,
   parseMarkdownLink,
   proseMask,
+  yamlLinkAt,
+  yamlValueLines,
+  yamlUnescape,
   tagRegex,
   targetPathPart,
   wikilinkRegex,
@@ -27,6 +34,8 @@ export interface LinkOccurrence {
   line: number;
   /** Trimmed text of the line, for display. */
   snippet: string;
+  /** Written as an embed, `![[…]]`. */
+  embed?: boolean;
 }
 
 /** A reference from one note to another, for the backlinks UI. */
@@ -71,65 +80,49 @@ function normalizeRel(rel: string): string {
     .toLowerCase();
 }
 
-/** Per-line dedupe key for extracted targets. Unlike normalizeRel it KEEPS a
- * leading `./` — resolve() treats `./Note` (source-folder relative) and bare
- * `Note` (vault-wide root-most) differently, so they must not collapse into
- * one occurrence or a real backlink is silently dropped. */
-function dedupeKey(p: string): string {
-  return p.replace(/\\/g, "/").replace(/\.md$/i, "").normalize("NFC").trim().toLowerCase();
-}
 
-function folderOf(normRel: string): string {
-  const i = normRel.lastIndexOf("/");
-  return i >= 0 ? normRel.slice(0, i) : "";
-}
-
-function depthOf(normRel: string): number {
-  return (normRel.match(/\//g) ?? []).length;
-}
 
 const INLINE_CODE_RE = /`[^`\n]*`/g;
 
-function extractLinks(content: string): LinkOccurrence[] {
+function extractLinks(lines: string[], prose: boolean[]): LinkOccurrence[] {
   const out: LinkOccurrence[] = [];
-  const lines = content.split("\n");
-  const prose = proseMask(lines); // skip frontmatter + fenced code
+  const yamlLines = yamlValueLines(lines);
+  const re = wikilinkRegex();
+  const mre = mdLinkRegexGlobal();
   for (let i = 0; i < lines.length; i++) {
-    if (!prose[i]) continue;
-    const line = lines[i].replace(INLINE_CODE_RE, " "); // `[[x]]` in code isn't a link
-    const re = wikilinkRegex();
-    const seen = new Set<string>();
+    // Property values are scanned too, as rewriteLinks does on rename.
+    const yaml = yamlLines[i];
+    if ((!prose[i] && !yaml) || !lines[i].includes("[")) continue;
+    const line = yaml ? lines[i] : lines[i].replace(INLINE_CODE_RE, " "); // `[[x]]` in code isn't a link
+    const ctxAt = (pos: number, len: number) => (yaml ? yamlLinkAt(line, pos, len) : { ok: true, quote: null });
+    re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(line))) {
-      const rawTarget = m[1].trim();
+      const ctx = ctxAt(m.index, m[0].length);
+      if (!ctx.ok) continue;
+      let rawTarget = yamlUnescape(m[1].trim(), ctx.quote);
+      // A table-escaped `[[Note\|alias]]`: the backslash isn't part of the name.
+      if (m[2] !== undefined && rawTarget.endsWith("\\")) rawTarget = rawTarget.slice(0, -1).trimEnd();
       const pathPart = targetPathPart(rawTarget);
       if (!pathPart) continue; // [[#heading]] self-ref
-      const key = dedupeKey(pathPart); // dedupe identical targets, keep distinct paths
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({ rawTarget, line: i + 1, snippet: lines[i].trim() });
+      out.push({ rawTarget, line: i + 1, snippet: lines[i].trim(), embed: line[m.index - 1] === "!" });
     }
     // Markdown-style internal links: [text](Note.md), [t](folder/My%20Note.md#H)
     // — Obsidian vaults configured with "Use [[Wikilinks]]: off" are full of
     // them, and they must feed backlinks/graph like wikilinks do.
-    const mre = mdLinkRegexGlobal();
+    mre.lastIndex = 0;
     while ((m = mre.exec(line))) {
+      const ctx = ctxAt(m.index, m[0].length);
+      if (!ctx.ok) continue;
       const parsed = parseMarkdownLink(m[0]);
       if (!parsed) continue;
-      const internal = internalMdHref(parsed.href);
+      const internal = internalMdHref(yamlUnescape(parsed.href, ctx.quote));
       if (!internal) continue;
       const rawTarget = internal.path + internal.fragment;
-      const key = dedupeKey(internal.path);
-      if (seen.has(key)) continue;
-      seen.add(key);
       out.push({ rawTarget, line: i + 1, snippet: lines[i].trim() });
     }
   }
   return out;
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** A `#tag` aggregate row for the tag pane. */
@@ -245,9 +238,21 @@ function splitOutsideQuotes(s: string): string[] {
 
 /** Distinct tags in a note (frontmatter `tags:` + body `#tag`), deduped
  * case-insensitively, preserving first-seen display casing. */
-export function extractTags(content: string): string[] {
-  const lines = content.split("\n");
-  const prose = proseMask(lines);
+// An inline HTML tag as CommonMark reads one (so `x<y and #z>` stays text).
+const HTML_TAG =
+  /<[a-zA-Z][a-zA-Z0-9-]*(?:\s+[a-zA-Z_:][a-zA-Z0-9_.:-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>|<\/[a-zA-Z][a-zA-Z0-9-]*\s*>/g;
+
+// What may come before a quote's `>`: indent, list marks and other quote marks.
+const QUOTE_MARKS_RE = /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]*)*$/;
+
+export function extractTags(content: string, lines = content.split("\n"), mask = proseMask(lines)): string[] {
+  let prose = mask;
+  // An SVG drawing's markup and labels aren't prose (its colours aren't tags).
+  for (const b of htmlBlockRanges(content)) {
+    if (!/^\s*<svg[\s>]/i.test(lines[b.fromLine])) continue;
+    if (prose === mask) prose = [...mask];
+    for (let i = b.fromLine; i <= b.toLine; i++) prose[i] = false;
+  }
   const seen = new Set<string>();
   const out: string[] = [];
   const add = (raw: string) => {
@@ -259,12 +264,31 @@ export function extractTags(content: string): string[] {
     out.push(t);
   };
   for (const t of frontmatterTags(lines)) add(t);
-  for (let i = 0; i < lines.length; i++) {
-    if (!prose[i]) continue;
-    const line = lines[i].replace(INLINE_CODE_RE, " "); // `#x` in code isn't a tag
-    const re = tagRegex();
+  // `>#tag` is a tag where that `>` opens a quote line. Where only quote
+  // marks come before it, in a note with no HTML or math, it does; anything
+  // else (list marks, indents, a block it may sit in) takes the whole note to
+  // tell, so the note is parsed only then.
+  const plainNote = !content.includes("<") && !content.includes("$$");
+  let quoteMarks: Set<number> | null = null;
+  let at = 0;
+  const blank = (s: string) => " ".repeat(s.length);
+  const re = tagRegex();
+  for (let i = 0; i < lines.length; at += lines[i].length + 1, i++) {
+    if (!prose[i] || !lines[i].includes("#")) continue;
+    const line = lines[i]
+      .replace(INLINE_CODE_RE, blank) // `#x` in code isn't a tag
+      .replace(HTML_TAG, blank); // nor is a colour in an HTML attribute
+    re.lastIndex = 0;
     let m: RegExpExecArray | null;
-    while ((m = re.exec(line))) add(m[2]); // group 2 = bare name
+    while ((m = re.exec(line))) {
+      if (/^\d+$/.test(m[2])) continue; // group 2 = bare name; `#42` isn't a tag
+      if (line[m.index - 1] === ">") {
+        const marks = lines[i].slice(0, m.index - 1);
+        if (!QUOTE_MARKS_RE.test(marks)) continue;
+        if (!(plainNote && /^(?: {0,3}> ?)*$/.test(marks)) && !(quoteMarks ??= quoteMarkOffsets(content)).has(at + m.index - 1)) continue;
+      }
+      add(m[2]);
+    }
   }
   return out;
 }
@@ -272,6 +296,8 @@ export function extractTags(content: string): string[] {
 export class VaultIndex {
   private occ = new Map<string, LinkOccurrence[]>();
   private meta = new Map<string, Meta>();
+  /** target path -> sources linking to it; rebuilt on demand after any change. */
+  private reverse: Map<string, Set<string>> | null = null;
   // Resolution: normalized basename -> paths (an array, so case/Unicode-distinct
   // notes that share a basename all coexist). Slashed targets filter by path.
   private byName = new Map<string, string[]>();
@@ -282,6 +308,7 @@ export class VaultIndex {
   private tags = new Map<string, string[]>();
 
   build(notes: VaultNote[]): void {
+    this.reverse = null;
     this.occ.clear();
     this.meta.clear();
     this.byName.clear();
@@ -295,14 +322,18 @@ export class VaultIndex {
     this.removeFromMaps(note.path); // drop the old name/alias entries for this path
     const aliases = frontmatterAliases(note.content);
     this.meta.set(note.path, { rel: note.rel, name: note.name, aliases: aliases.length ? aliases : undefined });
-    this.occ.set(note.path, extractLinks(note.content));
-    this.tags.set(note.path, extractTags(note.content));
+    const lines = note.content.split("\n");
+    const prose = proseMask(lines);
+    this.occ.set(note.path, extractLinks(lines, prose));
+    this.reverse = null;
+    this.tags.set(note.path, extractTags(note.content, lines, prose));
     this.addToMaps(note.path, note.name, aliases);
   }
 
   removeNote(path: string): void {
     this.removeFromMaps(path);
     this.occ.delete(path);
+    this.reverse = null;
     this.tags.delete(path);
     this.meta.delete(path);
   }
@@ -356,6 +387,32 @@ export class VaultIndex {
     return [...keys];
   }
 
+  /** Vault paths (no .md) of the notes that link to `targetPath`. */
+  backlinkRels(targetPath: string): string[] {
+    if (!this.reverse) {
+      const rev = new Map<string, Set<string>>();
+      for (const [source, occs] of this.occ) {
+        for (const o of occs) {
+          const dest = this.resolve(o.rawTarget, source);
+          if (!dest || dest === source) continue;
+          let set = rev.get(dest);
+          if (!set) rev.set(dest, (set = new Set()));
+          set.add(source);
+        }
+      }
+      this.reverse = rev;
+    }
+    return [...(this.reverse.get(targetPath) ?? [])]
+      .map((p) => (this.meta.get(p)?.rel ?? "").replace(/\.md$/i, ""))
+      .filter(Boolean)
+      .sort();
+  }
+
+  /** The raw targets of a note's `![[embeds]]`, in order. */
+  embedsOf(path: string): string[] {
+    return (this.occ.get(path) ?? []).filter((o) => o.embed).map((o) => o.rawTarget);
+  }
+
   /** Every tag in the vault with the number of notes using it. Sorted by count
    * (desc), then name — the order the tag pane shows. */
   allTags(): TagCount[] {
@@ -402,31 +459,28 @@ export class VaultIndex {
     for (const a of m.aliases ?? []) drop(this.byAlias, a);
   }
 
-  /** Pick the best of several same-basename candidates: root-most (shortest
-   * path) wins, alphabetical tie-break — matching Obsidian's vault-wide
-   * semantics (Obsidian does NOT prefer the source's folder). */
+  /** Shortest path first, then alphabetical (used for alias owners). */
   private pickBest(paths: string[]): string {
     if (paths.length === 1) return paths[0];
     return [...paths].sort((a, b) => {
       const ra = normalizeRel(this.meta.get(a)?.rel ?? "");
       const rb = normalizeRel(this.meta.get(b)?.rel ?? "");
-      return depthOf(ra) - depthOf(rb) || ra.localeCompare(rb);
+      return ra.length - rb.length || ra.localeCompare(rb);
     })[0];
-  }
-
-  /** Find candidates whose normalized rel exactly equals `wantRel`. */
-  private exactRel(candidates: string[], wantRel: string): string[] {
-    return candidates.filter((path) => normalizeRel(this.meta.get(path)?.rel ?? "") === wantRel);
   }
 
   /**
    * Resolve a raw wikilink target (from `sourcePath`) to a concrete note path,
-   * or null if no such note exists. Forms supported (all Obsidian-compatible):
-   * bare `[[Note]]` (vault-wide, root-most wins), `[[folder/Note]]` (path
-   * suffix), `[[/Note]]` (root-anchored exact), and `[[./N]]`/`[[../N]]`
-   * (relative to the source note's folder).
+   * or null if no such note exists, the way Obsidian does (see linkpath.ts):
+   * bare `[[Note]]`, `[[folder/Note]]`, `[[/Note]]`, `[[./N]]`/`[[../N]]`.
    */
   resolve(rawTarget: string, sourcePath: string): string | null {
+    return this.resolveFromRel(rawTarget, this.meta.get(sourcePath)?.rel ?? null);
+  }
+
+  /** resolve() for a link written in a note at `sourceRel`, which needn't be
+   * indexed: where a note's links would point after it moves. */
+  resolveFromRel(rawTarget: string, sourceRel: string | null): string | null {
     const p = targetPathPart(rawTarget);
     if (!p) return null;
     const segments = p.split(/[/\\]/);
@@ -444,45 +498,47 @@ export class VaultIndex {
       candidates = this.byName.get(normalizeName(lastSeg));
     }
     const real = candidates ?? [];
-
-    // Root-anchored: [[/folder/Note]] or [[/Note]] — exact path from the root.
-    if (p.startsWith("/") || p.startsWith("\\")) {
-      const wantRel = normalizeRel(p.replace(/^[/\\]+/, ""));
-      const matches = this.exactRel(real, wantRel);
-      return matches.length ? this.pickBest(matches) : null;
-    }
-
-    // Relative: any `.`/`..` segment — join against the source note's folder.
-    if (segments.some((s) => s === "." || s === "..")) {
-      const srcFolder = folderOf(normalizeRel(this.meta.get(sourcePath)?.rel ?? ""));
-      const stack = srcFolder ? srcFolder.split("/") : [];
-      for (const seg of segments) {
-        if (seg === "" || seg === ".") continue;
-        if (seg === "..") {
-          if (stack.length === 0) return null; // escapes the vault root
-          stack.pop();
-        } else {
-          stack.push(seg);
-        }
-      }
-      const wantRel = normalizeRel(stack.join("/"));
-      const matches = this.exactRel(real, wantRel);
-      return matches.length ? this.pickBest(matches) : null;
-    }
-
-    if (segments.length > 1) {
-      // Folder-qualified: keep only notes whose path ends with the given path.
-      const wantRel = normalizeRel(p);
-      const matches = real.filter((path) => {
-        const rel = normalizeRel(this.meta.get(path)?.rel ?? "");
-        return rel === wantRel || rel.endsWith(`/${wantRel}`);
-      });
-      return matches.length ? this.pickBest(matches) : null;
-    }
-    // Bare name: a real file wins; only if none matches do aliases apply.
-    if (real.length) return this.pickBest(real);
+    const hit = linkpathDest(p, sourceRel, real, (path) => this.meta.get(path)?.rel ?? "", ".md");
+    if (hit) return hit;
+    // A bare name with no such file: Basalt also tries aliases (Obsidian leaves
+    // these unresolved, so nothing is ever rewritten through one).
+    if (segments.length > 1 || real.length) return null;
     const aliasCands = basename ? this.byAlias.get(basename) : undefined;
     return aliasCands && aliasCands.length ? this.pickBest(aliasCands) : null;
+  }
+
+  /** Obsidian's metadataCache.resolvedLinks: for each note (vault-relative
+   * path), the notes its links resolve to and how many times. */
+  resolvedLinks(): Record<string, Record<string, number>> {
+    return this.linkCounts().resolved;
+  }
+
+  /** Obsidian's resolvedLinks and unresolvedLinks together: for each note
+   * (vault-relative path), how many of its links reach each file, and how many
+   * name one that isn't there (by the name as written). `other` finds a file
+   * that isn't a note, such as an attachment, by its vault-relative path. */
+  linkCounts(other?: (rawTarget: string, sourceRel: string) => string | null): {
+    resolved: Record<string, Record<string, number>>;
+    unresolved: Record<string, Record<string, number>>;
+  } {
+    const resolved: Record<string, Record<string, number>> = {};
+    const unresolved: Record<string, Record<string, number>> = {};
+    for (const [sourcePath, occs] of this.occ) {
+      const from = this.meta.get(sourcePath)?.rel;
+      if (!from) continue;
+      const found: Record<string, number> = (resolved[from] = {});
+      const missing: Record<string, number> = (unresolved[from] = {});
+      for (const o of occs) {
+        const target = this.resolve(o.rawTarget, sourcePath);
+        const to = target ? this.meta.get(target)?.rel : other?.(o.rawTarget, from);
+        if (to) found[to] = (found[to] ?? 0) + 1;
+        else if (other) {
+          const name = targetPathPart(o.rawTarget).trim();
+          missing[name] = (missing[name] ?? 0) + 1;
+        }
+      }
+    }
+    return { resolved, unresolved };
   }
 
   /** The whole vault as a graph: a node per note, an edge per resolved link. */
@@ -591,34 +647,28 @@ export class VaultIndex {
    * blocks are skipped, so only genuine, actionable mentions surface.
    */
   unlinkedMentionsFor(
-    noteName: string,
+    names: string | string[],
     notes: VaultNote[],
     excludePath?: string,
   ): Backlink[] {
-    const needle = noteName.trim();
-    if (!needle) return [];
-    const boundary = new RegExp(
-      `(^|[^\\p{L}\\p{N}_])${escapeRegex(needle)}([^\\p{L}\\p{N}_]|$)`,
-      "iu",
-    );
-    const linkRe = wikilinkRegex();
+    // The note's name and its aliases (Obsidian counts both).
+    const list = Array.isArray(names) ? names : [names];
+    if (!list.some((n) => n.trim())) return [];
+    const mention = mentionRegex(list, "giu");
+    const any = mentionRegex(list);
     const out: Backlink[] = [];
     for (const note of notes) {
-      if (note.path === excludePath) continue;
+      if (note.path === excludePath || !any.test(note.content)) continue;
+      // The mentions "Link" can link (the same mask it uses), one entry each:
+      // Obsidian counts every match. Indented code and raw HTML are looked for
+      // only where a line naming the note could be in them.
       const lines = note.content.split("\n");
-      const prose = proseMask(lines); // skip frontmatter + fenced code
+      const masked = mentionLinesFor(note.content, any);
       for (let i = 0; i < lines.length; i++) {
-        if (!prose[i]) continue;
-        const raw = lines[i];
-        // Code FIRST, then links — the same order as extractLinks, so a link
-        // straddling one backtick of a code span (CommonMark gives code
-        // precedence) can't surface a false mention from inside code.
-        const stripped = raw
-          .replace(INLINE_CODE_RE, " ")
-          .replace(linkRe, " ")
-          .replace(mdLinkRegexGlobal(), " ");
-        if (!boundary.test(stripped)) continue;
-        out.push({ path: note.path, name: note.name, line: i + 1, snippet: raw.trim() });
+        mention.lastIndex = 0;
+        for (let m; (m = mention.exec(masked[i])); ) {
+          if (keepsEmphasis(lines, i, m.index, m.index + m[0].length)) out.push({ path: note.path, name: note.name, line: i + 1, snippet: lines[i].trim() });
+        }
       }
     }
     return out;

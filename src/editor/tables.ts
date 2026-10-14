@@ -11,7 +11,8 @@ import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { renderInline } from "./inlineRender";
-import { parseTable, serializeTable, insertRow, deleteRow, insertColumn, deleteColumn } from "../lib/tableEdit";
+import { hasMathLoaded, mathGeneration } from "./mathRender";
+import { editTableSource, tablePrefix, insertRow, deleteRow, insertColumn, deleteColumn } from "../lib/tableEdit";
 import type { ParsedTable } from "../lib/tableEdit";
 
 // Split a table row into cells on UNescaped pipes, then unescape `\|`.
@@ -35,24 +36,34 @@ export function cellOffsetInLine(line: string, col: number): number {
 }
 
 class TableWidget extends WidgetType {
-  constructor(readonly source: string) {
+  constructor(
+    readonly source: string,
+    readonly mathGeneration: number,
+  ) {
     super();
   }
   eq(other: TableWidget): boolean {
-    return other.source === this.source;
+    return other.source === this.source && other.mathGeneration === this.mathGeneration;
   }
   toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "cm-md-table-wrap";
     const table = document.createElement("table");
     table.className = "cm-md-table";
-    const lines = this.source.split("\n").filter((l) => l.trim().length > 0);
+    // A table in a list item or callout: its rows share an indent or `>` prefix.
+    const prefix = tablePrefix(this.source);
+    const raw = this.source.split("\n").filter((l) => l.trim().length > 0);
+    const lines = raw.map((l) => l.slice(prefix.length));
     if (lines.length === 0) {
       wrap.append(table);
       return wrap;
     }
     const headerCells = splitCells(lines[0]);
     const cols = headerCells.length;
+    // Each column's alignment, from the delimiter row (`:--`, `:-:`, `--:`).
+    const aligns = splitCells(lines[1] ?? "").map((d) =>
+      d.startsWith(":") && d.endsWith(":") ? "center" : d.endsWith(":") ? "right" : d.startsWith(":") ? "left" : "",
+    );
     // Source-line index for each rendered row: header is line 0; body rows skip
     // the delimiter (line 1). Built alongside the DOM for cell-precise caret.
     const bodyLineIdx: number[] = [];
@@ -68,10 +79,10 @@ class TableWidget extends WidgetType {
     const edit = (fn: (t: ParsedTable) => ParsedTable) => (e: Event) => {
       e.preventDefault();
       e.stopPropagation();
-      const t = parseTable(this.source);
-      if (!t) return;
+      const next = editTableSource(this.source, fn);
+      if (next === null) return;
       const { from, to } = range();
-      view.dispatch({ changes: { from, to, insert: serializeTable(fn(t)) } });
+      view.dispatch({ changes: { from, to, insert: next } });
     };
     // Reveal the raw source with the caret inside a specific cell.
     const editCell = (lineIdx: number, col: number) => (e: Event) => {
@@ -80,8 +91,8 @@ class TableWidget extends WidgetType {
       e.preventDefault();
       e.stopPropagation();
       const { from } = range();
-      const before = lines.slice(0, lineIdx).reduce((n, l) => n + l.length + 1, 0);
-      const pos = from + before + cellOffsetInLine(lines[lineIdx], col);
+      const before = raw.slice(0, lineIdx).reduce((n, l) => n + l.length + 1, 0);
+      const pos = from + before + prefix.length + cellOffsetInLine(lines[lineIdx], col);
       view.dispatch({ selection: { anchor: pos } });
       view.focus();
     };
@@ -98,9 +109,10 @@ class TableWidget extends WidgetType {
     const headRow = document.createElement("tr");
     headerCells.forEach((cell, c) => {
       const th = document.createElement("th");
+      if (aligns[c]) th.style.textAlign = aligns[c];
       const content = document.createElement("span");
       content.className = "cm-table-cell";
-      content.append(renderInline(cell));
+      content.append(renderInline(cell, view));
       content.addEventListener("mousedown", editCell(0, c));
       th.append(content);
       // Per-column controls (delete this column, insert one to its right).
@@ -120,14 +132,17 @@ class TableWidget extends WidgetType {
     bodyLineIdx.forEach((lineIdx, bodyRow) => {
       const cells = splitCells(lines[lineIdx]);
       const tr = document.createElement("tr");
-      for (let c = 0; c < cols; c++) {
+      // Cells past the header's last show too, as in Obsidian.
+      const width = Math.max(cols, cells.length);
+      for (let c = 0; c < width; c++) {
         const td = document.createElement("td");
+        if (aligns[c]) td.style.textAlign = aligns[c];
         const content = document.createElement("span");
         content.className = "cm-table-cell";
-        content.append(renderInline(cells[c] ?? ""));
+        content.append(renderInline(cells[c] ?? "", view));
         content.addEventListener("mousedown", editCell(lineIdx, c));
         td.append(content);
-        if (c === cols - 1) {
+        if (c === width - 1) {
           const bar = document.createElement("span");
           bar.className = "cm-table-rowbar";
           bar.append(
@@ -154,8 +169,10 @@ class TableWidget extends WidgetType {
     return wrap;
   }
   // Let control buttons / cell spans handle their own events; CM ignores them.
+  // A link in a cell goes to the editor, whose link handlers open it.
   ignoreEvent(event: Event): boolean {
     const t = event.target as HTMLElement | null;
+    if (t?.closest(".cm-wikilink, .cm-md-link")) return false;
     return !!t && (!!t.closest(".cm-table-ctrl") || !!t.closest(".cm-table-cell"));
   }
 }
@@ -185,7 +202,7 @@ function computeTables(state: EditorState): TableState {
       ranges.push({ from, to });
       if (touches(from, to)) return false; // editing: show raw
       const source = doc.sliceString(from, to);
-      builder.add(from, to, Decoration.replace({ widget: new TableWidget(source), block: true }));
+      builder.add(from, to, Decoration.replace({ widget: new TableWidget(source, mathGeneration()), block: true }));
       return false;
     },
   });
@@ -202,7 +219,7 @@ function touchedKey(ranges: { from: number; to: number }[], sel: EditorSelection
 const tableField = StateField.define<TableState>({
   create: (state) => computeTables(state),
   update: (value, tr) => {
-    if (tr.docChanged || syntaxTree(tr.state) !== syntaxTree(tr.startState)) {
+    if (tr.docChanged || syntaxTree(tr.state) !== syntaxTree(tr.startState) || hasMathLoaded(tr.effects)) {
       return computeTables(tr.state);
     }
     // On a pure selection change, only rebuild if a table's touched-state flipped

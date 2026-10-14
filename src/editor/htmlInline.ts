@@ -1,18 +1,19 @@
-// Inline raw HTML in Live Preview: render the SAFE, attribute-free inline tags
-// (<sup>, <sub>, <mark>, <kbd>, <u>, <s>, <ins>, <del>, <small>, <abbr>, <cite>)
-// by concealing the tags and styling the content with a class that mimics the
-// element (superscript via vertical-align, highlight, strike, …), revealing the
-// raw markup when the caret is on the span. Only this fixed allowlist — no
-// attributes, no <script>/<style> — so it's safe (the same set render.ts allows
-// inline; block HTML stays in Reading mode / export via DOMPurify).
+// Inline raw HTML in Live Preview: the inline tags Reading view renders
+// (<b>, <i>, <span>, <font>, <sup>, <mark>, <kbd>, …) show by concealing the
+// tags and styling the content with a class that mimics the element
+// (superscript via vertical-align, highlight, strike, …), revealing the raw
+// markup when the caret is on the span. Attributes are dropped, as Reading view
+// drops them, but for a plain colour on <font>. Nothing else is ever rendered,
+// so it's safe; block HTML stays in Reading mode / export via DOMPurify.
 import { RangeSetBuilder } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { isInExcludedRegion, treeChanged } from "./regions";
 
-const TAGS = "sup|sub|mark|kbd|u|s|ins|del|small|abbr|cite";
-const PAIR_RE = new RegExp(`<(${TAGS})>([^<]*?)</\\1>`, "gi");
+const TAGS = "abbr|bdi|big|b|cite|code|del|dfn|em|font|ins|i|kbd|mark|q|samp|small|span|strike|strong|sub|sup|s|time|u|var";
+const PAIR_RE = new RegExp(`<(${TAGS})(\\s[^<>]*)?>([^<]*?)</\\1>`, "gi");
+const FONT_COLOR = /\bcolor\s*=\s*["']?(#[0-9a-f]{3,8}|[a-z]+)["'\s>]?/i;
 const CONCEAL = Decoration.replace({});
 
 function build(view: EditorView): DecorationSet {
@@ -31,12 +32,16 @@ function build(view: EditorView): DecorationSet {
       if (isInExcludedRegion(view.state, start)) continue;
       if (touches(start, end)) continue; // editing → show raw markup
       const tag = m[1].toLowerCase();
-      const openLen = tag.length + 2; // `<tag>`
-      const innerFrom = start + openLen;
+      const innerFrom = start + m[0].indexOf(">") + 1;
       const innerTo = end - (tag.length + 3); // `</tag>`
       if (innerTo <= innerFrom) continue;
+      const color = tag === "font" ? FONT_COLOR.exec(m[2] ?? "")?.[1] : undefined;
       builder.add(start, innerFrom, CONCEAL);
-      builder.add(innerFrom, innerTo, Decoration.mark({ class: `cm-html-${tag}` }));
+      builder.add(
+        innerFrom,
+        innerTo,
+        Decoration.mark({ class: `cm-html-${tag}`, attributes: color ? { style: `color: ${color}` } : undefined }),
+      );
       builder.add(innerTo, end, CONCEAL);
     }
   }

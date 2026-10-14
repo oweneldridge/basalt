@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   parseTable,
+  tablePrefix,
+  editTableSource,
   serializeTable,
   insertRow,
   deleteRow,
@@ -58,5 +60,24 @@ describe("tableEdit", () => {
     const out = serializeTable(insertRow(t, 1));
     expect(out).toContain("3"); // and survives a structural edit
     expect(parseTable(out)!.rows.find((r) => r.includes("3"))).toBeTruthy();
+  });
+});
+
+describe("tables inside list items and callouts", () => {
+  it("finds the indent or quote markers every row shares", () => {
+    expect(tablePrefix("| a |\n| - |")).toBe("");
+    expect(tablePrefix("   | a |\n   | - |\n   | 1 |")).toBe("   ");
+    expect(tablePrefix("> | a |\n> | - |")).toBe("> ");
+    expect(tablePrefix(">   | a |\n>   | --- |\n>  | 1 |")).toBe(">  ");
+  });
+
+  it("keeps the prefix on every line through a structural edit", () => {
+    const listed = "   | a | b |\n   | - | - |\n   | 1 | 2 |";
+    expect(editTableSource(listed, (t) => insertRow(t, t.rows.length))).toBe(
+      "   | a   | b   |\n   | --- | --- |\n   | 1   | 2   |\n   |     |     |",
+    );
+    const quoted = "> | a |\n> | - |\n> | 1 |";
+    expect(editTableSource(quoted, (t) => insertColumn(t, 1))).toBe("> | a   |     |\n> | --- | --- |\n> | 1   |     |");
+    expect(editTableSource("not a table", (t) => t)).toBeNull();
   });
 });

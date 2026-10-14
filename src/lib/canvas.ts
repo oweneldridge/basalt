@@ -62,7 +62,13 @@ export interface CanvasData {
   passEdges?: unknown[];
   /** Top-level canvas keys other than nodes/edges, preserved on save. */
   topRaw?: Record<string, unknown>;
+  /** The file's top-level keys in order, so a save keeps it. */
+  topKeys?: string[];
 }
+
+// Sets `k` as an own key, `__proto__` included.
+const own = (o: Record<string, unknown>, k: string, v: unknown) =>
+  Object.defineProperty(o, k, { value: v, enumerable: true, writable: true, configurable: true });
 
 /** Serialize a CanvasData back to JSON Canvas text (tab-indented, like
  * Obsidian). Fields Basalt models are written from the live node/edge; any OTHER
@@ -87,7 +93,7 @@ export function serializeCanvas(data: CanvasData): string {
     o.width = r(n.width);
     o.height = r(n.height);
     put(o, "color", n.color);
-    if (n.type === "text") put(o, "text", n.text);
+    if (n.type === "text") o.text = n.text ?? ""; // required by the spec, even when empty
     else if (n.type === "file") {
       put(o, "file", n.file);
       put(o, "subpath", n.subpath);
@@ -110,10 +116,27 @@ export function serializeCanvas(data: CanvasData): string {
   });
   // Re-append verbatim the entries Basalt didn't model, and preserve any
   // top-level keys, so a save is non-destructive.
-  const top: Record<string, unknown> = { ...(data.topRaw ?? {}) };
-  top.nodes = [...nodes, ...(data.passNodes ?? [])];
-  top.edges = [...edges, ...(data.passEdges ?? [])];
-  return JSON.stringify(top, null, "\t");
+  const raw = data.topRaw ?? {};
+  const all: Record<string, unknown> = {
+    ...raw,
+    nodes: [...nodes, ...(data.passNodes ?? [])],
+    edges: [...edges, ...(data.passEdges ?? [])],
+  };
+  const top: Record<string, unknown> = {};
+  for (const k of [...(data.topKeys ?? []), ...Object.keys(all)]) own(top, k, all[k]);
+  return canvasText(top);
+}
+
+/** A canvas's JSON laid out as Obsidian writes it: a tab per level, each node
+ * and edge on a line of its own, other keys on one line, no newline at the end. */
+export function canvasText(top: Record<string, unknown>): string {
+  const listed = (key: string, value: unknown): value is unknown[] =>
+    (key === "nodes" || key === "edges") && Array.isArray(value) && value.length > 0;
+  const entry = ([key, value]: [string, unknown]) =>
+    `\t${JSON.stringify(key)}:` +
+    (listed(key, value) ? `[\n${value.map((v) => "\t\t" + JSON.stringify(v)).join(",\n")}\n\t]` : JSON.stringify(value));
+  const entries = Object.entries(top);
+  return entries.length ? `{\n${entries.map(entry).join(",\n")}\n}` : "{}";
 }
 
 function num(v: unknown, fallback = 0): number {
@@ -131,12 +154,17 @@ function end(v: unknown): End | undefined {
 
 /** Rewrite `file:` references in a canvas's file-nodes using `relMap`
  * (oldRel → newRel), for keeping canvas embeds pointing at a renamed/moved
- * note. This is a MINIMAL edit of the raw JSON — it changes only matched `file`
+ * note. This is a MINIMAL edit of the raw JSON: it changes only matched `file`
  * fields and re-stringifies, so it never rounds geometry or drops fields the
  * canvas modeler doesn't understand (unlike serializeCanvas). Returns the new
  * JSON, or null if nothing changed / the JSON is unparseable. A file-node's
- * subpath lives in a separate field, so `Note.md#heading` embeds keep it. */
-export function rewriteCanvasFileRefs(json: string, relMap: Map<string, string>): string | null {
+ * subpath lives in a separate field, so `Note.md#heading` embeds keep it.
+ * With `fixText`, each text card's text goes through it too. */
+export function rewriteCanvasFileRefs(
+  json: string,
+  relMap: Map<string, string>,
+  fixText?: (text: string) => string | null,
+): string | null {
   let data: unknown;
   try {
     data = JSON.parse(json);
@@ -151,7 +179,16 @@ export function rewriteCanvasFileRefs(json: string, relMap: Map<string, string>)
   let changed = false;
   for (const n of (data as { nodes: unknown[] }).nodes) {
     if (!n || typeof n !== "object") continue;
-    const node = n as { type?: unknown; file?: unknown };
+    const node = n as { type?: unknown; file?: unknown; text?: unknown };
+    // A text card's links, as Obsidian fixes them on a rename.
+    if (node.type === "text" && typeof node.text === "string" && fixText) {
+      const text = fixText(node.text);
+      if (text !== null && text !== node.text) {
+        node.text = text;
+        changed = true;
+      }
+      continue;
+    }
     if (node.type !== "file" || typeof node.file !== "string") continue;
     const to = relMap.get(node.file) ?? lower.get(node.file.toLowerCase());
     if (to !== undefined && to !== node.file) {
@@ -159,7 +196,7 @@ export function rewriteCanvasFileRefs(json: string, relMap: Map<string, string>)
       changed = true;
     }
   }
-  return changed ? JSON.stringify(data, null, "\t") : null;
+  return changed ? canvasText(data as Record<string, unknown>) : null;
 }
 
 /** Parse JSON Canvas text. Returns null only if the JSON itself is unparseable;
@@ -254,9 +291,9 @@ export function parseCanvas(json: string): CanvasData | null {
   // Preserve any top-level keys besides nodes/edges (Obsidian metadata, etc.).
   const topRaw: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(d as Record<string, unknown>)) {
-    if (k !== "nodes" && k !== "edges") topRaw[k] = v;
+    if (k !== "nodes" && k !== "edges") own(topRaw, k, v);
   }
-  return { nodes, edges, passNodes, passEdges, topRaw };
+  return { nodes, edges, passNodes, passEdges, topRaw, topKeys: Object.keys(d) };
 }
 
 /** Bounding box over all nodes (for fit-to-view). Null when empty. */

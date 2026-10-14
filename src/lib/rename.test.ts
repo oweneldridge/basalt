@@ -1,14 +1,21 @@
 // Tests for vault-wide link rewriting on rename — the riskiest text surgery in
 // the app: it edits OTHER notes' content, so every preserved detail matters.
 import { describe, expect, it } from "vitest";
-import { linkTargetFor, rewriteLinks } from "./rename";
-import { targetPathPart } from "./markdown";
+import { linkTargetFor, linkTargetForFormat, relativeLinkTarget, rewriteLinks } from "./rename";
+import { internalFileHref, targetPathPart, yamlValueLines } from "./markdown";
+import { VaultIndex } from "./vaultIndex";
+import type { VaultNote } from "./vault";
 
-// A mapper that renames targets whose path part matches `oldName`.
+// A mapper that renames targets whose path part matches `oldName` (markdown
+// links arrive with their .md extension).
 const renameMap = (oldName: string, newName: string) => (raw: string) =>
-  targetPathPart(raw).toLowerCase() === oldName.toLowerCase() ? newName : null;
+  targetPathPart(raw).replace(/\.md$/i, "").toLowerCase() === oldName.toLowerCase() ? newName : null;
 
 describe("rewriteLinks", () => {
+  it("returns null when every link it maps comes out the same", () => {
+    const same = (raw: string) => targetPathPart(raw).replace(/\.md$/i, "");
+    expect(rewriteLinks("[[Ideas|mine]] [[Ideas#Later]] ![[Ideas]] [i](Ideas.md)\n", same)).toBeNull();
+  });
   it("rewrites a plain wikilink", () => {
     expect(rewriteLinks("see [[Old]] here", renameMap("Old", "New"))).toBe("see [[New]] here");
   });
@@ -55,6 +62,59 @@ describe("rewriteLinks", () => {
       ["---", "up: [[Old]]", "---", "```", "[[Old]]", "```", "real [[New]]"].join("\n"),
     );
   });
+  it("rewrites links that are a whole quoted property value", () => {
+    const doc = [
+      "---",
+      'up: "[[Old]]"',
+      "see:",
+      '  - "[[Old#Goals|goals]]"',
+      '  - "[[Other]]"',
+      'flow: ["[[Old]]", "[[Other]]"]',
+      "note: met about [[Old]] today",
+      'mid: "see [[Old]]"',
+      "ref: '[text](Old.md)'",
+      "---",
+      "body [[Old]]",
+    ].join("\n");
+    expect(rewriteLinks(doc, renameMap("Old", "New"))).toBe(
+      [
+        "---",
+        'up: "[[New]]"',
+        "see:",
+        '  - "[[New#Goals|goals]]"',
+        '  - "[[Other]]"',
+        'flow: ["[[New]]", "[[Other]]"]',
+        "note: met about [[Old]] today",
+        'mid: "see [[Old]]"',
+        "ref: '[text](New.md)'",
+        "---",
+        "body [[New]]",
+      ].join("\n"),
+    );
+  });
+  it("keeps YAML quoting valid when the new name has a quote character", () => {
+    const doc = ["---", "a: '[[Old]]'", 'b: "[[Old]]"', "---"].join("\n");
+    expect(rewriteLinks(doc, renameMap("Old", "Owen's \"Q\""))).toBe(
+      ["---", "a: '[[Owen''s \"Q\"]]'", 'b: "[[Owen\'s \\"Q\\"]]"', "---"].join("\n"),
+    );
+  });
+  it("matches an escaped quote in a single-quoted property link", () => {
+    const doc = ["---", "a: '[[Owen''s]]'", "---"].join("\n");
+    expect(rewriteLinks(doc, renameMap("Owen's", "Mine"))).toBe(["---", "a: '[[Mine]]'", "---"].join("\n"));
+  });
+  it("leaves links in block-scalar property text alone, as Obsidian does", () => {
+    const doc = ["---", "summary: |", "  see [[Old]]", "  [[Old]] again", "next: x", "---"].join("\n");
+    expect(rewriteLinks(doc, renameMap("Old", "New"))).toBeNull();
+  });
+  it("leaves YAML comments and unquoted nested-list values alone", () => {
+    const doc = ["---", "up: [[Old]]", "- [[Old]]", "x: 1 # [[Old]]", "# [[Old]]", "---"].join("\n");
+    expect(rewriteLinks(doc, renameMap("Old", "New"))).toBeNull();
+  });
+  it("keeps the escaped pipe of a table-cell link", () => {
+    expect(rewriteLinks("| [[Old\\|x]] | [[Old#H\\|y]] |", renameMap("Old", "New"))).toBe(
+      "| [[New\\|x]] | [[New#H\\|y]] |",
+    );
+  });
   it("rewrites multiple links on one line independently", () => {
     expect(rewriteLinks("[[Old]] then [[Other]] then [[Old|x]]", renameMap("Old", "New"))).toBe(
       "[[New]] then [[Other]] then [[New|x]]",
@@ -89,7 +149,7 @@ describe("markdown-style link rewriting", () => {
     const map = (raw: string) =>
       targetPathPart(raw).toLowerCase() === "old note.md" ? "Renamed" : null;
     expect(rewriteLinks("[x](Old%20Note.md)", map)).toBe("[x](Renamed.md)");
-    expect(rewriteLinks("[x](<Old Note.md>)", map)).toBe("[x](Renamed.md)");
+    expect(rewriteLinks("[x](<Old Note.md>)", map)).toBe("[x](<Renamed.md>)");
   });
   it("rewrites image-embed form and leaves externals/code spans alone", () => {
     const map = (raw: string) =>
@@ -111,17 +171,70 @@ describe("markdown-style link rewriting", () => {
     expect(rewriteLinks("[see [1]](Old.md)", map)).toBe("[see [1]](New.md)");
     expect(rewriteLinks("[![alt](img.png)](Old.md)", map)).toBe("[![alt](img.png)](New.md)");
   });
-  it("keeps the angle form when the fragment needs it (spaces/parens)", () => {
+  it("keeps the angle form, with the raw path, as Obsidian does", () => {
     const map = (raw: string) =>
       targetPathPart(raw).toLowerCase() === "old.md" ? "New" : null;
     expect(rewriteLinks("see [t](<Old.md#My Heading>) here", map)).toBe(
       "see [t](<New.md#My Heading>) here",
     );
     expect(rewriteLinks("[t](<Old.md#a(b)>)", map)).toBe("[t](<New.md#a(b)>)");
-    // A safe fragment still un-angles and percent-encodes like Obsidian.
     const spaced = (raw: string) =>
-      targetPathPart(raw).toLowerCase() === "old note.md" ? "Renamed" : null;
-    expect(rewriteLinks("[x](<Old Note.md#Sec>)", spaced)).toBe("[x](Renamed.md#Sec)");
+      targetPathPart(raw).toLowerCase() === "old note.md" ? "Renamed Note" : null;
+    expect(rewriteLinks("[x](<Old Note.md#Sec>)", spaced)).toBe("[x](<Renamed Note.md#Sec>)");
+    expect(rewriteLinks("[x](Old%20Note.md)", spaced)).toBe("[x](Renamed%20Note.md)");
+    // A path an angled link can't hold is encoded instead.
+    const odd = (raw: string) => (targetPathPart(raw).toLowerCase() === "old.md" ? "a>b" : null);
+    expect(rewriteLinks("[x](<Old.md>)", odd)).toBe("[x](a%3Eb.md)");
+    const nl = (raw: string) => (targetPathPart(raw).toLowerCase() === "old.md" ? "a\nb" : null);
+    expect(rewriteLinks("[x](<Old.md>)", nl)).toBe("[x](a%0Ab.md)");
+    const spacedOld = (raw: string) => (targetPathPart(raw).toLowerCase() === "old.md" ? "New Note" : null);
+    expect(rewriteLinks("[a](<Old.md#a\\>b>)", spacedOld)).toBe("[a](New%20Note.md#a\\>b)");
+  });
+
+  it("encodes a path that wouldn't read back as itself in angle brackets", () => {
+    const hrefOf = (out: string | null) => internalFileHref(/\]\(<?([^>)]*)>?\)/.exec(out ?? "")![1]);
+    // A file named with # (linked as %23) stays one file name.
+    const lit = (raw: string, literal?: boolean) => (literal && raw === "a#b.png" ? "c#d.png" : null);
+    const a = rewriteLinks("[x](<a%23b.png>)", lit);
+    expect(a).toBe("[x](c%23d.png)");
+    expect(hrefOf(a)).toEqual({ path: "c#d.png", fragment: "" });
+    const toHash = (raw: string) => (targetPathPart(raw) === "pic.png" ? "a#b.png" : null);
+    expect(hrefOf(rewriteLinks("[x](<pic.png>)", toHash))).toEqual({ path: "a#b.png", fragment: "" });
+    // A name that looks like an escape isn't decoded into another name.
+    const pct = (raw: string) => (targetPathPart(raw) === "Old.md" ? "Rate %41" : null);
+    const b = rewriteLinks("[x](<Old.md>)", pct);
+    expect(b).toBe("[x](Rate%20%2541.md)");
+    expect(hrefOf(b)?.path).toBe("Rate %41.md");
+    // A bare % that isn't an escape reads back fine, so it stays angled.
+    const bare = (raw: string) => (targetPathPart(raw) === "Old.md" ? "100% done" : null);
+    expect(rewriteLinks("[x](<Old.md#Sec>)", bare)).toBe("[x](<100% done.md#Sec>)");
+  });
+});
+
+describe("relative links that a vault path would capture", () => {
+  const vnote = (rel: string): VaultNote => ({ path: `/v/${rel}`, rel, name: rel.split("/").pop()!.replace(/\.md$/, ""), content: "" });
+  const at = (rels: string[]) => {
+    const i = new VaultIndex();
+    i.build(rels.map(vnote));
+    return (from: string, to: string) => (text: string) => i.resolveFromRel(text, from) === `/v/${to}`;
+  };
+
+  it("keeps ./ when a root note has the bare path, as the link must still find its note", () => {
+    const reaches = at(["projects/A.md", "projects/Done.md", "Done.md", "projects/sub/Leaf.md", "sub/Leaf.md"]);
+    expect(relativeLinkTarget("projects/A.md", "projects/Done", reaches("projects/A.md", "projects/Done.md"))).toBe("./Done");
+    expect(relativeLinkTarget("projects/A.md", "projects/sub/Leaf", reaches("projects/A.md", "projects/sub/Leaf.md"))).toBe("./sub/Leaf");
+    expect(linkTargetForFormat("relative", "projects/Done", false, "projects/A.md", reaches("projects/A.md", "projects/Done.md"))).toBe("./Done");
+  });
+
+  it("writes the bare path, as Obsidian 1.14 does, when it finds the note", () => {
+    const reaches = at(["projects/A.md", "projects/Done.md", "projects/sub/Leaf.md", "other/Done.md", "x/sub/Leaf.md"]);
+    expect(relativeLinkTarget("projects/A.md", "projects/Done", reaches("projects/A.md", "projects/Done.md"))).toBe("Done");
+    expect(relativeLinkTarget("projects/A.md", "projects/sub/Leaf", reaches("projects/A.md", "projects/sub/Leaf.md"))).toBe("sub/Leaf");
+  });
+
+  it("climbs to a root note named like the note's own folder", () => {
+    expect(relativeLinkTarget("p/A.md", "p")).toBe("../p");
+    expect(relativeLinkTarget("p/q/A.md", "p/q")).toBe("../q");
   });
 });
 
@@ -146,5 +259,64 @@ describe("inline code inside link parts survives rewriting", () => {
     expect(rewriteLinks("[[Old#My `code` heading]]", renameMap("Old", "New"))).toBe(
       "[[New#My `code` heading]]",
     );
+  });
+});
+
+describe("block scalars in properties", () => {
+  const note = [
+    "---",
+    "summary: |",
+    '  "[[A]]"',
+    "",
+    '  more "[[A]]"',
+    "notes:",
+    "  - >-",
+    '    "[[A]]"',
+    'up: "[[A]]"',
+    "---",
+    '"[[A]]" in the body',
+  ].join("\n");
+
+  it("marks only lines that can hold a property value", () => {
+    expect(yamlValueLines(note.split("\n"))).toEqual([false, true, false, false, false, true, true, false, true, false, false]);
+  });
+
+  it("rewrites the property link but not the block scalar text", () => {
+    const out = rewriteLinks(note, renameMap("A", "B"))!;
+    expect(out.split("\n")).toEqual([
+      "---",
+      "summary: |",
+      '  "[[A]]"',
+      "",
+      '  more "[[A]]"',
+      "notes:",
+      "  - >-",
+      '    "[[A]]"',
+      'up: "[[B]]"',
+      "---",
+      '"[[B]]" in the body',
+    ]);
+  });
+});
+
+describe("block scalar detection edge cases", () => {
+  it("a comment or a sibling key doesn't hide property links; |2- headers count", () => {
+    const lines = [
+      "---",
+      "related: # format: |",
+      '  - "[[A]]"',
+      "items:",
+      "  - note: |",
+      "      text",
+      '    up: "[[A]]"',
+      "poem: |2-",
+      '    "[[A]]"',
+      "---",
+    ];
+    expect(yamlValueLines(lines)).toEqual([false, true, true, true, true, false, true, true, false, false]);
+    const out = rewriteLinks(lines.join("\n"), renameMap("A", "B"))!;
+    expect(out).toContain('  - "[[B]]"');
+    expect(out).toContain('    up: "[[B]]"');
+    expect(out).toContain('    "[[A]]"\n---');
   });
 });

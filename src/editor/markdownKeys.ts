@@ -29,18 +29,31 @@ function enclosing(
 }
 
 /** Toggle an inline emphasis marker around each selection range. `typeName` is
- * the lezer node this marker produces (Emphasis / StrongEmphasis). */
-function toggleWrap(marker: string, typeName: string): StateCommand {
+ * the lezer node this marker produces (Emphasis / StrongEmphasis). As in
+ * Obsidian, a bare caret works on the word it's in, steps out of the markers
+ * when it sits right before the closing ones, and spaces at a selection's ends
+ * stay outside the markers. */
+function toggleWrap(marker: string, alt: string, typeName: string): StateCommand {
   const len = marker.length;
   return ({ state, dispatch }) => {
     if (state.readOnly) return false;
+    const wrapped = new Set<number>(); // words already wrapped (two carets in one)
     const tr = state.changeByRange((range) => {
-      const { from, to } = range;
+      let { from, to } = range;
+      while (from < to && /\s/.test(state.sliceDoc(from, from + 1))) from++;
+      while (to > from && /\s/.test(state.sliceDoc(to - 1, to))) to--;
       const inverted = range.head < range.anchor;
       const mkRange = (a: number, b: number) =>
         inverted ? EditorSelection.range(b, a) : EditorSelection.range(a, b);
 
       const node = enclosing(state, from, to, typeName);
+      if (node && range.empty) {
+        const next = state.sliceDoc(from, from + len);
+        const close = node.lastChild;
+        if ((next === marker || next === alt) && close?.name === "EmphasisMark" && close.from === from) {
+          return { range: EditorSelection.cursor(from + len) };
+        }
+      }
       if (node) {
         // Unwrap: delete the node's actual opening/closing mark children (their
         // real lengths matter — `***` nests Emphasis and StrongEmphasis marks).
@@ -61,6 +74,19 @@ function toggleWrap(marker: string, typeName: string): StateCommand {
             range: mkRange(cf - shift, ct - shift),
           };
         }
+      }
+      // A bare caret wraps the word it's in, keeping its place in it.
+      const word = range.empty ? state.wordAt(from) : null;
+      if (word && wrapped.has(word.from)) return { range: EditorSelection.cursor(from) };
+      if (word) {
+        wrapped.add(word.from);
+        return {
+          changes: [
+            { from: word.from, insert: marker },
+            { from: word.to, insert: marker },
+          ],
+          range: EditorSelection.cursor(from + len),
+        };
       }
       // Wrap (an empty selection gets the markers with the caret inside).
       return {
@@ -99,8 +125,8 @@ const insertLink: StateCommand = ({ state, dispatch }) => {
 };
 
 // Also exposed as commands so the editor context menu can invoke them.
-export const toggleBold = toggleWrap("**", "StrongEmphasis");
-export const toggleItalic = toggleWrap("*", "Emphasis");
+export const toggleBold = toggleWrap("**", "__", "StrongEmphasis");
+export const toggleItalic = toggleWrap("*", "_", "Emphasis");
 
 export const markdownKeys: readonly KeyBinding[] = [
   { key: "Mod-b", run: toggleBold },

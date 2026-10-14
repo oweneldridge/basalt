@@ -42,9 +42,11 @@ describe("fillTemplate", () => {
 
 describe("relativeLinkTarget", () => {
   it("computes sibling and ancestor paths", () => {
-    expect(relativeLinkTarget("projects/A.md", "projects/B")).toBe("./B");
+    // No `./` for the note's own folder or below, as Obsidian 1.14 writes them.
+    expect(relativeLinkTarget("projects/A.md", "projects/B")).toBe("B");
     expect(relativeLinkTarget("projects/deep/A.md", "inbox/Todo")).toBe("../../inbox/Todo");
-    expect(relativeLinkTarget("A.md", "inbox/Todo")).toBe("./inbox/Todo");
+    expect(relativeLinkTarget("A.md", "inbox/Todo")).toBe("inbox/Todo");
+    expect(relativeLinkTarget("projects/A.md", "projects/sub/C")).toBe("sub/C");
   });
 });
 

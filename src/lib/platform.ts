@@ -50,10 +50,12 @@ type WebEvent = { payload: unknown };
 const webHandlers = new Map<string, Set<(e: WebEvent) => void>>();
 let es: EventSource | null = null;
 let connectedBefore = false;
+let retryMs = 1000;
 function ensureStream() {
   if (es) return;
   es = new EventSource(`${API}/api/events`);
   es.onopen = () => {
+    retryMs = 1000;
     // On RE-connect (laptop sleep/wake, a network blip, a server restart) the
     // stream missed any frames emitted during the gap, so an open note could be
     // stale and get silently clobbered by autosave. Force a full resync — App's
@@ -74,7 +76,14 @@ function ensureStream() {
     }
   };
   es.onerror = () => {
-    /* the browser auto-reconnects an EventSource; onopen fires again on success */
+    // The browser retries a dropped connection by itself, but a non-200 reply
+    // (a proxy's 502 during a redeploy) closes the stream for good. Start a new
+    // one; its onopen then resyncs like any reconnect.
+    if (!es || es.readyState !== EventSource.CLOSED) return;
+    es.close();
+    es = null;
+    window.setTimeout(ensureStream, retryMs);
+    retryMs = Math.min(retryMs * 2, 30000);
   };
 }
 export function listen<T>(event: string, handler: (e: { payload: T }) => void): Promise<UnlistenFn> {
@@ -126,11 +135,18 @@ export function confirm(message: string, options?: Parameters<typeof tauriConfir
 // --- opener ---
 export function openUrl(url: string): Promise<void> {
   if (isTauri) return tauriOpenUrl(url);
+  // Same schemes the desktop opener allows; never javascript:, data: or file:.
+  if (!/^(https?:|mailto:|tel:)/i.test(url.trim())) return Promise.reject(new Error(`Won't open ${url.split(":")[0]}: links`));
   window.open(url, "_blank", "noopener");
   return Promise.resolve();
 }
 export function openPath(path: string): Promise<void> {
   if (isTauri) return tauriOpenPath(path);
+  return Promise.resolve(); // a browser can't open a server-side filesystem path
+}
+/** Open a vault attachment in the OS's default app (the core checks the path). */
+export function openAttachment(path: string): Promise<void> {
+  if (isTauri) return tauriInvoke<void>("open_attachment", { path });
   return Promise.resolve(); // a browser can't open a server-side filesystem path
 }
 export function revealItemInDir(path: string): Promise<void> {

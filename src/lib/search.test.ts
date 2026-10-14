@@ -61,8 +61,22 @@ describe("searchVault operators", () => {
     expect(hits.some((h) => h.lineText.includes("quick"))).toBe(true);
   });
 
+  it("-path:, -file: and -tag: exclude, as in Obsidian", () => {
+    const names = (q: string) => [...new Set(searchVault(NOTES, q, { tagsOf }).map((h) => h.name))];
+    expect(names("quick -path:proj")).toEqual(["Alpha"]);
+    expect(names("quick -file:alpha")).toEqual(["Beta"]);
+    expect(names("quick -tag:animals")).toEqual(["Beta"]);
+  });
+
+  it("quoted operator values and regexes with spaces stay whole", () => {
+    const notes = [...NOTES, note("Daily Notes/Day.md", "a quick daily line")];
+    const names = (q: string) => [...new Set(searchVault(notes, q).map((h) => h.name))];
+    expect(names('path:"Daily Notes" quick')).toEqual(["Day"]);
+    expect(names("/quick daily/")).toEqual(["Day"]);
+  });
+
   it("empty / whitespace query returns nothing", () => {
-    expect(searchVault(NOTES, "   ")).toEqual([]);
+    expect(searchVault(NOTES, "   ")).toHaveLength(0);
   });
 });
 
@@ -109,5 +123,97 @@ describe("line: same-line operator", () => {
   it("reports the matching line as the hit", () => {
     const hits = searchVault(notes, "line:(lazy dog)");
     expect(hits[0].lineText).toContain("lazy dog");
+  });
+});
+
+describe("more of Obsidian's operators", () => {
+  const vault = [
+    note("Tasks.md", "# Plan\n- [ ] call Alice about budget\n- [x] email Bob about budget\nbudget notes\n## Later\nAlice again"),
+    note("Props.md", "---\nstatus: draft\ntags: [x]\naliases:\n  - Thing One\n---\nbody with Case words"),
+    note("Other.md", "Alice and budget in one section\n# Next\nnothing"),
+  ];
+  const paths = (q: string) => [...new Set(searchVault(vault, q).map((h) => h.path.replace("/v/", "")))].sort();
+  const lines = (q: string) => searchVault(vault, q).filter((h) => h.line > 1 || h.lineText !== h.name).map((h) => h.lineText);
+
+  it("task:, task-todo: and task-done: look in tasks only", () => {
+    expect(paths("task:budget")).toEqual(["Tasks.md"]);
+    expect(lines("task-todo:budget")).toEqual(["- [ ] call Alice about budget"]);
+    expect(lines("task-done:(bob budget)")).toEqual(["- [x] email Bob about budget"]);
+    expect(paths("task:nothing")).toEqual([]);
+  });
+  it("section: wants every term under one heading", () => {
+    expect(paths("section:(alice budget)")).toEqual(["Other.md", "Tasks.md"]);
+    expect(paths("section:(budget again)")).toEqual([]);
+  });
+  it("[property] and [property:value] look at the frontmatter", () => {
+    expect(paths("[status]")).toEqual(["Props.md"]);
+    expect(paths("[status:draft]")).toEqual(["Props.md"]);
+    expect(paths("[status:final]")).toEqual([]);
+    expect(paths('[aliases:"thing one"]')).toEqual(["Props.md"]);
+  });
+  it("match-case: is case-sensitive", () => {
+    expect(paths("match-case:Case")).toEqual(["Props.md"]);
+    expect(paths("match-case:case")).toEqual([]);
+  });
+  it("(a OR b) groups inside a search", () => {
+    expect(paths("budget (bob OR nobody)")).toEqual(["Tasks.md"]);
+    expect(paths("(alice OR thing) budget")).toEqual(["Other.md", "Tasks.md"]);
+  });
+});
+
+describe("search totals", () => {
+  it("count every result and note, past the ones listed", () => {
+    const notes = Array.from({ length: 400 }, (_, i) => note(`n${i}.md`, "a word here"));
+    const hits = searchVault(notes, "word");
+    expect(hits).toHaveLength(300);
+    expect(hits.total).toBe(400);
+    expect(hits.notes).toBe(400);
+  });
+  it("count a note's lines past the ones it lists", () => {
+    const hits = searchVault([note("Many.md", Array.from({ length: 50 }, (_, i) => `word ${i}`).join("\n"))], "word");
+    expect(hits).toHaveLength(20);
+    expect(hits.total).toBe(50);
+  });
+});
+
+describe("regexes, phrases and links with brackets", () => {
+  const notes = [
+    note("A.md", "ticket 12345 here\ncall (Alice) later\n- [x] box ticked\nsee [[Note]] too\nfoo first"),
+    note("B.md", "nothing to see"),
+  ];
+  const found = (q: string) => [...new Set(searchVault(notes, q).map((h) => h.path))];
+  it("stay whole", () => {
+    for (const q of ["/[0-9]{3}/", "/(foo|bar)/", "/call \\(alice\\)/i", '"call (Alice)"', '"[x] box"', "[[Note]]"]) {
+      expect(found(q), q).toEqual(["/v/A.md"]);
+    }
+  });
+  it("stay whole inside line:, task: and section: groups", () => {
+    const more = [
+      note("C.md", "see [[Note]] and more\n- [ ] call Bob about the plan\n- [ ] task [[Note]] link\n## alpha\nbeta there and beta"),
+      note("D.md", "nothing"),
+    ];
+    const hit = (q: string) => [...new Set(searchVault(more, q).map((h) => h.path))];
+    for (const q of ["line:(see [[Note]] and)", 'task:(call "Bob about" the)', 'section:(alpha "beta there" beta)', "task:(task [[Note]] link)"]) {
+      expect(hit(q), q).toEqual(["/v/C.md"]);
+    }
+  });
+  it("stay whole against a group's brackets", () => {
+    const more = [
+      note("E.md", "the quick brown fox\n- [ ] buy oat milk\n## plan\nquick brown dog"),
+      note("F.md", "brown quick fox\n- [ ] buy milk oat"),
+    ];
+    const hit = (q: string) => [...new Set(searchVault(more, q).map((h) => h.path))];
+    for (const q of ['line:("quick brown" fox)', 'line:(fox "quick brown")', 'task:("oat milk")', 'section:("quick brown" dog)', 'line:"quick brown"', '("quick brown" OR zzz)']) {
+      expect(hit(q), q).toEqual(["/v/E.md"]);
+    }
+  });
+  it("a phrase can be excluded, and a property value keeps its brackets", () => {
+    expect(found('ticket -"call (Alice)"')).toEqual([]);
+    expect(found('ticket -"call (Bob)"')).toEqual(["/v/A.md"]);
+    expect(parseSearchQuery('[status:("a b")]').props).toEqual([{ key: "status", value: '("a b")' }]);
+  });
+  it("while operators beside them still work", () => {
+    expect(found('"call (Alice)" [status]')).toEqual([]);
+    expect(found('/[0-9]{3}/ (foo OR zzz)')).toEqual(["/v/A.md"]);
   });
 });

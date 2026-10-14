@@ -10,8 +10,12 @@ import type { Extension } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
-import { parseMarkdownLink, internalMdHref } from "../lib/markdown";
+import { mdImageTarget, parseMarkdownLink, internalLinkTarget } from "../lib/markdown";
 import { frontmatterRange, treeChanged } from "./regions";
+import { blockedImage, isRemoteUrl, remoteImagesAllowed } from "../lib/remoteImages";
+import { linkResolves } from "../lib/transclude";
+import { notePathFacet } from "./query";
+import { renderInline } from "./inlineRender";
 
 export interface LivePreviewOptions {
   /** Open an external URL (a clicked Markdown link). */
@@ -46,21 +50,28 @@ export class ImgWidget extends WidgetType {
     return other.src === this.src && other.alt === this.alt && other.width === this.width;
   }
   toDOM(): HTMLElement {
+    if (isRemoteUrl(this.src) && !remoteImagesAllowed()) return blockedImage(this.src, this.alt);
+    // The widget's own element never changes: CodeMirror reads a swapped-out
+    // root as text typed into the line, and autosave would write the "missing"
+    // label over the embed. Only what's inside it changes.
+    const holder = document.createElement("span");
+    holder.className = "cm-md-image-holder";
     const img = document.createElement("img");
     img.className = "cm-md-image";
     img.alt = this.alt;
     if (this.width) img.style.maxWidth = `${this.width}px`;
+    holder.append(img);
     // Resolve async; retry once after the negative-cache TTL so an image
     // referenced before it exists self-heals without a reload.
     const load = (retry: boolean) => {
       this.resolve(this.src).then((url) => {
         if (url) img.src = url;
         else if (retry) window.setTimeout(() => load(false), 4500);
-        else img.replaceWith(missingImage(this.alt || this.src));
+        else holder.replaceChildren(missingImage(this.alt || this.src));
       });
     };
     load(true);
-    return img;
+    return holder;
   }
   ignoreEvent(): boolean {
     return false;
@@ -104,25 +115,28 @@ class CheckboxWidget extends WidgetType {
     box.type = "checkbox";
     box.checked = this.checked;
     box.className = "cm-task-checkbox";
-    // Toggle on a real click (not mousedown — that would fire when starting a
-    // drag-select). Resolve the marker's LIVE position from the DOM so we never
-    // write to a stale offset.
+    // The mousedown is kept from CodeMirror (see ignoreEvent) and from the
+    // browser: moving the caret onto the line would reveal its raw `- [ ]` and
+    // remove this box before the click arrived. Toggle on the click itself,
+    // resolving the marker's LIVE position so a stale offset is never written.
+    box.addEventListener("mousedown", (e) => e.preventDefault());
     box.addEventListener("click", (e) => {
       if (e.detail > 1) return;
       e.preventDefault();
       const pos = view.posAtDOM(box);
       const line = view.state.doc.lineAt(pos);
-      const m = /\[[ xX]\]/.exec(line.text);
+      const m = /\[[^\]\n]\]/.exec(line.text);
       if (!m) return;
       const from = line.from + m.index;
       const to = from + 3;
-      const checked = /\[[xX]\]/.test(view.state.doc.sliceString(from, to));
+      // Any status but a space counts as done (Obsidian's `[/]`, `[-]`…).
+      const checked = view.state.doc.sliceString(from + 1, from + 2) !== " ";
       view.dispatch({ changes: { from, to, insert: checked ? "[ ]" : "[x]" } });
     });
     return box;
   }
-  ignoreEvent(): boolean {
-    return false;
+  ignoreEvent(e: Event): boolean {
+    return e.type === "mousedown";
   }
 }
 
@@ -141,17 +155,20 @@ class LinkWidget extends WidgetType {
   constructor(
     readonly text: string,
     readonly href: string,
+    readonly unresolved = false,
   ) {
     super();
   }
   eq(other: LinkWidget): boolean {
-    return other.text === this.text && other.href === this.href;
+    return other.text === this.text && other.href === this.href && other.unresolved === this.unresolved;
   }
   toDOM(): HTMLElement {
     const a = document.createElement("a");
-    a.className = "cm-md-link";
+    a.className = this.unresolved ? "cm-md-link is-unresolved" : "cm-md-link";
     a.dataset.href = this.href;
-    a.textContent = this.text || this.href;
+    // Bold, italics or code in the link's text show as such.
+    if (this.text) a.append(renderInline(this.text));
+    else a.textContent = this.href;
     a.title = this.href;
     return a;
   }
@@ -222,7 +239,7 @@ function buildDecorations(
           builder.add(
             node.from,
             node.to,
-            Decoration.replace({ widget: new ImgWidget(alt, parsed.href, width, resolveImage) }),
+            Decoration.replace({ widget: new ImgWidget(alt, mdImageTarget(parsed.href), width, resolveImage) }),
           );
           return false;
         }
@@ -238,6 +255,12 @@ function buildDecorations(
           return;
         }
 
+        // `\*`: the backslash hides until the caret reaches it, as in Obsidian.
+        if (name === "Escape") {
+          if (!touches(node.from, node.to)) builder.add(node.from, node.from + 1, CONCEAL);
+          return;
+        }
+
         if (name === "QuoteMark") {
           if (lineTouched(node.from)) return;
           let end = node.to;
@@ -248,7 +271,7 @@ function buildDecorations(
 
         if (name === "ListMark") {
           if (lineTouched(node.from)) return;
-          const isTask = /^\s?\[[ xX]\]/.test(doc.sliceString(node.to, node.to + 4));
+          const isTask = /^\s?\[[^\]\n]\][ \t]/.test(doc.sliceString(node.to, node.to + 5));
           if (isTask) {
             builder.add(node.from, node.to, CONCEAL); // hide '-', checkbox renders
             return;
@@ -261,7 +284,7 @@ function buildDecorations(
 
         if (name === "TaskMarker") {
           if (lineTouched(node.from)) return;
-          const checked = /\[[xX]\]/.test(doc.sliceString(node.from, node.to));
+          const checked = doc.sliceString(node.from + 1, node.from + 2) !== " ";
           builder.add(node.from, node.to, Decoration.replace({ widget: new CheckboxWidget(checked) }));
           return;
         }
@@ -276,10 +299,12 @@ function buildDecorations(
           if (touches(node.from, node.to)) return false;
           const parsed = parseMarkdownLink(doc.sliceString(node.from, node.to));
           if (!parsed) return false; // reference-style / unusual: leave raw
+          const internal = internalLinkTarget(parsed.href);
+          const unresolved = internal !== null && !linkResolves(internal, state.facet(notePathFacet));
           builder.add(
             node.from,
             node.to,
-            Decoration.replace({ widget: new LinkWidget(parsed.text, parsed.href) }),
+            Decoration.replace({ widget: new LinkWidget(parsed.text, parsed.href, unresolved) }),
           );
           return false; // don't also process the LinkMark children
         }
@@ -336,10 +361,10 @@ export function livePreview(opts: LivePreviewOptions): Extension {
     mousedown: (event) => {
       const el = (event.target as HTMLElement | null)?.closest(".cm-md-link") as HTMLElement | null;
       if (el && el.dataset.href) {
-        // An internal `[text](Note.md#h)` link navigates within the vault; only
+        // An internal `[text](Note#h)` link navigates within the vault; only
         // a true external URL goes to the opener (matching ReadingView).
-        const internal = internalMdHref(el.dataset.href);
-        if (internal) opts.onOpenInternal(internal.path + internal.fragment);
+        const internal = internalLinkTarget(el.dataset.href);
+        if (internal !== null) opts.onOpenInternal(internal);
         else opts.onOpenUrl(el.dataset.href);
         event.preventDefault();
         return true;

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Modal } from "./Modal";
 
 interface Props {
   names: string[];
@@ -23,7 +24,7 @@ export function WorkspacesModal({ names, onSave, onLoad, onDelete, onClose }: Pr
   }, [onClose]);
 
   return (
-    <div className="palette-overlay" onMouseDown={onClose}>
+    <Modal className="palette-overlay" label="Workspaces" onClose={onClose}>
       <div className="settings workspaces-modal" onMouseDown={(e) => e.stopPropagation()}>
         <div className="settings-head">
           <h2>Workspaces</h2>
@@ -75,6 +76,6 @@ export function WorkspacesModal({ names, onSave, onLoad, onDelete, onClose }: Pr
           )}
         </section>
       </div>
-    </div>
+    </Modal>
   );
 }

@@ -12,7 +12,7 @@ export interface HtmlBlockRange {
   toLine: number;
 }
 
-const FENCE = /^(\s*)(`{3,}|~{3,})/;
+const FENCE = /^(\s*)(`{3,}(?!.*`)|~{3,})/;
 
 export function htmlBlockRanges(src: string): HtmlBlockRange[] {
   const lines = src.split("\n");

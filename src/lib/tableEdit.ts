@@ -129,3 +129,29 @@ export function deleteColumn(t: ParsedTable, at: number): ParsedTable {
   });
   return { header, aligns, rows };
 }
+
+/** The indent and `>` markers every line of a table shares: a table inside a
+ * list item, blockquote or callout. */
+export function tablePrefix(source: string): string {
+  const lines = source.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return "";
+  let prefix = /^[ \t>]*/.exec(lines[0])![0];
+  for (const l of lines.slice(1)) {
+    let i = 0;
+    while (i < prefix.length && l[i] === prefix[i]) i++;
+    prefix = prefix.slice(0, i);
+  }
+  return prefix;
+}
+
+/** Apply a structural edit to a table's source, keeping its shared prefix on
+ * every line so the table stays inside its list item or callout. */
+export function editTableSource(source: string, fn: (t: ParsedTable) => ParsedTable): string | null {
+  const prefix = tablePrefix(source);
+  const t = parseTable(source.split("\n").map((l) => l.slice(prefix.length)).join("\n"));
+  if (!t) return null;
+  return serializeTable(fn(t))
+    .split("\n")
+    .map((l) => prefix + l)
+    .join("\n");
+}
