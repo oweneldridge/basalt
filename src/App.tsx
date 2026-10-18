@@ -2145,7 +2145,10 @@ export default function App() {
           await settle(stopRecordingRef.current(true).then(async () => {
             for (const p of keep()) await flushPath(p);
           }));
-          if (!(await okToDropUnsaved("Switch vaults", dropping))) return;
+          if (!(await okToDropUnsaved("Switch vaults", dropping))) {
+            resume();
+            return;
+          }
         }
         if (await switchTo(path, openNoteRel, restoring, begun)) {
           const done = `Opened ${target.name}`;
@@ -3630,7 +3633,8 @@ export default function App() {
     [handleSaveAttachment],
   );
   stopRecordingRef.current = stopRecording;
-  // Pause a recording under way; the returned call carries it on.
+  // Pause a recording under way; the returned call carries it on, or starts a
+  // new one if it was stopped and saved meanwhile.
   pauseRecordingRef.current = () => {
     const cur = recorderRef.current;
     if (!cur) return null;
@@ -3638,9 +3642,10 @@ export default function App() {
     // Its time stands still meanwhile.
     if (recTimer.current) clearInterval(recTimer.current);
     return () => {
-      if (recorderRef.current !== cur) return;
-      cur.rec.resume();
-      countRecording();
+      if (recorderRef.current === cur) {
+        cur.rec.resume();
+        countRecording();
+      } else void startRecording();
     };
   };
 

@@ -1369,3 +1369,35 @@ test("a recording's time stands still while a switch has it paused", async ({ pa
   await opened(page);
   await expect(shown).not.toHaveText(at ?? "", { timeout: 3000 });
 });
+
+test("a recording at a switch turned down at the second question carries on as a new one", async ({ page }) => {
+  await fakeRecorder(page);
+  await load(page);
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click();
+  await page.evaluate(() => {
+    const w = window as unknown as { __log: string[]; __mockConfirm: () => boolean; __mockHook: (cmd: string, a: Record<string, unknown>) => unknown };
+    w.__log = [];
+    w.__mockConfirm = () => (w.__log.push("asked"), false);
+    w.__mockHook = (cmd, a) => {
+      w.__log.push(`${cmd}:${String(a.path ?? a.name ?? "")}`);
+      if (cmd === "write_note") return Promise.reject("disk full");
+    };
+  });
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await page.keyboard.press("ControlOrMeta+p");
+  await page.locator(".palette-input").first().fill("Record audio");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".rec-indicator")).toBeVisible();
+  await pickVault(page, "/mock/other");
+  await expect.poll(() => calls(page)).toContain("asked");
+  await opened(page);
+  const l = await calls(page);
+  // Its file is saved and its embed kept unsaved in the note; no vault opened.
+  expect(l.filter((x) => /^(asked|write_attachment|open_vault)/.test(x))).toEqual([expect.stringMatching(/^write_attachment:Recording /), "asked"]);
+  await expect(page.locator(".pane:not(.dock) .cm-content").first()).toContainText("![[Recording ");
+  await expect(page.locator(".rec-indicator")).toBeVisible();
+  expect(await page.evaluate(() => (globalThis as unknown as { __rec: string[] }).__rec)).toEqual(["pause", "stop"]);
+  await page.locator(".rec-stop").click();
+  await expect(page.locator(".rec-indicator")).toHaveCount(0);
+  await expect.poll(async () => (await calls(page)).filter((x) => x.startsWith("write_attachment:"))).toHaveLength(2);
+});
