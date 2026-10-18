@@ -158,7 +158,7 @@ test("after a group is dragged its cards are still on top, to click and drag", a
   expect(hit).toContain("Inside");
 });
 
-const openCanvas = async (page: import("@playwright/test").Page, name: string, nodes: object[], edges: object[] = []) => {
+const openCanvas = async (page: import("@playwright/test").Page, name: string, nodes: object[], edges: object[] = [], shown = nodes.length) => {
   await page.addInitScript(
     ([name, nodes, edges]) => {
       (window as unknown as { __mockExtraFiles: Record<string, string> }).__mockExtraFiles = {
@@ -169,7 +169,7 @@ const openCanvas = async (page: import("@playwright/test").Page, name: string, n
   );
   await page.reload();
   await page.locator(".tree-row.attachment", { hasText: name }).click();
-  await expect(page.locator(".canvas-node")).toHaveCount(nodes.length);
+  await expect(page.locator(".canvas-node")).toHaveCount(shown);
 };
 const savedIds = (page: import("@playwright/test").Page) =>
   page.evaluate(() => {
@@ -316,6 +316,32 @@ test("arrow keys in a row carry what was in the group when they began, as a drag
   await page.locator('[aria-label="Text: Lone"]').focus();
   await page.keyboard.press("ArrowDown");
   await expect.poll(xy).toEqual({ grp: [220, 0], c1: [420, 70] });
+});
+
+test("a node Basalt can't show, inside a moved group, moves with it and keeps its fields", async ({ page }) => {
+  const odd = { id: "p", type: "future-thing", x: 30, y: 150, width: 50, height: 50, shape: { kind: "star" }, z: 1 };
+  await openCanvas(page, "Odd", [
+    { id: "g", type: "group", label: "G", x: 0, y: 0, width: 400, height: 300 },
+    { id: "c", type: "text", text: "In", x: 20, y: 40, width: 100, height: 60 },
+    odd,
+    { id: "q", type: "future-thing", x: 500, y: 0, width: 50, height: 50 },
+  ], [], 2);
+  await recordWrites(page);
+  const pass = () =>
+    page.evaluate(() => {
+      const s = (window as unknown as { __saved: string[] }).__saved;
+      return s.length ? (JSON.parse(s[s.length - 1]).nodes as { id: string }[]).filter((n) => n.id === "p" || n.id === "q") : [];
+    });
+  await page.locator('[aria-label="Group: G"]').focus();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(pass).toEqual([{ ...odd, x: 50 }, { id: "q", type: "future-thing", x: 500, y: 0, width: 50, height: 50 }]);
+  expect(Object.keys((await pass())[0])).toEqual(Object.keys(odd));
+  const k = (await page.locator(".canvas-group").boundingBox())!.width / 400;
+  const label = (await page.locator(".canvas-group-label").boundingBox())!;
+  await dragBy(page, { x: label.x + 5, y: label.y + 5 }, 40 * k, 20 * k);
+  await expect.poll(async () => (await pass())[0]).toMatchObject({ x: 90, y: 170 });
+  expect(Object.keys((await pass())[0])).toEqual(Object.keys(odd));
+  expect((await pass())[1]).toMatchObject({ x: 500, y: 0 });
 });
 
 // Sends a pointer event the browser itself would send for a touch or pen: a

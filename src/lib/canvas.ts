@@ -338,8 +338,10 @@ export function canvasBounds(
   return { minX, minY, maxX, maxY };
 }
 
+type Box = { x: number; y: number; width: number; height: number };
+
 // Whether `b` lies wholly inside `a`.
-const inside = (a: CanvasNode, b: CanvasNode) =>
+const inside = (a: Box, b: Box) =>
   b.x >= a.x && b.y >= a.y && b.x + b.width <= a.x + a.width && b.y + b.height <= a.y + a.height;
 
 /** The ids given, plus every node inside a group among them: moving a group
@@ -351,6 +353,31 @@ export function withGroupContents(nodes: CanvasNode[], ids: Iterable<string>): S
     for (const n of nodes) if (inside(g, n)) out.add(n.id);
   }
   return out;
+}
+
+/** Where in `passNodes` the nodes Basalt doesn't model lie wholly inside a
+ * group among `ids`, so they move with it too. */
+export function passInGroups(data: CanvasData, ids: Set<string>): number[] {
+  const groups = data.nodes.filter((g) => g.type === "group" && ids.has(g.id));
+  const box = (v: unknown): Box | null => {
+    const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+    return [o.x, o.y, o.width, o.height].every((n) => typeof n === "number" && Number.isFinite(n)) ? (o as Box) : null;
+  };
+  return (data.passNodes ?? []).flatMap((v, i) => {
+    const b = box(v);
+    return b && groups.some((g) => inside(g, b)) ? [i] : [];
+  });
+}
+
+/** `passNodes` with the ones at `at` moved by dx, dy, every other field and
+ * the key order kept. */
+export function movePassNodes(pass: unknown[] | undefined, at: number[], dx: number, dy: number): unknown[] | undefined {
+  if (!pass || at.length === 0) return pass;
+  return pass.map((v, i) => {
+    if (!at.includes(i)) return v;
+    const o = v as Box;
+    return { ...o, x: Math.round(o.x + dx), y: Math.round(o.y + dy) };
+  });
 }
 
 /** Groups before cards, and a group before any smaller group inside it, so

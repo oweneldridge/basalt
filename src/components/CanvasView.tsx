@@ -7,6 +7,8 @@ import {
   canvasColor,
   orderGroups,
   withGroupContents,
+  passInGroups,
+  movePassNodes,
   pushHistory,
   stepHistory,
   type CanvasData,
@@ -413,7 +415,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
   const refocusAfterEdit = useRef<string | null>(null);
   // Key moves in a row, with nothing else edited or selected between them,
   // carry what was inside a group when they began, as a drag does.
-  const keyRun = useRef<{ at: CanvasData; sel: Set<string>; ids: Set<string> } | null>(null);
+  const keyRun = useRef<{ at: CanvasData; sel: Set<string>; ids: Set<string>; pass: number[] } | null>(null);
   const revealNode = (n: CanvasNode) => {
     const vp = viewport.current;
     if (!vp) return;
@@ -457,10 +459,16 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
         const d = dataRef.current;
         const run = keyRun.current;
         const sel = selectedRef.current;
-        const ids = run && run.at === shown.current && run.sel === sel ? run.ids : withGroupContents(d.nodes, sel);
-        const next = { ...d, nodes: orderGroups(d.nodes.map((m) => (ids.has(m.id) ? { ...m, x: m.x + dx, y: m.y + dy } : m))) };
+        const same = run && run.at === shown.current && run.sel === sel;
+        const ids = same ? run.ids : withGroupContents(d.nodes, sel);
+        const pass = same ? run.pass : passInGroups(d, ids);
+        const next = {
+          ...d,
+          nodes: orderGroups(d.nodes.map((m) => (ids.has(m.id) ? { ...m, x: m.x + dx, y: m.y + dy } : m))),
+          passNodes: movePassNodes(d.passNodes, pass, dx, dy),
+        };
         emit(next);
-        keyRun.current = { at: next, sel, ids };
+        keyRun.current = { at: next, sel, ids, pass };
       } else if (e.key === "Escape") {
         clearSel();
       } else {
@@ -510,6 +518,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
     const start = toWorld(e.clientX, e.clientY);
     // Original positions of every node moving in this drag.
     const orig = new Map(dataRef.current.nodes.filter((n) => moveNodeIds.has(n.id)).map((n) => [n.id, { x: n.x, y: n.y }]));
+    const pass = passInGroups(dataRef.current, moveNodeIds);
     let raf = 0;
     let delta: { dx: number; dy: number } | null = null;
     const move = (ev: PointerEvent) => {
@@ -551,7 +560,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
           return;
         }
         const order = [...moved.filter((n) => !orig.has(n.id)), ...moved.filter((n) => orig.has(n.id))];
-        emit({ ...d, nodes: orderGroups(order) });
+        emit({ ...d, nodes: orderGroups(order), passNodes: movePassNodes(d.passNodes, pass, delta.dx, delta.dy) });
       }
     };
     follow(e, e.target as HTMLElement, {

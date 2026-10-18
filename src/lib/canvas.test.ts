@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCanvas, serializeCanvas, canvasBounds, canvasColor, canvasText, rewriteCanvasFileRefs, withGroupContents, orderGroups, pushHistory, stepHistory, CANVAS_HISTORY_LIMIT, type CanvasData, type CanvasNode } from "./canvas";
+import { parseCanvas, serializeCanvas, canvasBounds, canvasColor, canvasText, rewriteCanvasFileRefs, withGroupContents, orderGroups, passInGroups, movePassNodes, pushHistory, stepHistory, CANVAS_HISTORY_LIMIT, type CanvasData, type CanvasNode } from "./canvas";
 
 describe("serializeCanvas", () => {
   it("round-trips parse → serialize → parse", () => {
@@ -352,6 +352,35 @@ describe("canvas groups", () => {
     expect([...withGroupContents([{ ...t("big", 0, 0), width: 500, height: 500 }, t("a", 10, 10)], ["big"])]).toEqual(["big"]);
     // Touching the edges still counts as inside.
     expect([...withGroupContents([g("box", 0, 0, 50, 20), t("fit", 0, 0)], ["box"])].sort()).toEqual(["box", "fit"]);
+  });
+
+  it("finds the nodes Basalt doesn't model inside a moved group, and moves them keeping their keys", () => {
+    const data = parseCanvas(
+      JSON.stringify({
+        nodes: [
+          { id: "g", type: "group", x: 0, y: 0, width: 400, height: 300 },
+          { id: "in", type: "future", x: 30, y: 150, width: 50, height: 50, extra: { a: 1 } },
+          { type: "noid", x: 10, y: 10, width: 10, height: 10 },
+          { id: "out", type: "future", x: 390, y: 10, width: 50, height: 50 },
+          { id: "nobox", type: "future", x: 10, y: 10 },
+          { id: "text", type: "future", x: "10", y: 10, width: 5, height: 5 },
+          "junk",
+          null,
+        ],
+      }),
+    )!;
+    expect(passInGroups(data, new Set(["g"]))).toEqual([0, 1]);
+    expect(passInGroups(data, new Set(["other"]))).toEqual([]);
+    expect(passInGroups({ ...data, passNodes: undefined }, new Set(["g"]))).toEqual([]);
+    const moved = movePassNodes(data.passNodes, [0, 1], 20.4, -5.6)!;
+    expect(moved[0]).toEqual({ id: "in", type: "future", x: 50, y: 144, width: 50, height: 50, extra: { a: 1 } });
+    expect(Object.keys(moved[0] as object)).toEqual(["id", "type", "x", "y", "width", "height", "extra"]);
+    expect(moved[1]).toEqual({ type: "noid", x: 30, y: 4, width: 10, height: 10 });
+    expect(moved.slice(2)).toEqual(data.passNodes!.slice(2));
+    expect(moved[2]).toBe(data.passNodes![2]);
+    expect(data.passNodes![0]).toMatchObject({ x: 30, y: 150 });
+    expect(movePassNodes(data.passNodes, [], 5, 5)).toBe(data.passNodes);
+    expect(movePassNodes(undefined, [0], 5, 5)).toBeUndefined();
   });
 
   it("orders a group before the smaller groups inside it, and otherwise keeps the order", () => {
