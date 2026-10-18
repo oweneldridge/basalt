@@ -4184,11 +4184,14 @@ export default function App() {
     async (info: PluginInfo, enabled: boolean) => {
       const v = vaultRef.current;
       if (!v) return;
+      const epoch = pluginEpoch.current;
       const cur = new Set(loadEnabled(v));
       if (enabled) cur.add(info.id);
       else cur.delete(info.id);
       saveEnabled(v, [...cur]);
       if (enabled) await rememberPluginCode(v, info);
+      // A switch stopped the plugins meanwhile: it loads with the rest if this vault stays.
+      if (pluginEpoch.current !== epoch) return;
       try {
         if (enabled) await loadPlugin(info);
         else await unloadPlugin(info.id);

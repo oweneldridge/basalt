@@ -186,3 +186,36 @@ for (const [first, second] of [
     await expect(page.locator(".ribbon-plugin-btn")).toHaveCount(1);
   });
 }
+
+for (const fails of [false, true]) {
+  test(`a plugin turned on as a switch starts ${fails ? "loads once that switch fails" : "doesn't load for the vault being left"}`, async ({ page }) => {
+    const marker = dailyAsker("globalThis.__lateFor = this.app.vault.getName();", "");
+    await page.addInitScript(() => {
+      const subtle = crypto.subtle;
+      const digest = subtle.digest.bind(subtle);
+      // Recording the plugin's code takes a while.
+      subtle.digest = ((...args: Parameters<SubtleCrypto["digest"]>) =>
+        new Promise((r) => setTimeout(r, (globalThis as unknown as { __slowHash?: number }).__slowHash ?? 0)).then(() => digest(...args))) as SubtleCrypto["digest"];
+    });
+    await setup(page, { vault: [plugin("late", marker)] }, {}, { "open:/mock/b": 3000 });
+    if (fails)
+      await page.evaluate(() => {
+        const w = window as unknown as W;
+        const hook = w.__mockHook;
+        w.__mockHook = (cmd, a) => (cmd === "open_vault" && a.path === "/mock/b" ? new Promise((_, j) => setTimeout(() => j("not a folder"), 3000)) : hook(cmd, a));
+      });
+    await page.keyboard.press("ControlOrMeta+p");
+    await page.locator(".palette-input").first().fill("Open settings");
+    await page.keyboard.press("Enter");
+    await page.evaluate(() => ((globalThis as unknown as { __slowHash: number }).__slowHash = 1500));
+    await page.locator(".plugin-row", { hasText: "late" }).locator('input[type="checkbox"]').click();
+    await page.keyboard.press("Escape");
+    await pick(page, "/mock/b");
+    await opened(page);
+    if (fails) await expect.poll(() => g(page, "__lateFor")).toBe("vault");
+    else {
+      await page.waitForTimeout(500);
+      expect(await g(page, "__lateFor")).toBeUndefined();
+    }
+  });
+}
