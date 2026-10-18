@@ -344,6 +344,38 @@ test("a node Basalt can't show, inside a moved group, moves with it and keeps it
   expect((await pass())[1]).toMatchObject({ x: 500, y: 0 });
 });
 
+test("a long group label stays inside its group, so the canvas under it pans", async ({ page }) => {
+  const long = "A very long group label that will not fit";
+  await openCanvas(page, "Labels", [
+    { id: "g1", type: "group", label: long, x: 0, y: 0, width: 90, height: 30 },
+    { id: "g2", type: "group", label: "Supercalifragilisticexpialidocious_label", x: 140, y: 0, width: 120, height: 80 },
+    { id: "t", type: "text", text: "Card", x: 0, y: 200, width: 200, height: 60 },
+  ]);
+  for (const id of ["g1", "g2"]) {
+    const g = page.locator(`[data-node-id="${id}"]`);
+    const gb = (await g.boundingBox())!;
+    const lb = (await g.locator(".canvas-group-label").boundingBox())!;
+    expect(lb.x + lb.width).toBeLessThanOrEqual(gb.x + gb.width + 0.5);
+    expect(lb.y + lb.height).toBeLessThanOrEqual(gb.y + gb.height + 0.5);
+  }
+  const label = page.locator('[data-node-id="g1"] .canvas-group-label');
+  await expect(label).toHaveAttribute("title", long);
+  await expect(page.locator('[data-node-id="g1"]')).toHaveAttribute("aria-label", `Group: ${long}`);
+  expect(await label.evaluate((el) => el.scrollWidth > el.clientWidth && getComputedStyle(el).textOverflow === "ellipsis")).toBe(true);
+  // Empty canvas just under the small group pans, and its anchors still show.
+  const g = (await page.locator('[data-node-id="g1"]').boundingBox())!;
+  const world = page.locator(".canvas-world");
+  const t0 = await world.evaluate((el) => (el as HTMLElement).style.transform);
+  await recordWrites(page);
+  await dragBy(page, { x: g.x + 20, y: g.y + g.height + 15 }, 60);
+  expect(await world.evaluate((el) => (el as HTMLElement).style.transform)).not.toBe(t0);
+  await page.waitForTimeout(700);
+  expect(await writes(page)).toBe(0);
+  await page.locator('[data-node-id="g2"] .canvas-group-label').click();
+  const anchor = (await page.locator('[data-node-id="g2"] .canvas-anchor-top').boundingBox())!;
+  expect(await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest(".canvas-anchor-top"), [anchor.x + anchor.width / 2, anchor.y + 2])).toBe(true);
+});
+
 // Sends a pointer event the browser itself would send for a touch or pen: a
 // cancel, lost capture, or a second finger.
 const send = (

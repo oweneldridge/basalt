@@ -966,7 +966,11 @@ function CanvasNodeView({
   if (node.type === "group") {
     return (
       <div className="canvas-node canvas-group" style={style} {...dragProps} {...a11y}>
-        {node.label && <div className="canvas-group-label">{node.label}</div>}
+        {node.label && (
+          <div className="canvas-group-label" title={node.label}>
+            {node.label}
+          </div>
+        )}
         {handles}
       </div>
     );
