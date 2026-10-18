@@ -250,7 +250,7 @@ export function installHost(d: HostDeps | null): void {
 interface LoadedPlugin {
   info: PluginInfo;
   instance: PluginInstance;
-  cleanups: (() => void)[];
+  ctx: PluginContext;
 }
 const loaded = new Map<string, LoadedPlugin>();
 
@@ -270,11 +270,18 @@ export function loadedIds(): string[] {
 
 class PluginContext {
   cleanups: (() => void)[] = [];
+  /** Unloaded: its leftover timers and promises can't change the vault. */
+  stopped = false;
   constructor(public readonly info: PluginInfo) {}
 }
 
+/** How long unloading waits for a plugin's onunload. */
+export const UNLOAD_WAIT_MS = 3000;
+
 /** The `basalt` module returned to plugins via require("basalt"). */
 function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
+  const live = <T,>(act: () => Promise<T>): Promise<T> =>
+    ctx.stopped ? Promise.reject(new Error(`Plugin ${ctx.info.id} is unloaded`)) : act();
   class Notice {
     constructor(message: string, timeoutMs = 4000) {
       host.notice(String(message), timeoutMs);
@@ -348,23 +355,23 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
         const rel = typeof file === "string" ? file : file.path;
         return host.cachedRead?.(rel) ?? host.readNote(rel);
       },
-      create: (path: string, content: string) => host.createNote(path, content),
+      create: (path: string, content: string) => live(() => host.createNote(path, content)),
       modify: (file: { path: string } | string, content: string) =>
-        host.modifyNote(typeof file === "string" ? file : file.path, content),
+        live(() => host.modifyNote(typeof file === "string" ? file : file.path, content)),
       /** Obsidian's process: change a note from its current text in one step;
        * refused if the note changes between the read and the write. */
       process: async (file: { path: string } | string, fn: (data: string) => string) => {
         const rel = typeof file === "string" ? file : file.path;
         const current = await host.readNote(rel);
         const next = fn(current);
-        if (next !== current) await host.modifyNote(rel, next, current);
+        if (next !== current) await live(() => host.modifyNote(rel, next, current));
         return next;
       },
       delete: (file: { path: string } | string) =>
-        host.deleteNote(typeof file === "string" ? file : file.path),
+        live(() => host.deleteNote(typeof file === "string" ? file : file.path)),
       rename: (file: { path: string } | string, newPath: string) =>
-        host.renameNote(typeof file === "string" ? file : file.path, newPath),
-      createFolder: (path: string) => host.createFolder(path),
+        live(() => host.renameNote(typeof file === "string" ? file : file.path, newPath)),
+      createFolder: (path: string) => live(() => host.createFolder(path)),
       /** Subscribe to a vault event: create/delete/modify → (file); rename →
        * (file, oldPath). Pass the returned ref to plugin.registerEvent(). */
       on: (name: VaultEventName, cb: (...args: unknown[]) => void): EventRef => {
@@ -388,7 +395,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     dailyNotes:
       host.openDailyNote && host.hasDailyNote
         ? {
-            open: (date: Date, folderIfUnset?: string) => host.openDailyNote!(date, folderIfUnset),
+            open: (date: Date, folderIfUnset?: string) => live(() => host.openDailyNote!(date, folderIfUnset)),
             has: (date: Date, folderIfUnset?: string) => host.hasDailyNote!(date, folderIfUnset),
           }
         : undefined,
@@ -410,7 +417,9 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
         const p = host.getActiveNotePath();
         return p ? { path: p } : null;
       },
-      openLinkText: (target: string) => host.openNote(target),
+      openLinkText: (target: string) => {
+        if (!ctx.stopped) host.openNote(target);
+      },
       /** The focused editor (Obsidian-shaped: `activeEditor.editor`), or null.
        * The editor exposes replaceSelection + a Basalt insertAtCursor that can
        * place the caret inside the inserted text. */
@@ -425,9 +434,12 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
   };
 
   const editor = {
-    replaceSelection: (text: string) => host.insertAtCursor?.(String(text)),
-    insertAtCursor: (text: string, caretOffset?: number) =>
-      host.insertAtCursor?.(String(text), caretOffset),
+    replaceSelection: (text: string) => {
+      if (!ctx.stopped) host.insertAtCursor?.(String(text));
+    },
+    insertAtCursor: (text: string, caretOffset?: number) => {
+      if (!ctx.stopped) host.insertAtCursor?.(String(text), caretOffset);
+    },
   };
 
   class Plugin {
@@ -533,7 +545,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     async saveData(data: unknown): Promise<void> {
       const json = JSON.stringify(data ?? null);
       ctx.info.data = json;
-      await host.savePluginData(ctx.info.id, json);
+      await live(() => host.savePluginData(ctx.info.id, json));
     }
   }
 
@@ -573,7 +585,7 @@ export async function loadPlugin(info: PluginInfo): Promise<void> {
   if (!deps) throw new Error("plugin host not installed");
   if (loaded.has(info.id)) return;
   const ctx = new PluginContext(info);
-  const entry: LoadedPlugin = { info, instance: {}, cleanups: ctx.cleanups };
+  const entry: LoadedPlugin = { info, instance: {}, ctx };
   loaded.set(info.id, entry);
   starting.add(info.id);
   try {
@@ -594,12 +606,17 @@ export async function unloadPlugin(id: string): Promise<void> {
   const lp = loaded.get(id);
   if (!lp) return;
   loaded.delete(id);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await lp.instance.onunload?.();
+    // One that never finishes doesn't hold up the rest, or a vault switch.
+    await Promise.race([lp.instance.onunload?.(), new Promise((r) => (timer = setTimeout(r, UNLOAD_WAIT_MS)))]);
   } catch (e) {
     console.error(`Plugin ${id} onunload failed:`, e);
+  } finally {
+    clearTimeout(timer);
   }
-  for (const c of lp.cleanups.splice(0).reverse()) {
+  lp.ctx.stopped = true;
+  for (const c of lp.ctx.cleanups.splice(0).reverse()) {
     try {
       c();
     } catch (e) {

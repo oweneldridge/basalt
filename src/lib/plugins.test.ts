@@ -18,6 +18,7 @@ import {
   isStarted,
   pluginSettingTabs,
   pluginRightViews,
+  UNLOAD_WAIT_MS,
   type HostDeps,
   type PluginInfo,
 } from "./plugins";
@@ -118,6 +119,71 @@ describe("plugin host", () => {
     expect(pluginCommands()).toHaveLength(0);
     expect(hasCodeBlockProcessor("x")).toBe(false);
     expect(notices).toEqual(["bye", "cleanup"]); // onunload, then cleanups (LIFO)
+  });
+
+  it("an unloaded plugin's leftovers can't change the vault, but its onunload saves", async () => {
+    const made: string[] = [];
+    const inserted: string[] = [];
+    const { host, saved } = fakeHost({
+      createNote: async (p) => void made.push(p),
+      openDailyNote: async () => void made.push("daily"),
+      hasDailyNote: () => false,
+      insertAtCursor: (t) => void inserted.push(t),
+    });
+    installHost(host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() { globalThis.__left = this; }
+        async onunload() { await this.saveData({ bye: 1 }); }
+      };
+    `;
+    await loadPlugin(info({ id: "left", code }));
+    const p = (globalThis as unknown as { __left: { app: any; saveData: (d: unknown) => Promise<void> } }).__left;
+    await p.app.vault.create("Before.md", "x");
+    await unloadPlugin("left");
+    expect(saved.left).toBe('{"bye":1}');
+    const tries = [
+      p.app.vault.create("After.md", "x"),
+      p.app.vault.modify("A.md", "x"),
+      p.app.vault.process("A.md", () => "y"),
+      p.app.vault.delete("A.md"),
+      p.app.vault.rename("A.md", "B"),
+      p.app.vault.createFolder("F"),
+      p.app.dailyNotes.open(new Date()),
+      p.saveData({ late: 1 }),
+    ];
+    for (const t of await Promise.allSettled(tries)) expect(t).toMatchObject({ status: "rejected", reason: expect.objectContaining({ message: "Plugin left is unloaded" }) });
+    p.app.workspace.activeEditor?.editor.insertAtCursor("late");
+    p.app.workspace.openLinkText("A");
+    expect(made).toEqual(["Before.md"]);
+    expect(inserted).toEqual([]);
+    expect(saved.left).toBe('{"bye":1}');
+  });
+
+  it("an onunload that never finishes doesn't hold up unloading", async () => {
+    vi.useFakeTimers();
+    try {
+      const { host, notices } = fakeHost();
+      installHost(host);
+      const code = `
+        const { Plugin, Notice } = require("basalt");
+        module.exports = class extends Plugin {
+          onload() { this.register(() => new Notice("cleaned")); }
+          onunload() { return new Promise(() => {}); }
+        };
+      `;
+      await loadPlugin(info({ id: "stuck", code }));
+      let done = false;
+      const unloading = unloadPlugin("stuck").then(() => (done = true));
+      await vi.advanceTimersByTimeAsync(UNLOAD_WAIT_MS - 1);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await unloading;
+      expect(notices).toEqual(["cleaned"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("supports a plain-object module and loadData/saveData", async () => {
