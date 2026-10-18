@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMPHASIS_CHECK_LIMIT, keepsEmphasis, linkifyMention, linkUntilSettled, maskForMentions, mentionLines, mentionLinesFor } from "./linkify";
+import { blankEmails, blankUrls, DEF_START_RE, EMPHASIS_CHECK_LIMIT, keepsEmphasis, linkifyMention, linkUntilSettled, maskForMentions, mentionLines, mentionLinesFor } from "./linkify";
 import { setStrictLineBreaks } from "./render";
 
 describe("linkifyMention", () => {
@@ -782,6 +782,77 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
     expect(mentionLines("[Foo]: x.md\r\n[Foo] here\r\n")[1]).not.toContain("Foo");
     expect(mentionLines('[r][["|-|Foo(-[- ===]')[0]).not.toContain("Foo");
     expect(mentionLines("[r][[x][Foo] and [r][a[x][Foo]")[0]).not.toContain("Foo");
+  });
+  it("finds a definition broken after a backslash in its label, or with a comment before its colon", () => {
+    for (const note of ['[x\\\nb]: /u "Foo"', '[x]%%c%%: /u "Foo"']) {
+      const i = note.split("\n").length - 1;
+      expect(mentionLines(note)[i], note).not.toContain("Foo");
+      expect(mentionLinesFor(note, /Foo/i)[i], note).not.toContain("Foo");
+    }
+  });
+  it("reads a label only where Reading view does: what follows an HTML block's HTML has its own", () => {
+    for (const [note, want] of [
+      ["<div>x</div>\n[x foo]: /u\n\n[x Foo]", true],
+      ["[x foo]: /u\n\n<div>x</div>\n[x Foo]", true],
+      ["<div>x</div>\n[x foo]: /u\n\n<p>y</p>\n[x Foo]", true],
+      ["<div>x</div>\n[x foo]: /u\n[x Foo]", false],
+      ["[x foo]: /u\n\n[x Foo]", false],
+    ] as const) {
+      const i = note.split("\n").length - 1;
+      expect(mentionLines(note)[i].includes("Foo"), note).toBe(want);
+      expect(mentionLinesFor(note, /Foo/i)[i].includes("Foo"), note).toBe(want);
+    }
+  });
+  it("gives a line a comment joins to the next the prose of the line it ends up on", () => {
+    expect(mentionLines("%%a\nb%%```Foo\nx\n```")[1]).not.toContain("Foo");
+  });
+  it("stays quick on list markers with runs of spaces, HTML block after HTML block, and long runs a URL or address may start in", () => {
+    for (const [note, i] of [
+      ["Foo\n" + "*  ".repeat(26).trimEnd() + "\n\n[a]: /u", 0],
+      ["$$x$$ Foo\n" + "<p>x</p>\n".repeat(4000), 0],
+      ["Foo\n" + "<li>x</li>\n".repeat(2500) + "\n```\ncode\n```\nprice $$ here", 0],
+      ["a+".repeat(40000) + "@x Foo", 0],
+      ["a.".repeat(40000) + "x Foo http://y", 0],
+      ["www.x ".repeat(10000) + "a+".repeat(40000) + "://x Foo", 0],
+    ] as const) {
+      const t0 = performance.now();
+      expect(mentionLines(note)[i], note.slice(0, 12)).toContain("Foo");
+      expect(mentionLinesFor(note, /Foo/i)[i], note.slice(0, 12)).toContain("Foo");
+      expect(performance.now() - t0, note.slice(0, 12)).toBeLessThan(1500);
+    }
+  });
+  it("finds where a definition may start as before, and a label running on after a backslash", () => {
+    // The pattern before, with the backslash added: exponential on a long run of markers and spaces.
+    const before = /^[ \t>]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+[ \t>]*)*\[(?!\[)(?:(?:[^\]\n\\]|\\.)*\]:|(?:[^\]\n\\]|\\.)*\\?$)/m;
+    let seed = 3;
+    const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
+    const chars = [" ", " ", "\t", ">", "-", "*", "1", ".", ")", "[", "[", "]", ":", "\\", "\n", "a"];
+    for (let n = 0; n < 50_000; n++) {
+      let s = "";
+      for (let k = 0, len = 1 + Math.floor(rnd() * 14); k < len; k++) s += chars[Math.floor(rnd() * chars.length)];
+      expect(DEF_START_RE.test(s), JSON.stringify(s)).toBe(before.test(s));
+    }
+  });
+  it("blanks URLs and email addresses as the patterns for them do", () => {
+    const url = /\b(?:[a-z][a-z0-9+.-]*:\/\/|www\.)[^\s<>()[\]]+/gi;
+    const email = /(?<![\w.-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+    let seed = 5;
+    const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
+    const word = (chars: string[]) => {
+      let s = "";
+      for (let k = 0, len = 1 + Math.floor(rnd() * 16); k < len; k++) s += chars[Math.floor(rnd() * chars.length)];
+      return s;
+    };
+    const urlChars = ["a", "h", "W", "www.", "w", ".", "+", "-", "://", ":", "/", " ", "1", "_", "(", "é", "x", "http://"];
+    const emailChars = ["a", "b", "_", "1", ".", ".", "+", "-", "@", "@", " ", "é", "!"];
+    // An address can start right after another ends at a `+`.
+    for (const e of ["a@b.c+d@e.f", "x@y.z.+a@b.c", "a@b.c++d@e.f"]) expect(blankEmails(e), e).toBe(e.replace(email, (m) => " ".repeat(m.length)));
+    for (let n = 0; n < 50_000; n++) {
+      const u = word(urlChars);
+      expect(blankUrls(u), JSON.stringify(u)).toBe(u.replace(url, (m) => " ".repeat(m.length)));
+      const e = word(emailChars);
+      expect(blankEmails(e), JSON.stringify(e)).toBe(e.replace(email, (m) => " ".repeat(m.length)));
+    }
   });
 });
 

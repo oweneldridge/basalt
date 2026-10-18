@@ -7,7 +7,6 @@ import { CALLOUT_LINE, commentRanges, linkDefinitions, stripComments, stripComme
 
 // A code span: a run of backticks, closed by a run of the same length.
 const INLINE_CODE_RE = /(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g;
-const URL_RE = /\b(?:[a-z][a-z0-9+.-]*:\/\/|www\.)[^\s<>()[\]]+/gi;
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -21,12 +20,11 @@ const HTML_TAG_RE =
 // An autolink, `<scheme:...>` or `<user@host>`, as the editor's parser reads one.
 const AUTOLINK_RE =
   /<(?:[a-z][-\w+.]+:[^\s>]+|[a-z\d.!#$%&'*+/=?^_`{|}~-]+@[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?(?:\.[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?)*)>/gi;
-// A definition's start, wherever its address and title are: its label (not a
-// footnote's, and no bracket in it but an escaped one), after any quote marks
-// and list markers, and what follows the colon on its line.
 // A line a link definition may start on: past its quote and list marks and
-// indent, a label and its `]:`, or a label that runs on past the line.
-const DEF_START_RE = /^[ \t>]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+[ \t>]*)*\[(?!\[)(?:(?:[^\]\n\\]|\\.)*\]:|(?:[^\]\n\\]|\\.)*$)/m;
+// indent, a label and its `]:`, or a label that runs on past the line (a
+// backslash before the break too). One space or tab per marker, so a run of
+// spaces can be read only one way.
+export const DEF_START_RE = /^[ \t>]*(?:(?:[-*+]|\d{1,9}[.)])[ \t][ \t>]*)*\[(?!\[)(?:[^\]\n\\]|\\.)*(?:\]:|\\?$)/m;
 const DEF_HEAD_RE = /^((?:[ \t]*(?:>|(?:[-*+]|\d{1,9}[.)])(?=[ \t])))*)[ \t]*\[(?!\^)((?:[^[\]\\\n]|\\.)+)\]:([^\n]*)$/;
 const DEF_TITLE_RE = /^(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^)\\]|\\.)*\))$/;
 
@@ -70,9 +68,84 @@ function isDefinition(line: string): boolean {
 const REF_LINK_RE = /!?\[[^\][\n]*\]\[[^\][\n]*\]/g;
 // A shortcut reference link, `[label]`, a link only when the note defines it.
 const SHORTCUT_RE = /!?\[([^\][\n]+)\]/g;
-// A callout's type, a footnote reference and an email address. Run after the
-// links and URLs are masked, so a linked image's `[![` isn't read as a callout.
-const OTHER_RE = /\[![^[\]\n]*\]|\[\^[^[\]\n]+\]|(?<![\w.-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+// A callout's type and a footnote reference. Run after the links and URLs are
+// masked, so a linked image's `[![` isn't read as a callout.
+const OTHER_RE = /\[![^[\]\n]*\]|\[\^[^[\]\n]+\]/g;
+const LOCAL = /[\w.+-]/;
+const NOT_AFTER = /[\w.-]/;
+const DOMAIN = /[\w-]/;
+
+const SCHEME = /[a-z0-9+.-]/i;
+const ALPHA = /[a-z]/i;
+const WORD = /\w/;
+const URL_END = /[\s<>()[\]]/;
+
+/** `line` with each URL blanked, as `/\b(?:[a-z][a-z0-9+.-]*:\/\/|www\.)[^\s<>()[\]]+/gi`
+ * finds them, but read from each `://` and `www.` so a long run stays linear. */
+export function blankUrls(line: string): string {
+  const www = /www\./gi;
+  let scheme = line.indexOf("://"); // the next `://` not yet ruled out
+  let s = -1; // the first place a scheme may start before it
+  let w = www.test(line) ? -2 : -1; // the next `www.` that may start one, -2 if not looked for yet
+  if (scheme < 0 && w === -1) return line;
+  let out = "";
+  let from = 0; // where the last URL ended
+  for (;;) {
+    // Each is kept while it's past the last URL, so a long line is read once.
+    if (s < from) {
+      s = -1;
+      if (scheme >= 0 && scheme < from) scheme = line.indexOf("://", from);
+      while (scheme >= 0 && s < 0) {
+        let p = scheme;
+        while (p > from && SCHEME.test(line[p - 1])) p--;
+        while (p < scheme && !(ALPHA.test(line[p]) && !WORD.test(line[p - 1] ?? ""))) p++;
+        if (p < scheme && scheme + 3 < line.length && !URL_END.test(line[scheme + 3])) s = p;
+        else scheme = line.indexOf("://", scheme + 1);
+      }
+    }
+    if (w === -2 || (w >= 0 && w < from)) {
+      w = -1;
+      for (www.lastIndex = from; w < 0; ) {
+        const m = www.exec(line);
+        if (!m) break;
+        if (!WORD.test(line[m.index - 1] ?? "") && m.index + 4 < line.length && !URL_END.test(line[m.index + 4])) w = m.index;
+        else www.lastIndex = m.index + 1;
+      }
+    }
+    if (s < 0 && w < 0) break;
+    const start = s >= 0 && (w < 0 || s <= w) ? s : w;
+    let end = start === s ? scheme + 3 : w + 4;
+    while (end < line.length && !URL_END.test(line[end])) end++;
+    out += line.slice(from, start) + " ".repeat(end - start);
+    from = end;
+  }
+  return from ? out + line.slice(from) : line;
+}
+
+/** `line` with each email address blanked, as `/(?<![\w.-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g`
+ * finds them, but read from each `@` so a long run stays linear. */
+export function blankEmails(line: string): string {
+  let out = "";
+  let from = 0; // where the last address ended
+  for (let at = line.indexOf("@"); at >= 0; at = line.indexOf("@", at + 1)) {
+    // Back over the name, then on to the first place one may start.
+    let start = at;
+    while (start > from && LOCAL.test(line[start - 1])) start--;
+    while (start < at && NOT_AFTER.test(line[start - 1] ?? "")) start++;
+    // The domain: two parts or more, a dot between each.
+    let end = at;
+    let parts = 0;
+    while (line[end] === (parts ? "." : "@") && DOMAIN.test(line[end + 1] ?? "")) {
+      end += 2;
+      while (end < line.length && DOMAIN.test(line[end])) end++;
+      parts++;
+    }
+    if (start === at || parts < 2) continue;
+    out += line.slice(from, start) + " ".repeat(end - start);
+    from = end;
+  }
+  return from ? out + line.slice(from) : line;
+}
 // A word right after `!`, a backslash or `[` (not an escaped one), where a link
 // would turn into an embed, lose its first bracket or take that bracket into
 // its name.
@@ -157,13 +230,11 @@ function maskRest(line: string, refs: ReadonlySet<string>, written = line): stri
   // a code span or a link isn't a tag's.
   let tagged = line;
   if (written.includes("#")) for (const m of [...written.matchAll(TAG_RE), ...(written.includes("|#") ? written.matchAll(CELL_TAG_RE) : [])]) tagged = tagged.slice(0, m.index) + " ".repeat(m[0].length) + tagged.slice(m.index! + m[0].length);
-  return tagged
+  const linked = tagged
     .replace(mdLinkRegexGlobal(), (m) => " ".repeat(m.length))
     .replace(REF_LINK_RE, (m) => " ".repeat(m.length))
-    .replace(SHORTCUT_RE, (m, text: string) => (refs.has(label(text)) ? " ".repeat(m.length) : m))
-    .replace(URL_RE, (m) => " ".repeat(m.length))
-    .replace(OTHER_RE, (m) => " ".repeat(m.length))
-    .replace(AFTER_MARK_RE, (m) => m[0] + " ".repeat(m.length - 1));
+    .replace(SHORTCUT_RE, (m, text: string) => (refs.has(label(text)) ? " ".repeat(m.length) : m));
+  return blankEmails(blankUrls(linked).replace(OTHER_RE, (m) => " ".repeat(m.length))).replace(AFTER_MARK_RE, (m) => m[0] + " ".repeat(m.length - 1));
 }
 
 // The quote marks a line starts with, each at most three spaces in.
@@ -307,7 +378,7 @@ interface DeadScan {
  * with no `[` before it in its paragraph ends a link whose text began above.
  * `shape` is the same text with its code not yet blanked, to read the lines,
  * and a line `prose` says isn't reads as blank. */
-function blankLinks(text: string, refs: ReadonlySet<string>, shape = text, prose?: boolean[], paraAt?: (k: number) => Para): string {
+function blankLinks(text: string, refs: ReadonlySet<string> | ((line: number) => ReadonlySet<string>), shape = text, prose?: boolean[], paraAt?: (k: number) => Para): string {
   const open: number[] = [];
   const links: [number, number][] = [];
   // Line breaks matter only while a bracket is open; otherwise lines are counted when needed.
@@ -362,7 +433,10 @@ function blankLinks(text: string, refs: ReadonlySet<string>, shape = text, prose
           end = LABEL_RE.lastIndex;
           if (shape[end] === "(") end = Math.max(end, addressEnd(shape, end + 1, dead));
         }
-      } else if (i < j && refs.size && j - i <= 1000 && refs.has(label(text.slice(i + 1, j).replace(/\r?\n[ \t>]*/g, " ")))) end = j + 1;
+      } else if (i < j && j - i <= 1000) {
+        const known = typeof refs === "function" ? (countTo(j), refs(lineNo)) : refs;
+        if (known.size && known.has(label(text.slice(i + 1, j).replace(/\r?\n[ \t>]*/g, " ")))) end = j + 1;
+      }
       if (end < 0) continue;
       links.push([text[i - 1] === "!" ? i - 1 : i, end]);
       pos = end;
@@ -516,16 +590,19 @@ export function mentionLines(content: string, indented = true, html = true, deep
   const text = shape.split("\n").map((l, i) => (prose[i] ? l : " ".repeat(l.length)));
   let refs = new Set<string>();
   let taken = new Set<number>();
+  let own = new Map<number, Set<string>>();
   // Link definitions as Reading view finds them, rendering the note.
-  if (content.includes("]:") && DEF_START_RE.test(content.includes("%%") ? stripComments(content) : content)) ({ labels: refs, lines: taken } = linkDefinitions(content));
+  const shown = content.includes("%%") ? stripComments(content) : content;
+  if (shown.includes("]:") && DEF_START_RE.test(shown)) ({ labels: refs, lines: taken, own } = linkDefinitions(content));
+  const refsAt = (l: number) => own.get(l) ?? refs;
   // Code spans and links are found across lines: either may run on. Code
   // first, as a backtick that opens one before a link or tag does wins.
   const paraAt = paragraphs(text);
   const spans = blankCodeAcross(text, text, content, taken, paraAt);
   const code = spans.map((l, i) => (!prose[i] ? l : taken.has(i) ? " ".repeat(l.length) : maskCode(l, false)));
-  return blankLinks(code.join("\n"), refs, shape, prose, paraAt)
+  return blankLinks(code.join("\n"), own.size ? refsAt : refs, shape, prose, paraAt)
     .split("\n")
-    .map((l, i) => (prose[i] ? cutUnclosed(maskRest(l, refs, text[i]), unclosedAt(code[i])) : l));
+    .map((l, i) => (prose[i] ? cutUnclosed(maskRest(l, refsAt(i), text[i]), unclosedAt(code[i])) : l));
 }
 
 /** Whether a line starts with eleven quote or list marker characters, the
