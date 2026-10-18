@@ -266,6 +266,10 @@ function madeNow(content: string): FileStats {
 }
 // Keys that edit text in a field, with Cmd or Ctrl.
 const EDIT_KEYS = new Set(["a", "c", "v", "x", "z", "y", "arrowleft", "arrowright", "arrowup", "arrowdown", "backspace", "delete", "home", "end"]);
+// And a Mac text field's Emacs keys, with Ctrl.
+const MAC_CTRL_EDIT_KEYS = new Set(["a", "b", "d", "e", "f", "h", "k", "n", "o", "p", "t", "y"]);
+// How long a vault switch waits for a save to land before asking about what's unsaved.
+const FLUSH_WAIT_MS = 4000;
 // Bound on the self-write suppression map (rel -> last written content).
 const SELF_WRITES_MAX = 128;
 
@@ -700,6 +704,41 @@ export default function App() {
   const switching = useRef<Promise<void> | null>(null);
   const switchesInFlight = useRef(0);
   const switchesDone = useRef(() => {});
+  // The vaults being switched to, oldest first.
+  const switchTargets = useRef<{ name: string }[]>([]);
+  // Saves answered, so a switch can tell a slow save from one that hangs.
+  const savesDone = useRef(0);
+  // The vault whose plugins are loaded (or loading); a switch stops them.
+  const pluginsFor = useRef<string | null>(null);
+  const pluginEpoch = useRef(0);
+  const pluginsStopping = useRef(0);
+  const pluginsStopped = useRef<Promise<void>>(Promise.resolve());
+  const refreshPluginsRef = useRef<() => Promise<void>>(async () => {});
+  const stopRecordingRef = useRef<(save?: boolean) => Promise<void>>(async () => {});
+  // Plugins stop before a switch, so what they save as they go stays in this vault.
+  const stopPlugins = useCallback(() => {
+    pluginEpoch.current++;
+    pluginsFor.current = null;
+    const run = pluginsStopped.current.then(async () => {
+      pluginsStopping.current++;
+      try {
+        await unloadAll();
+      } finally {
+        pluginsStopping.current--;
+      }
+    });
+    pluginsStopped.current = run;
+    return run;
+  }, []);
+  // A plugin's change waits out a switch, refused if the vault changed; saves made as they stop go at once.
+  const pluginWrite = useCallback(async <T,>(write: () => Promise<T>): Promise<T> => {
+    if (switching.current && pluginsStopping.current === 0) {
+      const v = vaultRef.current;
+      while (switching.current) await switching.current;
+      if (vaultRef.current !== v) throw new Error("Not done: Basalt opened another vault meanwhile");
+    }
+    return write();
+  }, []);
   // The vault being opened, announced while it loads.
   const [switchingVault, setSwitchingVault] = useState<string | null>(null);
   const [switchedTo, setSwitchedTo] = useState("");
@@ -1039,6 +1078,7 @@ export default function App() {
   const writeSave = useCallback(
     async (path: string, doc: string, force = false) => {
       setSaving(true);
+      const vault = vaultRef.current;
       try {
         const known = notesRef.current.find((n) => n.path === path);
         if (!known && !force) {
@@ -1058,6 +1098,8 @@ export default function App() {
           return;
         }
         await writeNote(path, doc, expected);
+        // Answered after a switch: it landed in the vault that's gone.
+        if (vaultRef.current !== vault) return;
         if (unknown || bigBase.current.has(path)) setBigBase(path, doc);
         setSaveError(null);
         retryDelay.current = 2000;
@@ -1113,6 +1155,7 @@ export default function App() {
           }
         }
       } catch (e) {
+        if (vaultRef.current !== vault) return;
         if (isWriteConflict(e)) {
           addConflict(path);
           if (!pending.current.has(path)) pending.current.set(path, doc);
@@ -1127,6 +1170,7 @@ export default function App() {
         setSaveError(`Not saved: ${e}`);
         retryLater();
       } finally {
+        savesDone.current++;
         setSaving(false);
       }
     },
@@ -1199,6 +1243,7 @@ export default function App() {
         setSaveError(`Not saved: ${e}`);
         retryLater();
       } finally {
+        savesDone.current++;
         setSaving(false);
       }
     },
@@ -1322,7 +1367,7 @@ export default function App() {
       (p) => notesRef.current.find((n) => n.path === p)?.name ?? p.split(/[\\/]/).pop() ?? p,
     );
     const shown = names.slice(0, 5).join(", ") + (names.length > 5 ? ` and ${names.length - 5} more` : "");
-    return confirm(`Changes in ${shown} couldn't be saved. ${action} anyway and lose them?`, {
+    return confirm(`Changes in ${shown} aren't saved. ${action} anyway and lose them?`, {
       title: "Unsaved changes",
       kind: "warning",
     });
@@ -1929,7 +1974,7 @@ export default function App() {
         throw e;
       }
       // A newer switch began meanwhile: it decides the window, unless it fails.
-      if (!(await stillCurrent(gen))) return;
+      if (!(await stillCurrent(gen))) return false;
       // A window opened for a note stays on it, even if it reloads while loading.
       if (openNoteRel) markOpenedForNote(root);
       // Read the saved workspace NOW (before any state reset fires the save
@@ -1941,12 +1986,11 @@ export default function App() {
       setLineNumbers(obsConfigRef.current?.showLineNumber ?? false);
       if (localStorage.getItem(READABLE_WIDTH_KEY) === null) setReadableWidth(obsConfigRef.current?.readableLineLength ?? true);
       setBookmarks(await readObsidianBookmarks().catch(() => []));
-      if (vaultRef.current !== root || !pluginsReady.current) {
-        pluginsReady.current?.done(); // anything waiting on the last vault's plugins stops waiting
-        let done = () => {};
-        const promise = new Promise<void>((resolve) => (done = resolve));
-        pluginsReady.current = { vault: root, promise, done };
-      }
+      // The switch stopped the plugins, so they load again even for this vault.
+      pluginsReady.current?.done(); // anything waiting on the last vault's plugins stops waiting
+      let done = () => {};
+      const promise = new Promise<void>((resolve) => (done = resolve));
+      pluginsReady.current = { vault: root, promise, done };
       const savedTab = localStorage.getItem(rightTabKey(root));
       setRightTab(
         savedTab === "outline" || savedTab === "tags" || savedTab === "bookmarks" || savedTab === "links"
@@ -2018,14 +2062,18 @@ export default function App() {
           if (opened && vaultRef.current === root) markDailyOpened(root);
         });
       }
+      return true;
     },
     [loadVault, restoreWorkspace, openInPane, ensureWorkspace, stillCurrent],
   );
   const openVault = useCallback(
     async (path: string, openNoteRel?: string, restoring = false) => {
+      const target = { name: vaultName(path) || path };
+      switchTargets.current.push(target);
       if (switchesInFlight.current++ === 0) {
         switching.current = new Promise<void>((resolve) => (switchesDone.current = resolve));
         // Menus and views of the vault that's going would act on it.
+        setModal(null);
         setGraphOpen(false);
         setSlidesOpen(false);
         setTabMenu(null);
@@ -2038,26 +2086,43 @@ export default function App() {
         setRenameTarget(null);
         setTemplatePrompt(null);
       }
-      setSwitchingVault(vaultName(path) || path);
+      setSwitchingVault(target.name);
+      setSwitchedTo("");
       try {
-        // Held from here, so nothing typed during a slow save is left unsaved.
-        await flushAll();
+        // Held from here. Plugins, a recording and unsaved typing finish in the old vault.
+        await stopPlugins();
+        const saved = (async () => {
+          await stopRecordingRef.current(true);
+          await flushAll();
+          return true;
+        })();
+        // A save that never answers can't hold it: once none lands for a while, ask.
+        for (let seen = -1; seen !== savesDone.current; ) {
+          seen = savesDone.current;
+          if (await Promise.race([saved, new Promise<boolean>((r) => window.setTimeout(() => r(false), FLUSH_WAIT_MS))])) break;
+        }
         if (!(await okToDropUnsaved("Switch vaults"))) return;
-        await switchTo(path, openNoteRel, restoring);
-        const done = `Opened ${vaultName(path) || path}`;
-        setSwitchedTo(done);
-        window.setTimeout(() => setSwitchedTo((x) => (x === done ? "" : x)), 4000);
+        if (await switchTo(path, openNoteRel, restoring)) {
+          const done = `Opened ${target.name}`;
+          setSwitchedTo(done);
+          window.setTimeout(() => setSwitchedTo((x) => (x === done ? "" : x)), 4000);
+        }
       } finally {
+        switchTargets.current.splice(switchTargets.current.indexOf(target), 1);
         if (--switchesInFlight.current === 0) {
           switching.current = null;
           setSwitchingVault(null);
           switchesDone.current();
           if (document.activeElement === switchStatusRef.current) switchStatusRef.current?.blur();
           refocusIfLost();
+          // A switch that didn't change the vault stopped its plugins all the same.
+          if (vaultRef.current && pluginsFor.current !== vaultRef.current) void refreshPluginsRef.current();
+        } else {
+          setSwitchingVault(switchTargets.current[switchTargets.current.length - 1].name);
         }
       }
     },
-    [flushAll, switchTo],
+    [flushAll, switchTo, stopPlugins],
   );
   useEffect(() => {
     if (switchingVault === null) return;
@@ -2070,7 +2135,10 @@ export default function App() {
       if (!(e.target instanceof Element) || !e.target.closest("dialog")) return false;
       if (!e.metaKey && !e.ctrlKey) return true;
       if (e.getModifierState("AltGraph")) return true;
-      return (isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && EDIT_KEYS.has(e.key.toLowerCase());
+      if (e.altKey || (e.metaKey && e.ctrlKey)) return false;
+      const key = e.key.toLowerCase();
+      if (isMac && e.ctrlKey) return MAC_CTRL_EDIT_KEYS.has(key);
+      return (isMac ? e.metaKey : e.ctrlKey) && EDIT_KEYS.has(key);
     };
     // Shortcuts wait, but for the command palette, to switch again.
     const hold = (e: KeyboardEvent) => {
@@ -2128,8 +2196,8 @@ export default function App() {
       const parsed = parseBasaltUri(url);
       if (!parsed) return;
       // If the target vault is already open, just navigate — don't reset the
-      // workspace by re-opening it.
-      if (vaultRef.current === parsed.vault) {
+      // workspace by re-opening it. Not while it's going: the link opens it again.
+      if (vaultRef.current === parsed.vault && !switching.current) {
         const target = parsed.note ? notesRef.current.find((n) => n.rel === parsed.note) : null;
         if (target) openInPane(ensureWorkspace(), target.path);
         return;
@@ -3279,8 +3347,10 @@ export default function App() {
    * Templater tags, makes no note if nothing here would fill them, and opens
    * nothing once you've opened something else meanwhile. */
   const openDailyNote = useCallback(async (date: Date = new Date(), folderIfUnset?: string, atStartup = false): Promise<boolean> => {
-    // A switch under way decides which vault this is.
+    // A switch under way decides which vault this is (at startup, it mustn't change).
+    const asked = vaultRef.current;
     while (switching.current) await switching.current;
+    if (atStartup && vaultRef.current !== asked) return false;
     const cfg = obsConfigRef.current;
     const root = vaultRef.current ?? "";
     const gen = vaultGen.current;
@@ -3484,6 +3554,7 @@ export default function App() {
     async (save = true) => {
       const cur = recorderRef.current;
       if (!cur) return;
+      const v = vaultRef.current;
       if (recTimer.current) {
         clearInterval(recTimer.current);
         recTimer.current = null;
@@ -3500,10 +3571,11 @@ export default function App() {
       const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
       const file = new File([blob], `Recording ${stamp}.${ext}`, { type: blob.type });
       const target = await handleSaveAttachment(file);
-      if (target) editorApiRef.current?.insertAtCursor(`![[${target}]]`);
+      if (target && vaultRef.current === v) editorApiRef.current?.insertAtCursor(`![[${target}]]`);
     },
     [handleSaveAttachment],
   );
+  stopRecordingRef.current = stopRecording;
 
   /** Replace an upload placeholder in whichever note still contains it —
    * the editor that received the paste is gone (note switch / reload). */
@@ -3918,7 +3990,7 @@ export default function App() {
         const root = vaultRef.current ?? "";
         return readNote(note ? note.path : rel.startsWith(root) || !root ? rel : `${root.replace(/[/\\]+$/, "")}/${rel}`);
       },
-      createNote: async (rel, content) => {
+      createNote: (rel, content) => pluginWrite(async () => {
         const name = rel.replace(/\.md$/i, "");
         const abs = await createNote(name, content); // sanitized + vault-contained in Rust
         const vrel = abs.startsWith(vaultRef.current ?? "")
@@ -3931,20 +4003,20 @@ export default function App() {
           [...prev, note].sort((a, b) => a.rel.toLowerCase().localeCompare(b.rel.toLowerCase())),
         );
         bumpStructure();
-      },
-      modifyNote: (rel, content, expected) => pluginModifyNote(rel, content, expected),
-      deleteNote: async (rel) => {
+      }),
+      modifyNote: (rel, content, expected) => pluginWrite(() => pluginModifyNote(rel, content, expected)),
+      deleteNote: (rel) => pluginWrite(async () => {
         const note = notesRef.current.find((n) => n.rel === rel || n.path === rel);
         if (note) await handleDeleteNoteRef.current(note.path, { skipConfirm: true });
-      },
-      renameNote: async (rel, newPath) => {
+      }),
+      renameNote: (rel, newPath) => pluginWrite(async () => {
         const note = notesRef.current.find((n) => n.rel === rel || n.path === rel);
         if (note) await handleRenameNoteRef.current(note.path, newPath.replace(/\.md$/i, ""));
-      },
-      createFolder: async (rel) => {
+      }),
+      createFolder: (rel) => pluginWrite(async () => {
         await createFolder(rel);
         bumpStructure();
-      },
+      }),
       getActiveNotePath: () => {
         const p = focusedIdRef.current ? panesRef.current[focusedIdRef.current]?.active : null;
         if (!p) return null;
@@ -3952,7 +4024,7 @@ export default function App() {
       },
       openNote: (target) => openViewerFileRef.current(target),
       vaultName: () => vaultName(vaultRef.current ?? ""),
-      savePluginData: (id, json) => writePluginData(id, json),
+      savePluginData: (id, json) => pluginWrite(() => writePluginData(id, json)),
       notice: (msg, timeoutMs) => showNotice(msg, timeoutMs),
       getFileCache: (rel) => {
         const note = notesRef.current.find((n) => n.rel === rel || n.path === rel);
@@ -3990,20 +4062,24 @@ export default function App() {
       resolvedLinks: () => index.current.linkCounts(attachmentRel).resolved,
       unresolvedLinks: () => index.current.linkCounts(attachmentRel).unresolved,
       insertAtCursor: (text, caretOffset) => editorApiRef.current?.insertAtCursor(text, caretOffset),
-      openDailyNote: async (date, folderIfUnset) => {
+      openDailyNote: (date, folderIfUnset) => pluginWrite(async () => {
         await dailyNoteApi.current.open(date, folderIfUnset);
-      },
+      }),
       hasDailyNote: (date, folderIfUnset) => dailyNoteApi.current.has(date, folderIfUnset),
       onRegistryChanged: () => setPluginVersion((v) => v + 1),
     };
     installHost(deps);
     return () => installHost(null);
-  }, [pluginModifyNote, showNotice, bumpStructure]);
+  }, [pluginModifyNote, showNotice, bumpStructure, pluginWrite]);
 
   // Load the enabled plugins for a vault (called on open + on toggle).
   const refreshPlugins = useCallback(async () => {
     const v = vaultRef.current;
     if (!v) return;
+    pluginsFor.current = v;
+    const epoch = pluginEpoch.current;
+    // The vault switched, or a switch stopped the plugins, mid-load.
+    const stale = () => vaultRef.current !== v || pluginEpoch.current !== epoch;
     try {
       let infos: PluginInfo[] = [];
       try {
@@ -4011,26 +4087,30 @@ export default function App() {
       } catch {
         /* no plugins folder */
       }
-      if (vaultRef.current !== v) return; // vault changed during the async list
+      if (stale()) return;
       setInstalledPlugins(infos);
       const { run, changed } = await vetEnabledPlugins(v, infos);
       for (const info of changed) {
         showNotice(`Plugin "${info.name}" changed since you enabled it, so it's off. Turn it on again in Settings to run the new version.`, 10000);
       }
+      if (stale()) return;
       await unloadAll();
       for (const info of run) {
-        if (vaultRef.current !== v) break; // the vault switched mid-load: stop
+        if (stale()) break;
         try {
           await loadPlugin(info);
         } catch (e) {
-          showNotice(`Plugin "${info.name}" failed to load: ${e instanceof Error ? e.message : e}`, 8000);
+          if (!stale()) showNotice(`Plugin "${info.name}" failed to load: ${e instanceof Error ? e.message : e}`, 8000);
         }
       }
       setPluginVersion((x) => x + 1);
     } finally {
-      if (pluginsReady.current?.vault === v) pluginsReady.current.done();
+      // A load that stopped leaves waiting to the one that replaces it.
+      if (!stale() && pluginsReady.current?.vault === v) pluginsReady.current.done();
     }
   }, [showNotice]);
+
+  refreshPluginsRef.current = refreshPlugins;
 
   // Enable/disable a plugin from Settings.
   const setPluginEnabled = useCallback(
@@ -6620,10 +6700,10 @@ export default function App() {
         <div className="rec-indicator" role="status">
           <span className="rec-dot" aria-hidden />
           Recording {Math.floor(recSeconds / 60)}:{String(recSeconds % 60).padStart(2, "0")}
-          <button className="rec-stop" aria-disabled={switchingVault !== null || undefined} onClick={() => switchingVault === null && void stopRecording(true)}>
+          <button className="rec-stop" onClick={() => void stopRecording(true)}>
             Stop &amp; insert
           </button>
-          <button className="rec-discard" aria-disabled={switchingVault !== null || undefined} onClick={() => switchingVault === null && void stopRecording(false)}>
+          <button className="rec-discard" onClick={() => void stopRecording(false)}>
             Discard
           </button>
         </div>

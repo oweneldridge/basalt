@@ -303,35 +303,38 @@ test.describe("the ribbon during a slow switch", () => {
   });
 });
 
-test.describe("a plugin's daily note during a slow switch", () => {
-  test.use({
-    vaultFiles: {
-      "Note X.md": "x\n",
-      ".obsidian/daily-notes.json": JSON.stringify({ folder: "XDaily" }),
-      ".basalt/plugins/daily-now/main.js":
-        'const { Plugin } = require("basalt"); module.exports = class extends Plugin { onload() { globalThis.__daily = () => this.app.dailyNotes.open(new Date()); } };',
-      ".basalt/plugins/daily-now/manifest.json": JSON.stringify({ id: "daily-now", name: "Daily Now", version: "0.0.1" }),
-    },
-  });
+const dailyNow = {
+  ".basalt/plugins/daily-now/main.js":
+    'const { Plugin } = require("basalt"); module.exports = class extends Plugin { onload() { globalThis.__daily = () => this.app.dailyNotes.open(new Date()); } };',
+  ".basalt/plugins/daily-now/manifest.json": JSON.stringify({ id: "daily-now", name: "Daily Now", version: "0.0.1" }),
+};
 
-  test("waits for the new vault, and is made with its settings", async ({ page, vault }) => {
+async function enablePlugin(page: Page, name: string, ready: string) {
+  await page.keyboard.press("ControlOrMeta+p");
+  await page.locator(".palette-input").first().fill("Open settings");
+  await page.keyboard.press("Enter");
+  await page.locator(".plugin-row", { hasText: name }).locator('input[type="checkbox"]').click();
+  await expect.poll(() => page.evaluate((g) => typeof (globalThis as Record<string, unknown>)[g], ready)).not.toBe("undefined");
+  await page.keyboard.press("Escape");
+}
+
+test.describe("the old vault's plugin asking for a daily note during a slow switch", () => {
+  test.use({ vaultFiles: { "Note X.md": "x\n", ".obsidian/daily-notes.json": JSON.stringify({ folder: "XDaily" }), ...dailyNow } });
+
+  test("makes none, in either vault", async ({ page, vault }) => {
     test.setTimeout(90000);
     const a = await otherVault({ "Welcome A.md": "a\n", ".obsidian/daily-notes.json": JSON.stringify({ folder: "ADaily" }) });
     try {
       await holdSwitch(page, vault.url, a, 3000);
       await openApp(page, vault);
-      await page.keyboard.press("ControlOrMeta+p");
-      await page.locator(".palette-input").first().fill("Open settings");
-      await page.keyboard.press("Enter");
-      await page.locator(".plugin-row", { hasText: "Daily Now" }).locator('input[type="checkbox"]').click();
-      await expect.poll(() => page.evaluate(() => typeof (globalThis as { __daily?: unknown }).__daily)).toBe("function");
-      await page.keyboard.press("Escape");
+      await enablePlugin(page, "Daily Now", "__daily");
       await switchTo(page, a.root);
       await page.waitForTimeout(400);
-      await page.evaluate(() => void (globalThis as unknown as { __daily: () => Promise<void> }).__daily());
+      const asked = await page.evaluate(() => (globalThis as unknown as { __daily: () => Promise<void> }).__daily().then(() => "made", (e) => String(e)));
+      expect(asked).toMatch(/unloaded/);
       await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 20000 });
-      await expect.poll(() => a.exists(`ADaily/${today}.md`), { timeout: 8000 }).toBe(true);
-      expect(a.files().some((f) => f.startsWith("XDaily"))).toBe(false);
+      await page.waitForTimeout(1500);
+      expect(a.files().sort()).toEqual(["Welcome A.md"]);
       expect(vault.exists(`XDaily/${today}.md`)).toBe(false);
     } finally {
       await a.stop();
@@ -339,35 +342,160 @@ test.describe("a plugin's daily note during a slow switch", () => {
   });
 });
 
-test.describe("a plugin's daily note during two switches", () => {
-  test.use({
-    vaultFiles: {
-      "Note X.md": "x\n",
-      ".obsidian/daily-notes.json": JSON.stringify({ folder: "XDaily" }),
-      ".basalt/plugins/daily-now/main.js":
-        'const { Plugin } = require("basalt"); module.exports = class extends Plugin { onload() { globalThis.__daily = () => this.app.dailyNotes.open(new Date()); } };',
-      ".basalt/plugins/daily-now/manifest.json": JSON.stringify({ id: "daily-now", name: "Daily Now", version: "0.0.1" }),
-    },
-  });
+test.describe("the new vault's plugin asking for a daily note as it loads, during two switches", () => {
+  test.use({ vaultFiles: { "Note X.md": "x\n", ".obsidian/daily-notes.json": JSON.stringify({ folder: "XDaily" }) } });
 
-  test("is made once the second has opened the vault", async ({ page, vault }) => {
+  test("has it made once the second has opened the vault, with its settings", async ({ page, vault }) => {
     test.setTimeout(90000);
-    const a = await otherVault({ "Welcome A.md": "a\n", ".obsidian/daily-notes.json": JSON.stringify({ folder: "ADaily" }) });
+    const a = await otherVault({
+      "Welcome A.md": "a\n",
+      ".obsidian/daily-notes.json": JSON.stringify({ folder: "ADaily" }),
+      ".basalt/plugins/daily-load/main.js":
+        'const { Plugin } = require("basalt"); module.exports = class extends Plugin { onload() { if (globalThis.__asked) return; globalThis.__asked = 1; this.app.dailyNotes.open(new Date()).then(() => (globalThis.__made = 1)); } };',
+      ".basalt/plugins/daily-load/manifest.json": JSON.stringify({ id: "daily-load", name: "Daily Load", version: "0.0.1" }),
+    });
     try {
-      await holdSwitch(page, vault.url, a, 2500);
+      await page.addInitScript((r) => localStorage.setItem(`basalt.plugins.enabled.${r}`, JSON.stringify(["daily-load"])), a.root);
+      const sent = await holdSwitch(page, vault.url, a, 1000, { read_vault: 3000 });
       await openApp(page, vault);
-      await page.keyboard.press("ControlOrMeta+p");
-      await page.locator(".palette-input").first().fill("Open settings");
-      await page.keyboard.press("Enter");
-      await page.locator(".plugin-row", { hasText: "Daily Now" }).locator('input[type="checkbox"]').click();
-      await expect.poll(() => page.evaluate(() => typeof (globalThis as { __daily?: unknown }).__daily)).toBe("function");
-      await page.keyboard.press("Escape");
       await switchTo(page, a.root);
-      await page.waitForTimeout(400);
-      await page.evaluate(() => void (globalThis as unknown as { __daily: () => Promise<void> }).__daily());
+      // A's notes are still coming; its plugin has asked, and waits.
+      await expect.poll(() => page.evaluate(() => (globalThis as { __asked?: number }).__asked), { timeout: 10000 }).toBe(1);
+      expect(sent.filter((x) => x.startsWith("create_note"))).toEqual([]);
       await switchTo(page, a.root, true);
       await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 20000 });
       await expect.poll(() => a.exists(`ADaily/${today}.md`), { timeout: 10000 }).toBe(true);
+      expect(vault.exists(`XDaily/${today}.md`)).toBe(false);
+    } finally {
+      await a.stop();
+    }
+  });
+});
+
+const maker = {
+  ".basalt/plugins/maker/main.js":
+    'const { Plugin } = require("basalt"); module.exports = class extends Plugin { onload() { globalThis.__make = () => this.app.vault.create("Plugin Made.md", "p"); globalThis.__folder = () => this.app.vault.createFolder("PluginFolder"); } async onunload() { await this.saveData({ from: "X" }); } };',
+  ".basalt/plugins/maker/manifest.json": JSON.stringify({ id: "maker", name: "Maker", version: "0.0.1" }),
+};
+
+test.describe("the old vault's plugin during a switch", () => {
+  test.use({ vaultFiles: { "Note X.md": "x\n", ...maker } });
+
+  test("makes nothing in the new vault while it opens", async ({ page, vault }) => {
+    test.setTimeout(90000);
+    const a = await otherVault({ "Welcome A.md": "a\n", ...maker });
+    try {
+      const sent = await holdSwitch(page, vault.url, a, 1500, { read_obsidian_config: 4000 });
+      await openApp(page, vault);
+      await enablePlugin(page, "Maker", "__make");
+      await switchTo(page, a.root);
+      await page.waitForTimeout(2500); // A has opened; its settings are slow
+      expect(await inert(page)).toBe(true);
+      const tried = await page.evaluate(() => {
+        const g = globalThis as unknown as { __make: () => Promise<void>; __folder: () => Promise<void> };
+        return Promise.all([g.__make(), g.__folder()].map((p) => p.then(() => "done", (e) => String(e))));
+      });
+      expect(tried).toEqual([expect.stringMatching(/unloaded/), expect.stringMatching(/unloaded/)]);
+      await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 20000 });
+      await page.waitForTimeout(1500);
+      expect(a.files().sort()).toEqual(["Welcome A.md"]);
+      expect(vault.exists("Plugin Made.md")).toBe(false);
+      expect(sent.filter((x) => /^(create_note|create_folder)@/.test(x))).toEqual([]);
+    } finally {
+      await a.stop();
+    }
+  });
+
+  test("saves what it saves as it stops to its own vault", async ({ page, vault }) => {
+    test.setTimeout(90000);
+    const a = await otherVault({ "Welcome A.md": "a\n", ...maker, ".basalt/plugins/maker/data.json": '{"from":"A"}' });
+    try {
+      const sent = await holdSwitch(page, vault.url, a, 0);
+      await openApp(page, vault);
+      await enablePlugin(page, "Maker", "__make");
+      await switchTo(page, a.root);
+      await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 20000 });
+      await page.waitForTimeout(1000);
+      expect(JSON.parse(vault.read(".basalt/plugins/maker/data.json"))).toEqual({ from: "X" });
+      const { readFileSync } = await import("node:fs");
+      expect(JSON.parse(readFileSync(join(a.root, ".basalt/plugins/maker/data.json"), "utf8"))).toEqual({ from: "A" });
+      expect(sent.filter((x) => x.startsWith("write_plugin_data"))).toEqual(["write_plugin_data@old"]);
+    } finally {
+      await a.stop();
+    }
+  });
+});
+
+const keyer = {
+  ".basalt/plugins/keyer/main.js":
+    'const { Plugin } = require("basalt"); module.exports = class extends Plugin { onload() { globalThis.__keyer = []; this.registerDomEvent(document, "keydown", (e) => { globalThis.__keyer.push("down:" + e.key); if (e.key === "F2") this.app.vault.create("F2 Made.md", "x"); }); this.registerDomEvent(window, "keyup", (e) => { globalThis.__keyer.push("up:" + e.key); if (e.key === "F4") this.app.vault.create("F4 Made.md", "x"); }); } };',
+  ".basalt/plugins/keyer/manifest.json": JSON.stringify({ id: "keyer", name: "Keyer", version: "0.0.1" }),
+};
+
+test.describe("the old vault's plugin's own key listeners during a slow switch", () => {
+  test.use({ vaultFiles: { "Note X.md": "x\n", ...keyer } });
+
+  test("hear nothing, and make nothing", async ({ page, vault }) => {
+    test.setTimeout(90000);
+    const a = await otherVault({ "Welcome A.md": "a\n" });
+    try {
+      const sent = await holdSwitch(page, vault.url, a, 3000);
+      await openApp(page, vault);
+      await enablePlugin(page, "Keyer", "__keyer");
+      await switchTo(page, a.root);
+      await page.waitForTimeout(300);
+      expect(await inert(page)).toBe(true);
+      await page.evaluate(() => ((globalThis as unknown as { __keyer: string[] }).__keyer.length = 0));
+      await page.keyboard.press("F2");
+      await page.keyboard.press("F4");
+      expect(await page.evaluate(() => (globalThis as unknown as { __keyer: string[] }).__keyer)).toEqual([]);
+      await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 20000 });
+      await page.waitForTimeout(1500);
+      expect(a.files().sort()).toEqual(["Welcome A.md"]);
+      expect(sent.filter((x) => x.startsWith("create_note"))).toEqual([]);
+    } finally {
+      await a.stop();
+    }
+  });
+});
+
+test.describe("a save that never answers", () => {
+  test.use({ vaultFiles: { "Note X.md": "x\n" } });
+
+  test("can't hold a switch: it asks, keeps the typing if told no, and goes on if told yes", async ({ page, vault }) => {
+    test.setTimeout(90000);
+    const a = await otherVault({ "Welcome A.md": "a\n" });
+    try {
+      await holdSwitch(page, vault.url, a, 0);
+      let hang = false;
+      await page.route("**/api/invoke", async (route) => {
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        if (hang && body.cmd === "write_note") return; // never answers
+        return route.fallback();
+      });
+      const asked: string[] = [];
+      let answer = false;
+      page.on("dialog", (d) => {
+        asked.push(d.message());
+        void (answer ? d.accept() : d.dismiss());
+      });
+      await openApp(page, vault);
+      await openNote(page, "Note X");
+      hang = true;
+      await page.locator(".pane:not(.dock) .cm-content").first().click();
+      await page.keyboard.press("ControlOrMeta+End");
+      await page.keyboard.type("y");
+      await page.waitForTimeout(1500);
+      await switchTo(page, a.root);
+      expect(await inert(page)).toBe(true);
+      await expect.poll(() => asked.length, { timeout: 10000 }).toBe(1);
+      expect(asked[0]).toMatch(/Note X.*aren't saved/);
+      await expect(page.locator("main.main")).not.toHaveAttribute("inert");
+      await expect(page.locator(".pane:not(.dock) .cm-content").first()).toContainText("xy");
+      answer = true;
+      await switchTo(page, a.root);
+      await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 20000 });
+      expect(asked).toHaveLength(2);
     } finally {
       await a.stop();
     }
