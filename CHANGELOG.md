@@ -639,7 +639,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   duplicated is also saved, and drawn, before any smaller group wholly inside
   it, so it never covers one it holds; a group only partly over another keeps
   its place. Moving a group, by mouse or arrow keys, moves the cards and
-  groups wholly inside it, as in Obsidian. A click that moves the
+  groups wholly inside it, as in Obsidian: what was inside when the drag, or
+  a run of arrow-key presses, began, not what it passes over. A click that moves the
   pointer a pixel or two, or a drag that ends where it began, doesn't move or
   save anything. A group's `background` is kept as the file had it. Keys
   stay where the file had them, but for a card's position, size and colour

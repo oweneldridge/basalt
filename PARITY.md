@@ -163,9 +163,11 @@ button for the rest; Obsidian scrolls through all of them.
   otherwise they keep their own order).
 - Moving a group moves the cards and groups wholly inside it, with the mouse
   or the arrow keys, as Obsidian's help says ("When you move the group, the
-  cards inside it move too"). Not checked: whether Obsidian also takes a card
-  only partly inside, and where it saves them (Basalt saves them with the
-  group, after what stayed put).
+  cards inside it move too"). What's inside is taken when a drag, or a run of
+  arrow-key moves, begins, so a group doesn't pick up the cards it passes
+  over. Not checked: whether Obsidian also takes a card only partly inside,
+  and where it saves them (after a drag Basalt saves them with the group,
+  after what stayed put; arrow keys keep the order, but for groups).
 - Canvas undo and redo follow Obsidian's help: Cmd-Z (Ctrl-Z) undoes, Cmd-Shift-Z
   or Cmd-Y (Ctrl-Shift-Z or Ctrl-Y) redoes, and the canvas controls have Undo
   and Redo. Each edit is one step: a whole drag, a resize, a new card, a

@@ -288,6 +288,36 @@ test("moving a group moves what's inside it, by mouse or keyboard", async ({ pag
   expect(await xy()).toEqual({ ...moved, inner: [40 + dx, dy], c1: [80 + dx, 60 + dy] });
 });
 
+test("arrow keys in a row carry what was in the group when they began, as a drag does", async ({ page }) => {
+  await openCanvas(page, "Sweep", [
+    { id: "grp", type: "group", label: "Grp", x: 0, y: 0, width: 300, height: 200 },
+    { id: "c1", type: "text", text: "Lone", x: 400, y: 50, width: 100, height: 60 },
+  ]);
+  await recordWrites(page);
+  const xy = () =>
+    page.evaluate(() => {
+      const s = (window as unknown as { __saved: string[] }).__saved;
+      return s.length ? Object.fromEntries((JSON.parse(s[s.length - 1]).nodes as { id: string; x: number; y: number }[]).map((n) => [n.id, [n.x, n.y]])) : {};
+    });
+  const grp = page.locator('[aria-label="Group: Grp"]');
+  await grp.focus();
+  for (let i = 0; i < 2; i++) await page.keyboard.press("Shift+ArrowRight");
+  // The card now lies wholly inside, but this run began without it.
+  await expect.poll(xy).toEqual({ grp: [200, 0], c1: [400, 50] });
+  await page.keyboard.press("Shift+ArrowRight");
+  await expect.poll(xy).toEqual({ grp: [300, 0], c1: [400, 50] });
+  await page.keyboard.press("Shift+ArrowLeft");
+  // Another edit ends the run, so the next key move takes what's inside now.
+  await page.locator('.canvas-color-dot[title="Color 3"]').click();
+  await grp.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(xy).toEqual({ grp: [220, 0], c1: [420, 50] });
+  // So does selecting something else.
+  await page.locator('[aria-label="Text: Lone"]').focus();
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(xy).toEqual({ grp: [220, 0], c1: [420, 70] });
+});
+
 // Sends a pointer event the browser itself would send for a touch or pen: a
 // cancel, lost capture, or a second finger.
 const send = (

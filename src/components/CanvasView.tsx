@@ -411,6 +411,9 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
   // edits a text card or opens a note or link, arrows move the selection
   // (Shift for bigger steps), Escape deselects.
   const refocusAfterEdit = useRef<string | null>(null);
+  // Key moves in a row, with nothing else edited or selected between them,
+  // carry what was inside a group when they began, as a drag does.
+  const keyRun = useRef<{ at: CanvasData; sel: Set<string>; ids: Set<string> } | null>(null);
   const revealNode = (n: CanvasNode) => {
     const vp = viewport.current;
     if (!vp) return;
@@ -452,8 +455,12 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
       } else if (moves[e.key] && editable) {
         const [dx, dy] = moves[e.key];
         const d = dataRef.current;
-        const ids = withGroupContents(d.nodes, selectedRef.current);
-        emit({ ...d, nodes: orderGroups(d.nodes.map((m) => (ids.has(m.id) ? { ...m, x: m.x + dx, y: m.y + dy } : m))) });
+        const run = keyRun.current;
+        const sel = selectedRef.current;
+        const ids = run && run.at === shown.current && run.sel === sel ? run.ids : withGroupContents(d.nodes, sel);
+        const next = { ...d, nodes: orderGroups(d.nodes.map((m) => (ids.has(m.id) ? { ...m, x: m.x + dx, y: m.y + dy } : m))) };
+        emit(next);
+        keyRun.current = { at: next, sel, ids };
       } else if (e.key === "Escape") {
         clearSel();
       } else {
