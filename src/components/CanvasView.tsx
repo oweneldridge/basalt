@@ -411,6 +411,8 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
     let raf = 0;
     let delta: { dx: number; dy: number } | null = null;
     const move = (ev: PointerEvent) => {
+      // A click's small wobble isn't a drag.
+      if (!delta && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 4) return;
       const p = toWorld(ev.clientX, ev.clientY);
       delta = { dx: p.x - start.x, dy: p.y - start.y };
       if (!raf)
@@ -432,13 +434,23 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
       if (raf) cancelAnimationFrame(raf);
       if (delta) {
         // Commit all moved nodes in one emit (single undo step), last in the
-        // list as Obsidian saves them, so they draw on top.
+        // list as Obsidian saves them, so they draw on top, but groups stay
+        // before cards, under them.
         const d = dataRef.current;
         const moved = d.nodes.map((n) => {
           const o = orig.get(n.id);
           return o && delta ? { ...n, x: Math.round(o.x + delta.dx), y: Math.round(o.y + delta.dy) } : n;
         });
-        emit({ ...d, nodes: [...moved.filter((n) => !orig.has(n.id)), ...moved.filter((n) => orig.has(n.id))] });
+        const back = d.nodes.filter((n) => orig.has(n.id)).every((n) => {
+          const o = orig.get(n.id)!;
+          return Math.round(o.x + delta!.dx) === o.x && Math.round(o.y + delta!.dy) === o.y;
+        });
+        if (back) {
+          setData({ ...d, nodes: d.nodes.map((n) => ({ ...n, ...orig.get(n.id) })) });
+          return;
+        }
+        const order = [...moved.filter((n) => !orig.has(n.id)), ...moved.filter((n) => orig.has(n.id))];
+        emit({ ...d, nodes: [...order.filter((n) => n.type === "group"), ...order.filter((n) => n.type !== "group")] });
       }
     };
     window.addEventListener("pointermove", move);

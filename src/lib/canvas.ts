@@ -109,7 +109,7 @@ export function serializeCanvas(data: CanvasData): string {
     put(o, "color", n.color);
     if (n.type === "group") {
       put(o, "label", n.label);
-      put(o, "background", n.raw?.background);
+      if (n.raw && "background" in n.raw) o.background = n.raw.background;
     }
     return o;
   });
