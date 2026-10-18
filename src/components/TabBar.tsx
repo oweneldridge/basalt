@@ -125,10 +125,11 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
               ? (e) => {
                   // Its name shows under this tab, kept inside the bar.
                   const tab = e.currentTarget;
-                  const bar = tab.parentElement;
+                  const bar = tab.closest<HTMLElement>(".tab-bar");
                   const name = tab.querySelector<HTMLElement>(".tab-name");
                   if (!bar || !name) return;
-                  const x = Math.max(4, Math.min(tab.offsetLeft, bar.clientWidth - name.offsetWidth - 4));
+                  const left = tab.getBoundingClientRect().left - bar.getBoundingClientRect().left;
+                  const x = Math.max(4, Math.min(left, bar.clientWidth - name.offsetWidth - 4));
                   bar.style.setProperty("--name-x", `${x}px`);
                 }
               : undefined
