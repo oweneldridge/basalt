@@ -560,3 +560,64 @@ test.describe("typing just before a switch", () => {
     }
   });
 });
+
+const slowBye = {
+  ".basalt/plugins/slow/main.js": [
+    'const { Plugin } = require("basalt");',
+    "module.exports = class extends Plugin {",
+    "  onload() {",
+    "    globalThis.__slowLoaded = 1;",
+    "    let n = 0;",
+    '    this.registerInterval(() => { if (this.unloading) this.app.vault.create("Leak " + n++ + ".md", "leak").catch(() => {}); }, 150);',
+    "  }",
+    "  async onunload() { this.unloading = true; await new Promise((r) => setTimeout(r, 2500)); }",
+    "};",
+  ].join("\n"),
+  ".basalt/plugins/slow/manifest.json": JSON.stringify({ id: "slow", name: "Slow Plugin", version: "0.0.1" }),
+  ".basalt/plugins/dn/main.js":
+    'const { Plugin } = require("basalt"); module.exports = class extends Plugin { onload() { globalThis.__dnLoaded = 1; } async onunload() { this.app.dailyNotes.open(new Date()).catch(() => {}); } };',
+  ".basalt/plugins/dn/manifest.json": JSON.stringify({ id: "dn", name: "DN Plugin", version: "0.0.1" }),
+};
+
+test.describe("a plugin stopping as a switch starts", () => {
+  test.use({ vaultFiles: { "Note X.md": "x\n", ".obsidian/daily-notes.json": JSON.stringify({ folder: "XDaily" }), ...slowBye } });
+
+  test("turned off just before it, writes nothing into the new vault", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    const a = await otherVault({ "Welcome A.md": "a\n" });
+    try {
+      await holdSwitch(page, vault.url, a, 200);
+      await openApp(page, vault);
+      await enablePlugin(page, "Slow Plugin", "__slowLoaded");
+      await page.keyboard.press("ControlOrMeta+p");
+      await page.locator(".palette-input").first().fill("Open settings");
+      await page.keyboard.press("Enter");
+      await page.locator(".plugin-row", { hasText: "Slow Plugin" }).locator('input[type="checkbox"]').click(); // off; it's slow to stop
+      await page.keyboard.press("Escape");
+      await switchTo(page, a.root, true);
+      await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 20000 });
+      await page.waitForTimeout(3000);
+      expect(a.files()).toEqual(["Welcome A.md"]);
+      expect(vault.exists("Leak 0.md")).toBe(true);
+    } finally {
+      await a.stop();
+    }
+  });
+
+  test("asking for today's daily note as it stops, has it made in neither vault", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    const a = await otherVault({ "Welcome A.md": "a\n" });
+    try {
+      await holdSwitch(page, vault.url, a, 200);
+      await openApp(page, vault);
+      await enablePlugin(page, "DN Plugin", "__dnLoaded");
+      await switchTo(page, a.root, true);
+      await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 20000 });
+      await page.waitForTimeout(1500);
+      expect(a.files()).toEqual(["Welcome A.md"]);
+      expect(vault.exists(`XDaily/${today}.md`)).toBe(false);
+    } finally {
+      await a.stop();
+    }
+  });
+});

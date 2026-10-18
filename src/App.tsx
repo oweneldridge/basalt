@@ -3346,11 +3346,12 @@ export default function App() {
    * waits for the plugins (15 s at most) when a missing note's template has
    * Templater tags, makes no note if nothing here would fill them, and opens
    * nothing once you've opened something else meanwhile. */
-  const openDailyNote = useCallback(async (date: Date = new Date(), folderIfUnset?: string, atStartup = false): Promise<boolean> => {
-    // A switch under way decides which vault this is (at startup, it mustn't change).
-    const asked = vaultRef.current;
+  const openDailyNote = useCallback(async (date: Date = new Date(), folderIfUnset?: string, atStartup = false, forVault?: string | null): Promise<boolean> => {
+    // A switch under way decides which vault this is (at startup, or for a
+    // plugin, it mustn't change).
+    const asked = forVault === undefined ? vaultRef.current : forVault;
     while (switching.current) await switching.current;
-    if (atStartup && vaultRef.current !== asked) return false;
+    if ((atStartup || forVault !== undefined) && vaultRef.current !== asked) return false;
     const cfg = obsConfigRef.current;
     const root = vaultRef.current ?? "";
     const gen = vaultGen.current;
@@ -4063,9 +4064,11 @@ export default function App() {
       resolvedLinks: () => index.current.linkCounts(attachmentRel).resolved,
       unresolvedLinks: () => index.current.linkCounts(attachmentRel).unresolved,
       insertAtCursor: (text, caretOffset) => editorApiRef.current?.insertAtCursor(text, caretOffset),
-      openDailyNote: (date, folderIfUnset) => pluginWrite(async () => {
-        await dailyNoteApi.current.open(date, folderIfUnset);
-      }),
+      openDailyNote: async (date, folderIfUnset) => {
+        const v = vaultRef.current;
+        await dailyNoteApi.current.open(date, folderIfUnset, false, v);
+        if (vaultRef.current !== v) throw new Error("Not done: Basalt opened another vault meanwhile");
+      },
       hasDailyNote: (date, folderIfUnset) => dailyNoteApi.current.has(date, folderIfUnset),
       onRegistryChanged: () => setPluginVersion((v) => v + 1),
     };

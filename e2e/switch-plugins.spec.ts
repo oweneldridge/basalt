@@ -74,3 +74,27 @@ test("a plugin turned off just before a switch writes nothing into the new vault
   expect(writes).toContainEqual("vault:create_note:Leak 0");
   expect(writes.filter((l) => !l.startsWith("vault:"))).toEqual([]);
 });
+
+const dailyAsker = (onload: string, onunload: string) =>
+  `const { Plugin } = require("basalt"); module.exports = class extends Plugin { onload() { ${onload} } async onunload() { ${onunload} } };`;
+const askDaily = "this.app.dailyNotes.open(new Date()).then(() => (globalThis.__daily = 'made'), (e) => (globalThis.__daily = String(e)));";
+
+test("a daily note an old vault's plugin asks for as it stops is made in neither vault", async ({ page }) => {
+  await setup(page, { vault: [plugin("dn", dailyAsker("", askDaily))] }, { vault: ["dn"] });
+  await page.waitForTimeout(300);
+  await pick(page, "/mock/b");
+  await opened(page);
+  await expect.poll(() => g(page, "__daily")).toMatch(/another vault/);
+  expect((await log(page)).filter((l) => l.includes("create_note"))).toEqual([]);
+});
+
+test("a daily note one plugin asks for while another is slow to stop is made in neither vault", async ({ page }) => {
+  const timer = "this.registerInterval(() => { if (globalThis.__ask) { globalThis.__ask = false; " + askDaily + " } }, 50);";
+  await setup(page, { vault: [plugin("aslow", dailyAsker("", "await new Promise((r) => setTimeout(r, 1500));")), plugin("btimer", dailyAsker(timer, ""))] }, { vault: ["aslow", "btimer"] });
+  await page.waitForTimeout(300);
+  await pick(page, "/mock/b");
+  await page.evaluate(() => ((globalThis as unknown as { __ask: boolean }).__ask = true));
+  await opened(page);
+  await expect.poll(() => g(page, "__daily")).toMatch(/another vault/);
+  expect((await log(page)).filter((l) => l.includes("create_note"))).toEqual([]);
+});
