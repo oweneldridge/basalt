@@ -76,6 +76,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   says how many results it found.
 - Plugins get Obsidian's `metadataCache.unresolvedLinks`, and `resolvedLinks`
   counts links to attachments too.
+- Canvas undo and redo, as in Obsidian: Cmd-Z, and Cmd-Shift-Z or Cmd-Y (Ctrl
+  on Windows and Linux), or the Undo and Redo buttons. A whole drag, a group
+  moved with what's inside it, or a delete of several cards is one step, and
+  each undo or redo is saved. A card's text editor keeps the keys for its own
+  undo. A change made outside Basalt starts a fresh history, so undo never
+  writes over it; a rename or move of the canvas keeps it. The last 100 steps
+  are kept.
 
 ### Changed
 

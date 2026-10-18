@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCanvas, serializeCanvas, canvasBounds, canvasColor, canvasText, rewriteCanvasFileRefs, withGroupContents, orderGroups, type CanvasNode } from "./canvas";
+import { parseCanvas, serializeCanvas, canvasBounds, canvasColor, canvasText, rewriteCanvasFileRefs, withGroupContents, orderGroups, pushHistory, stepHistory, CANVAS_HISTORY_LIMIT, type CanvasData, type CanvasNode } from "./canvas";
 
 describe("serializeCanvas", () => {
   it("round-trips parse → serialize → parse", () => {
@@ -367,5 +367,57 @@ describe("canvas groups", () => {
     // A group only partly over another, on any side, doesn't hold it.
     for (const [x, y] of [[-50, 10], [10, -50], [350, 10], [10, 250]])
       expect(ids([g("small", x, y, 100, 100), outer])).toEqual(["small", "outer"]);
+  });
+});
+
+describe("canvas undo history", () => {
+  const at = (x: number): CanvasData => ({ nodes: [{ id: "a", type: "text", text: "", x, y: 0, width: 50, height: 20 }], edges: [] });
+  const none = { past: [], future: [] };
+
+  it("undoes and redoes each edit in turn, back to the start and forward again", () => {
+    const [s0, s1, s2] = [at(0), at(10), at(20)];
+    let h = pushHistory(pushHistory(none, s0), s1);
+    let shown = s2;
+    const go = (dir: "undo" | "redo") => {
+      const r = stepHistory(h, shown, dir);
+      if (r) [h, shown] = [r.history, r.data];
+      return r && shown;
+    };
+    expect(go("redo")).toBeNull();
+    expect(go("undo")).toBe(s1);
+    expect(go("undo")).toBe(s0);
+    expect(go("undo")).toBeNull();
+    expect(shown).toBe(s0);
+    expect(go("redo")).toBe(s1);
+    expect(go("redo")).toBe(s2);
+    expect(go("redo")).toBeNull();
+    expect(h).toEqual({ past: [s0, s1], future: [] });
+  });
+
+  it("drops what was undone once there's a new edit", () => {
+    const [s0, s1, s2] = [at(0), at(10), at(20)];
+    const undone = stepHistory(pushHistory(none, s0), s1, "undo")!;
+    expect(undone.history).toEqual({ past: [], future: [s1] });
+    expect(pushHistory(undone.history, undone.data)).toEqual({ past: [s0], future: [] });
+    expect(stepHistory(pushHistory(undone.history, undone.data), s2, "redo")).toBeNull();
+  });
+
+  it("keeps the last 100 steps", () => {
+    expect(CANVAS_HISTORY_LIMIT).toBe(100);
+    const states = Array.from({ length: 105 }, (_, i) => at(i));
+    const h = states.reduce((acc, s) => pushHistory(acc, s), { past: [], future: [] } as { past: CanvasData[]; future: CanvasData[] });
+    expect(h.past.length).toBe(100);
+    expect(h.past[0]).toBe(states[5]);
+    expect(h.past[99]).toBe(states[104]);
+    expect(pushHistory(none, at(0), 2).past.length).toBe(1);
+    expect(pushHistory({ past: [at(0), at(1)], future: [] }, at(2), 2).past.map((d) => d.nodes[0].x)).toEqual([1, 2]);
+  });
+
+  it("leaves the history it was given as it was", () => {
+    const h = { past: [at(0)], future: [at(5)] };
+    pushHistory(h, at(1));
+    stepHistory(h, at(2), "undo");
+    stepHistory(h, at(2), "redo");
+    expect(h).toEqual({ past: [at(0)], future: [at(5)] });
   });
 });

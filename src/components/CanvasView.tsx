@@ -7,7 +7,10 @@ import {
   canvasColor,
   orderGroups,
   withGroupContents,
+  pushHistory,
+  stepHistory,
   type CanvasData,
+  type CanvasHistory,
   type CanvasNode,
   type CanvasEdge,
   type Side,
@@ -29,6 +32,7 @@ interface Props {
 }
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|svg|webp|bmp|avif|ico)$/i;
+const isMac = /Mac/.test(navigator.platform);
 const COLORS: (string | undefined)[] = [undefined, "1", "2", "3", "4", "5", "6"];
 
 function anchor(n: CanvasNode, s: Side): { x: number; y: number } {
@@ -91,12 +95,21 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
   // Fit-to-view runs only on an EXTERNAL doc change (initial load / reload), not
   // on our own edits — otherwise every drag would reset the user's pan/zoom.
   const pendingFit = useRef(true);
+  // Undo history, and the canvas as last committed, which a drag in progress
+  // hasn't changed. A change from outside starts a fresh history, so an undo
+  // never writes over it.
+  const history = useRef<CanvasHistory>({ past: [], future: [] });
+  const shown = useRef(parsed);
+  const shownJson = useRef<string | null>(null);
   useEffect(() => {
     if (doc !== lastEmitted.current) {
-      setData(parseCanvas(doc) ?? { nodes: [], edges: [] });
+      setData(parsed);
+      shown.current = parsed;
+      shownJson.current = null;
+      history.current = { past: [], future: [] };
       pendingFit.current = true;
     }
-  }, [doc]);
+  }, [doc, parsed]);
 
   // Multi-select: a set of selected node/edge ids (Obsidian canvas parity).
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -132,16 +145,26 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
     }
   };
 
-  // Emit the current data as JSON (commit a change to disk via the parent).
-  const emit = useCallback(
-    (next: CanvasData) => {
+  // Show `next` and save it as JSON through the parent.
+  const commit = useCallback(
+    (next: CanvasData, json: string) => {
       setData(next);
-      if (!onChange) return;
-      const json = serializeCanvas(next);
+      shown.current = next;
+      shownJson.current = json;
       lastEmitted.current = json;
-      onChange(json);
+      onChange?.(json);
     },
     [onChange],
+  );
+
+  // An edit: one undo step, unless it changed nothing.
+  const emit = useCallback(
+    (next: CanvasData) => {
+      const json = serializeCanvas(next);
+      if (json !== (shownJson.current ?? serializeCanvas(shown.current))) history.current = pushHistory(history.current, shown.current);
+      commit(next, json);
+    },
+    [commit],
   );
 
   const patchNode = useCallback(
@@ -308,6 +331,47 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
     };
   }, []);
 
+  // Focus left on nothing, as when the card that had it is gone, goes back to
+  // the canvas, so its keys still work.
+  const keepFocus = useCallback(
+    () =>
+      requestAnimationFrame(() => {
+        const at = document.activeElement;
+        if (!at || at === document.body || (at as HTMLButtonElement).disabled) viewport.current?.focus({ preventScroll: true });
+      }),
+    [],
+  );
+
+  // One step back or forward. Not mid-drag, as the drag would commit over it.
+  // The selection keeps what's still there.
+  const undoRedo = useCallback(
+    (dir: "undo" | "redo") => {
+      if (dragPointer.current !== null) return;
+      const s = stepHistory(history.current, shown.current, dir);
+      if (!s) return;
+      history.current = s.history;
+      commit(s.data, serializeCanvas(s.data));
+      const ids = new Set([...s.data.nodes, ...s.data.edges].map((x) => x.id));
+      setSelected((prev) => new Set([...prev].filter((id) => ids.has(id))));
+      keepFocus();
+    },
+    [commit, keepFocus],
+  );
+
+  // Cmd-Z undoes, Cmd-Shift-Z or Cmd-Y redoes (Ctrl elsewhere), as in
+  // Obsidian. A card's text editor keeps these for its own undo.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+    const key = e.key.toLowerCase();
+    const dir = key === "z" ? (e.shiftKey ? "redo" : "undo") : key === "y" && !e.shiftKey ? "redo" : null;
+    if (!editable || !mod || e.altKey || !dir) return;
+    const el = e.target as HTMLElement;
+    if (el.isContentEditable || el.tagName === "TEXTAREA" || el.tagName === "INPUT") return;
+    e.preventDefault();
+    e.stopPropagation();
+    undoRedo(dir);
+  };
+
   // Delete every selected node (+ its edges) and any selected edges.
   const deleteSelection = useCallback(() => {
     const sel = selectedRef.current;
@@ -320,7 +384,8 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
       edges: d.edges.filter((ed) => !sel.has(ed.id) && !nodeIds.has(ed.fromNode) && !nodeIds.has(ed.toNode)),
     });
     setSelected(new Set());
-  }, [emit]);
+    keepFocus();
+  }, [emit, keepFocus]);
 
   // Clone the selected nodes (offset +24,+24, fresh ids) and select the copies.
   const duplicateSelection = useCallback(() => {
@@ -597,7 +662,15 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
   };
 
   return (
-    <div className="canvas-view" data-path={path} ref={viewport} onDoubleClick={onDoubleClick} onContextMenu={onEmptyContextMenu}>
+    <div
+      className="canvas-view"
+      data-path={path}
+      ref={viewport}
+      tabIndex={editable ? -1 : undefined}
+      onKeyDown={onKeyDown}
+      onDoubleClick={onDoubleClick}
+      onContextMenu={onEmptyContextMenu}
+    >
       {editable && (
         <div className="canvas-toolbar">
           <button
@@ -621,6 +694,12 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
             }}
           >
             + Card
+          </button>
+          <button className="link-btn" title="Undo" disabled={history.current.past.length === 0} onClick={() => undoRedo("undo")}>
+            Undo
+          </button>
+          <button className="link-btn" title="Redo" disabled={history.current.future.length === 0} onClick={() => undoRedo("redo")}>
+            Redo
           </button>
           {colorRef && (
             <div className="canvas-colors">

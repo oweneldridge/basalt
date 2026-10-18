@@ -363,6 +363,36 @@ export function orderGroups(nodes: CanvasNode[]): CanvasNode[] {
   return [...out, ...nodes.filter((n) => n.type !== "group")];
 }
 
+/** A canvas's undo history: the states before the one shown, oldest first,
+ * and the ones undone, latest undone last. Steps share their nodes, as edits
+ * never change a node in place. */
+export interface CanvasHistory {
+  past: CanvasData[];
+  future: CanvasData[];
+}
+
+export const CANVAS_HISTORY_LIMIT = 100;
+
+/** The history after an edit that replaced `before`: the edit is one step,
+ * only the last `limit` are kept, and what was undone can't be redone. */
+export function pushHistory(h: CanvasHistory, before: CanvasData, limit = CANVAS_HISTORY_LIMIT): CanvasHistory {
+  return { past: [...h.past, before].slice(-limit), future: [] };
+}
+
+/** One step back or forward from `shown`, or null when there's none. */
+export function stepHistory(
+  h: CanvasHistory,
+  shown: CanvasData,
+  dir: "undo" | "redo",
+): { history: CanvasHistory; data: CanvasData } | null {
+  const from = dir === "undo" ? h.past : h.future;
+  if (from.length === 0) return null;
+  const data = from[from.length - 1];
+  const rest = from.slice(0, -1);
+  const history = dir === "undo" ? { past: rest, future: [...h.future, shown] } : { past: [...h.past, shown], future: rest };
+  return { history, data };
+}
+
 /** JSON Canvas preset colors (1-6); a hex string passes through. */
 export function canvasColor(color: string | undefined, fallback: string): string {
   if (!color) return fallback;

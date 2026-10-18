@@ -166,6 +166,14 @@ button for the rest; Obsidian scrolls through all of them.
   cards inside it move too"). Not checked: whether Obsidian also takes a card
   only partly inside, and where it saves them (Basalt saves them with the
   group, after what stayed put).
+- Canvas undo and redo follow Obsidian's help: Cmd-Z (Ctrl-Z) undoes, Cmd-Shift-Z
+  or Cmd-Y (Ctrl-Shift-Z or Ctrl-Y) redoes, and the canvas controls have Undo
+  and Redo. Each edit is one step: a whole drag, a resize, a new card, a
+  delete, a colour, a connection or a card's text. Basalt keeps the last 100
+  steps, starts afresh when the file changes outside, keeps the history
+  through a rename or move, and leaves the keys to a card's text editor while
+  it's open. Not checked: how many steps Obsidian keeps, and what it selects
+  after an undo (Basalt keeps the selection that's still there).
 - Still different, on purpose: Obsidian rewrote a link in a Latin-1 note and
   turned its `é` into a replacement character; Basalt leaves notes that
   aren't UTF-8 untouched, so the link there goes stale.
@@ -332,7 +340,7 @@ theme marketplaces stay out of scope by design.
 | **medium** | medium | partial | Export to PDF (dedicated, with options) | PDF only via OS/webview print dialog's 'Save as PDF'; no direct export and none of Obsidian's options (page size, margins, orientation, downscale, title). |
 | **medium** | medium | partial | Canvas node interactions (resize/multi-select/context menu) | Resize only from single bottom-right handle, no marquee/shift multi-select for group move/delete, and delete only via keyboard (no right-click menu). |
 | **medium** | medium | partial | Canvas edge property editing | No UI to add/edit edge labels or colors, cannot reconnect/reroute endpoints, and new edges always get a single toEnd arrow with no direction/none toggle. |
-| **medium** | medium | missing | Canvas undo and redo | Cmd-Z and Cmd-Shift-Z do nothing in a canvas: a move, resize, delete or new card can't be taken back. Obsidian undoes canvas edits. Found 2026-10-18. |
+| **medium** | medium | done | Canvas undo and redo | Done 2026-10-18: Cmd-Z, Cmd-Shift-Z and Cmd-Y (Ctrl elsewhere) and Undo and Redo buttons, one step per edit, as Obsidian's help describes. |
 | **medium** | medium | partial | Properties UI (rename key/reorder/autocomplete) | Existing property keys cannot be renamed (static div; input only for new props), no drag-reorder, and no name/value autocomplete or vault-wide suggestions. |
 | **medium** | medium | missing | Note composer (merge/split/extract) | No 'merge with another file', 'split by headings', or 'extract selection/heading into new note' commands. |
 | **medium** | medium | partial | Custom hotkeys — rebind built-in commands | Built-ins preventDefault first and the custom handler bails on defaultPrevented, so built-in chords can't be remapped; built-ins never appear in the Hotkeys manager and reassignment yields a silent dead key with no conflict warning. |

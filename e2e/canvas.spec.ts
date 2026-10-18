@@ -158,14 +158,14 @@ test("after a group is dragged its cards are still on top, to click and drag", a
   expect(hit).toContain("Inside");
 });
 
-const openCanvas = async (page: import("@playwright/test").Page, name: string, nodes: object[]) => {
+const openCanvas = async (page: import("@playwright/test").Page, name: string, nodes: object[], edges: object[] = []) => {
   await page.addInitScript(
-    ([name, nodes]) => {
+    ([name, nodes, edges]) => {
       (window as unknown as { __mockExtraFiles: Record<string, string> }).__mockExtraFiles = {
-        [`${name}.canvas`]: JSON.stringify({ nodes, edges: [] }),
+        [`${name}.canvas`]: JSON.stringify({ nodes, edges }),
       };
     },
-    [name, nodes] as const,
+    [name, nodes, edges] as const,
   );
   await page.reload();
   await page.locator(".tree-row.attachment", { hasText: name }).click();
@@ -454,5 +454,343 @@ test("a selected card's anchors and resize handle can be pressed in full", async
     for (const [x, y] of [[cx, cy], [cx + dx, cy + dy]]) {
       expect(await page.evaluate(([x, y, sel]) => !!document.elementFromPoint(x as number, y as number)?.closest(sel as string), [x, y, sel] as const), `${sel} at ${x},${y}`).toBe(true);
     }
+  }
+});
+
+type Saved = { nodes: { id: string; x: number; y: number; width: number; height: number; text?: string; color?: string }[]; edges: { id: string }[] };
+const lastSaved = (page: import("@playwright/test").Page) =>
+  page.evaluate(() => {
+    const s = (window as unknown as { __saved: string[] }).__saved;
+    return s.length ? (JSON.parse(s[s.length - 1]) as Saved) : null;
+  });
+const savedNode = async (page: import("@playwright/test").Page, id: string) => (await lastSaved(page))?.nodes.find((n) => n.id === id);
+const undo = (page: import("@playwright/test").Page) => page.keyboard.press("ControlOrMeta+z");
+const redo = (page: import("@playwright/test").Page) => page.keyboard.press("ControlOrMeta+Shift+z");
+const onCanvas = (page: import("@playwright/test").Page) => page.evaluate(() => !!document.activeElement?.closest(".canvas-view"));
+const selectedCount = (page: import("@playwright/test").Page) =>
+  page.locator(".canvas-node").evaluateAll((els) => els.filter((el) => (el as HTMLElement).style.boxShadow !== "").length);
+
+test.describe("undo and redo", () => {
+  test("a drag of two cards is one step, and each undo and redo is saved", async ({ page }) => {
+    await recordWrites(page);
+    const a = page.locator(nodeA);
+    const b = page.locator(".canvas-node", { hasText: "Node B" });
+    await a.click();
+    await b.click({ modifiers: ["Shift"] });
+    const a0 = (await a.boundingBox())!;
+    await dragBy(page, { x: a0.x + 20, y: a0.y + a0.height / 2 }, 60, 30);
+    await expect.poll(() => writes(page)).toBe(1);
+    const moved = await lastSaved(page);
+    const a1 = moved.nodes.find((n) => n.id === "a1")!;
+    expect(a1.x).toBeGreaterThan(20);
+    expect(moved.nodes.find((n) => n.id === "a2")!.x).toBe(240 + a1.x);
+    await undo(page);
+    await expect.poll(() => writes(page)).toBe(2);
+    expect((await lastSaved(page))!.nodes.map((n) => [n.id, n.x, n.y])).toEqual([["a1", 0, 0], ["a2", 240, 0], ["a3", 0, 160]]);
+    expect(Math.round((await a.boundingBox())!.x)).toBe(Math.round(a0.x));
+    // What moved is still selected, and the keys still reach the canvas.
+    expect(await selectedCount(page)).toBe(2);
+    expect(await onCanvas(page)).toBe(true);
+    await undo(page);
+    await page.waitForTimeout(700);
+    expect(await writes(page)).toBe(2);
+    await redo(page);
+    await expect.poll(() => writes(page)).toBe(3);
+    expect(await lastSaved(page))!.toEqual(moved);
+  });
+
+  test("a group's move, with what's inside it, is one step", async ({ page }) => {
+    await openCanvas(page, "Holds", [
+      { id: "outer", type: "group", label: "Outer", x: -40, y: -60, width: 520, height: 360 },
+      { id: "c1", type: "text", text: "In", x: 60, y: 60, width: 160, height: 60 },
+      { id: "c3", type: "text", text: "Out", x: 700, y: 0, width: 160, height: 60 },
+    ]);
+    await recordWrites(page);
+    const k = (await page.locator(".canvas-group").boundingBox())!.width / 520;
+    const label = (await page.locator(".canvas-group-label").boundingBox())!;
+    await dragBy(page, { x: label.x + 5, y: label.y + 5 }, 50 * k, 30 * k);
+    await expect.poll(() => writes(page)).toBe(1);
+    const moved = await lastSaved(page);
+    expect((await savedNode(page, "c1"))?.x).toBeGreaterThan(90);
+    await undo(page);
+    await expect.poll(() => writes(page)).toBe(2);
+    expect((await lastSaved(page))!.nodes.map((n) => [n.id, n.x, n.y])).toEqual([["outer", -40, -60], ["c1", 60, 60], ["c3", 700, 0]]);
+    await redo(page);
+    await expect.poll(() => writes(page)).toBe(3);
+    expect(await lastSaved(page))!.toEqual(moved);
+  });
+
+  test("a resize undoes and redoes", async ({ page }) => {
+    await recordWrites(page);
+    const a = page.locator(nodeA);
+    await a.click();
+    const handle = (await a.locator(".canvas-handle").boundingBox())!;
+    await dragBy(page, { x: handle.x + 5, y: handle.y + 5 }, 60, 40);
+    await expect.poll(() => writes(page)).toBe(1);
+    const grown = await savedNode(page, "a1");
+    expect(grown.width).toBeGreaterThan(190);
+    await undo(page);
+    await expect.poll(() => writes(page)).toBe(2);
+    expect(await savedNode(page, "a1"))?.toMatchObject({ width: 160, height: 60 });
+    await redo(page);
+    await expect.poll(() => writes(page)).toBe(3);
+    expect(await savedNode(page, "a1"))?.toMatchObject({ width: grown.width, height: grown.height });
+  });
+
+  test("a new card goes on undo, the selection with it, and focus stays on the canvas", async ({ page }) => {
+    await recordWrites(page);
+    await page.locator('button[title="Add a card"]').click();
+    await expect(page.locator(".canvas-text-input")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".canvas-node")).toHaveCount(4);
+    await expect(page.locator(".canvas-colors")).toHaveCount(1);
+    await expect.poll(() => writes(page)).toBe(1);
+    await undo(page);
+    await expect(page.locator(".canvas-node")).toHaveCount(3);
+    await expect(page.locator(".canvas-colors")).toHaveCount(0);
+    await expect.poll(() => onCanvas(page)).toBe(true);
+    await expect.poll(() => writes(page)).toBe(2);
+    expect((await lastSaved(page))!.nodes.map((n) => n.id)).toEqual(["a1", "a2", "a3"]);
+    await redo(page);
+    await expect(page.locator(".canvas-node")).toHaveCount(4);
+    await expect.poll(() => writes(page)).toBe(3);
+    expect((await lastSaved(page))!.nodes).toHaveLength(4);
+  });
+
+  test("a delete of two cards comes back whole, with the connection it took", async ({ page }) => {
+    await openCanvas(
+      page,
+      "Linked",
+      [
+        { id: "p", type: "text", text: "P", x: 0, y: 0, width: 160, height: 60 },
+        { id: "q", type: "text", text: "Q", x: 300, y: 0, width: 160, height: 60 },
+        { id: "r", type: "text", text: "R", x: 0, y: 200, width: 160, height: 60 },
+      ],
+      [{ id: "e1", fromNode: "p", fromSide: "right", toNode: "q", toSide: "left" }],
+    );
+    await recordWrites(page);
+    const edges = page.locator(".canvas-edges > g");
+    await expect(edges).toHaveCount(1);
+    await page.locator('.canvas-node[aria-label="Text: P"]').click();
+    await page.locator('.canvas-node[aria-label="Text: R"]').click({ modifiers: ["Shift"] });
+    await page.keyboard.press("Delete");
+    await expect(page.locator(".canvas-node")).toHaveCount(1);
+    await expect(edges).toHaveCount(0);
+    await undo(page);
+    await expect(page.locator(".canvas-node")).toHaveCount(3);
+    await expect(edges).toHaveCount(1);
+    await expect.poll(() => writes(page)).toBeGreaterThan(0);
+    await expect.poll(async () => (await lastSaved(page))!.edges.map((e) => e.id)).toEqual(["e1"]);
+    expect((await lastSaved(page))!.nodes.map((n) => n.id)).toEqual(["p", "q", "r"]);
+    await redo(page);
+    await expect(page.locator(".canvas-node")).toHaveCount(1);
+    await expect.poll(async () => (await lastSaved(page))!.nodes.map((n) => n.id)).toEqual(["q"]);
+  });
+
+  test("a colour undoes and redoes, and picking the colour a card has isn't a step", async ({ page }) => {
+    await recordWrites(page);
+    await page.locator(nodeA).click();
+    await page.locator('.canvas-color-dot[title="Color 1"]').click();
+    await expect.poll(() => writes(page)).toBe(1);
+    expect((await savedNode(page, "a1"))?.color).toBe("1");
+    await page.locator('.canvas-color-dot[title="Color 1"]').click();
+    await page.locator(nodeA).focus();
+    await undo(page);
+    await expect.poll(async () => (await savedNode(page, "a1"))?.color).toBeUndefined();
+    await redo(page);
+    await expect.poll(async () => (await savedNode(page, "a1"))?.color).toBe("1");
+  });
+
+  test("a connection undoes and redoes", async ({ page }) => {
+    await recordWrites(page);
+    const a = page.locator(nodeA);
+    await a.click();
+    const anchor = (await a.locator(".canvas-anchor-right").boundingBox())!;
+    const b = (await page.locator(".canvas-node", { hasText: "Node B" }).boundingBox())!;
+    await page.mouse.move(anchor.x + anchor.width / 2 - 3, anchor.y + anchor.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 4 });
+    await page.mouse.up();
+    const edges = page.locator(".canvas-edges > g");
+    await expect(edges).toHaveCount(1);
+    await expect.poll(() => writes(page)).toBe(1);
+    const made = (await lastSaved(page))!.edges;
+    await a.focus();
+    await undo(page);
+    await expect(edges).toHaveCount(0);
+    await expect.poll(() => writes(page)).toBe(2);
+    expect((await lastSaved(page))!.edges).toEqual([]);
+    await redo(page);
+    await expect(edges).toHaveCount(1);
+    await expect.poll(() => writes(page)).toBe(3);
+    expect((await lastSaved(page))!.edges).toEqual(made);
+  });
+
+  test("a card's text edit undoes and redoes", async ({ page }) => {
+    await recordWrites(page);
+    const a = page.locator(nodeA);
+    await a.dblclick();
+    await page.locator(".canvas-text-input").fill("Changed");
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".canvas-node").first()).toContainText("Changed");
+    await expect(page.locator(".canvas-node").first()).toBeFocused();
+    await undo(page);
+    await expect(page.locator(".canvas-node").first()).toContainText("Node A");
+    await expect.poll(async () => (await savedNode(page, "a1"))?.text).toBe("Node A");
+    await redo(page);
+    await expect(page.locator(".canvas-node").first()).toContainText("Changed");
+    await expect.poll(async () => (await savedNode(page, "a1"))?.text).toBe("Changed");
+  });
+
+  test("an edit after an undo leaves nothing to redo", async ({ page }) => {
+    await recordWrites(page);
+    const a = page.locator(nodeA);
+    await a.focus();
+    await page.keyboard.press("ArrowRight");
+    await undo(page);
+    await expect(page.locator('button[title="Redo"]')).toBeEnabled();
+    await page.locator(".canvas-node", { hasText: "Node B" }).focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(page.locator('button[title="Redo"]')).toBeDisabled();
+    await expect.poll(async () => (await savedNode(page, "a2"))?.y).toBe(20);
+    const before = await writes(page);
+    await redo(page);
+    await page.waitForTimeout(700);
+    expect(await writes(page)).toBe(before);
+    expect((await savedNode(page, "a1"))?.x).toBe(0);
+  });
+
+  test("while a card's text is edited the keys are its own", async ({ page }) => {
+    await recordWrites(page);
+    const a = page.locator(nodeA);
+    await a.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(() => writes(page)).toBe(1);
+    const b = page.locator(".canvas-node", { hasText: "Node B" });
+    const input = page.locator(".canvas-text-input");
+    await b.dblclick();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" more");
+    await undo(page);
+    await expect(input).toBeFocused();
+    await expect(input).not.toHaveValue("Node B more");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(700);
+    expect((await savedNode(page, "a1"))?.x).toBe(20);
+    // Undone on the canvas, the text and then the move, and neither redo key
+    // redoes from a card's editor.
+    await a.focus();
+    await undo(page);
+    await undo(page);
+    await expect.poll(async () => (await savedNode(page, "a1"))?.x).toBe(0);
+    await b.dblclick();
+    await redo(page);
+    await page.keyboard.press("ControlOrMeta+y");
+    await expect(input).toBeFocused();
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(700);
+    expect((await savedNode(page, "a1"))?.x).toBe(0);
+  });
+
+  test("a change from outside starts a fresh history, so undo can't write over it", async ({ page }) => {
+    await page.evaluate(() => {
+      const w = window as unknown as { __saved: string[]; __outside?: string; __mockHook: (cmd: string, a: { content?: string; path?: string }) => unknown };
+      w.__saved = [];
+      w.__mockHook = (cmd, a) => {
+        if (cmd === "write_canvas") return w.__saved.push(String(a.content)), { result: null };
+        if (cmd === "read_note" && w.__outside && String(a.path).endsWith("/Board.canvas")) return { result: w.__outside };
+      };
+    });
+    await page.locator(nodeA).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(() => writes(page)).toBe(1);
+    await page.waitForTimeout(300);
+    await page.evaluate(() => {
+      const w = window as unknown as { __outside: string; __mockEmit: (n: string, p: unknown) => void };
+      w.__outside = JSON.stringify({
+        nodes: [
+          { id: "a1", type: "text", text: "Outside", x: 500, y: 0, width: 160, height: 60 },
+          { id: "a2", type: "text", text: "Node B", x: 240, y: 0, width: 160, height: 60 },
+        ],
+        edges: [],
+      });
+      w.__mockEmit("vault-rescan", null);
+    });
+    await expect(page.locator(".canvas-node")).toHaveCount(2);
+    await expect(page.locator(nodeA)).toHaveCount(0);
+    await expect(page.locator('button[title="Undo"]')).toBeDisabled();
+    await page.locator(".canvas-node").first().focus();
+    await undo(page);
+    await page.waitForTimeout(700);
+    expect(await writes(page)).toBe(1);
+    await expect(page.locator(".canvas-node", { hasText: "Outside" })).toHaveCount(1);
+    // A new edit undoes back to what came from outside, not past it.
+    await page.locator(".canvas-node", { hasText: "Node B" }).focus();
+    await page.keyboard.press("ArrowDown");
+    await expect.poll(async () => (await savedNode(page, "a2"))?.y).toBe(20);
+    await undo(page);
+    await expect.poll(async () => (await lastSaved(page))!.nodes.map((n) => [n.id, n.text, n.x, n.y])).toEqual([["a1", "Outside", 500, 0], ["a2", "Node B", 240, 0]]);
+  });
+
+  test("an undo pressed mid-drag waits, and the drag keeps the edit before it", async ({ page }) => {
+    await recordWrites(page);
+    const a = page.locator(nodeA);
+    await a.click();
+    await page.locator('.canvas-color-dot[title="Color 2"]').click();
+    await expect.poll(() => writes(page)).toBe(1);
+    const box = (await a.boundingBox())!;
+    await page.mouse.move(box.x + 20, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 60, box.y + box.height / 2, { steps: 4 });
+    await undo(page);
+    await page.mouse.move(box.x + 80, box.y + box.height / 2, { steps: 2 });
+    await page.mouse.up();
+    await expect.poll(() => writes(page)).toBe(2);
+    expect(await savedNode(page, "a1"))?.toMatchObject({ color: "2" });
+    expect((await savedNode(page, "a1"))?.x).toBeGreaterThan(30);
+  });
+
+  test("the Undo and Redo buttons step through the edits", async ({ page }) => {
+    await recordWrites(page);
+    const undoBtn = page.locator('button[title="Undo"]');
+    const redoBtn = page.locator('button[title="Redo"]');
+    await expect(undoBtn).toBeDisabled();
+    await expect(redoBtn).toBeDisabled();
+    await page.locator(nodeA).focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(undoBtn).toBeEnabled();
+    await undoBtn.click();
+    await expect.poll(async () => (await savedNode(page, "a1"))?.y).toBe(0);
+    await expect(undoBtn).toBeDisabled();
+    await expect.poll(() => onCanvas(page)).toBe(true);
+    await redoBtn.click();
+    await expect.poll(async () => (await savedNode(page, "a1"))?.y).toBe(20);
+    await expect(redoBtn).toBeDisabled();
+  });
+
+  for (const [platform, mod, other] of [["Linux x86_64", "Control", "Meta"], ["MacIntel", "Meta", "Control"]] as const) {
+    test(`on ${platform.startsWith("Mac") ? "a Mac" : "Linux"} the keys go with ${mod}, and Y redoes too`, async ({ page }) => {
+      await page.addInitScript((p) => Object.defineProperty(navigator, "platform", { get: () => p }), platform);
+      await page.reload();
+      if ((await page.locator(".canvas-view").count()) === 0) await page.locator(".tree-row.attachment", { hasText: "Board" }).click();
+      await expect(page.locator(".canvas-node")).toHaveCount(3);
+      expect(await page.evaluate(() => navigator.platform)).toBe(platform);
+      await recordWrites(page);
+      await page.locator(nodeA).focus();
+      await page.keyboard.press("ArrowRight");
+      await expect.poll(() => writes(page)).toBe(1);
+      await page.keyboard.press(`${other}+z`);
+      await page.keyboard.press(`${mod}+Alt+z`);
+      await page.keyboard.press(`${mod}+${other}+z`);
+      await page.waitForTimeout(700);
+      expect(await writes(page)).toBe(1);
+      await page.keyboard.press(`${mod}+z`);
+      await expect.poll(async () => (await savedNode(page, "a1"))?.x).toBe(0);
+      await page.keyboard.press(`${mod}+Shift+y`);
+      await page.waitForTimeout(700);
+      expect((await savedNode(page, "a1"))?.x).toBe(0);
+      await page.keyboard.press(`${mod}+y`);
+      await expect.poll(async () => (await savedNode(page, "a1"))?.x).toBe(20);
+    });
   }
 });

@@ -4962,6 +4962,19 @@ export default function App() {
     for (let i = 0; i < 16 && movedTo.current.has(p) && !there(p); i++) p = movedTo.current.get(p)!;
     return p;
   };
+  // An open canvas keeps its view through a rename or move, and with it the
+  // undo history and the pan and zoom.
+  const canvasKeys = useRef(new Map<string, number>());
+  const canvasSeq = useRef(0);
+  const canvasKey = (path: string) => {
+    if (!canvasKeys.current.has(path)) canvasKeys.current.set(path, ++canvasSeq.current);
+    return canvasKeys.current.get(path);
+  };
+  const carryCanvasKey = (from: string, to: string) => {
+    const k = canvasKeys.current.get(from);
+    canvasKeys.current.delete(from);
+    if (k !== undefined) canvasKeys.current.set(to, k);
+  };
   const enqueueRename = useCallback(<T,>(job: () => Promise<T>): Promise<T> => {
     renameJobs.current++;
     const run = renameQueue.current
@@ -5328,6 +5341,7 @@ export default function App() {
         renameWindow.current.set(from, to);
         movedTo.current.set(from, to);
         movedTo.current.delete(to);
+        carryCanvasKey(from, to);
         const live = liveDocs.current.get(from);
         if (live !== undefined) liveDocs.current.set(to, live);
       }
@@ -5394,8 +5408,8 @@ export default function App() {
     [enqueueRename, renameFolderNow],
   );
 
-  // A canvas card being typed into saves its text when it loses focus. A rename
-  // or move draws the canvas again, so the typing is committed first.
+  // A canvas card being typed into saves its text when it loses focus, so a
+  // rename or move commits the typing before it saves and moves the file.
   const commitCanvasTyping = (moving: (path: string) => boolean) => {
     const el = document.activeElement;
     const canvas = el instanceof HTMLElement ? el.closest<HTMLElement>(".canvas-view[data-path]") : null;
@@ -5444,6 +5458,7 @@ export default function App() {
       setAttachmentsList((prev) => prev.map((a) => (a.path === path ? moved : a)));
       movedTo.current.set(path, newPath);
       movedTo.current.delete(newPath);
+      carryCanvasKey(path, newPath);
       moveBigBase(path, newPath);
       // An edit made during the rename goes to the new path.
       const typed = pending.current.get(path);
@@ -5961,7 +5976,7 @@ export default function App() {
           </div>
         ) : path ? (
           /\.canvas$/i.test(path) ? (
-            <ErrorBoundary key={`${id}:${path}:canvas`} resetKey={path} onClose={() => void closeTab(id, path)}>
+            <ErrorBoundary key={`${id}:${canvasKey(path)}:canvas`} resetKey={path} onClose={() => void closeTab(id, path)}>
               <CanvasView
                 path={path}
                 doc={pane.doc}

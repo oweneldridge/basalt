@@ -2001,6 +2001,8 @@ button.primary:hover {
 
 /* ------- Canvas editing ------- */
 .canvas-view { position: relative; touch-action: none; }
+.canvas-view:focus:not(:focus-visible) { outline: none; }
+.canvas-view:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 .canvas-node { user-select: none; }
 .canvas-text.editing { padding: 0; }
 .canvas-text-input {
