@@ -18,6 +18,9 @@ import {
   isStarted,
   pluginSettingTabs,
   pluginRightViews,
+  pluginRibbonItems,
+  pluginStatusBarItems,
+  pluginEditorExtensions,
   UNLOAD_WAIT_MS,
   type HostDeps,
   type PluginInfo,
@@ -204,6 +207,61 @@ describe("plugin host", () => {
     finish();
     await done;
     expect(all).toBe(true);
+  });
+
+  it("a plugin stopped mid-onload registers nothing after", async () => {
+    const { host } = fakeHost();
+    installHost(host);
+    vi.stubGlobal("document", { createElement: () => ({ className: "", remove() {} }) });
+    let go = () => {};
+    const g = globalThis as any;
+    g.__late = new Promise<void>((r) => (go = r));
+    g.__el = new EventTarget();
+    g.__hits = [];
+    g.__cleaned = [];
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        async onload() {
+          await globalThis.__late;
+          const hit = (what) => () => globalThis.__hits.push(what);
+          this.addCommand({ id: "c", name: "C", callback: () => {} });
+          this.registerMarkdownCodeBlockProcessor("late", () => {});
+          this.registerEditorExtension({ late: true });
+          this.addSettingTab({ containerEl: {}, display: () => {} });
+          this.addRibbonIcon("L", "Late", () => {});
+          this.registerView("late-view", "Late", () => {});
+          globalThis.__item = this.addStatusBarItem();
+          this.register(() => globalThis.__cleaned.push("register"));
+          this.registerEvent({ off: () => globalThis.__cleaned.push("event") });
+          this.registerDomEvent(globalThis.__el, "late", hit("dom"));
+          globalThis.__iv = this.registerInterval(hit("interval"), 5);
+          this.app.vault.on("modify", hit("vault"));
+          this.app.workspace.on("file-open", hit("workspace"));
+        }
+      };
+    `;
+    const loading = loadPlugin(info({ id: "late", code }));
+    await unloadPlugin("late");
+    go();
+    await loading;
+    await new Promise((r) => setTimeout(r, 30));
+    g.__el.dispatchEvent(new Event("late"));
+    emitVaultEvent("modify", { path: "A.md", name: "A" });
+    emitWorkspaceEvent("file-open", { path: "A.md", name: "A" });
+    expect(pluginCommands()).toEqual([]);
+    expect(hasCodeBlockProcessor("late")).toBe(false);
+    expect(pluginEditorExtensions()).toEqual([]);
+    expect(pluginSettingTabs()).toEqual([]);
+    expect(pluginRibbonItems()).toEqual([]);
+    expect(pluginRightViews()).toEqual([]);
+    expect(pluginStatusBarItems()).toEqual([]);
+    expect(g.__item).toBeTruthy();
+    expect(g.__iv).toBe(0);
+    expect(listensFor("late", "modify")).toBe(false);
+    expect(g.__hits).toEqual([]);
+    expect(g.__cleaned).toEqual(["register", "event"]);
+    vi.unstubAllGlobals();
   });
 
   it("a plugin acts only on the vault it was loaded for", async () => {

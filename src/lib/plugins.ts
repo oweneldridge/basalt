@@ -387,6 +387,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       /** Subscribe to a vault event: create/delete/modify → (file); rename →
        * (file, oldPath). Pass the returned ref to plugin.registerEvent(). */
       on: (name: VaultEventName, cb: (...args: unknown[]) => void): EventRef => {
+        if (ctx.stopped) return { off: () => {} };
         const key = `${ctx.info.id}:${name}`;
         // Its own handler each time, so subscribing twice runs it twice (as in
         // Obsidian) and each off() ends one subscription.
@@ -441,7 +442,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       /** Subscribe to a workspace event: file-open → (file|null);
        * active-leaf-change → (file|null). */
       on: (name: WorkspaceEventName, cb: (...args: unknown[]) => void): EventRef =>
-        subscribe(workspaceListeners, name, (...args: unknown[]) => cb(...args)), // each its own, as vault.on
+        ctx.stopped ? { off: () => {} } : subscribe(workspaceListeners, name, (...args: unknown[]) => cb(...args)), // each its own, as vault.on
     },
   };
 
@@ -459,12 +460,14 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     manifest = ctx.info;
     /** Register a command in the palette; auto-removed on unload. */
     addCommand(cmd: { id: string; name: string; callback: () => void }) {
+      if (ctx.stopped) return;
       const id = `${ctx.info.id}:${cmd.id}`;
       commands.set(id, { id, name: cmd.name, callback: cmd.callback });
       ctx.cleanups.push(() => commands.delete(id));
       host.onRegistryChanged();
     }
     registerMarkdownCodeBlockProcessor(lang: string, fn: CodeBlockProcessor) {
+      if (ctx.stopped) return;
       const key = lang.toLowerCase();
       if (RESERVED_LANGS.has(key)) {
         host.notice(`Plugin ${ctx.info.id}: "${key}" is a built-in block and can't be overridden`);
@@ -477,6 +480,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       host.onRegistryChanged();
     }
     registerEditorExtension(ext: Extension) {
+      if (ctx.stopped) return;
       const entry = { pluginId: ctx.info.id, ext };
       editorExtensions.push(entry);
       ctx.cleanups.push(() => {
@@ -487,6 +491,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     }
     /** Register a settings panel shown under this plugin in Settings. */
     addSettingTab(tab: SettingTab) {
+      if (ctx.stopped) return;
       settingTabs.set(ctx.info.id, tab);
       ctx.cleanups.push(() => {
         if (settingTabs.get(ctx.info.id) === tab) settingTabs.delete(ctx.info.id);
@@ -495,6 +500,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     }
     /** Add a ribbon icon (an emoji/text glyph + tooltip) that runs `callback`. */
     addRibbonIcon(icon: string, title: string, callback: () => void) {
+      if (ctx.stopped) return;
       const entry: RibbonItem = { pluginId: ctx.info.id, icon, title, callback };
       ribbonItems.push(entry);
       ctx.cleanups.push(() => {
@@ -506,6 +512,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     /** Register a custom right-panel view (shown as an extra tab). `mount` fills
      * the given container and may return a cleanup run when the view hides. */
     registerView(id: string, name: string, mount: (container: HTMLElement) => (() => void) | void) {
+      if (ctx.stopped) return;
       const view: PluginView = { pluginId: ctx.info.id, id, name, mount };
       pluginViews.set(id, view);
       ctx.cleanups.push(() => {
@@ -517,6 +524,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     addStatusBarItem(): HTMLElement {
       const el = document.createElement("span");
       el.className = "status-bar-item plugin-status-item";
+      if (ctx.stopped) return el;
       const entry = { pluginId: ctx.info.id, el };
       statusBarItems.push(entry);
       ctx.cleanups.push(() => {
@@ -529,19 +537,23 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     }
     /** Register an arbitrary cleanup run on unload. */
     register(cleanup: () => void) {
-      ctx.cleanups.push(cleanup);
+      if (ctx.stopped) cleanup();
+      else ctx.cleanups.push(cleanup);
     }
     /** Track an event subscription so it's removed on unload. */
     registerEvent(ref: EventRef) {
-      ctx.cleanups.push(() => ref.off());
+      if (ctx.stopped) ref.off();
+      else ctx.cleanups.push(() => ref.off());
     }
     /** Add a DOM listener that's removed on unload. */
     registerDomEvent(el: EventTarget, type: string, cb: (ev: Event) => void) {
+      if (ctx.stopped) return;
       el.addEventListener(type, cb);
       ctx.cleanups.push(() => el.removeEventListener(type, cb));
     }
     /** Start an interval cleared on unload; returns the id. */
     registerInterval(cb: () => void, ms: number): number {
+      if (ctx.stopped) return 0;
       const id = setInterval(cb, ms) as unknown as number;
       ctx.cleanups.push(() => clearInterval(id));
       return id;

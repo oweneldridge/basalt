@@ -98,3 +98,20 @@ test("a daily note one plugin asks for while another is slow to stop is made in 
   await expect.poll(() => g(page, "__daily")).toMatch(/another vault/);
   expect((await log(page)).filter((l) => l.includes("create_note"))).toEqual([]);
 });
+
+test("a plugin whose onload a switch cuts off leaves nothing in the next vault", async ({ page }) => {
+  const late = dailyAsker(
+    "return (async () => { globalThis.__late = 1; await new Promise((r) => setTimeout(r, 1500)); this.addCommand({ id: 'x', name: 'Leaky late command', callback: () => {} }); this.addRibbonIcon('L', 'Leaky ribbon', () => {}); this.registerInterval(() => { globalThis.__ticks = (globalThis.__ticks || 0) + 1; }, 100); })();",
+    "",
+  );
+  await setup(page, { vault: [plugin("late", late)] }, { vault: ["late"] }, { "open:/mock/b": 300 });
+  await expect.poll(() => g(page, "__late")).toBe(1);
+  await pick(page, "/mock/b");
+  await opened(page);
+  await page.waitForTimeout(1800);
+  expect(await g(page, "__ticks")).toBeUndefined();
+  await expect(page.locator(".ribbon-plugin-btn")).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+p");
+  await page.locator(".palette-input").first().fill("Leaky late");
+  await expect(page.getByText("No matching command")).toBeVisible();
+});
