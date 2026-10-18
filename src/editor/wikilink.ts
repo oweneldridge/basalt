@@ -190,9 +190,7 @@ function wikilinkCompletions(opts: WikilinkCompletionOptions) {
         const files = notes.filter((n) => !n.alias);
         const target = note.alias
           ? note.name
-          : linkTargetForFormat(opts.getLinkFormat(), relNoExt, taken, here, (t) =>
-              linkpathDest(t, here, files, (n) => n.rel, ".md")?.rel === note.rel,
-            );
+          : linkTargetForFormat(opts.getLinkFormat(), relNoExt, taken, here, linkReaches(files, here, note.rel));
         insert(target)(view, _completion, from, to);
       },
     }));
@@ -205,6 +203,17 @@ function wikilinkCompletions(opts: WikilinkCompletionOptions) {
       options.push({ label: `\u200b${typed}`, displayLabel: typed, detail: "Create new note", type: "text", boost: -99, apply: insert(typed) });
     }
     return { from: before.from + 2, options, filter: true };
+  };
+}
+
+/** Whether a link text in `fromRel` finds `toRel` as the index resolves it: among notes of its file name. */
+export function linkReaches(files: readonly { rel: string }[], fromRel: string | null, toRel: string): (text: string) => boolean {
+  const stem = (rel: string) => normalizeName((rel.split("/").pop() ?? "").replace(/\.md$/i, ""));
+  return (text) => {
+    const last = text.split(/[/\\]/).pop() ?? "";
+    let named = files.filter((n) => stem(n.rel) === normalizeName(last.replace(/\.md$/i, "")));
+    if (named.length === 0 && /\.md$/i.test(last)) named = files.filter((n) => stem(n.rel) === normalizeName(last));
+    return linkpathDest(text, fromRel, named, (n) => n.rel, ".md")?.rel === toRel;
   };
 }
 
