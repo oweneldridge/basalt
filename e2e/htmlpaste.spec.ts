@@ -119,7 +119,7 @@ test("paste: no word is lost from random, often malformed, HTML", async ({ page 
   const lost = await page.evaluate(async (m) => {
     const { htmlToMarkdown } = await import(m);
     let seed = 7;
-    const rnd = (n: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n);
+    const rnd = (n: number) => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) % n);
     const tags = ["p", "div", "span", "b", "i", "code", "pre", "ul", "ol", "li", "blockquote", "h2", "table", "tr", "td", "th", "caption", "a", "mark", "s", "br", "section"];
     let word = 0;
     const gen = (depth: number): string => {

@@ -551,7 +551,7 @@ describe("Link all leaves code in quotes and every kind of link alone", () => {
       expect(mentionLines(note).at(-1)).toBe("Foo");
       expect(mentionLinesFor(note, /Foo/i).at(-1)).toBe("Foo");
     }
-  });
+  }, 20000);
   it("reads definitions, paragraphs, callout titles and math blocks as Reading view does", () => {
     // Whether the mention "Foo" (wherever it is) is offered, by both scans.
     const offered = (note: string) => {

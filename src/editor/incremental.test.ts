@@ -18,7 +18,7 @@ const BASE = [
 
 // A small deterministic random source, so a failure can be replayed.
 function rng(seed: number) {
-  return () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  return () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
 }
 const CHARS = ["a", " ", "\n", "$", "<", ">", "`", "~", "\\", "-", "5", "x", "/", "d", "i", "v", "%"];
 
