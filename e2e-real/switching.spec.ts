@@ -753,3 +753,72 @@ test.describe("a Link under way when a switch starts", () => {
     }
   });
 });
+
+test.describe("a folder move a switch gives up on", () => {
+  test.use({ vaultFiles: { "Shared/Roadmap.md": "road\n", "Solo.md": "solo\n" } });
+  const files = { "Shared/Plan.md": "plan\n", "Hub.md": "see [[Shared/Plan]]\n" };
+
+  async function moveShared(page: Page) {
+    await page.locator(".tree-row.folder", { hasText: "Shared" }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: /Rename/ }).first().click();
+    await page.locator(".prompt-input").fill("Moved");
+    await page.locator(".prompt-input").press("Enter");
+  }
+
+  test("held by a save that stops answering, moves nothing in the next vault", async ({ page, vault }) => {
+    test.setTimeout(90000);
+    const a = await otherVault(files);
+    try {
+      let slow = false;
+      await holdSwitch(page, vault.url, a, 0, {}, (cmd) => (slow && cmd === "write_note" ? 7000 : 0));
+      page.on("dialog", (d) => void d.accept());
+      await openApp(page, vault);
+      await page.locator(".tree-row.folder", { hasText: "Shared" }).first().click();
+      await openNote(page, "Roadmap");
+      slow = true;
+      await page.locator(".pane:not(.dock) .cm-content").first().click();
+      await page.keyboard.press("ControlOrMeta+End");
+      await page.keyboard.type("typed");
+      await page.waitForTimeout(900); // its save is out, and slow
+      await moveShared(page);
+      await switchTo(page, a.root, true);
+      await expect(page.locator(".tree-row.file", { hasText: "Hub" })).toBeVisible({ timeout: 30000 });
+      await page.waitForTimeout(4000); // the save has answered
+      expect(a.files().sort()).toEqual(["Hub.md", "Shared", "Shared/Plan.md"]);
+      const { readFileSync } = await import("node:fs");
+      expect(readFileSync(join(a.root, "Hub.md"), "utf8")).toBe(files["Hub.md"]);
+      await expect(page.getByRole("alert")).toHaveText("");
+      await expect(page.locator(".notice")).toHaveCount(0);
+    } finally {
+      await a.stop();
+    }
+  });
+
+  test("queued behind a slow note rename, moves nothing in the next vault and asks nothing", async ({ page, vault }) => {
+    test.setTimeout(90000);
+    const a = await otherVault(files);
+    try {
+      let slow = false;
+      await holdSwitch(page, vault.url, a, 0, {}, (cmd) => (slow && cmd === "rename_note" ? 6000 : 0));
+      const asked: string[] = [];
+      page.on("dialog", (d) => (asked.push(d.message()), void d.accept()));
+      await openApp(page, vault);
+      slow = true;
+      await page.locator(".tree-row.file", { hasText: "Solo" }).first().click({ button: "right" });
+      await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+      await page.locator(".prompt-input").fill("Solo2");
+      await page.locator(".prompt-input").press("Enter");
+      await moveShared(page);
+      await switchTo(page, a.root, true);
+      await expect(page.locator(".tree-row.file", { hasText: "Hub" })).toBeVisible({ timeout: 30000 });
+      await page.waitForTimeout(3000);
+      expect(a.files().sort()).toEqual(["Hub.md", "Shared", "Shared/Plan.md"]);
+      expect(asked).toEqual([]);
+      expect(vault.exists("Shared/Roadmap.md")).toBe(true);
+      await expect(page.getByRole("alert")).toHaveText("");
+      await expect(page.locator(".notice")).toHaveCount(0);
+    } finally {
+      await a.stop();
+    }
+  });
+});

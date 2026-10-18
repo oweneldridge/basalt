@@ -945,3 +945,177 @@ for (const [canvas, first] of [
     await expect(page.locator(".tree-row.file", { hasText: "Ideas" })).toHaveCount(1);
   });
 }
+
+// "other" has a Projects folder too, and a note linking into it; "/mock/bad"
+// fails to open when the test calls __failOpen. Each call is logged as
+// "vault:cmd:args" or "other:cmd:args"; `old` answers for the vault being left,
+// with `oneAtATime` in a queue that runs one call at a time, as the desktop
+// core does.
+async function otherWithProjects(page: Page, old: (cmd: string, a: Record<string, unknown>) => unknown = () => undefined, oneAtATime = false) {
+  await page.evaluate(
+    ([oldSrc, serial]) => {
+      const w = window as unknown as { __log: string[]; __other: boolean; __failOpen: () => void; __mockConfirm: () => boolean; __mockHook: (cmd: string, a: Record<string, unknown>) => unknown };
+      const plan = { path: "/mock/other/Projects/Plan.md", rel: "Projects/Plan.md", name: "Plan", content: "plan\n", mtime: 1, ctime: 1, size: 5 };
+      const hub = { path: "/mock/other/Hub.md", rel: "Hub.md", name: "Hub", content: "see [[Projects/Plan]]\n", mtime: 1, ctime: 1, size: 22 };
+      const oldHook = new Function(`return ${oldSrc}`)() as (cmd: string, a: Record<string, unknown>) => unknown;
+      w.__log = [];
+      w.__mockConfirm = () => (w.__log.push("asked"), true);
+      let queue: Promise<unknown> = Promise.resolve();
+      const answer = (cmd: string, a: Record<string, unknown>) => {
+        w.__log.push(`${w.__other ? "other" : "vault"}:${cmd}:${JSON.stringify(a).slice(0, 80)}`);
+        if (cmd === "open_vault" && a.path === "/mock/bad") return new Promise((_, j) => (w.__failOpen = () => j("not a folder")));
+        if (cmd === "open_vault") {
+          w.__other = String(a.path) === "/mock/other";
+          return w.__other ? { result: "/mock/other" } : undefined;
+        }
+        if (!w.__other) return oldHook(cmd, a);
+        if (cmd === "read_vault") return { result: [plan, hub] };
+        if (cmd === "read_note") return String(a.path).startsWith("/mock/other/") ? { result: String(a.path).endsWith("Hub.md") ? hub.content : plan.content } : Promise.reject("path escapes vault");
+        if (cmd === "list_attachments") return { result: [] };
+        if (cmd === "list_folders") return { result: ["Projects"] };
+        return { result: null };
+      };
+      w.__mockHook = (cmd, a) => {
+        if (/read_obsidian|list_css|debug_log|start_watching|list_plugins|read_image|take_pending/.test(cmd)) return;
+        if (!serial) return answer(cmd, a);
+        const p = queue.then(() => answer(cmd, a));
+        queue = p.catch(() => {});
+        return p;
+      };
+    },
+    [old.toString(), oneAtATime] as const,
+  );
+}
+const inOther = async (page: Page, cmd: string) => (await calls(page)).filter((l) => l.startsWith(`other:${cmd}:`));
+
+test("a folder move held by a save that stops answering moves nothing once the switch gives up on it", async ({ page }) => {
+  test.setTimeout(60000);
+  await load(page);
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click();
+  await page.locator(".tree-row.file", { hasText: "Roadmap" }).first().click();
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await otherWithProjects(page, (cmd) => {
+    const w = window as unknown as { __release: () => void };
+    if (cmd === "write_note") return new Promise((r) => (w.__release = () => r({ result: null })));
+  });
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type("typed");
+  await expect.poll(async () => (await calls(page)).filter((l) => l.startsWith("vault:write_note:"))).toHaveLength(1);
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: /Rename/ }).first().click();
+  await page.locator(".prompt-input").fill("Plans");
+  await page.locator(".prompt-input").press("Enter");
+  await pickVault(page, "/mock/other");
+  await opened(page);
+  await expect(page.locator(".tree-row.file", { hasText: "Hub" })).toHaveCount(1);
+  await page.evaluate(() => (window as unknown as { __release: () => void }).__release());
+  await page.waitForTimeout(1500);
+  expect((await calls(page)).filter((l) => /:rename_folder:/.test(l))).toEqual([]);
+  expect(await inOther(page, "write_note")).toEqual([]);
+  await expect(page.getByRole("alert")).toHaveText("");
+  await expect(page.locator(".tree-row.folder", { hasText: "Projects" })).toHaveCount(1);
+});
+
+test("a folder move queued behind a slow note rename moves nothing once the switch gives up on them", async ({ page }) => {
+  test.setTimeout(60000);
+  await load(page);
+  await otherWithProjects(page, (cmd) => (cmd === "rename_note" ? new Promise((r) => setTimeout(() => r(undefined), 6000)) : undefined), true);
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+  await page.locator(".prompt-input").fill("Ideas2");
+  await page.locator(".prompt-input").press("Enter");
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: /Rename/ }).first().click();
+  await page.locator(".prompt-input").fill("Plans");
+  await page.locator(".prompt-input").press("Enter");
+  await pickVault(page, "/mock/other");
+  await opened(page);
+  await expect(page.locator(".tree-row.file", { hasText: "Hub" })).toHaveCount(1);
+  await page.waitForTimeout(1500);
+  const l = await calls(page);
+  expect(l.filter((x) => /:rename_folder:/.test(x))).toEqual([]);
+  expect(l.filter((x) => x.startsWith("other:") && !/:(read_vault|list_attachments|list_folders|read_note):/.test(x))).toEqual([]);
+  expect(l).not.toContain("asked");
+  await expect(page.getByRole("alert")).toHaveText("");
+});
+
+async function loadWithBad(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem("basalt.recentVaults", JSON.stringify(["other", "bad"].map((n, i) => ({ path: `/mock/${n}`, name: n, ts: Date.now() - i }))));
+  });
+  await page.goto("/app-harness.html");
+  await expect(page.locator(".sidebar")).toBeVisible();
+}
+const failOpen = (page: Page) => page.evaluate(() => (window as unknown as { __failOpen: () => void }).__failOpen());
+
+test("a folder move held by a save that stops answering goes on when the switch fails", async ({ page }) => {
+  test.setTimeout(60000);
+  await loadWithBad(page);
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click();
+  await page.locator(".tree-row.file", { hasText: "Roadmap" }).first().click();
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await otherWithProjects(page, (cmd) => {
+    const w = window as unknown as { __release: () => void };
+    if (cmd === "write_note" && !w.__release) return new Promise((r) => (w.__release = () => r({ result: null })));
+  });
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type("typed");
+  await expect.poll(async () => (await calls(page)).filter((l) => l.startsWith("vault:write_note:"))).toHaveLength(1);
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: /Rename/ }).first().click();
+  await page.locator(".prompt-input").fill("Plans");
+  await page.locator(".prompt-input").press("Enter");
+  await pickVault(page, "/mock/bad");
+  await expect.poll(() => calls(page), { timeout: 8000 }).toContainEqual(expect.stringMatching(/^vault:open_vault:/));
+  await page.evaluate(() => (window as unknown as { __release: () => void }).__release());
+  await page.waitForTimeout(500);
+  await failOpen(page);
+  await opened(page);
+  await expect.poll(() => calls(page)).toContainEqual(expect.stringMatching(/^vault:rename_folder:/));
+  await expect(page.locator(".tree-row.folder", { hasText: "Plans" })).toHaveCount(1);
+});
+
+test("a folder move queued behind a rename goes on when a switch that stopped waiting for them fails", async ({ page }) => {
+  test.setTimeout(60000);
+  await loadWithBad(page);
+  await otherWithProjects(page, (cmd) => (cmd === "rename_note" ? new Promise((_, j) => setTimeout(() => j("busy"), 6000)) : undefined), true);
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+  await page.locator(".prompt-input").fill("Ideas2");
+  await page.locator(".prompt-input").press("Enter");
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: /Rename/ }).first().click();
+  await page.locator(".prompt-input").fill("Plans");
+  await page.locator(".prompt-input").press("Enter");
+  await pickVault(page, "/mock/bad");
+  // The rename has failed, and the open is under way.
+  await expect.poll(() => page.evaluate(() => typeof (window as unknown as { __failOpen?: unknown }).__failOpen), { timeout: 10000 }).toBe("function");
+  await page.waitForTimeout(500);
+  await failOpen(page);
+  await opened(page);
+  await expect.poll(() => calls(page)).toContainEqual(expect.stringMatching(/^vault:rename_folder:/));
+});
+
+test("a file rename held by a save that stops answering does nothing once the switch gives up on it", async ({ page }) => {
+  test.setTimeout(60000);
+  await load(page);
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click();
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await otherWithProjects(page, (cmd) => {
+    const w = window as unknown as { __release: () => void };
+    if (cmd === "write_note") return new Promise((r) => (w.__release = () => r({ result: null })));
+  });
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type("typed");
+  await expect.poll(async () => (await calls(page)).filter((l) => l.startsWith("vault:write_note:"))).toHaveLength(1);
+  await page.locator(".tree-row.attachment", { hasText: "Board" }).click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+  await page.locator(".prompt-input").fill("Board2");
+  await page.locator(".prompt-input").press("Enter");
+  await pickVault(page, "/mock/other");
+  await opened(page);
+  await page.evaluate(() => (window as unknown as { __release: () => void }).__release());
+  await page.waitForTimeout(1000);
+  expect((await calls(page)).filter((l) => /:rename_attachment:/.test(l))).toEqual([]);
+  await expect(page.getByRole("alert")).toHaveText("");
+});

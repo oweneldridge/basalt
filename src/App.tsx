@@ -4978,17 +4978,20 @@ export default function App() {
     canvasKeys.current.set(to, canvasKeys.current.get(from) ?? ++canvasSeq.current);
     canvasKeys.current.delete(from);
   };
-  const enqueueRename = useCallback(<T,>(job: () => Promise<T>): Promise<T> => {
+  // One asked for in a vault that a switch has since left does nothing.
+  const enqueueRename = useCallback(<T,>(job: () => Promise<T>): Promise<T | undefined> => {
     renameJobs.current++;
+    const gen = shownGen.current;
+    const start = () => {
+      renameGen.current = gen;
+      return job();
+    };
     const run = renameQueue.current
-      .then(() => {
-        renameGen.current = vaultGen.current;
-        return job();
-      })
+      .then(() => (vaultGen.current === gen ? start() : stillCurrent(gen).then((ok) => (ok ? start() : undefined))))
       .finally(() => renameJobs.current--);
     renameQueue.current = run.catch(() => {});
     return track(vaultJobs.current, run);
-  }, []);
+  }, [stillCurrent]);
   const handleRenameNote = useCallback(
     (oldPath: string, newName: string) => enqueueRename(() => renameNoteNow(currentPath(oldPath), newName)),
     [enqueueRename, renameNoteNow],
@@ -5177,6 +5180,7 @@ export default function App() {
   const renameFolderNow = useCallback(
     async (folderRel: string, newFolderRel: string) => {
       const root = vaultRef.current;
+      const gen = renameGen.current;
       if (!root || !newFolderRel || newFolderRel === folderRel) return;
       const oldPrefix = `${folderRel}/`;
       const newPrefix = `${newFolderRel}/`;
@@ -5195,6 +5199,9 @@ export default function App() {
       // pending write to a now-moved path would be lost.
       commitCanvasTyping((p) => attachmentsRef.current.some((a) => a.path === p && a.rel.startsWith(oldPrefix)));
       await flushAll();
+      // A switch that stopped waiting for this may have opened another vault,
+      // which has its own folder of this name.
+      if (vaultGen.current !== gen && !(await stillCurrent(gen))) return;
       const movingNotes = notesRef.current.filter((n) => n.rel.startsWith(oldPrefix));
       const movingAtts = attachmentsRef.current.filter((a) => a.rel.startsWith(oldPrefix));
       for (const f of [...movingNotes, ...movingAtts]) {
@@ -5404,7 +5411,7 @@ export default function App() {
       const folderFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
       reportLinkFixes("Folder moved", folderFails);
     },
-    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs, rewriteNoteLinks, reportLinkFixes],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs, rewriteNoteLinks, reportLinkFixes, stillCurrent],
   );
   const handleRenameFolder = useCallback(
     (folderRel: string, newFolderRel: string) => enqueueRename(() => renameFolderNow(folderRel, newFolderRel)),
@@ -5426,10 +5433,12 @@ export default function App() {
   const renameAttachmentNow = useCallback(
     async (path: string, newName: string) => {
       const root = vaultRef.current;
+      const gen = renameGen.current;
       const att = attachmentsRef.current.find((a) => a.path === path);
       if (!root || !att) return;
       commitCanvasTyping((p) => p === path);
       await flushAll();
+      if (vaultGen.current !== gen && !(await stillCurrent(gen))) return;
       if (conflictsRef.current.has(path)) {
         setSaveError(`Resolve the "Changed on disk" conflict in ${att.name} before renaming it`);
         return;
@@ -5544,7 +5553,7 @@ export default function App() {
       const allFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
       reportLinkFixes("Renamed", allFails);
     },
-    [flushAll, flushPath, bumpStructure, moveBigBase, getLinkFormat, rewriteNoteLinks, rewriteCanvasRefs, reportLinkFixes],
+    [flushAll, flushPath, bumpStructure, moveBigBase, getLinkFormat, rewriteNoteLinks, rewriteCanvasRefs, reportLinkFixes, stillCurrent],
   );
   const handleRenameAttachment = useCallback(
     (path: string, newName: string) => enqueueRename(() => renameAttachmentNow(currentPath(path), newName)),
