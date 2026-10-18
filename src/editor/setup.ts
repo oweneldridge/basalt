@@ -177,7 +177,6 @@ export function reportCursor(state: EditorState, onCursor: EditorCallbacks["onCu
   onCursor(line.number, sel.head - line.from + 1, sel.to - sel.from, sel.empty ? null : () => state.sliceDoc(sel.from, sel.to));
 }
 
-/** Toggle Vim keybindings on a live editor. */
 const labelCompartment = new Compartment();
 const editorLabel = (noteName: string, where?: string) =>
   EditorView.contentAttributes.of({
@@ -190,6 +189,7 @@ export function setEditorWhere(view: EditorView, where: string | undefined): voi
   view.dispatch({ effects: labelCompartment.reconfigure(editorLabel(noteName, where)) });
 }
 
+/** Toggle Vim keybindings on a live editor. */
 export function setVimMode(view: EditorView, on: boolean): void {
   view.dispatch({ effects: vimCompartment.reconfigure(on ? vim() : []) });
 }
