@@ -37,8 +37,10 @@ export function Palette<T>({
 
   const all = useMemo(() => getItems(query), [query, getItems]);
   const items = useMemo(() => all.slice(0, MAX_RENDER), [all]);
-  // A row picked in a longer list falls back to the first when the list shrinks.
-  const active = picked < items.length ? picked : 0;
+  // A row picked in a longer list falls back to the first when the list
+  // shrinks, and stays there if it grows again.
+  if (picked !== 0 && !(picked >= 0 && picked < items.length)) setPicked(0);
+  const active = picked;
 
   // Keep the active row in view.
   useEffect(() => {

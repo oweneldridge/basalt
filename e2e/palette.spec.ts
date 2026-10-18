@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/app-harness.html");
@@ -68,4 +68,49 @@ test("typing picks the first match, though the list still reaches the row the mo
   await page.locator(".palette-input").fill("o");
   await expect.poll(() => page.locator(".palette-item").count()).toBeGreaterThan(3);
   await expect(page.locator(".palette-item").first()).toHaveAttribute("aria-selected", "true");
+});
+
+// The vault on disk becomes just these notes.
+async function rescan(page: Page, notes: string[]) {
+  await page.evaluate((notes) => {
+    const w = window as unknown as { __mockHook: (cmd: string) => Promise<{ result: unknown } | void> | void; __mockEmit: (n: string, p: unknown) => void };
+    const list = notes.map((n) => {
+      const [rel, content] = n.split("|");
+      return { path: `/mock/vault/${rel}`, rel, name: rel.replace(/\.md$/, ""), content, mtime: 1, ctime: 1, size: content.length };
+    });
+    w.__mockHook = (cmd) => (cmd === "read_vault" ? Promise.resolve({ result: list }) : undefined);
+    w.__mockEmit("vault-rescan", null);
+  }, notes);
+}
+
+test("ArrowDown on an empty list leaves the first row picked once results come", async ({ page }) => {
+  await page.keyboard.press("ControlOrMeta+Shift+f");
+  const input = page.locator(".palette-input");
+  await input.fill("zzqqmatch");
+  await expect(page.locator(".palette-item")).toHaveCount(0);
+  await input.press("ArrowDown");
+  await rescan(page, ["Welcome.md|# Welcome\n", "A.md|zzqqmatch one\n", "B.md|zzqqmatch two\n"]);
+  const rows = page.locator(".palette-item");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toHaveAttribute("aria-selected", "true");
+  await expect(input).toHaveAttribute("aria-activedescendant", (await rows.first().getAttribute("id"))!);
+  await input.press("Enter");
+  await expect(input).toHaveCount(0);
+});
+
+test("a list that shrinks past the picked row and grows back keeps the first row", async ({ page }) => {
+  const many = Array.from({ length: 30 }, (_, i) => `N${String(i).padStart(2, "0")}.md|x\n`);
+  await rescan(page, many);
+  await page.keyboard.press("ControlOrMeta+o");
+  const rows = page.locator(".palette-item");
+  await expect(rows).toHaveCount(30);
+  await rows.nth(5).hover();
+  await expect(rows.nth(5)).toHaveAttribute("aria-selected", "true");
+  await page.mouse.move(2, 2);
+  await rescan(page, ["Only.md|x\n"]);
+  await expect(rows).toHaveCount(1);
+  await rescan(page, many);
+  await expect(rows).toHaveCount(30);
+  await expect(rows.first()).toHaveAttribute("aria-selected", "true");
+  await expect(rows.nth(5)).toHaveAttribute("aria-selected", "false");
 });
