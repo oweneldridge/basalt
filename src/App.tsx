@@ -1083,6 +1083,7 @@ export default function App() {
     async (path: string, doc: string, force = false) => {
       setSaving(true);
       const vault = vaultRef.current;
+      const gen = vaultGen.current;
       try {
         const known = notesRef.current.find((n) => n.path === path);
         if (!known && !force) {
@@ -1175,7 +1176,8 @@ export default function App() {
         retryLater();
       } finally {
         savesDone.current++;
-        setSaving(false);
+        // One that answers after a switch it was given up for says nothing there.
+        if (vaultGen.current === gen) setSaving(false);
       }
     },
     [bumpIndex, bumpStructure, rememberSelfWrite, addConflict, setBigBase],
@@ -1211,6 +1213,7 @@ export default function App() {
   const writeViewer = useCallback(
     async (path: string, doc: string, force = false) => {
       setSaving(true);
+      const gen = vaultGen.current;
       try {
         const att = attachmentsRef.current.find((a) => a.path === path);
         const rel = att?.rel;
@@ -1248,7 +1251,7 @@ export default function App() {
         retryLater();
       } finally {
         savesDone.current++;
-        setSaving(false);
+        if (vaultGen.current === gen) setSaving(false);
       }
     },
     [rememberSelfWrite, addConflict],
@@ -2027,6 +2030,7 @@ export default function App() {
       setLayout(null);
       setFocusedId(null);
       setConflicts(new Set());
+      setSaving(false); // a save given up on at the switch answers to the vault that's gone
       pending.current.clear();
       liveDocs.current.clear();
       renameWindow.current.clear();

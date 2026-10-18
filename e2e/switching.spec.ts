@@ -390,6 +390,63 @@ test("a save that never answers can't hold a switch: it asks, and goes on if tol
   expect(await page.evaluate(() => (window as unknown as { __opens: number }).__opens)).toBe(1);
 });
 
+for (const [late, canvas] of [
+  [false, false],
+  [true, false],
+  [true, true],
+] as const) {
+  test(`after switching anyway past a ${canvas ? "canvas " : ""}save that ${late ? "answers late" : "never answers"}, the new vault's status is its own`, async ({ page }) => {
+    test.setTimeout(60000);
+    await load(page);
+    if (canvas) {
+      await page.locator(".tree-row.attachment", { hasText: "Board" }).click();
+      await expect(page.locator(".canvas-node")).toHaveCount(3);
+    } else {
+      await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click();
+      await page.locator(".pane:not(.dock) .cm-content").first().click();
+    }
+    await page.evaluate((answers) => {
+      const w = window as unknown as { __mockConfirm: () => boolean; __other: boolean; __newSave: boolean; __oldDone: () => void; __mockHook: (cmd: string, a: Record<string, unknown>) => unknown };
+      const other = { path: "/mock/other/Other.md", rel: "Other.md", name: "Other", content: "other\n", mtime: 1, ctime: 1, size: 6 };
+      w.__mockConfirm = () => true;
+      // The old vault's save answers once the new vault's is under way, or never.
+      let old = () => {};
+      w.__oldDone = () => old();
+      w.__mockHook = (cmd, a) => {
+        if (cmd === "open_vault") return (w.__other = true), { result: "/mock/other" };
+        if (cmd === "write_note" && w.__other) return (w.__newSave = true), new Promise(() => {});
+        if (cmd === "write_note" || cmd === "write_canvas") return new Promise((r) => answers && (old = () => r({ result: null })));
+        if (!w.__other) return;
+        if (cmd === "read_vault") return { result: [other] };
+        if (cmd === "read_note") return { result: other.content };
+        if (cmd === "list_attachments" || cmd === "list_folders") return { result: [] };
+      };
+    }, late);
+    if (canvas) {
+      await page.locator(".canvas-node").first().click();
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await page.locator(".canvas-view").press("Delete");
+      await expect(page.locator(".canvas-node")).toHaveCount(2);
+    } else {
+      await page.keyboard.press("ControlOrMeta+End");
+      await page.keyboard.type("kept");
+    }
+    await page.waitForTimeout(1200);
+    await pickVault(page, "/mock/other");
+    await opened(page);
+    const status = page.locator(".status").first();
+    await expect(status).not.toContainText("Saving");
+    await page.locator(".tree-row.file", { hasText: "Other" }).first().click();
+    await page.locator(".pane:not(.dock) .cm-content").first().click();
+    await page.keyboard.type("new");
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __newSave: boolean }).__newSave)).toBe(true);
+    await expect(status).toHaveText("Saving…");
+    await page.evaluate(() => (window as unknown as { __oldDone: () => void }).__oldDone());
+    await page.waitForTimeout(500);
+    await expect(status).toHaveText("Saving…");
+  });
+}
+
 test("a switch says what it's opening while an earlier one loads and a later one fails", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem(
