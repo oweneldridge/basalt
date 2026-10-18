@@ -185,15 +185,20 @@ function maskFrom(lines: string[], start: number, mask: boolean[], depth: number
     }
     // A paragraph: to a blank line, a line that starts a block (a table too,
     // unless the paragraph may be one), the line after a link reference
-    // definition, or an underline.
+    // definition, or an underline. A table, its header over a delimiter row,
+    // ends at a row without a `|` (one led by a `|`, if its header is).
     const ref = line.next === 91 /* [ */ ? new RefScan(line.text.slice(line.pos)) : null;
     const head = i;
     const headPos = line.pos;
+    const headText = line.text;
+    const piped = hasPipe(headText, headPos);
+    let table = false;
     while (++i < n) {
       read(i);
       if (line.pos === line.text.length) continue next;
-      if (line.indent < line.baseIndent + 4 && (interrupts(line, stack) || (tableAt(line, lines[i + 1]) && !hasPipe(lines[head], headPos)))) continue next;
+      if (line.indent < line.baseIndent + 4 && (interrupts(line, stack) || (!piped && tableAt(line, lines[i + 1])) || (table && rowEnds(line, headText.charCodeAt(headPos) === 124)))) continue next;
       if (ref?.nextLine(line.baseIndent ? " ".repeat(line.basePos) + line.text.slice(line.basePos) : line.text)) continue next;
+      if (piped && i === head + 1) table = delimiterAt(line) && cellsOf(headText, headPos) === cellsOf(line.text, line.pos);
       if (line.depth === stack.length && underlineAt(line)) {
         if (++i < n) read(i);
         continue next;
@@ -416,7 +421,21 @@ function tableAt(line: Line, after: string | undefined): boolean {
   if (after.endsWith("\r")) after = after.slice(0, -1);
   return DELIMITER_ROW.test(after) && cellsOf(line.text, line.basePos) === cellsOf(after, line.basePos);
 }
-const DELIMITER_ROW = /^[>\s]*\|?(\s*:?-+:?\s*\|)+(\s*:?-+:?\s*)?$/;
+// The editor's parser's, `^[>\s]*\|?(\s*:?-+:?\s*\|)+(\s*:?-+:?\s*)?$`, with
+// the spaces before the first cell read once rather than every way they split.
+const DELIMITER_ROW = /^[>\s]*(?:\|\s*)?:?-+:?\s*\|(?:\s*:?-+:?\s*\|)*(?:\s*:?-+:?\s*)?$/;
+
+/** Whether the line, read as a paragraph's second, is a table's delimiter row. */
+function delimiterAt(line: Line): boolean {
+  const c = line.next;
+  return (c === 45 || c === 58 || c === 124) && DELIMITER_ROW.test(line.text.slice(line.pos));
+}
+
+/** Whether the line ends a table rather than adding a row to it. */
+function rowEnds(line: Line, barred: boolean): boolean {
+  const text = line.text.slice(line.basePos);
+  return barred ? !text.trimStart().startsWith("|") : !/(?:^|[^\\])\|/.test(text);
+}
 
 function hasPipe(text: string, from: number): boolean {
   for (let i = from; i < text.length; i++) {

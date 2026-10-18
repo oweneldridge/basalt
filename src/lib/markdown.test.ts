@@ -62,7 +62,7 @@ describe("wikilinkRegex on runs of brackets", () => {
       expect(all(wikilinkRegex(), s), s).not.toEqual([]);
     }
     let seed = 7;
-    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
     const chars = ["[", "[", "[", "]", "]", "\\", "a", "|", "\n", " ", "#"];
     for (let n = 0; n < 20_000; n++) {
       let s = "";
@@ -250,6 +250,22 @@ describe("proseMask reads containers as the editor's parser does", () => {
   it("ends a paragraph where a table starts", () => {
     expect(mask("- a\nb | c\n--|--\n     ~~~\n     [[L]]")).toEqual([1, 1, 1, 1, 1]);
     expect(mask("- a\nb | c\n--\n     ~~~\n     [[L]]")).toEqual([1, 1, 1, 0, 0]);
+    // A delimiter row after a quote's marks, or a list item's.
+    expect(mask(">- a\n>|a|b|\n>-|-\n>    ```\n>[[L]]")).toEqual([1, 1, 1, 0, 0]);
+  });
+
+  it("ends a table at a row without a pipe, where a paragraph would run on", () => {
+    expect(mask(">- a\n>-||s\n |-|-|-\n>-\n>     ```\n>     [[L]]")).toEqual([1, 1, 1, 1, 0, 0]);
+    expect(mask("a|b\n-|-\n-\n     ```\n     [[L]]")).toEqual([1, 1, 1, 0, 0]);
+    // Rows under a header led by a pipe are too.
+    expect(mask("|a|b|\n|-|-|\n|c\n-\n     ```")).toEqual([1, 1, 1, 1, 0]);
+    expect(mask("|a|b|\n|-|-|\nc|d\n-\n     ```")).toEqual([1, 1, 1, 1, 1]);
+  });
+
+  it("stays quick on a long run of spaces under a line with a pipe", () => {
+    const t0 = performance.now();
+    mask("x\na|b\n" + " ".repeat(60000) + "x\n```");
+    expect(performance.now() - t0).toBeLessThan(1000);
   });
 
   it("reads a note with CRLF line endings as one with LF", () => {
