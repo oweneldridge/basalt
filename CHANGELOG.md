@@ -738,9 +738,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   icon tab's name shows under its tab on keyboard focus without moving the
   tabs, below every row when they wrap, so it covers none of them. Moving
   between slides keeps focus on the slide, and the same note open in two
-  panes has two names, in Reading view ("Reading view: Ideas, pane 2") and
-  the editor ("Editing Ideas, pane 2"); with more than one note pane, each
-  one's tabs are named for it too ("Open notes, pane 2"). A long link in a
+  panes, in a stacked column of one too, has two names, in Reading view
+  ("Reading view: Ideas, pane 2") and the editor ("Editing Ideas, pane 2");
+  with more than one note pane, each one's tabs are named for it too ("Open
+  notes, pane 2"). A long link in a
   callout wraps instead of scrolling Reading view sideways, and a table in a
   callout keeps its words whole and scrolls inside the callout when it's too
   wide. Only a failed save is announced as "Not saved".

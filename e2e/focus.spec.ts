@@ -478,7 +478,13 @@ test("two editors on one note, and each pane's tab list, have different names", 
   await page.keyboard.press("ControlOrMeta+o");
   await page.keyboard.type("Welcome");
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("textbox", { name: "Editing Ideas" })).toHaveCount(1);
+  await expect(page.getByRole("textbox", { name: "Editing Ideas", exact: true })).toHaveCount(1);
+  // Stacked, pane 2 shows Ideas again in a column of its own.
+  await notePanes(page).nth(1).getByRole("button", { name: /Stack tabs/ }).click();
+  await expect(page.locator(".stacked-col")).toHaveCount(2);
+  await expect(page.getByRole("textbox", { name: "Editing Ideas, pane 1" })).toHaveCount(1);
+  await expect(page.getByRole("textbox", { name: "Editing Ideas, pane 2" })).toHaveCount(1);
+  await expect(page.getByRole("textbox", { name: "Editing Welcome", exact: true })).toHaveCount(1);
 });
 
 test("a table in a callout keeps its words whole and scrolls in the callout", async ({ page }) => {

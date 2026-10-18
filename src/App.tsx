@@ -5762,9 +5762,12 @@ export default function App() {
     const ids = notePaneIds();
     return ids.length > 1 && ids.includes(id) ? `pane ${ids.indexOf(id) + 1}` : undefined;
   };
-  // Only when another note pane shows the same note.
+  // Only when another note pane shows the same note, in any of its columns
+  // when stacked.
   const sameNoteAt = (id: string, path: string): string | undefined =>
-    notePaneIds().some((i) => i !== id && panes[i].active === path) ? paneNo(id) : undefined;
+    notePaneIds().some((i) => i !== id && (panes[i].stacked ? panes[i].tabs : [panes[i].active]).includes(path))
+      ? paneNo(id)
+      : undefined;
   const renderPane = (id: string) => {
     const pane = panes[id];
     if (!pane) return null;
@@ -5846,6 +5849,7 @@ export default function App() {
                 continuesFrom={[...renameWindow.current].find(([, to]) => to === tab.path)?.[0]}
                 path={tab.path}
                 selfRel={tab.rel}
+                where={sameNoteAt(id, tab.path)}
                 pluginVersion={pluginVersion}
                 doc={doc}
                 getNotes={getNotes}
