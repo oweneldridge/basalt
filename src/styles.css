@@ -812,8 +812,6 @@ button.primary:hover {
   font-size: 13px;
   color: var(--text-muted);
   padding: 4px 8px;
-  box-sizing: border-box;
-  max-width: 100%;
   max-height: 100%;
   overflow: hidden;
   white-space: nowrap;

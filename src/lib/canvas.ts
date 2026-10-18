@@ -360,7 +360,7 @@ export function withGroupContents(nodes: CanvasNode[], ids: Iterable<string>): S
 export function passInGroups(data: CanvasData, ids: Set<string>): number[] {
   const groups = data.nodes.filter((g) => g.type === "group" && ids.has(g.id));
   const box = (v: unknown): Box | null => {
-    const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+    const o = (v ?? {}) as Record<string, unknown>;
     return [o.x, o.y, o.width, o.height].every((n) => Number.isFinite(n)) ? (o as Box) : null;
   };
   return (data.passNodes ?? []).flatMap((v, i) => {

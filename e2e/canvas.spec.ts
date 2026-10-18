@@ -1040,6 +1040,11 @@ test.describe("undo and redo", () => {
       expect((await savedNode(page, "a1"))?.x).toBe(0);
       await page.keyboard.press(`${mod}+y`);
       await expect.poll(async () => (await savedNode(page, "a1"))?.x).toBe(20);
+      // A capital Z, as with Caps Lock or where Shift gives one, works the same.
+      await page.keyboard.press(`${mod}+Z`);
+      await expect.poll(async () => (await savedNode(page, "a1"))?.x).toBe(0);
+      await page.keyboard.press(`${mod}+Shift+Z`);
+      await expect.poll(async () => (await savedNode(page, "a1"))?.x).toBe(20);
     });
   }
 });

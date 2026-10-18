@@ -373,8 +373,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
     const key = e.key.toLowerCase();
     const dir = key === "z" ? (e.shiftKey ? "redo" : "undo") : key === "y" && !e.shiftKey ? "redo" : null;
     if (!editable || !mod || e.altKey || !dir) return;
-    const el = e.target as HTMLElement;
-    if (el.isContentEditable || el.tagName === "TEXTAREA" || el.tagName === "INPUT") return;
+    if ((e.target as HTMLElement).tagName === "TEXTAREA") return;
     e.preventDefault();
     e.stopPropagation();
     undoRedo(dir);
