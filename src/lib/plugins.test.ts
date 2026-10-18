@@ -186,6 +186,81 @@ describe("plugin host", () => {
     }
   });
 
+  it("unloading everything waits for an unload already under way", async () => {
+    const { host } = fakeHost();
+    installHost(host);
+    let finish = () => {};
+    (globalThis as any).__slowBye = new Promise<void>((r) => (finish = r));
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin { onunload() { return globalThis.__slowBye; } };
+    `;
+    await loadPlugin(info({ id: "slow-bye", code }));
+    void unloadPlugin("slow-bye");
+    let all = false;
+    const done = unloadAll().then(() => (all = true));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(all).toBe(false);
+    finish();
+    await done;
+    expect(all).toBe(true);
+  });
+
+  it("a plugin acts only on the vault it was loaded for", async () => {
+    let open: string | null = "/v/one";
+    const made: string[] = [];
+    const { host, saved } = fakeHost({
+      vaultPath: () => open,
+      createNote: async (p) => void made.push(p),
+      readNote: async () => "text",
+      getFolders: () => ["F"],
+      openDailyNote: async () => void made.push("daily"),
+      hasDailyNote: () => true,
+      resolvedLinks: () => ({ "A.md": { "B.md": 1 } }),
+      unresolvedLinks: () => ({ "A.md": { X: 1 } }),
+    });
+    installHost(host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin { onload() { globalThis.__mine = this; } };
+    `;
+    await loadPlugin(info({ id: "mine", code }));
+    const p = (globalThis as any).__mine;
+    const looks = () => [
+      p.app.vault.getMarkdownFiles().length,
+      p.app.vault.getFiles().length,
+      p.app.vault.getAllLoadedFiles().length,
+      p.app.metadataCache.getFileCache("A.md") !== null,
+      Object.keys(p.app.metadataCache.resolvedLinks).length,
+      Object.keys(p.app.metadataCache.unresolvedLinks).length,
+      p.app.workspace.getActiveFile() !== null,
+      p.app.workspace.activeEditor !== null,
+      p.app.dailyNotes.has(new Date()),
+    ];
+    expect(looks()).toEqual([1, 1, 3, true, 1, 1, true, true, true]);
+    await expect(p.app.vault.read("A.md")).resolves.toBe("text");
+    open = "/v/two";
+    expect(looks()).toEqual([0, 0, 1, false, 0, 0, false, false, false]);
+    let processed: string | undefined;
+    const tries = [
+      p.app.vault.read("A.md"),
+      p.app.vault.cachedRead("A.md"),
+      p.app.vault.process("A.md", (t: string) => ((processed = t), "y")),
+      p.app.vault.create("New.md", "x"),
+      p.app.dailyNotes.open(new Date()),
+      p.saveData({ x: 1 }),
+    ];
+    for (const t of await Promise.allSettled(tries)) expect(t).toMatchObject({ status: "rejected", reason: expect.objectContaining({ message: expect.stringMatching(/another vault/) }) });
+    expect(processed).toBeUndefined();
+    expect(made).toEqual([]);
+    expect(saved.mine).toBeUndefined();
+    open = "/v/one";
+    await unloadPlugin("mine");
+    await expect(p.app.vault.read("A.md")).rejects.toThrow("Plugin mine is unloaded");
+    await expect(p.app.vault.cachedRead("A.md")).rejects.toThrow("Plugin mine is unloaded");
+    expect(looks()).toEqual([0, 0, 1, false, 0, 0, false, false, false]);
+  });
+
   it("supports a plain-object module and loadData/saveData", async () => {
     const { host, saved } = fakeHost();
     installHost(host);

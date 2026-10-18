@@ -84,6 +84,8 @@ export interface HostDeps {
   getActiveNotePath: () => string | null;
   openNote: (target: string) => void;
   vaultName: () => string;
+  /** The open vault's path; a plugin acts only on the vault it was loaded for. */
+  vaultPath?: () => string | null;
   savePluginData: (id: string, json: string) => Promise<void>;
   notice: (message: string, timeoutMs?: number) => void;
   /** Parsed metadata for a note (by vault-relative path), or null if unknown. */
@@ -272,7 +274,10 @@ class PluginContext {
   cleanups: (() => void)[] = [];
   /** Unloaded: its leftover timers and promises can't change the vault. */
   stopped = false;
-  constructor(public readonly info: PluginInfo) {}
+  constructor(
+    public readonly info: PluginInfo,
+    public readonly vault: string | null,
+  ) {}
 }
 
 /** How long unloading waits for a plugin's onunload. */
@@ -280,8 +285,15 @@ export const UNLOAD_WAIT_MS = 3000;
 
 /** The `basalt` module returned to plugins via require("basalt"). */
 function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
+  const here = () => !host.vaultPath || host.vaultPath() === ctx.vault;
   const live = <T,>(act: () => Promise<T>): Promise<T> =>
-    ctx.stopped ? Promise.reject(new Error(`Plugin ${ctx.info.id} is unloaded`)) : act();
+    ctx.stopped
+      ? Promise.reject(new Error(`Plugin ${ctx.info.id} is unloaded`))
+      : !here()
+        ? Promise.reject(new Error("Not done: Basalt opened another vault meanwhile"))
+        : act();
+  // What a stopped plugin, or one whose vault has gone, sees of the vault.
+  const seen = <T,>(none: T, get: () => T): T => (ctx.stopped || !here() ? none : get());
   class Notice {
     constructor(message: string, timeoutMs = 4000) {
       host.notice(String(message), timeoutMs);
@@ -317,12 +329,12 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       stat: { ctime: f.ctime ?? 0, mtime: f.mtime ?? 0, size: f.size ?? 0 },
     };
   };
-  const allFiles = () => (host.getFiles?.() ?? host.getMarkdownFiles().map((f) => ({ ...f, path: f.path }))).map(fileOf);
+  const allFiles = () => seen([], () => host.getFiles?.() ?? host.getMarkdownFiles().map((f) => ({ ...f, path: f.path }))).map(fileOf);
   type Folder = { path: string; name: string; children: unknown[]; parent: Folder | null };
   const allLoaded = () => {
     const root: Folder = { path: "/", name: "", children: [], parent: null };
     const folders = new Map<string, Folder>([["", root]]);
-    for (const rel of [...(host.getFolders?.() ?? [])].sort()) {
+    for (const rel of [...seen([], () => host.getFolders?.() ?? [])].sort()) {
       folders.set(rel, { path: rel, name: rel.split("/").pop() ?? rel, children: [], parent: null });
     }
     const parentOf = (path: string) => folders.get(path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "") ?? root;
@@ -343,17 +355,17 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
   const app = {
     vault: {
       getName: () => host.vaultName(),
-      getMarkdownFiles: () => host.getMarkdownFiles(),
+      getMarkdownFiles: () => seen([], () => host.getMarkdownFiles()),
       /** Every file, notes and attachments, as Obsidian's TFile. */
       getFiles: () => allLoaded().filter((f) => !("children" in f)),
       /** Every file and folder, the vault's root first, as Obsidian gives them. */
       getAllLoadedFiles: () => allLoaded(),
       read: (file: { path: string } | string) =>
-        host.readNote(typeof file === "string" ? file : file.path),
+        live(() => host.readNote(typeof file === "string" ? file : file.path)),
       /** Obsidian's cachedRead: the app's copy when it has one, else a read. */
       cachedRead: async (file: { path: string } | string) => {
         const rel = typeof file === "string" ? file : file.path;
-        return host.cachedRead?.(rel) ?? host.readNote(rel);
+        return live(async () => host.cachedRead?.(rel) ?? host.readNote(rel));
       },
       create: (path: string, content: string) => live(() => host.createNote(path, content)),
       modify: (file: { path: string } | string, content: string) =>
@@ -362,7 +374,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
        * refused if the note changes between the read and the write. */
       process: async (file: { path: string } | string, fn: (data: string) => string) => {
         const rel = typeof file === "string" ? file : file.path;
-        const current = await host.readNote(rel);
+        const current = await live(() => host.readNote(rel));
         const next = fn(current);
         if (next !== current) await live(() => host.modifyNote(rel, next, current));
         return next;
@@ -396,25 +408,25 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       host.openDailyNote && host.hasDailyNote
         ? {
             open: (date: Date, folderIfUnset?: string) => live(() => host.openDailyNote!(date, folderIfUnset)),
-            has: (date: Date, folderIfUnset?: string) => host.hasDailyNote!(date, folderIfUnset),
+            has: (date: Date, folderIfUnset?: string) => seen(false, () => host.hasDailyNote!(date, folderIfUnset)),
           }
         : undefined,
     metadataCache: {
       /** Parsed metadata for a note (accepts a `{path}` or a rel string). */
       getFileCache: (file: { path: string } | string): FileCache | null =>
-        host.getFileCache(typeof file === "string" ? file : file.path),
+        seen(null, () => host.getFileCache(typeof file === "string" ? file : file.path)),
       /** Each note's resolved links, as Obsidian's `resolvedLinks`. */
       get resolvedLinks(): Record<string, Record<string, number>> {
-        return host.resolvedLinks?.() ?? {};
+        return seen({}, () => host.resolvedLinks?.() ?? {});
       },
       /** Each note's links to files that aren't there, as Obsidian's `unresolvedLinks`. */
       get unresolvedLinks(): Record<string, Record<string, number>> {
-        return host.unresolvedLinks?.() ?? {};
+        return seen({}, () => host.unresolvedLinks?.() ?? {});
       },
     },
     workspace: {
       getActiveFile: () => {
-        const p = host.getActiveNotePath();
+        const p = seen(null, () => host.getActiveNotePath());
         return p ? { path: p } : null;
       },
       openLinkText: (target: string) => {
@@ -424,7 +436,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
        * The editor exposes replaceSelection + a Basalt insertAtCursor that can
        * place the caret inside the inserted text. */
       get activeEditor() {
-        return host.getActiveNotePath() ? { editor } : null;
+        return seen(null, () => host.getActiveNotePath()) ? { editor } : null;
       },
       /** Subscribe to a workspace event: file-open → (file|null);
        * active-leaf-change → (file|null). */
@@ -584,7 +596,7 @@ function instantiate(mod: PluginModule, ctx: PluginContext): PluginInstance {
 export async function loadPlugin(info: PluginInfo): Promise<void> {
   if (!deps) throw new Error("plugin host not installed");
   if (loaded.has(info.id)) return;
-  const ctx = new PluginContext(info);
+  const ctx = new PluginContext(info, deps.vaultPath?.() ?? null);
   const entry: LoadedPlugin = { info, instance: {}, ctx };
   loaded.set(info.id, entry);
   starting.add(info.id);
@@ -601,11 +613,21 @@ export async function loadPlugin(info: PluginInfo): Promise<void> {
   deps.onRegistryChanged();
 }
 
+// Unloads under way, so unloading everything waits for them too.
+const unloading = new Set<Promise<void>>();
+
 /** Stop and unregister a plugin. Never throws. */
-export async function unloadPlugin(id: string): Promise<void> {
+export function unloadPlugin(id: string): Promise<void> {
   const lp = loaded.get(id);
-  if (!lp) return;
+  if (!lp) return Promise.resolve();
   loaded.delete(id);
+  const run = stop(id, lp);
+  unloading.add(run);
+  void run.then(() => unloading.delete(run));
+  return run;
+}
+
+async function stop(id: string, lp: LoadedPlugin): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     // One that never finishes doesn't hold up the rest, or a vault switch.
@@ -628,6 +650,7 @@ export async function unloadPlugin(id: string): Promise<void> {
 
 export async function unloadAll(): Promise<void> {
   for (const id of [...loaded.keys()]) await unloadPlugin(id);
+  await Promise.all(unloading);
 }
 
 // ---------------------------------------------------------------------------

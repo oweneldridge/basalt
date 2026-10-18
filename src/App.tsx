@@ -4024,6 +4024,7 @@ export default function App() {
       },
       openNote: (target) => openViewerFileRef.current(target),
       vaultName: () => vaultName(vaultRef.current ?? ""),
+      vaultPath: () => vaultRef.current,
       savePluginData: (id, json) => pluginWrite(() => writePluginData(id, json)),
       notice: (msg, timeoutMs) => showNotice(msg, timeoutMs),
       getFileCache: (rel) => {
