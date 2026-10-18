@@ -4755,6 +4755,7 @@ export default function App() {
   const renameNoteNow = useCallback(
     async (oldPath: string, newName: string) => {
       const root = vaultRef.current;
+      const gen = renameGen.current;
       if (!root) return;
       try {
         await flushAll();
@@ -4782,6 +4783,8 @@ export default function App() {
           if (newPath === oldPath && pending.current.has(oldPath)) void flushPath(oldPath);
         }
         if (newPath === oldPath) return;
+        // Answered once another vault opened: the note list there isn't this one.
+        if (vaultGen.current !== gen && !(await stillCurrent(gen))) return;
         movedTo.current.set(oldPath, newPath);
         movedTo.current.delete(newPath);
         moveBigBase(oldPath, newPath);
@@ -4946,12 +4949,13 @@ export default function App() {
           (c) => sourceMap(c.path, c.rel),
         );
         const allFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
+        if (vaultGen.current !== gen && !(await stillCurrent(gen))) return;
         reportLinkFixes("Renamed", allFails);
       } catch (e) {
         setSaveError(`Couldn't rename: ${e}`);
       }
     },
-    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs, rewriteNoteLinks, registerRewrite, reconcileRewrites, queueWrite, reportLinkFixes],
+    [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, patchPane, rewriteCanvasRefs, rewriteNoteLinks, registerRewrite, reconcileRewrites, queueWrite, reportLinkFixes, stillCurrent],
   );
   // Renames and folder moves run one at a time: a second one waits for the
   // first to finish rewriting links, so it never starts from stale paths.
@@ -5259,6 +5263,7 @@ export default function App() {
         return;
       }
       for (const p of movingPaths) renaming.current.delete(p);
+      if (vaultGen.current !== gen && !(await stillCurrent(gen))) return;
       setFolders((prev) => prev.map((f) => (f === folderRel || f.startsWith(oldPrefix) ? swap(f) : f)));
 
       // Migrate any pending edit / save timer keyed by a moving OLD path to its
@@ -5409,6 +5414,7 @@ export default function App() {
       );
 
       const folderFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
+      if (vaultGen.current !== gen && !(await stillCurrent(gen))) return;
       reportLinkFixes("Folder moved", folderFails);
     },
     [flushAll, flushPath, bumpStructure, rememberSelfWrite, getLinkFormat, rewriteCanvasRefs, rewriteNoteLinks, reportLinkFixes, stillCurrent],
@@ -5463,6 +5469,7 @@ export default function App() {
         if (newPath === path && pending.current.has(path)) void flushPath(path);
       }
       if (newPath === path) return;
+      if (vaultGen.current !== gen && !(await stillCurrent(gen))) return;
       const newRel = newPath.startsWith(root) ? newPath.slice(root.length).replace(/^[/\\]+/, "") : newPath;
       const moved: Attachment = { ...att, path: newPath, rel: newRel, name: newRel.split("/").pop() ?? newRel };
       const postAtts = preAtts.map((a) => (a.path === path ? moved : a));
@@ -5551,6 +5558,7 @@ export default function App() {
         (c) => mapperFor(c.path === newPath ? path : c.path, c.path),
       );
       const allFails = [...failures, ...canvasFails.map((r) => `${r} (canvas)`)];
+      if (vaultGen.current !== gen && !(await stillCurrent(gen))) return;
       reportLinkFixes("Renamed", allFails);
     },
     [flushAll, flushPath, bumpStructure, moveBigBase, getLinkFormat, rewriteNoteLinks, rewriteCanvasRefs, reportLinkFixes, stillCurrent],

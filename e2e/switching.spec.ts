@@ -1119,3 +1119,28 @@ test("a file rename held by a save that stops answering does nothing once the sw
   expect((await calls(page)).filter((l) => /:rename_attachment:/.test(l))).toEqual([]);
   await expect(page.getByRole("alert")).toHaveText("");
 });
+
+for (const [what, from, row, to] of [
+  ["rename", "Ideas", ".tree-row.file", "Ideas2"],
+  ["folder move", "Projects", ".tree-row.folder", "Plans"],
+] as const) {
+  test(`a ${what} answered while a switch that stopped waiting for it fails goes on`, async ({ page }) => {
+    test.setTimeout(60000);
+    await loadWithBad(page);
+    await otherWithProjects(page, (c) => {
+      const w = window as unknown as { __answer: () => void };
+      if (c === "rename_note" || c === "rename_folder") return new Promise((r) => (w.__answer = () => r(undefined)));
+    });
+    await page.locator(row, { hasText: from }).first().click({ button: "right" });
+    await page.locator(".ctx-item", { hasText: /Rename/ }).first().click();
+    await page.locator(".prompt-input").fill(to);
+    await page.locator(".prompt-input").press("Enter");
+    await pickVault(page, "/mock/bad");
+    await expect.poll(() => page.evaluate(() => typeof (window as unknown as { __failOpen?: unknown }).__failOpen), { timeout: 10000 }).toBe("function");
+    await page.evaluate(() => (window as unknown as { __answer: () => void }).__answer());
+    await page.waitForTimeout(500);
+    await failOpen(page);
+    await opened(page);
+    await expect(page.locator(row, { hasText: to })).toHaveCount(1);
+  });
+}

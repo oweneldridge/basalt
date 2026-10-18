@@ -822,3 +822,133 @@ test.describe("a folder move a switch gives up on", () => {
     }
   });
 });
+
+const hearer = {
+  ".basalt/plugins/hearer/main.js":
+    'const { Plugin } = require("basalt"); module.exports = class extends Plugin { onload() { globalThis.__heard = []; this.registerEvent(this.app.vault.on("rename", (f, old) => globalThis.__heard.push(old + ">" + f.path))); } };',
+  ".basalt/plugins/hearer/manifest.json": JSON.stringify({ id: "hearer", name: "Hearer", version: "0.0.1" }),
+};
+
+for (const [what, cmd, row, to] of [
+  ["note rename", "rename_note", ".tree-row.file", "Solo2"],
+  ["folder move", "rename_folder", ".tree-row.folder", "Moved"],
+] as const) {
+  test.describe(`a ${what} whose answer comes after the next vault opened`, () => {
+    test.use({ vaultFiles: { "Solo.md": "solo\n", "Hub.md": "see [[Solo]]\n", "Shared/Roadmap.md": "road\n" } });
+
+    test("tells that vault's plugins nothing, and shows or fixes nothing there", async ({ page, vault }) => {
+      test.setTimeout(90000);
+      const a = await otherVault({ "Welcome A.md": "a\n", "Solo.md": "theirs\n", "Hub.md": "see [[Solo]]\n", ...hearer });
+      try {
+        const sent = await holdSwitch(page, vault.url, a, 0);
+        await page.addInitScript((r) => localStorage.setItem(`basalt.plugins.enabled.${r}`, JSON.stringify(["hearer"])), a.root);
+        // Done in the old vault at once; its answer is slow to come back.
+        await page.route("**/api/invoke", async (route) => {
+          const body = JSON.parse(route.request().postData() ?? "{}");
+          if (body.cmd !== cmd) return route.fallback();
+          const resp = await route.fetch({ url: `${vault.url}/api/invoke` });
+          await new Promise((r) => setTimeout(r, 8000));
+          return route.fulfill({ response: resp });
+        });
+        await openApp(page, vault);
+        const from = { rename_note: "Solo", rename_folder: "Shared" }[cmd];
+        await page.locator(row, { hasText: from }).first().click({ button: "right" });
+        await page.locator(".ctx-item", { hasText: /Rename/ }).first().click();
+        await page.locator(".prompt-input").fill(to);
+        await page.locator(".prompt-input").press("Enter");
+        await expect.poll(() => vault.exists({ rename_note: "Solo2.md", rename_folder: "Moved/Roadmap.md" }[cmd])).toBe(true);
+        await switchTo(page, a.root, true);
+        await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 30000 });
+        await expect.poll(() => page.evaluate(() => Array.isArray((globalThis as { __heard?: string[] }).__heard))).toBe(true);
+        // Every file tree row shown from here on.
+        await page.evaluate(() => {
+          const seen = new Set<string>();
+          (window as unknown as { __rows: Set<string> }).__rows = seen;
+          new MutationObserver(() => document.querySelectorAll(".tree-row").forEach((r) => seen.add(r.textContent ?? ""))).observe(document.body, { childList: true, subtree: true, characterData: true });
+        });
+        await page.waitForTimeout(6000); // the rename has answered
+        expect(await page.evaluate(() => (globalThis as { __heard?: string[] }).__heard)).toEqual([]);
+        expect(await page.evaluate((t) => [...(window as unknown as { __rows: Set<string> }).__rows].filter((r) => r.includes(t)), to)).toEqual([]);
+        await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible();
+        expect(sent.filter((x) => x === "write_note@new")).toEqual([]);
+        await expect(page.locator(".notice")).toHaveCount(0);
+      } finally {
+        await a.stop();
+      }
+    });
+  });
+}
+
+for (const [what, files, start] of [
+  ["a rename", { "Target.md": "t\n", ...Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`Src ${i}.md`, `see [[Target]] ${i}\n`])) }, renameTarget],
+  [
+    "a folder move",
+    { "Box/Target.md": "t\n", ...Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`Src ${i}.md`, `see [[Box/Target]] ${i}\n`])) },
+    async (page: Page) => {
+      await page.locator(".tree-row.folder", { hasText: "Box" }).first().click({ button: "right" });
+      await page.locator(".ctx-item", { hasText: /Rename/ }).first().click();
+      await page.locator(".prompt-input").fill("Crate");
+      await page.locator(".prompt-input").press("Enter");
+    },
+  ],
+  [
+    "a file rename",
+    { "pic.png": "x", ...Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`Src ${i}.md`, `see ![[pic.png]] ${i}\n`])) },
+    async (page: Page) => {
+      await page.locator(".tree-row.attachment", { hasText: "pic" }).first().click({ button: "right" });
+      await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+      await page.locator(".prompt-input").fill("pic2");
+      await page.locator(".prompt-input").press("Enter");
+    },
+  ],
+] as const) {
+  test.describe(`${what} whose link fix fails after a switch gave up on it`, () => {
+    test.use({ vaultFiles: files });
+
+    test("says nothing about it in the next vault", async ({ page, vault }) => {
+      test.setTimeout(90000);
+      const a = await otherVault({ "Welcome A.md": "a\n" });
+      try {
+        await holdSwitch(page, vault.url, a, 0);
+        let first = true;
+        await page.route("**/api/invoke", async (route) => {
+          const body = JSON.parse(route.request().postData() ?? "{}");
+          if (body.cmd !== "write_note" || !srcPath(body.args ?? {}) || !first) return route.fallback();
+          first = false;
+          await new Promise((r) => setTimeout(r, 6000));
+          return route.fulfill({ contentType: "application/json", body: JSON.stringify({ error: "disk busy" }) });
+        });
+        await openApp(page, vault);
+        await start(page);
+        await expect.poll(() => first).toBe(false);
+        await switchTo(page, a.root, true);
+        await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 30000 });
+        await page.waitForTimeout(3000); // the fix has failed
+        await expect(page.locator(".notice")).toHaveCount(0);
+        await expect(page.getByRole("alert")).toHaveText("");
+      } finally {
+        await a.stop();
+      }
+    });
+
+    test("reports it when that switch fails", async ({ page, vault }) => {
+      test.setTimeout(90000);
+      await holdSwitch(page, vault.url, { url: vault.url, root: "/unused" }, 0);
+      let first = true;
+      await page.route("**/api/invoke", async (route) => {
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        // The vault that fails takes a while to say so.
+        if (body.cmd === "open_vault" && body.args?.path === BAD) await new Promise((r) => setTimeout(r, 6000));
+        if (body.cmd !== "write_note" || !srcPath(body.args ?? {}) || !first) return route.fallback();
+        first = false;
+        await new Promise((r) => setTimeout(r, 8000));
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({ error: "disk busy" }) });
+      });
+      await openApp(page, vault);
+      await start(page);
+      await expect.poll(() => first).toBe(false);
+      await switchTo(page, BAD, true);
+      await expect(page.locator(".notice")).toContainText("links weren't updated in: Src", { timeout: 20000 });
+    });
+  });
+}
