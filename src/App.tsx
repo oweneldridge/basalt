@@ -673,7 +673,7 @@ export default function App() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   // Seeds the search palette when opened from a tag / search bookmark.
   const [searchSeed, setSearchSeed] = useState("");
-  const [fileMenu, setFileMenu] = useState<{ path: string; x: number; y: number } | null>(null);
+  const [fileMenu, setFileMenu] = useState<{ path: string; x: number; y: number; from: Element | null } | null>(null);
   const [tabMenu, setTabMenu] = useState<{ paneId: string; path: string; x: number; y: number } | null>(null);
   // Editor right-click context menu position (uses editorApiRef for its actions).
   const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
@@ -5662,7 +5662,7 @@ export default function App() {
             onFolderContextMenu={(folderRel, x, y) => setFolderMenu({ folderRel, x, y })}
             onMoveToFolder={handleMoveToFolder}
             onOpenAttachment={handleOpenAttachment}
-            onContextMenu={(path, x, y) => setFileMenu({ path, x, y })}
+            onContextMenu={(path, x, y) => setFileMenu({ path, x, y, from: document.activeElement })}
             onAttachmentContextMenu={(path, x, y) => setAttMenu({ path, x, y })}
           />
         );
@@ -6497,16 +6497,23 @@ export default function App() {
             <button
               className="ctx-item danger"
               onClick={() => {
-                const path = fileMenu.path;
+                const { path, from } = fileMenu;
                 setFileMenu(null);
-                // Focus stays in the file tree, on the row next to the note's,
-                // even when the note was open and the next one's editor took it.
+                // Focus stays where it was, as in another note's editor. If it was
+                // on the note's row or nowhere, it goes to the next row in the
+                // tree, even when the note was open and the next one's editor
+                // took it.
                 const rows = [...document.querySelectorAll<HTMLElement>(".sidebar .tree-row")];
                 const at = rows.findIndex((r) => r.dataset.path === path);
                 const near = at === -1 ? undefined : (rows[at + 1] ?? rows[at - 1]);
                 void handleDeleteNote(path).finally(() =>
                   requestAnimationFrame(() =>
                     requestAnimationFrame(() => {
+                      if (notesRef.current.some((n) => n.path === path)) return;
+                      if (from instanceof HTMLElement && from !== document.body && from.isConnected) {
+                        from.focus({ preventScroll: true });
+                        return;
+                      }
                       const now = document.activeElement;
                       if (now !== document.body && !now?.closest(".pane:not(.dock)")) return;
                       if (near?.isConnected) near.focus({ preventScroll: true });

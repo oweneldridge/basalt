@@ -395,6 +395,56 @@ test("deleting the open note from the file tree keeps focus on the next row, not
   await expect.poll(() => page.evaluate(() => document.activeElement?.closest(".tree-row")?.textContent ?? "")).toContain("Notes");
 });
 
+test("answering No to deleting a note from the tree menu leaves focus on its row", async ({ page }) => {
+  await fresh(page);
+  await page.evaluate(() => ((window as unknown as { __mockConfirm: () => boolean }).__mockConfirm = () => false));
+  const row = page.locator(".tree-row.file", { hasText: "Ideas" });
+  await row.focus();
+  await page.keyboard.press("Shift+F10");
+  await page.getByRole("menu").getByRole("menuitem", { name: "Delete", exact: true }).press("Enter");
+  await page.waitForTimeout(150);
+  await expect(row).toBeFocused();
+});
+
+// A Mac's WebKit doesn't focus a row on a right-click, so the menu opens with
+// focus still in the editor, and hands it back there on close.
+for (const answer of [false, true]) {
+  test(`deleting another note from the tree menu, answered ${answer ? "Yes" : "No"}, leaves focus in the editor`, async ({ page }) => {
+    await fresh(page);
+    await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+    const editor = page.locator(".pane:not(.dock) .cm-content").first();
+    await editor.click();
+    await expect(editor).toBeFocused();
+    await page.evaluate((a) => ((window as unknown as { __mockConfirm: () => boolean }).__mockConfirm = () => a), answer);
+    const row = page.locator(".tree-row.file", { hasText: "Ideas" });
+    const box = (await row.boundingBox())!;
+    await row.dispatchEvent("contextmenu", { clientX: box.x + 10, clientY: box.y + 5, button: 2 });
+    await page.getByRole("menu").getByRole("menuitem", { name: "Delete", exact: true }).click();
+    await expect(row).toHaveCount(answer ? 0 : 1);
+    await page.waitForTimeout(150);
+    await expect(page.getByRole("textbox", { name: "Editing Welcome" })).toBeFocused();
+  });
+
+  test(`deleting a note from the tree menu with nothing focused, answered ${answer ? "Yes" : "No"}`, async ({ page }) => {
+    await fresh(page);
+    await page.evaluate((a) => ((window as unknown as { __mockConfirm: () => boolean }).__mockConfirm = () => a), answer);
+    const row = page.locator(".tree-row.file", { hasText: "Ideas" });
+    // Once the app has put focus where it starts, take it away.
+    await expect(page.locator(".pane:not(.dock) .cm-content, .pane:not(.dock) .placeholder").first()).toBeVisible();
+    await page.waitForTimeout(300);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    expect(await onPage(page)).toBe(true);
+    const box = (await row.boundingBox())!;
+    await row.dispatchEvent("contextmenu", { clientX: box.x + 10, clientY: box.y + 5, button: 2 });
+    await page.getByRole("menu").getByRole("menuitem", { name: "Delete", exact: true }).click();
+    await expect(row).toHaveCount(answer ? 0 : 1);
+    await page.waitForTimeout(150);
+    // Yes leaves focus on the next row; No leaves it where it was.
+    if (answer) await expect.poll(() => page.evaluate(() => document.activeElement?.closest(".tree-row")?.textContent ?? "")).toContain("Notes");
+    else expect(await onPage(page)).toBe(true);
+  });
+}
+
 test("in a narrow dock an icon tab's name shows below every tab row, under its own tab", async ({ page }) => {
   await page.setViewportSize({ width: 640, height: 500 });
   await fresh(page);

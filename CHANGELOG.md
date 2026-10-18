@@ -729,8 +729,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   left active, not the first one off screen. A note opened from the file tree
   goes to the note pane you used last. A middle click on a tab in the other
   split leaves your pane focused. Deleting a note from the file tree's menu
-  leaves focus on the next row in the tree, even when the note was open and
-  the next note's editor would have taken it. Reading view's
+  leaves focus where it was, such as in another note's editor, and answering
+  No never moves it. When focus was on the note's row or nowhere, it goes to
+  the next row in the tree, even when the note was open and the next note's
+  editor would have taken it. Reading view's
   focus ring is in the text's colour, as the tabs' is, so Dark Reader keeps it
   visible, and a tab's ring no longer hides the active tab's underline. An
   icon tab's name shows under its tab on keyboard focus without moving the
