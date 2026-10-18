@@ -1839,13 +1839,17 @@ export default function App() {
   const handleDuplicateNote = useCallback(
     async (path: string) => {
       const root = vaultRef.current;
+      const gen = shownGen.current;
       const note = notesRef.current.find((n) => n.path === path);
       if (!root || !note || !isMarkdownPath(path)) return;
+      // Not once a switch has opened another vault, which has its own folders.
+      const switched = async () => vaultGen.current !== gen && !(await stillCurrent(gen));
       try {
         const content = await readNote(path);
+        if (await switched()) return;
         const dir = note.rel.replace(/[^/\\]+$/, "");
-        const copyPath = await createNote(`${dir}${note.name} copy`);
-        await writeNote(copyPath, content, "");
+        const copyPath = await createNote(`${dir}${note.name} copy`, content);
+        if (await switched()) return;
         const rel = copyPath.startsWith(root) ? copyPath.slice(root.length).replace(/^[/\\]+/, "") : copyPath;
         const copy: VaultNote = { path: copyPath, rel, name: nameFromRel(rel), content, ...madeNow(content) };
         index.current.setNote(copy);
@@ -1858,7 +1862,7 @@ export default function App() {
         setSaveError(`Couldn't duplicate: ${e}`);
       }
     },
-    [openNoteByPath, rememberSelfWrite, bumpStructure],
+    [openNoteByPath, rememberSelfWrite, bumpStructure, stillCurrent],
   );
 
   // Rebuild the saved tab/split layout for a vault. Tabs pointing at notes that
@@ -3525,6 +3529,7 @@ export default function App() {
    * attachmentFolderPath) and return the embed link target. */
   const handleSaveAttachment = useCallback(async (file: File): Promise<string | null> => {
     if (!vaultRef.current) return null;
+    const gen = shownGen.current;
     // Capture the source note BEFORE any await — a note switch mid-encode must
     // not change where attachmentFolderPath "./" resolves.
     const sourceRel = activeRelRef.current ?? "";
@@ -3547,7 +3552,10 @@ export default function App() {
       const pad = (n: number) => String(n).padStart(2, "0");
       const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
       const name = generic ? `Pasted image ${stamp}.${ext}` : file.name;
+      // Its folder is the note's, in the vault it was pasted in.
+      if (vaultGen.current !== gen && !(await stillCurrent(gen))) return null;
       const att = await writeAttachment(name, b64, sourceRel);
+      if (vaultGen.current !== gen && !(await stillCurrent(gen))) return null;
       setAttachmentsList((prev) =>
         [...prev.filter((a) => a.path !== att.path), att].sort((a, b) =>
           a.rel.toLowerCase().localeCompare(b.rel.toLowerCase()),
@@ -3562,7 +3570,7 @@ export default function App() {
       setSaveError(`Couldn't save attachment: ${e}`);
       return null;
     }
-  }, []);
+  }, [stillCurrent]);
 
   // Audio recorder (Obsidian's core recorder): capture from the mic, save as an
   // attachment, and embed it at the cursor. `recSeconds` drives the UI (null =
@@ -5126,6 +5134,7 @@ export default function App() {
   // leave the index/state; the prune effect closes their tabs.
   const handleDeleteFolder = useCallback(
     async (folderRel: string) => {
+      const gen = shownGen.current;
       const prefix = `${folderRel}/`;
       const inside = notesRef.current.filter((n) => n.rel.startsWith(prefix));
       // Editable viewers (.canvas/.base) share the pending/conflict machinery —
@@ -5147,6 +5156,9 @@ export default function App() {
           }
           await flushPath(f.path);
         }
+        // A switch that stopped waiting for these saves may have opened another
+        // vault, which has its own folder of this name.
+        if (vaultGen.current !== gen && !(await stillCurrent(gen))) return;
         // flushPath never throws on a failed write — it leaves the doc in
         // `pending`. ABORT if anything is still unsaved (incl. edits typed
         // during the flushes) rather than trash a stale copy.
@@ -5162,6 +5174,7 @@ export default function App() {
           clearConflict(f.path);
         }
         await deleteFolder(folderRel);
+        if (vaultGen.current !== gen && !(await stillCurrent(gen))) return;
         for (const f of all) {
           selfWrites.current.delete(f.rel);
           if (vaultRef.current) void clearSnapshots(vaultRef.current, f.rel);
@@ -5176,7 +5189,7 @@ export default function App() {
         setSaveError(`Couldn't delete folder: ${e}`);
       }
     },
-    [bumpStructure, clearConflict, flushPath],
+    [bumpStructure, clearConflict, flushPath, stillCurrent],
   );
 
   // Rename/move a whole folder in ONE fs::rename (Rust rename_folder moves the

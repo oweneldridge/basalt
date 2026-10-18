@@ -825,7 +825,7 @@ test.describe("a folder move a switch gives up on", () => {
 
 const hearer = {
   ".basalt/plugins/hearer/main.js":
-    'const { Plugin } = require("basalt"); module.exports = class extends Plugin { onload() { globalThis.__heard = []; this.registerEvent(this.app.vault.on("rename", (f, old) => globalThis.__heard.push(old + ">" + f.path))); } };',
+    'const { Plugin } = require("basalt"); module.exports = class extends Plugin { onload() { globalThis.__heard = []; this.registerEvent(this.app.vault.on("rename", (f, old) => globalThis.__heard.push(old + ">" + f.path))); this.registerEvent(this.app.vault.on("create", (f) => globalThis.__heard.push("+" + f.path))); } };',
   ".basalt/plugins/hearer/manifest.json": JSON.stringify({ id: "hearer", name: "Hearer", version: "0.0.1" }),
 };
 
@@ -1041,3 +1041,91 @@ test.describe("a Link that stops answering", () => {
     await expect.poll(() => vault.read("Src 0.md"), { timeout: 20000 }).toBe("[[Target]] here\n");
   });
 });
+
+// Every file tree the page shows from here on, as its rows' text.
+async function watchTree(page: Page) {
+  await page.evaluate(() => {
+    const w = window as unknown as { __trees: string[][] };
+    w.__trees = [];
+    new MutationObserver(() => w.__trees.push([...document.querySelectorAll(".tree-row")].map((r) => r.textContent ?? ""))).observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  });
+  return () => page.evaluate(() => (window as unknown as { __trees: string[][] }).__trees);
+}
+
+for (const [what, cmd, act, shown] of [
+  [
+    "a copy",
+    "create_note",
+    async (page: Page) => {
+      await page.locator(".tree-row.file", { hasText: "Solo" }).first().click({ button: "right" });
+      await page.locator(".ctx-item", { hasText: "Make a copy" }).click();
+    },
+    (tree: string[]) => !tree.some((r) => r.includes("Solo copy")),
+  ],
+  [
+    "a folder delete",
+    "delete_folder",
+    async (page: Page) => {
+      await page.locator(".tree-row.folder", { hasText: "Shared" }).first().click({ button: "right" });
+      await page.locator(".ctx-item", { hasText: "Delete folder" }).click();
+    },
+    (tree: string[]) => tree.some((r) => r.includes("Shared")),
+  ],
+  [
+    "a pasted image",
+    "write_attachment",
+    async (page: Page) => {
+      await openNote(page, "Solo");
+      await page.locator(".pane:not(.dock) .cm-content").first().click();
+      await page.evaluate(() => {
+        const dt = new DataTransfer();
+        dt.items.add(new File(["png"], "shot.png", { type: "image/png" }));
+        document.querySelector(".pane:not(.dock) .cm-content")!.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      });
+    },
+    (tree: string[]) => !tree.some((r) => r.includes("shot")),
+  ],
+] as const) {
+  test.describe(`${what} whose answer comes after the next vault opened`, () => {
+    test.use({ vaultFiles: { "Solo.md": "solo\n", "Shared/Roadmap.md": "road\n" } });
+
+    test("shows and tells that vault nothing", async ({ page, vault }) => {
+      test.setTimeout(90000);
+      const a = await otherVault({ "Welcome A.md": "a\n", "Shared/Plan.md": "plan\n", ...hearer });
+      try {
+        await holdSwitch(page, vault.url, a, 0);
+        await page.addInitScript((r) => localStorage.setItem(`basalt.plugins.enabled.${r}`, JSON.stringify(["hearer"])), a.root);
+        page.on("dialog", (d) => void d.accept());
+        let sent = false;
+        // Done in the old vault at once; its answer is slow to come back.
+        await page.route("**/api/invoke", async (route) => {
+          const body = JSON.parse(route.request().postData() ?? "{}");
+          if (body.cmd !== cmd) return route.fallback();
+          sent = true;
+          const resp = await route.fetch({ url: `${vault.url}/api/invoke` });
+          await new Promise((r) => setTimeout(r, 8000));
+          return route.fulfill({ response: resp });
+        });
+        await openApp(page, vault);
+        await act(page);
+        await expect.poll(() => sent).toBe(true);
+        await switchTo(page, a.root, true);
+        await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 30000 });
+        await expect.poll(() => page.evaluate(() => Array.isArray((globalThis as { __heard?: string[] }).__heard))).toBe(true);
+        const trees = await watchTree(page);
+        await page.waitForTimeout(9000); // it has answered
+        expect((await trees()).filter((t) => !shown(t))).toEqual([]);
+        await expect(page.locator(".tree-row.folder", { hasText: "Shared" })).toHaveCount(1);
+        expect(await page.evaluate(() => (globalThis as { __heard?: string[] }).__heard)).toEqual([]);
+        expect(a.exists("Shared/Plan.md")).toBe(true);
+        await expect(page.getByRole("alert")).toHaveText("");
+      } finally {
+        await a.stop();
+      }
+    });
+  });
+}

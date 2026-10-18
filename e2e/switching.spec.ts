@@ -1177,3 +1177,168 @@ test("Link all goes on through a switch that fails after it stopped waiting", as
   await opened(page);
   await expect.poll(() => page.evaluate(() => (window as unknown as { __written: string }).__written)).toBe("[[Ideas]] here\n");
 });
+
+test("a folder delete held by a save that stops answering deletes nothing once the switch gives up on it", async ({ page }) => {
+  test.setTimeout(60000);
+  await load(page);
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click();
+  await page.locator(".tree-row.file", { hasText: "Roadmap" }).first().click();
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await otherWithProjects(page, (cmd) => {
+    const w = window as unknown as { __release: () => void };
+    if (cmd === "write_note") return new Promise((r) => (w.__release = () => r({ result: null })));
+  });
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type("typed");
+  await expect.poll(async () => (await calls(page)).filter((l) => l.startsWith("vault:write_note:"))).toHaveLength(1);
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Delete folder" }).click();
+  await pickVault(page, "/mock/other");
+  await opened(page);
+  await expect(page.locator(".tree-row.file", { hasText: "Hub" })).toHaveCount(1);
+  await page.evaluate(() => (window as unknown as { __release: () => void }).__release());
+  await page.waitForTimeout(1000);
+  expect((await calls(page)).filter((l) => /:delete_folder:/.test(l))).toEqual([]);
+  await expect(page.locator(".tree-row.folder", { hasText: "Projects" })).toHaveCount(1);
+});
+
+test("a copy whose read answers after a switch makes nothing in the next vault", async ({ page }) => {
+  test.setTimeout(60000);
+  await load(page);
+  await otherWithProjects(page, (cmd) => (cmd === "read_note" ? new Promise((r) => setTimeout(() => r(undefined), 2000)) : undefined));
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Make a copy" }).click();
+  await pickVault(page, "/mock/other");
+  await opened(page);
+  await page.waitForTimeout(2500);
+  const l = await calls(page);
+  expect(l.filter((x) => /^other:(create_note|write_note):/.test(x))).toEqual([]);
+  await expect(page.locator(".tree-row.file", { hasText: "Ideas copy" })).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveText("");
+});
+
+test("an image pasted just before a switch is saved in neither vault once the switch has opened the next", async ({ page }) => {
+  test.setTimeout(60000);
+  await page.addInitScript(() => {
+    // Reading the pasted file takes a while.
+    const read = Blob.prototype.arrayBuffer;
+    Blob.prototype.arrayBuffer = function () {
+      return new Promise((r) => setTimeout(r, 3000)).then(() => read.call(this));
+    };
+  });
+  await load(page);
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click();
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await otherWithProjects(page);
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["png"], "shot.png", { type: "image/png" }));
+    document.querySelector(".pane:not(.dock) .cm-content")!.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  await pickVault(page, "/mock/other");
+  await opened(page);
+  await page.waitForTimeout(3500);
+  expect((await calls(page)).filter((l) => /:write_attachment:/.test(l))).toEqual([]);
+  await expect(page.locator(".tree-row", { hasText: "shot" })).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveText("");
+});
+
+for (const [what, slow, act, done] of [
+  [
+    "a copy's read",
+    "read_note",
+    async (page: Page) => {
+      await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click({ button: "right" });
+      await page.locator(".ctx-item", { hasText: "Make a copy" }).click();
+    },
+    (page: Page) => expect(page.locator(".tree-row.file", { hasText: "Ideas copy" })).toHaveCount(1),
+  ],
+  [
+    "a copy's making",
+    "create_note",
+    async (page: Page) => {
+      await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click({ button: "right" });
+      await page.locator(".ctx-item", { hasText: "Make a copy" }).click();
+    },
+    (page: Page) => expect(page.locator(".tree-row.file", { hasText: "Ideas copy" })).toHaveCount(1),
+  ],
+  [
+    "a folder delete's save",
+    "write_note",
+    async (page: Page) => {
+      await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click();
+      await page.locator(".tree-row.file", { hasText: "Roadmap" }).first().click();
+      await page.locator(".pane:not(.dock) .cm-content").first().click();
+      await page.keyboard.press("ControlOrMeta+End");
+      await page.keyboard.type("typed");
+      await expect.poll(() => page.evaluate(() => typeof (window as unknown as { __answer?: unknown }).__answer)).toBe("function");
+      await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click({ button: "right" });
+      await page.locator(".ctx-item", { hasText: "Delete folder" }).click();
+    },
+    (page: Page) => expect(page.locator(".tree-row.folder", { hasText: "Projects" })).toHaveCount(0),
+  ],
+  [
+    "a folder delete",
+    "delete_folder",
+    async (page: Page) => {
+      await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click({ button: "right" });
+      await page.locator(".ctx-item", { hasText: "Delete folder" }).click();
+    },
+    (page: Page) => expect(page.locator(".tree-row.folder", { hasText: "Projects" })).toHaveCount(0),
+  ],
+  [
+    "a pasted image's read",
+    "arrayBuffer",
+    async (page: Page) => {
+      await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click();
+      await page.locator(".pane:not(.dock) .cm-content").first().click();
+      await page.evaluate(() => {
+        const dt = new DataTransfer();
+        dt.items.add(new File(["png"], "shot.png", { type: "image/png" }));
+        document.querySelector(".pane:not(.dock) .cm-content")!.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      });
+    },
+    (page: Page) => expect(page.locator(".pane:not(.dock) .cm-content").first()).toContainText("![[shot.png]]"),
+  ],
+  [
+    "a pasted image's save",
+    "write_attachment",
+    async (page: Page) => {
+      await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click();
+      await page.locator(".pane:not(.dock) .cm-content").first().click();
+      await page.evaluate(() => {
+        const dt = new DataTransfer();
+        dt.items.add(new File(["png"], "shot.png", { type: "image/png" }));
+        document.querySelector(".pane:not(.dock) .cm-content")!.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      });
+    },
+    (page: Page) => expect(page.locator(".pane:not(.dock) .cm-content").first()).toContainText("![[shot.png]]"),
+  ],
+] as const) {
+  test(`${what} answered while a switch that didn't wait for it fails goes on`, async ({ page }) => {
+    test.setTimeout(60000);
+    await page.addInitScript((cmd) => {
+      if (cmd !== "arrayBuffer") return;
+      const read = Blob.prototype.arrayBuffer;
+      Blob.prototype.arrayBuffer = function () {
+        return new Promise((r) => ((window as unknown as { __answer: () => void }).__answer = () => r(undefined))).then(() => read.call(this));
+      };
+    }, slow);
+    await loadWithBad(page);
+    await page.evaluate((cmd) => ((window as unknown as { __slow: string }).__slow = cmd), slow);
+    await otherWithProjects(page, (c, a) => {
+      const w = window as unknown as { __slow: string; __answer?: () => void };
+      if (c !== w.__slow || w.__answer || (c === "read_note" && !String(a.path).endsWith("/Ideas.md"))) return;
+      return new Promise((r) => (w.__answer = () => r(undefined)));
+    });
+    await act(page);
+    await expect.poll(() => page.evaluate(() => typeof (window as unknown as { __answer?: unknown }).__answer)).toBe("function");
+    await pickVault(page, "/mock/bad");
+    await expect.poll(() => page.evaluate(() => typeof (window as unknown as { __failOpen?: unknown }).__failOpen), { timeout: 10000 }).toBe("function");
+    await page.evaluate(() => (window as unknown as { __answer: () => void }).__answer());
+    await page.waitForTimeout(500);
+    await failOpen(page);
+    await opened(page);
+    await done(page);
+  });
+}
