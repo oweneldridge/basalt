@@ -1144,3 +1144,36 @@ for (const [what, from, row, to] of [
     await expect(page.locator(row, { hasText: to })).toHaveCount(1);
   });
 }
+
+test("Link all goes on through a switch that fails after it stopped waiting", async ({ page }) => {
+  test.setTimeout(60000);
+  await page.addInitScript(() => {
+    (window as unknown as { __mockExtraFiles: Record<string, string> }).__mockExtraFiles = { "Src.md": "Ideas here\n" };
+    localStorage.setItem("basalt.recentVaults", JSON.stringify([{ path: "/mock/bad", name: "bad", ts: Date.now() }]));
+  });
+  await page.goto("/app-harness.html");
+  await expect(page.locator(".sidebar")).toBeVisible();
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click();
+  await page.locator(".pane.dock .tab.view-tab", { hasText: "Backlinks" }).click();
+  await page.evaluate(() => {
+    const w = window as unknown as { __reads: number; __failOpen: () => void; __written: string; __mockHook: (cmd: string, a: Record<string, unknown>) => unknown };
+    w.__reads = 0;
+    w.__written = "";
+    w.__failOpen = () => {};
+    w.__mockHook = (cmd, a) => {
+      if (cmd === "open_vault") return new Promise((_, j) => (w.__failOpen = () => j("not a folder")));
+      if (String(a.path) !== "/mock/vault/Src.md") return;
+      if (cmd === "write_note") w.__written = String(a.content);
+      // Its first read takes longer than a switch waits, then fails.
+      if (cmd === "read_note" && w.__reads++ === 0) return new Promise((_, j) => setTimeout(() => j("busy"), 6000));
+    };
+  });
+  await page.locator(".panel-section").nth(1).locator(".link-all-btn").click();
+  await pickVault(page, "/mock/bad");
+  await expect(page.locator("main.main")).toHaveAttribute("inert", "");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __reads: number }).__reads)).toBe(1);
+  await page.waitForTimeout(6500); // the read has failed; the open is still under way
+  await page.evaluate(() => (window as unknown as { __failOpen: () => void }).__failOpen());
+  await opened(page);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __written: string }).__written)).toBe("[[Ideas]] here\n");
+});

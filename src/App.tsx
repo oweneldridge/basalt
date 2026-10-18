@@ -5102,7 +5102,7 @@ export default function App() {
       const names = [target.name, ...index.current.aliasesOf(target.path)];
       const touched = [...new Set(mentions.map((m) => m.path))];
       await linkUntilSettled(async () => {
-        if (vaultGen.current !== gen) return 0;
+        if (vaultGen.current !== gen && !(await stillCurrent(gen))) return 0;
         const fresh: VaultNote[] = [];
         for (const p of touched) {
           const note = notesRef.current.find((n) => n.path === p);
