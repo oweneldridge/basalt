@@ -718,6 +718,7 @@ export default function App() {
   const pluginsStopped = useRef<Promise<void>>(Promise.resolve());
   const refreshPluginsRef = useRef<() => Promise<void>>(async () => {});
   const stopRecordingRef = useRef<(save?: boolean) => Promise<void>>(async () => {});
+  const pauseRecordingRef = useRef<() => (() => void) | null>(() => null);
   // Plugins stop before a switch, so what they save as they go stays in this vault.
   const stopPlugins = useCallback(() => {
     pluginEpoch.current++;
@@ -1368,9 +1369,10 @@ export default function App() {
 
   // After a flush, anything still pending couldn't be saved (a conflict or a
   // failed write). Ask before an action that would drop it.
-  const okToDropUnsaved = useCallback(async (action: string): Promise<boolean> => {
-    if (pending.current.size === 0) return true;
-    const names = [...pending.current.keys()].map(
+  const okToDropUnsaved = useCallback(async (action: string, asked?: Set<string>): Promise<boolean> => {
+    const left = [...pending.current.keys()].filter((p) => !asked?.has(p));
+    if (left.length === 0) return true;
+    const names = left.map(
       (p) => notesRef.current.find((n) => n.path === p)?.name ?? p.split(/[\\/]/).pop() ?? p,
     );
     const shown = names.slice(0, 5).join(", ") + (names.length > 5 ? ` and ${names.length - 5} more` : "");
@@ -2102,17 +2104,30 @@ export default function App() {
       try {
         // Held from here. Plugins, a recording and unsaved typing finish in the old vault.
         await stopPlugins();
-        const saved = (async () => {
-          await stopRecordingRef.current(true);
-          await flushAll();
-          return true;
-        })();
-        // A save that never answers can't hold it: once none lands for a while, ask.
-        for (let seen = -1; seen !== savesDone.current; ) {
-          seen = savesDone.current;
-          if (await Promise.race([saved, new Promise<boolean>((r) => window.setTimeout(() => r(false), FLUSH_WAIT_MS))])) break;
+        // A save that never answers can't hold it: once none lands for a while, go on.
+        const settle = async (work: Promise<unknown>) => {
+          const done = work.then(() => true);
+          for (let seen = -1; seen !== savesDone.current; ) {
+            seen = savesDone.current;
+            if (await Promise.race([done, new Promise<boolean>((r) => window.setTimeout(() => r(false), FLUSH_WAIT_MS))])) return;
+          }
+        };
+        // A recording only pauses until it's sure the switch goes on.
+        const resume = pauseRecordingRef.current();
+        await settle(flushAll());
+        const dropping = new Set(pending.current.keys());
+        if (!(await okToDropUnsaved("Switch vaults"))) {
+          resume?.();
+          return;
         }
-        if (!(await okToDropUnsaved("Switch vaults"))) return;
+        if (resume) {
+          // Its file, and the note with its embed.
+          const keep = () => [...pending.current.keys()].filter((p) => !dropping.has(p));
+          await settle(stopRecordingRef.current(true).then(async () => {
+            for (const p of keep()) await flushPath(p);
+          }));
+          if (!(await okToDropUnsaved("Switch vaults", dropping))) return;
+        }
         if (await switchTo(path, openNoteRel, restoring, begun)) {
           const done = `Opened ${target.name}`;
           setSwitchedTo(done);
@@ -2133,7 +2148,7 @@ export default function App() {
         }
       }
     },
-    [flushAll, switchTo, stopPlugins],
+    [flushAll, flushPath, switchTo, stopPlugins],
   );
   useEffect(() => {
     if (switchingVault === null) return;
@@ -3591,6 +3606,15 @@ export default function App() {
     [handleSaveAttachment],
   );
   stopRecordingRef.current = stopRecording;
+  // Pause a recording under way; the returned call carries it on.
+  pauseRecordingRef.current = () => {
+    const cur = recorderRef.current;
+    if (!cur) return null;
+    if (cur.rec.state === "recording") cur.rec.pause();
+    return () => {
+      if (recorderRef.current === cur) cur.rec.resume();
+    };
+  };
 
   /** Replace an upload placeholder in whichever note still contains it —
    * the editor that received the paste is gone (note switch / reload). */

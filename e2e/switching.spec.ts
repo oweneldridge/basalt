@@ -256,6 +256,98 @@ test("a recording under way when a switch starts is saved into the vault it was 
   await opened(page);
 });
 
+async function fakeRecorder(page: Page) {
+  await page.addInitScript(() => {
+    // @ts-expect-error test shim
+    navigator.mediaDevices = navigator.mediaDevices || {};
+    navigator.mediaDevices.getUserMedia = async () => ({ getTracks: () => [{ stop() {} }] }) as unknown as MediaStream;
+    const g = globalThis as unknown as { __rec: string[] };
+    g.__rec = [];
+    class FakeRec {
+      mimeType = "audio/webm";
+      state = "inactive";
+      ondataavailable: ((e: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      start() {
+        this.state = "recording";
+        setTimeout(() => this.ondataavailable?.({ data: new Blob(["x"], { type: "audio/webm" }) }), 10);
+      }
+      pause() {
+        this.state = "paused";
+        g.__rec.push("pause");
+      }
+      resume() {
+        this.state = "recording";
+        g.__rec.push("resume");
+      }
+      stop() {
+        this.state = "inactive";
+        g.__rec.push("stop");
+        this.onstop?.();
+      }
+    }
+    // @ts-expect-error test shim
+    window.MediaRecorder = FakeRec;
+  });
+}
+
+test("a recording under way when a switch is turned down goes on, and is saved when stopped", async ({ page }) => {
+  await fakeRecorder(page);
+  await load(page);
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click();
+  await page.evaluate(() => {
+    const w = window as unknown as { __log: string[]; __mockConfirm: () => boolean; __mockHook: (cmd: string, a: Record<string, unknown>) => unknown };
+    w.__log = [];
+    w.__mockConfirm = () => false;
+    w.__mockHook = (cmd, a) => {
+      w.__log.push(`${cmd}:${String(a.path ?? a.name ?? "")}`);
+      if (cmd === "write_note") return Promise.reject("disk full");
+    };
+  });
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await page.keyboard.type("unsaved");
+  await page.keyboard.press("ControlOrMeta+p");
+  await page.locator(".palette-input").first().fill("Record audio");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".rec-indicator")).toBeVisible();
+  await pickVault(page, "/mock/other");
+  await expect.poll(() => page.evaluate(() => (globalThis as unknown as { __rec: string[] }).__rec)).toEqual(["pause", "resume"]);
+  await opened(page);
+  await expect(page.locator(".rec-indicator")).toBeVisible();
+  expect((await calls(page)).filter((l) => /^(write_attachment|open_vault):/.test(l))).toEqual([]);
+  await page.locator(".rec-stop").click();
+  await expect(page.locator(".rec-indicator")).toHaveCount(0);
+  await expect.poll(() => calls(page)).toContainEqual(expect.stringMatching(/^write_attachment:Recording /));
+});
+
+test("a recording at a switch that goes on past unsaved changes is saved first, and asks once", async ({ page }) => {
+  await fakeRecorder(page);
+  await load(page);
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click();
+  await page.evaluate(() => {
+    const w = window as unknown as { __log: string[]; __mockConfirm: () => boolean; __mockHook: (cmd: string, a: Record<string, unknown>) => unknown };
+    w.__log = [];
+    w.__mockConfirm = () => (w.__log.push("asked"), true);
+    w.__mockHook = (cmd, a) => {
+      w.__log.push(`${cmd}:${String(a.path ?? a.name ?? "")}`);
+      if (cmd === "write_note") return Promise.reject("disk full");
+    };
+  });
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await page.keyboard.type("unsaved");
+  await page.keyboard.press("ControlOrMeta+p");
+  await page.locator(".palette-input").first().fill("Record audio");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".rec-indicator")).toBeVisible();
+  await pickVault(page, "/mock/other");
+  await opened(page);
+  const log = await calls(page);
+  const after = log.slice(log.indexOf("asked"), log.findIndex((l) => l.startsWith("open_vault:")));
+  // Its file, and no second try at the note the question let go.
+  expect(after.filter((l) => !l.startsWith("read_") && !l.startsWith("list_"))).toEqual(["asked", expect.stringMatching(/^write_attachment:Recording /)]);
+  expect(log.filter((l) => l === "asked")).toHaveLength(1);
+});
+
 test("a slide show closes at a switch", async ({ page }) => {
   await load(page);
   await page.locator(".tree-row.file", { hasText: "Deck" }).first().click();
