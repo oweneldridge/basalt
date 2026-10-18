@@ -360,3 +360,102 @@ test("refocusing passes over a match that can't take focus", async ({ page }) =>
   await expect(page.locator(".pane:not(.dock) .tab-bar > .cm-content")).toHaveCount(1);
   await expect.poll(() => focused(page)).toBe("reading-view");
 });
+
+test("in stacked tabs the quick switcher puts focus, and typing, in the note it opened", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __mockExtraFiles: Record<string, string> }).__mockExtraFiles = { "N1.md": "n1\n", "N2.md": "n2\n", "N3.md": "n3\n" };
+  });
+  await fresh(page);
+  for (const n of ["Welcome", "Ideas", "N1", "N2"]) await page.locator(".tree-row.file", { hasText: n }).first().click();
+  await page.getByRole("button", { name: /Stack tabs/ }).click();
+  await expect(page.locator(".stacked-col")).toHaveCount(4);
+  await page.locator(".stacked-col").nth(3).locator(".cm-content").click();
+  await page.keyboard.press("ControlOrMeta+o");
+  await page.keyboard.type("N3");
+  await expect(page.locator(".palette-item", { hasText: "N3" }).first()).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".stacked-col.active .cm-content")).toHaveAttribute("aria-label", "Editing N3");
+  await expect(page.locator(".stacked-col.active .cm-content")).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+w");
+  await expect(page.locator(".stacked-col")).toHaveCount(4);
+  await expect(page.locator(".stacked-col.active .cm-content")).toBeFocused();
+});
+
+test("deleting the open note from the file tree keeps focus on the next row, not the next note's editor", async ({ page }) => {
+  await fresh(page);
+  await page.locator(".tree-row.file", { hasText: "Welcome" }).click();
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  const row = page.locator(".tree-row.file", { hasText: "Ideas" });
+  await row.focus();
+  await page.keyboard.press("Shift+F10");
+  await page.getByRole("menu").getByRole("menuitem", { name: "Delete", exact: true }).press("Enter");
+  await expect(page.locator(".tree-row.file", { hasText: "Ideas" })).toHaveCount(0);
+  await expect(page.locator(".pane:not(.dock) .cm-content")).toHaveAttribute("aria-label", "Editing Welcome");
+  await page.waitForTimeout(150);
+  await expect.poll(() => page.evaluate(() => document.activeElement?.closest(".tree-row")?.textContent ?? "")).toContain("Notes");
+});
+
+test("in a narrow dock an icon tab's name shows below every tab row, under its own tab", async ({ page }) => {
+  await page.setViewportSize({ width: 640, height: 500 });
+  await fresh(page);
+  const dock = page.locator(".pane.dock-right");
+  const bar = dock.locator(".tab-bar").first();
+  const tabs = await dock.getByRole("tab").all();
+  const barBox = (await bar.boundingBox())!;
+  expect(barBox.height).toBeGreaterThan(40);
+  for (const tab of tabs) {
+    await tab.focus();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowLeft");
+    const t = (await tab.boundingBox())!;
+    const n = (await tab.locator(".tab-name").boundingBox())!;
+    expect(n.y).toBeGreaterThanOrEqual(barBox.y + barBox.height - 1);
+    // Under the tab, unless that would run it past the bar's right edge.
+    expect(Math.abs(n.x - t.x) <= 5 || n.x + n.width >= barBox.x + barBox.width - 6).toBe(true);
+  }
+});
+
+test("two editors on one note, and each pane's tab list, have different names", async ({ page }) => {
+  await fresh(page);
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).click();
+  await expect(page.getByRole("textbox", { name: "Editing Ideas" })).toHaveCount(1);
+  await expect(page.getByRole("tablist", { name: "Open notes" })).toHaveCount(1);
+  await menu(page, notePanes(page).first().getByRole("tab", { name: /Ideas/ }), "Split right");
+  await expect(page.getByRole("textbox", { name: "Editing Ideas, pane 1" })).toHaveCount(1);
+  await expect(page.getByRole("textbox", { name: "Editing Ideas, pane 2" })).toHaveCount(1);
+  await expect(page.getByRole("tablist", { name: "Open notes, pane 2" })).toHaveCount(1);
+  await notePanes(page).nth(1).locator(".cm-content").click();
+  await page.keyboard.press("ControlOrMeta+o");
+  await page.keyboard.type("Welcome");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("textbox", { name: "Editing Ideas" })).toHaveCount(1);
+});
+
+test("a table in a callout keeps its words whole and scrolls in the callout", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __mockExtraFiles: Record<string, string> }).__mockExtraFiles = {
+      "Long.md": "> [!tip] Table\n> | Col one | Col two | Col three |\n> | --- | --- | --- |\n> | " + "x".repeat(150) + " | y | z |\n",
+    };
+  });
+  await fresh(page);
+  await page.setViewportSize({ width: 800, height: 700 });
+  await page.locator(".tree-row.file", { hasText: "Long" }).click();
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await page.keyboard.press("ControlOrMeta+e");
+  const view = page.locator(".pane:not(.dock) .reading-view").first();
+  // Every word of every header sits on one line.
+  const split = await view.locator(".md-callout th").evaluateAll((ths) =>
+    ths.flatMap((th) => {
+      const text = th.firstChild!;
+      return [...(text.textContent ?? "").matchAll(/\S+/g)].filter((m) => {
+        const r = document.createRange();
+        r.setStart(text, m.index!);
+        r.setEnd(text, m.index! + m[0].length);
+        return new Set([...r.getClientRects()].map((x) => Math.round(x.top))).size > 1;
+      }).map((m) => m[0]);
+    }),
+  );
+  expect(split).toEqual([]);
+  const { sw, cw } = await view.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
+  expect(sw).toBeLessThanOrEqual(cw);
+});

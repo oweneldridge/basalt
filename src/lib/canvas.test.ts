@@ -81,6 +81,13 @@ describe("serializeCanvas", () => {
     expect(out.obsidianMeta).toEqual({ zoom: 2 });
   });
 
+  it("keeps a group's background as the file had it, an empty one too", () => {
+    for (const background of ["", null, "img.png"]) {
+      const text = JSON.stringify({ nodes: [{ id: "g", type: "group", x: 0, y: 0, width: 10, height: 10, background }], edges: [] });
+      expect(JSON.parse(serializeCanvas(parseCanvas(text)!)).nodes[0].background).toBe(background);
+    }
+  });
+
   it("clearing a modeled optional (color) drops the key even if it was in the original", () => {
     const src = JSON.stringify({
       nodes: [{ id: "n", type: "text", text: "x", x: 0, y: 0, width: 200, height: 60, color: "5" }],
