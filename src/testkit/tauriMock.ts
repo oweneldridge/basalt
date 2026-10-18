@@ -147,6 +147,7 @@ function invokeNow<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
             '    this.addCommand({ id: "meta", name: "Dump Ideas metadata", callback: () => { globalThis.__ideasMeta = this.app.metadataCache.getFileCache("Ideas.md"); } });',
             '    this.registerView("demo-view", "Demo View", (el) => { el.textContent = "demo-view-content"; return () => { globalThis.__demoViewClosed = true; }; });',
             '    this.addCommand({ id: "vrename", name: "Vault rename Ideas", callback: () => { this.app.vault.rename("Ideas.md", "IdeasViaPlugin"); } });',
+            '    this.addCommand({ id: "vmodify", name: "Vault modify Gamma", callback: () => { this.app.vault.modify("Gamma.md", "# Gamma\\nmodified by plugin\\n"); } });',
             '    this.addCommand({ id: "vcreate", name: "Vault create a note", callback: () => { this.app.vault.create("Made By Plugin.md", "é\\nx"); } });',
             '    this.registerEvent(this.app.vault.on("modify", () => {}));',
             "  }",

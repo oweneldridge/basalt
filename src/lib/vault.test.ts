@@ -33,4 +33,14 @@ describe("bufferChange", () => {
     bufferChange(buf, { path: "/v/A.md", rel: "A.md", mtime: 2, statsOnly: true, seq: 2 });
     expect(buf.get("A.md")).toEqual({ path: "/v/A.md", rel: "A.md", mtime: 2, statsOnly: true, seq: 2 });
   });
+
+  it("keeps a newer change's stats when an older read is sent back behind it", () => {
+    const buf = new Map<string, ChangedNote>();
+    bufferChange(buf, { path: "/v/A.md", rel: "A.md", mtime: 5, statsOnly: true, seq: 7 });
+    bufferChange(buf, { path: "/v/A.md", rel: "A.md", mtime: 2, seq: 3 });
+    expect(buf.get("A.md")).toEqual({ path: "/v/A.md", rel: "A.md", mtime: 5, statsOnly: false, seq: 7 });
+    bufferChange(buf, { path: "/v/B.md", rel: "B.md", mtime: 5, seq: 7 });
+    bufferChange(buf, { path: "/v/B.md", rel: "B.md", mtime: 2, statsOnly: true, seq: 3 });
+    expect(buf.get("B.md")).toEqual({ path: "/v/B.md", rel: "B.md", mtime: 5, seq: 7 });
+  });
 });

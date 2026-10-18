@@ -38,11 +38,18 @@ export interface ChangedNote extends FileStats {
   seq?: number;
 }
 
-/** Add a watcher change to `buf` (one per note), where newer stats never
- * cancel a pending read of the note's text. */
+/** Add a watcher change to `buf` (one per note): the newer of the two by
+ * `seq` is kept, and a newer one's stats never cancel a pending read of the
+ * note's text. */
 export function bufferChange(buf: Map<string, ChangedNote>, c: ChangedNote): void {
   const had = buf.get(c.rel);
-  buf.set(c.rel, had && !had.statsOnly && c.statsOnly ? { ...c, statsOnly: false } : c);
+  if (!had) {
+    buf.set(c.rel, c);
+    return;
+  }
+  // A read sent back to wait (its old seq) behind a change since.
+  const [older, newer] = (had.seq ?? 0) > (c.seq ?? 0) ? [c, had] : [had, c];
+  buf.set(c.rel, !older.statsOnly && newer.statsOnly ? { ...newer, statsOnly: false } : newer);
 }
 
 /** A non-Markdown vault file (image/PDF/audio/video) — no content shipped. */

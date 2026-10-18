@@ -1956,6 +1956,7 @@ export default function App() {
       setSourceMode(localStorage.getItem(`basalt.sourceMode.${root}`) === "1");
       setReadingMode(localStorage.getItem(`basalt.reading.${root}`) === "1");
       setVault(root);
+      vaultRef.current = root; // now, for anything that lands before the next render
       setRecentVaults(pushRecentVault(root, Date.now()));
       if (WINDOW_LABEL === "main") {
         // The main window auto-restores its last vault on next launch.
@@ -2325,7 +2326,8 @@ export default function App() {
   // Apply a batch of external (on-disk) changes, matched by vault-relative path.
   const processChanges = useCallback(
     async (incoming: ChangedNote[]) => {
-      if (!vaultRef.current) return;
+      const vault = vaultRef.current;
+      if (!vault) return;
       const shown = showHiddenRef.current ? incoming : incoming.filter((c) => !isHiddenRel(c.rel));
       // A batch whose read was slow can land after a later change's stats.
       const newest = (c: ChangedNote) => {
@@ -2358,6 +2360,7 @@ export default function App() {
           }
         }),
       );
+      if (vaultRef.current !== vault) return; // read from the vault that's gone
 
       // A read that overlapped one of our own saves may hold text older than
       // that save: read it again once the save has settled.
@@ -2371,9 +2374,13 @@ export default function App() {
       // Do NOT consume the entry on match — one save can produce several event
       // bursts (our rename + iCloud's own touches), and every echo must match.
       // The entry is replaced by the next save or evicted by the size cap.
-      const results = reads.filter(
-        (r) => !(r.ok && (selfWrites.current.get(r.rel) === r.content || isBeingWritten(r.path, r.content))),
-      );
+      const echo = (r: (typeof reads)[number]) =>
+        r.ok && (selfWrites.current.get(r.rel) === r.content || isBeingWritten(r.path, r.content));
+      // An echo's stats are the save's, as the disk has them.
+      const echoed = reads.filter((r) => echo(r) && newest(r.stats)).map((r) => r.stats);
+      if (echoed.length > 0) setNotes((prev) => withStats(prev, echoed));
+      // A read landing after a newer change's: that change's text and stats stand.
+      const results = reads.filter((r) => !echo(r) && newest(r.stats));
       if (results.length === 0) return;
 
       for (const r of results) {
@@ -2386,7 +2393,6 @@ export default function App() {
           if (ex) index.current.removeNote(ex.path);
         }
       }
-      const fresh = new Set(results.filter((r) => newest(r.stats)).map((r) => r.rel));
       setNotes((prev) => {
         let next = prev.slice();
         for (const r of results) {
@@ -2395,8 +2401,8 @@ export default function App() {
             if (i === -1) {
               next.push({ path: r.path, rel: r.rel, name: nameFromRel(r.rel), content: r.content, ...statsOf(r.stats, r.content) });
             } else {
-              // Changed outside the app: its stats are new too, unless a later change's are in.
-              next[i] = { ...next[i], content: r.content, ...(fresh.has(r.rel) ? statsOf(r.stats, r.content) : {}) };
+              // Changed outside the app: its stats are new too.
+              next[i] = { ...next[i], content: r.content, ...statsOf(r.stats, r.content) };
             }
           } else if (i !== -1) {
             next = next.filter((n) => n.rel !== r.rel);
