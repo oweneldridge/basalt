@@ -901,3 +901,46 @@ test.describe("a vault that opens its daily note, in a window opened for one not
     expect(vault.exists(`Daily/${today}.md`)).toBe(true);
   });
 });
+
+test.describe("a vault that opens its daily note from Templater, behind a slow plugin", () => {
+  const BAD = "/nonexistent/basalt-e2e-daily-B";
+  test.use({
+    vaultFiles: {
+      ".obsidian/app.json": JSON.stringify({ openBehavior: "daily" }),
+      ".obsidian/daily-notes.json": JSON.stringify({ folder: "Daily", template: "Templates/Daily" }),
+      ".obsidian/plugins/templater-obsidian/data.json": JSON.stringify({ trigger_on_file_creation: true }),
+      "Templates/Daily.md": "title: <% tp.file.title %>\n",
+      ".basalt/plugins/templater-lite/main.js": readFileSync(join(templater, "main.js"), "utf8"),
+      ".basalt/plugins/templater-lite/manifest.json": readFileSync(join(templater, "manifest.json"), "utf8"),
+      ".basalt/plugins/aa-slow/main.js": 'const { Plugin } = require("basalt"); module.exports = class extends Plugin { onload() { return new Promise((r) => setTimeout(r, 4000)); } };',
+      ".basalt/plugins/aa-slow/manifest.json": JSON.stringify({ id: "aa-slow", name: "Aa Slow", version: "0.0.1" }),
+    },
+  });
+
+  test("still waits for Templater Lite when a switch that fails stops the plugins loading", async ({ page, vault }) => {
+    test.setTimeout(90000);
+    await page.addInitScript((b) => {
+      const list = JSON.parse(localStorage.getItem("basalt.recentVaults") ?? "[]");
+      if (!list.some((v: { path: string }) => v.path === b)) localStorage.setItem("basalt.recentVaults", JSON.stringify([...list, { path: b, name: "B", ts: 0 }]));
+    }, BAD);
+    await page.route("**/api/invoke", async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      if (body.cmd === "open_vault" && body.args?.path === BAD) return route.fulfill({ contentType: "application/json", body: JSON.stringify({ error: "not a folder" }) });
+      return route.fallback();
+    });
+    await openApp(page, vault);
+    await expect(page.locator(".notice")).toContainText("Templater");
+    await enable(page, "Aa Slow");
+    await enable(page, "Templater Lite");
+    expect(vault.exists(`Daily/${today}.md`)).toBe(false);
+    await page.reload();
+    // Aa Slow is still loading, Templater Lite after it.
+    await page.getByRole("button", { name: /Command palette/ }).click();
+    await page.locator(".palette-input").first().fill("Switch vault");
+    await expect(page.locator(".palette-item").first()).toContainText("Switch vault");
+    await page.keyboard.press("Enter");
+    await page.locator(".vault-item", { hasText: BAD }).first().click();
+    await expect.poll(() => vault.exists(`Daily/${today}.md`), { timeout: 30000 }).toBe(true);
+    expect(vault.read(`Daily/${today}.md`)).toBe(`title: ${today}\n`);
+  });
+});
