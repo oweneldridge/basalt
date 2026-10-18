@@ -5018,7 +5018,7 @@ export default function App() {
   // the one line, writes, and reconciles index/notes/panes — like a rename's
   // link rewrite. Returns the line it wrote, or null if it changed nothing.
   const linkifyInNote = useCallback(
-    async (sourcePath: string, line: number, target: VaultNote): Promise<string | null> => {
+    async (sourcePath: string, line: number, target: VaultNote, gen: number): Promise<string | null> => {
       if (conflictsRef.current.has(sourcePath)) {
         setSaveError("Resolve the “Changed on disk” conflict before linking mentions");
         return null;
@@ -5030,6 +5030,8 @@ export default function App() {
       } catch {
         return null;
       }
+      // A switch that stopped waiting for this may have opened another vault.
+      if (vaultGen.current !== gen && !(await stillCurrent(gen))) return null;
       if (pending.current.has(sourcePath)) {
         setSaveError("Save this note before linking mentions");
         return null;
@@ -5055,7 +5057,8 @@ export default function App() {
       try {
         await writeNote(sourcePath, content, disk);
       } catch (e) {
-        setSaveError(`Couldn't link mention: ${e}`);
+        // Not in the next vault; a switch that fails says so itself.
+        if (vaultGen.current === gen) setSaveError(`Couldn't link mention: ${e}`);
         return null;
       } finally {
         savesDone.current++;
@@ -5073,14 +5076,14 @@ export default function App() {
       bumpStructure(); // the mention is now a real link → backlinks/unlinked recompute
       return next;
     },
-    [flushPath, rememberSelfWrite, patchPane, bumpStructure, getLinkFormat],
+    [flushPath, rememberSelfWrite, patchPane, bumpStructure, getLinkFormat, stillCurrent],
   );
 
   const handleLinkMention = useCallback(
     (m: { path: string; line: number }) => {
       // The note the Backlinks panel shows, which a click there has unfocused.
       const target = notesRef.current.find((n) => n.path === lastNotePathRef.current);
-      if (target) void track(vaultJobs.current, linkifyInNote(m.path, m.line, target)).then(() => setMentionsLinked((x) => x + 1));
+      if (target) void track(vaultJobs.current, linkifyInNote(m.path, m.line, target, shownGen.current)).then(() => setMentionsLinked((x) => x + 1));
     },
     [linkifyInNote],
   );
@@ -5089,9 +5092,9 @@ export default function App() {
     async (mentions: { path: string; line: number }[]) => {
       const target = notesRef.current.find((n) => n.path === lastNotePathRef.current);
       if (!target) return;
-      const gen = vaultGen.current;
+      const gen = shownGen.current;
       // None once another vault opens (a switch gave up waiting).
-      const link = async (m: { path: string; line: number }) => ((await stillCurrent(gen)) ? linkifyInNote(m.path, m.line, target) : null);
+      const link = async (m: { path: string; line: number }) => ((await stillCurrent(gen)) ? linkifyInNote(m.path, m.line, target, gen) : null);
       // Snapshot the list; line numbers stay valid (linkify never adds lines).
       for (const m of [...mentions]) await link(m);
       // A link can make a mention near it linkable (`*Foo*Foo`, or `o*Foo` then

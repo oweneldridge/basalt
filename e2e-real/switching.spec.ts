@@ -952,3 +952,92 @@ for (const [what, files, start] of [
     });
   });
 }
+
+test.describe("a Link that stops answering", () => {
+  test.use({ vaultFiles: { "Target.md": "t\n", "Src 0.md": "Target here\n" } });
+
+  test("does nothing in the next vault, and says nothing there", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    const a = await otherVault({ "Welcome A.md": "a\n", "Src 0.md": "Target here\n" });
+    try {
+      await holdSwitch(page, vault.url, a, 0, {}, (cmd, args) => (cmd === "read_note" && srcPath(args) ? 7000 : 0));
+      const asked: string[] = [];
+      await page.route("**/api/invoke", (route) => {
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        asked.push(`${body.cmd}:${String(body.args?.path ?? "")}`);
+        return route.fallback();
+      });
+      await openApp(page, vault);
+      await openNote(page, "Target");
+      await page.locator(".pane.dock .tab.view-tab", { hasText: "Backlinks" }).click();
+      await page.locator(".panel-section").nth(1).locator(".ref-link-btn").first().click();
+      await switchTo(page, a.root, true);
+      await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 20000 });
+      await page.waitForTimeout(5000); // the read has answered
+      const later = asked.slice(asked.indexOf(`open_vault:${a.root}`));
+      expect(later.filter((x) => x.includes(vault.dir))).toEqual([]);
+      expect(vault.read("Src 0.md")).toBe("Target here\n");
+      const { readFileSync } = await import("node:fs");
+      expect(readFileSync(join(a.root, "Src 0.md"), "utf8")).toBe("Target here\n");
+      await expect(page.getByRole("alert")).toHaveText("");
+    } finally {
+      await a.stop();
+    }
+  });
+
+  // Its write is sent in the old vault and fails a while later.
+  async function failingWrite(page: Page, ms: number) {
+    let sent = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      if (body.cmd !== "write_note" || !srcPath(body.args ?? {})) return route.fallback();
+      sent = true;
+      await new Promise((r) => setTimeout(r, ms));
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ error: "disk busy" }) });
+    });
+    return () => sent;
+  }
+  async function linkOne(page: Page) {
+    await openNote(page, "Target");
+    await page.locator(".pane.dock .tab.view-tab", { hasText: "Backlinks" }).click();
+    await page.locator(".panel-section").nth(1).locator(".ref-link-btn").first().click();
+  }
+
+  test("whose write fails once the switch gave up on it says nothing in the next vault", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    const a = await otherVault({ "Welcome A.md": "a\n" });
+    try {
+      await holdSwitch(page, vault.url, a, 0);
+      const sent = await failingWrite(page, 6000);
+      await openApp(page, vault);
+      await linkOne(page);
+      await expect.poll(sent).toBe(true);
+      await switchTo(page, a.root, true);
+      await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 20000 });
+      await page.waitForTimeout(3000); // the write has failed
+      await expect(page.getByRole("alert")).toHaveText("");
+    } finally {
+      await a.stop();
+    }
+  });
+
+  test("whose read answers while a switch that gave up on it fails links it", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    await holdSwitch(page, vault.url, { url: vault.url, root: "/unused" }, 0);
+    let sent = false;
+    await page.route("**/api/invoke", async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      if (body.cmd === "open_vault" && body.args?.path === BAD) await new Promise((r) => setTimeout(r, 6000));
+      if (body.cmd !== "read_note" || !srcPath(body.args ?? {}) || sent) return route.fallback();
+      sent = true;
+      const resp = await route.fetch({ url: `${vault.url}/api/invoke` });
+      await new Promise((r) => setTimeout(r, 7000));
+      return route.fulfill({ response: resp });
+    });
+    await openApp(page, vault);
+    await linkOne(page);
+    await expect.poll(() => sent).toBe(true);
+    await switchTo(page, BAD, true);
+    await expect.poll(() => vault.read("Src 0.md"), { timeout: 20000 }).toBe("[[Target]] here\n");
+  });
+});
