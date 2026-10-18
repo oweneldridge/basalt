@@ -191,14 +191,14 @@ function maskFrom(lines: string[], start: number, mask: boolean[], depth: number
     const head = i;
     const headPos = line.pos;
     const headText = line.text;
-    const piped = hasPipe(headText, headPos);
+    let piped: boolean | undefined;
     let table = false;
     while (++i < n) {
       read(i);
       if (line.pos === line.text.length) continue next;
-      if (line.indent < line.baseIndent + 4 && (interrupts(line, stack) || (!piped && tableAt(line, lines[i + 1])) || (table && rowEnds(line, headText.charCodeAt(headPos) === 124)))) continue next;
+      if (line.indent < line.baseIndent + 4 && (interrupts(line, stack) || (tableAt(line, lines[i + 1]) && !(piped ??= hasPipe(headText, headPos))) || (table && rowEnds(line, headText.charCodeAt(headPos) === 124)))) continue next;
       if (ref?.nextLine(line.baseIndent ? " ".repeat(line.basePos) + line.text.slice(line.basePos) : line.text)) continue next;
-      if (piped && i === head + 1) table = delimiterAt(line) && cellsOf(headText, headPos) === cellsOf(line.text, line.pos);
+      if (i === head + 1 && delimiterAt(line) && (piped ??= hasPipe(headText, headPos))) table = cellsOf(headText, headPos) === cellsOf(line.text, line.pos);
       if (line.depth === stack.length && underlineAt(line)) {
         if (++i < n) read(i);
         continue next;

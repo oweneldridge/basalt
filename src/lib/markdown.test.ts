@@ -260,6 +260,8 @@ describe("proseMask reads containers as the editor's parser does", () => {
     // Rows under a header led by a pipe are too.
     expect(mask("|a|b|\n|-|-|\n|c\n-\n     ```")).toEqual([1, 1, 1, 1, 0]);
     expect(mask("|a|b|\n|-|-|\nc|d\n-\n     ```")).toEqual([1, 1, 1, 1, 1]);
+    // A header without a pipe makes no table, whatever its delimiter row.
+    expect(mask("ab\n-|\n*\n  ```\n[[L]]")).toEqual([1, 1, 1, 0, 0]);
   });
 
   it("stays quick on a long run of spaces under a line with a pipe", () => {
