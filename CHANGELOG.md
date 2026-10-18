@@ -496,6 +496,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   numbered lists item by item, and links a mention that another link made
   linkable in the same pass. A note with thousands of closed HTML lines in a
   row no longer empties the unlinked mentions list.
+- Link all and Backlinks stay quick on a long run of list markers and spaces,
+  thousands of HTML blocks in a row, and long runs a web or email address may
+  start in, where each took seconds or failed. They leave alone a definition
+  whose label runs on after a backslash or has a comment before its colon,
+  read a label after an HTML block's HTML as Reading view does, and end a
+  table at a row without a pipe. Reading view and the editor stay quick on a
+  long run of spaces under a line with a `|`.
 - The index reads list items, lines that run on a paragraph, and HTML blocks
   as Reading view does, so code fences, and the links and tags around them,
   are found where Reading view shows them: `- a` then `2. ```` is one
