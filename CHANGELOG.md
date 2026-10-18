@@ -591,37 +591,50 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its time, and the edit's text still reaches the editor and search.
 - While another vault opens, the notes take no typing and only another switch
   can run (the command palette offers just that), so nothing typed, and no
-  daily note asked for, lands in the wrong vault. This holds until every
-  switch under way has finished, even when a second switch fails while the
-  first is still loading. Hotkeys wait too, bare F-keys and Option ones
-  included, as do the ribbon's Quick switcher, Search, Graph and Settings
-  buttons, plugin ribbon icons and status bar items, a selected canvas card's
-  Delete key, and the recorder's buttons; the waiting buttons say they're
-  unavailable, and their tooltips say they wait for the vault. A message
-  ("Opening Work…") says what's happening and holds focus until the vault is
-  open, then "Opened Work" is announced and focus goes back to the note. The graph,
-  context menus and rename prompts of the vault being left close. Typing in
-  the command palette and the vault picker works as usual meanwhile: Option
-  and AltGr characters, select all, copy and paste. Typing while a slow save
-  finishes before a switch no longer asks whether to drop unsaved changes.
-  A save that stops answering no longer holds a switch: once no save has
-  landed for 4 seconds, Basalt asks whether to switch anyway and lose the
-  unsaved changes, and the next vault doesn't show "Saving…" for it. A
-  rename, folder move, Link or Link all under way finishes in the old vault
-  first; one that stops answering is left there, and does nothing in the next
-  vault, though it goes on if that vault doesn't open. The vault's plugins stop before it goes, so they write nothing into
-  the next one, one turned off just before included, and an `onunload` that
-  never finishes is cut off after 3 seconds. A plugin stopped before its
-  `onload` finished adds no commands, icons or timers after, and a stopped
-  plugin can't read the next vault. A vault opened only on the way to
-  another loads no plugins, and a vault's plugins load once when it opens. A
-  daily note the old vault's plugins ask for is made in neither vault, and
-  the new vault's own plugins get theirs once it's open. A switch closes any
-  open dialog, a link to the vault that's going opens its note after
-  switching back to it, a Mac's Ctrl text keys (Ctrl-A, Ctrl-E and the rest)
-  still work in the palette and the vault picker, a recording under way is
-  saved into the old vault's note (or goes on, if you turn the switch down),
-  and "Opened Work" is announced only for the switch that ends up open.
+  daily note asked for, lands in the wrong vault. This holds until every switch
+  under way has finished, even when a second switch fails while the first is
+  still loading. Hotkeys wait too, bare F-keys and Option ones included, as do
+  the ribbon's Quick switcher, Search, Graph and Settings buttons, plugin
+  ribbon icons and status bar items, a selected canvas card's Delete key, and
+  the recorder's buttons; the waiting buttons say they're unavailable, and
+  their tooltips say they wait for the vault. A message ("Opening Work…") says
+  what's happening and holds focus until the vault is open, then "Opened Work"
+  is announced and focus goes back to the note. The graph, context menus and
+  rename prompts of the vault being left close. Typing in the command palette
+  and the vault picker works as usual meanwhile: Option and AltGr characters,
+  select all, copy and paste. Typing while a slow save finishes before a switch
+  no longer asks whether to drop unsaved changes. A save that stops answering
+  no longer holds a switch: once no save has landed for 4 seconds, Basalt asks
+  whether to switch anyway and lose the unsaved changes, and the next vault
+  doesn't show "Saving…" for it. A save that starts while a switch is failing
+  clears "Saving…" when it answers. A rename, folder move, Link or Link all
+  under way, or waiting its turn, finishes in the old vault first; one that
+  stops answering is left there, and once the next vault is open it does
+  nothing there: it moves no folder of the same name, tells that vault's
+  plugins nothing, and shows no error or notice. It goes on if that vault
+  doesn't open, and Link all then goes back over its notes as usual. Make a
+  copy, Delete folder and a pasted image don't hold a switch, but once the next
+  vault is open they make, delete and show nothing there either, and go on if
+  it doesn't open. The vault's plugins stop before it goes, so they write
+  nothing into the next one, one turned off just before included, and an
+  `onunload` that never finishes is cut off after 3 seconds. A plugin stopped
+  before its `onload` finished adds no commands, icons or timers after. A
+  stopped plugin can't read the next vault or learn its name, and hears none of
+  its events, even from handlers it never registered; it opens no links and
+  types into no note there. A plugin turned on in Settings as a switch starts
+  loads only if its vault stays open. A vault opened only on the way to another
+  loads no plugins, and a vault's plugins load once when it opens. A daily note
+  the old vault's plugins ask for is made in neither vault, and the new vault's
+  own plugins get theirs once it's open. A switch closes any open dialog, a
+  link to the vault that's going opens its note after switching back to it, a
+  Mac's Ctrl text keys (Ctrl-A, Ctrl-E and the rest) still work in the palette
+  and the vault picker, and "Opened Work" is announced only for the switch that
+  ends up open. A recording under way pauses, its time with it, and goes on if
+  you turn the switch down. Otherwise it's saved into the old vault with its
+  embed in the note; if that note then can't be saved and you turn the switch
+  down, a new recording starts. A recording whose file takes longer to save
+  than a switch waits is saved without its embed, and one whose file can't be
+  saved is lost.
 - Renames and moves write links as Obsidian 1.14 does, checked against it by
   hand: a relative link to the note's own folder or below has no `./`, a
   `[text](<path>)` link keeps its angle brackets, and a canvas keeps
