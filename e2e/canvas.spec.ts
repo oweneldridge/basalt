@@ -885,9 +885,11 @@ test.describe("undo and redo", () => {
     const redoBtn = page.locator('button[title="Redo"]');
     await expect(undoBtn).toBeDisabled();
     await expect(redoBtn).toBeDisabled();
+    await expect(undoBtn).toHaveCSS("opacity", "0.4");
     await page.locator(nodeA).focus();
     await page.keyboard.press("ArrowDown");
     await expect(undoBtn).toBeEnabled();
+    await expect(undoBtn).toHaveCSS("opacity", "1");
     await undoBtn.click();
     await expect.poll(async () => (await savedNode(page, "a1"))?.y).toBe(0);
     await expect(undoBtn).toBeDisabled();
