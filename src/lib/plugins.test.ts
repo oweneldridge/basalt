@@ -431,6 +431,59 @@ describe("plugin events", () => {
     expect((globalThis as any).__events).toEqual([]);
   });
 
+  it("a stopped plugin, or one whose vault has gone, hears nothing and does nothing in the next vault", async () => {
+    let open = "/v/one";
+    const opened: string[] = [];
+    const inserted: string[] = [];
+    installHost(
+      fakeHost({
+        vaultPath: () => open,
+        vaultName: () => open.split("/").pop()!,
+        openNote: (t) => void opened.push(t),
+        insertAtCursor: (t) => void inserted.push(t),
+      }).host,
+    );
+    const g = globalThis as any;
+    g.__heard = [];
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin { onload() {
+        globalThis["__" + this.manifest.id] = this;
+        this.app.vault.on("create", (f) => globalThis.__heard.push(this.manifest.id + ":" + f.path));
+        this.app.workspace.on("file-open", (f) => globalThis.__heard.push(this.manifest.id + ":open:" + f.path));
+      } };`;
+    await loadPlugin(info({ id: "left", code }));
+    await loadPlugin(info({ id: "gone", code }));
+    emitVaultEvent("create", { path: "Mine.md", name: "Mine" });
+    expect(g.__heard).toEqual(["left:Mine.md", "gone:Mine.md"]);
+    const editors = [g.__left, g.__gone].map((p) => p.app.workspace.activeEditor.editor);
+    await unloadPlugin("gone");
+    open = "/v/two";
+    g.__heard = [];
+    emitVaultEvent("create", { path: "Secret.md", name: "Secret" });
+    emitWorkspaceEvent("file-open", { path: "Secret.md", name: "Secret" });
+    expect(g.__heard).toEqual([]);
+    expect(listensFor("gone", "create")).toBe(false);
+    for (const p of [g.__left, g.__gone]) {
+      expect(p.app.vault.getName()).toBe("one");
+      p.app.workspace.openLinkText("Secret");
+    }
+    for (const e of editors) {
+      e.insertAtCursor("x");
+      e.replaceSelection("x");
+    }
+    expect(opened).toEqual([]);
+    expect(inserted).toEqual([]);
+    open = "/v/one";
+    emitVaultEvent("create", { path: "Back.md", name: "Back" });
+    expect(g.__heard).toEqual(["left:Back.md"]);
+    const once = g.__left.app.vault.on("modify", () => {});
+    once.off();
+    once.off();
+    g.__left.app.vault.on("modify", () => {});
+    expect(listensFor("left", "modify")).toBe(true);
+  });
+
   it("tells which plugins listen for a vault event, until they unload or let go", async () => {
     installHost(fakeHost().host);
     const code = `

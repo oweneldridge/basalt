@@ -272,6 +272,8 @@ export function loadedIds(): string[] {
 
 class PluginContext {
   cleanups: (() => void)[] = [];
+  /** Its event subscriptions, registered or not: none outlives it. */
+  subscriptions = new Set<() => void>();
   /** Unloaded: its leftover timers and promises can't change the vault. */
   stopped = false;
   constructor(
@@ -294,6 +296,20 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
         : act();
   // What a stopped plugin, or one whose vault has gone, sees of the vault.
   const seen = <T,>(none: T, get: () => T): T => (ctx.stopped || !here() ? none : get());
+  const ownName = host.vaultName();
+  // A handler that runs only in the plugin's own vault, and ends with it.
+  const listen = (map: Map<string, Set<Listener>>, name: string, cb: (...args: unknown[]) => void, ended?: () => void): EventRef => {
+    const ref = subscribe(map, name, (...args: unknown[]) => {
+      if (here()) cb(...args);
+    });
+    const off = () => {
+      if (!ctx.subscriptions.delete(off)) return;
+      ref.off();
+      ended?.();
+    };
+    ctx.subscriptions.add(off);
+    return { off };
+  };
   class Notice {
     constructor(message: string, timeoutMs = 4000) {
       host.notice(String(message), timeoutMs);
@@ -354,7 +370,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
 
   const app = {
     vault: {
-      getName: () => host.vaultName(),
+      getName: () => seen(ownName, () => host.vaultName()),
       getMarkdownFiles: () => seen([], () => host.getMarkdownFiles()),
       /** Every file, notes and attachments, as Obsidian's TFile. */
       getFiles: () => allLoaded().filter((f) => !("children" in f)),
@@ -391,16 +407,8 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
         const key = `${ctx.info.id}:${name}`;
         // Its own handler each time, so subscribing twice runs it twice (as in
         // Obsidian) and each off() ends one subscription.
-        const ref = subscribe(vaultListeners, name, (...args: unknown[]) => cb(...args));
         listening.set(key, (listening.get(key) ?? 0) + 1);
-        let live = true;
-        return {
-          off: () => {
-            ref.off();
-            if (live) listening.set(key, (listening.get(key) ?? 1) - 1);
-            live = false;
-          },
-        };
+        return listen(vaultListeners, name, cb, () => listening.set(key, (listening.get(key) ?? 1) - 1));
       },
     },
     /** Daily notes as the vault's Daily notes settings define them. Absent on
@@ -431,7 +439,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
         return p ? { path: p } : null;
       },
       openLinkText: (target: string) => {
-        if (!ctx.stopped) host.openNote(target);
+        if (!ctx.stopped && here()) host.openNote(target);
       },
       /** The focused editor (Obsidian-shaped: `activeEditor.editor`), or null.
        * The editor exposes replaceSelection + a Basalt insertAtCursor that can
@@ -442,16 +450,16 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       /** Subscribe to a workspace event: file-open → (file|null);
        * active-leaf-change → (file|null). */
       on: (name: WorkspaceEventName, cb: (...args: unknown[]) => void): EventRef =>
-        ctx.stopped ? { off: () => {} } : subscribe(workspaceListeners, name, (...args: unknown[]) => cb(...args)), // each its own, as vault.on
+        ctx.stopped ? { off: () => {} } : listen(workspaceListeners, name, cb), // each its own, as vault.on
     },
   };
 
   const editor = {
     replaceSelection: (text: string) => {
-      if (!ctx.stopped) host.insertAtCursor?.(String(text));
+      if (!ctx.stopped && here()) host.insertAtCursor?.(String(text));
     },
     insertAtCursor: (text: string, caretOffset?: number) => {
-      if (!ctx.stopped) host.insertAtCursor?.(String(text), caretOffset);
+      if (!ctx.stopped && here()) host.insertAtCursor?.(String(text), caretOffset);
     },
   };
 
@@ -650,6 +658,7 @@ async function stop(id: string, lp: LoadedPlugin): Promise<void> {
     clearTimeout(timer);
   }
   lp.ctx.stopped = true;
+  for (const off of [...lp.ctx.subscriptions]) off();
   for (const c of lp.ctx.cleanups.splice(0).reverse()) {
     try {
       c();
