@@ -53,6 +53,11 @@ Obsidian features since 1.9 and where Basalt stands:
 | 1.14 | Fix: `![](` no longer swallows the rest of the note | Not affected (Basalt reads `![](` as text in the editor and Reading view) |
 | 1.12 | Obsidian CLI | Partial (Basalt's own CLI, seven commands, works without the app) |
 
+To look at after PR #2: Pele (`pele` on npm, MIT, github.com/obsidianmd/pele),
+a Mermaid renderer the Obsidian team built for Obsidian, themed with CSS
+variables. Not checked yet whether a released Obsidian uses it; if it does,
+its diagrams may lay out differently from Basalt's mermaid 11.
+
 ### Second pass on real notes (2026-10-07)
 
 Notes from a copy of Owen's vault were checked in Basalt. Obsidian itself
@@ -150,6 +155,11 @@ button for the rest; Obsidian scrolls through all of them.
 - Not checked: where Obsidian puts a non-default `fromEnd` or `toEnd` among
   the other keys (Basalt writes them after their side), and whether a card
   only selected, not dragged, moves to the end.
+- Also not checked: how far the pointer must move before Obsidian counts a
+  press as a drag (Basalt uses 4 pixels), whether a card moved with the arrow
+  keys goes to the end (in Basalt it stays put), and how several or nested
+  groups are ordered after a drag (Basalt keeps groups before cards, in their
+  own order).
 - Still different, on purpose: Obsidian rewrote a link in a Latin-1 note and
   turned its `é` into a replacement character; Basalt leaves notes that
   aren't UTF-8 untouched, so the link there goes stale.

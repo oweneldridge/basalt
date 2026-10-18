@@ -575,8 +575,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   included, as do the ribbon's Quick switcher, Search, Graph and Settings
   buttons, plugin ribbon icons and status bar items, a selected canvas card's
   Delete key, and the recorder's buttons; the waiting buttons say they're
-  unavailable. A message ("Opening Work…") says what's happening and holds
-  focus until the vault is open, then focus goes back to the note. The graph,
+  unavailable, and their tooltips say they wait for the vault. A message
+  ("Opening Work…") says what's happening and holds focus until the vault is
+  open, then "Opened Work" is announced and focus goes back to the note. The graph,
   context menus and rename prompts of the vault being left close. Typing in
   the command palette and the vault picker works as usual meanwhile: Option
   and AltGr characters, select all, copy and paste. Typing while a slow save
@@ -595,7 +596,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `__proto__` key included. Any object or array in it that holds another,
   even an empty one, gets an entry per line, as Obsidian 1.14 saves it, and
   everything else stays on one line. A dragged card is saved last, as
-  Obsidian saves the card it brings to the front, and groups first. Keys
+  Obsidian saves the card it brings to the front, and groups first, so after
+  a group is dragged its cards are still on top. A click that moves the
+  pointer a pixel or two, or a drag that ends where it began, doesn't move or
+  save anything. A group's `background` is kept as the file had it. Keys
   stay where the file had them, but for a card's position, size and colour
   and a connection's sides, ends, colour and label, which go last in
   Obsidian's order. Default ends (none at the start, an arrow at the end)
@@ -703,15 +707,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Focus lands in a note pane when one closes, even next to a canvas, and a
   side panel never becomes the pane Cmd-W acts on. The quick switcher puts
   focus in the note it opens, in Reading view too, from a tab or a side panel.
-  A note opened from the file tree goes to the note pane you used last. A
-  middle click on a tab in the other split leaves your pane focused. Deleting
-  a note from the file tree's menu leaves focus in the tree. Reading view's
+  In stacked tabs it goes to the column it opens, and Cmd-W to the column
+  left active, not the first one off screen. A note opened from the file tree
+  goes to the note pane you used last. A middle click on a tab in the other
+  split leaves your pane focused. Deleting a note from the file tree's menu
+  leaves focus on the next row in the tree, even when the note was open and
+  the next note's editor would have taken it. Reading view's
   focus ring is in the text's colour, as the tabs' is, so Dark Reader keeps it
   visible, and a tab's ring no longer hides the active tab's underline. An
-  icon tab's name shows under the tab bar on keyboard focus without moving the
-  tabs. Moving between slides keeps focus on the slide, and the same note open
-  in two panes in Reading view has two names ("Reading view: Ideas, pane 2").
-  A long link in a callout wraps instead of scrolling Reading view sideways.
+  icon tab's name shows under its tab on keyboard focus without moving the
+  tabs, below every row when they wrap, so it covers none of them. Moving
+  between slides keeps focus on the slide, and the same note open in two
+  panes has two names, in Reading view ("Reading view: Ideas, pane 2") and
+  the editor ("Editing Ideas, pane 2"); with more than one note pane, each
+  one's tabs are named for it too ("Open notes, pane 2"). A long link in a
+  callout wraps instead of scrolling Reading view sideways, and a table in a
+  callout keeps its words whole and scrolls inside the callout when it's too
+  wide. Only a failed save is announced as "Not saved".
 - Graph view and Slides are dialogs: focus stays inside, Escape returns it to
   where it was, and the rest of the app is inert. Slides announce "Slide 2 of
   5" as you move. The graph's filter, mode buttons and canvas have names.
