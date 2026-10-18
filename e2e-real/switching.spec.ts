@@ -691,6 +691,16 @@ for (const [what, files, start, fixed] of [
       });
     }
 
+    test("goes on in the old vault when a switch that stopped waiting for it fails", async ({ page, vault }) => {
+      test.setTimeout(90000);
+      await holdSwitch(page, vault.url, { url: vault.url, root: "/unused" }, 0, {}, slowFixes(50, 3));
+      await openApp(page, vault);
+      await start(page);
+      await expect.poll(() => sources.filter((f) => fixed(vault.read(f))).length, { timeout: 10000 }).toBe(3);
+      await switchTo(page, BAD, true);
+      await expect.poll(() => sources.filter((f) => !fixed(vault.read(f))), { timeout: 30000 }).toEqual([]);
+    });
+
     test("stops once the switch has stopped waiting for it, asking nothing of the new vault", async ({ page, vault }) => {
       test.setTimeout(90000);
       const a = await otherVault({ "Welcome A.md": "a\n", ...files });

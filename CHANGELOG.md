@@ -602,7 +602,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unsaved changes, and the next vault doesn't show "Saving…" for it. A
   rename, folder move, Link or Link all under way finishes in the old vault
   first; one that stops answering is left there, and does nothing in the next
-  vault. The vault's plugins stop before it goes, so they write nothing into
+  vault, though it goes on if that vault doesn't open. The vault's plugins stop before it goes, so they write nothing into
   the next one, one turned off just before included, and an `onunload` that
   never finishes is cut off after 3 seconds. A plugin stopped before its
   `onload` finished adds no commands, icons or timers after, and a stopped

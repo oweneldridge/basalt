@@ -4587,8 +4587,9 @@ export default function App() {
   // A link pass's write joins the note's save queue: a save typed meanwhile
   // waits for it, then compares against the rewrite rather than the old text.
   const queueWrite = useCallback((path: string, job: () => Promise<void>): Promise<void> => {
-    // Not once another vault is opening: a switch that gave up waiting for the rename.
-    const run = (saveChains.current.get(path) ?? Promise.resolve()).then(() => (vaultGen.current === renameGen.current ? job() : undefined));
+    // Not once another vault opens: a switch that gave up waiting for the rename.
+    const gen = renameGen.current;
+    const run = (saveChains.current.get(path) ?? Promise.resolve()).then(async () => ((await stillCurrent(gen)) ? job() : undefined));
     const settled = run.then(
       () => undefined,
       () => undefined,
@@ -4599,7 +4600,7 @@ export default function App() {
       if (saveChains.current.get(path) === settled) saveChains.current.delete(path);
     });
     return run;
-  }, []);
+  }, [stillCurrent]);
 
   const rewriteCanvasRefs = useCallback(
     async (
@@ -5066,8 +5067,8 @@ export default function App() {
       const target = notesRef.current.find((n) => n.path === lastNotePathRef.current);
       if (!target) return;
       const gen = vaultGen.current;
-      // None once another vault is opening (a switch gave up waiting).
-      const link = (m: { path: string; line: number }) => (vaultGen.current === gen ? linkifyInNote(m.path, m.line, target) : Promise.resolve(null));
+      // None once another vault opens (a switch gave up waiting).
+      const link = async (m: { path: string; line: number }) => ((await stillCurrent(gen)) ? linkifyInNote(m.path, m.line, target) : null);
       // Snapshot the list; line numbers stay valid (linkify never adds lines).
       for (const m of [...mentions]) await link(m);
       // A link can make a mention near it linkable (`*Foo*Foo`, or `o*Foo` then
@@ -5088,7 +5089,7 @@ export default function App() {
       });
       setMentionsLinked((x) => x + 1);
     },
-    [linkifyInNote],
+    [linkifyInNote, stillCurrent],
   );
   const handleLinkAllMentions = useCallback(
     (mentions: { path: string; line: number }[]) => track(vaultJobs.current, linkAllMentions(mentions)),
