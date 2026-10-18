@@ -219,6 +219,73 @@ test("an older read that lands after a newer one leaves the newer one's text and
   await expect(page.locator(".pane:not(.dock) .cm-content").last()).toContainText("new text, 20 bytes");
 });
 
+// An outside edit whose read is slow, then a time-only change (iCloud's
+// attributes, a touch) while the read is out: the read is the only copy of the
+// edit's text, and the later change's time is the one to keep.
+test("an outside edit's text lands even if a time-only change comes in during its read", async ({ page }) => {
+  await load(page, { "Old.base": base("file.mtime.year < 2021"), "Gamma.md": "# Gamma\n" });
+  await page.locator(".tree-row.attachment", { hasText: "Old" }).click();
+  await expect(view(page)).toHaveCount(1);
+  await page.getByRole("button", { name: "Split right" }).click();
+  await page.locator(".tree-row.file", { hasText: "Gamma" }).first().click();
+  const editor = page.locator(".pane:not(.dock) .cm-content").last();
+  await expect(editor).toContainText("Gamma");
+  await page.evaluate(() => {
+    const w = window as unknown as { __mockHook: (cmd: string, a: { path?: string }) => Promise<{ result: unknown } | void> };
+    w.__mockHook = async (cmd, a) => {
+      if (cmd !== "read_note" || !a.path?.endsWith("Gamma.md")) return;
+      await new Promise((r) => setTimeout(r, 1500));
+      return { result: "# Gamma\n\nedited on the phone\n" };
+    };
+  });
+  await emit(page, { path: "/mock/vault/Gamma.md", rel: "Gamma.md", mtime: Date.UTC(2026, 0, 1), ctime: Date.UTC(2020, 0, 1), size: 30 });
+  await page.waitForTimeout(600); // its read is under way
+  await emit(page, { ...old2020("Gamma.md"), size: 30 });
+  await expect(editor).toContainText("edited on the phone", { timeout: 5000 });
+  await page.waitForTimeout(300);
+  await expect(view(page).getByRole("listitem").filter({ hasText: "Gamma" })).toHaveCount(1);
+  await page.getByRole("button", { name: /^Search/ }).click();
+  await page.locator(".palette-input").first().fill("edited on the phone");
+  await expect(page.locator(".palette-item")).toHaveCount(1);
+});
+
+test("a read sent back behind our save lands its text even if a time-only change comes in as it's read again", async ({ page }) => {
+  await load(page, { "Gamma.md": "# Gamma\n" });
+  await page.locator(".tree-row.file", { hasText: "Gamma" }).first().click();
+  const editor = page.locator(".pane:not(.dock) .cm-content").first();
+  await page.evaluate(() => {
+    const w = window as unknown as { __saved: boolean; __read: number; __mockHook: (cmd: string, a: { path?: string }) => Promise<{ result: unknown } | void> };
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const fire = (x: object) => (window as unknown as { __mockEmit: (n: string, p: unknown) => void }).__mockEmit("vault-changed", [x]);
+    w.__read = 0;
+    w.__mockHook = async (cmd, a) => {
+      if (!a.path?.endsWith("Gamma.md")) return;
+      if (cmd === "write_note") {
+        await sleep(1500);
+        w.__saved = true;
+        return;
+      }
+      if (cmd !== "read_note") return;
+      if (w.__read++ > 0 && w.__saved) {
+        // Read again once the save is done: a time-only change lands meanwhile.
+        await sleep(300);
+        fire({ path: "/mock/vault/Gamma.md", rel: "Gamma.md", mtime: Date.UTC(2020, 4, 2), ctime: Date.UTC(2020, 0, 1), size: 30, statsOnly: true });
+        await sleep(900);
+      }
+      return { result: "# Gamma\n\nfrom the phone\n" };
+    };
+  });
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.type("z");
+  await page.waitForTimeout(700);
+  await emit(page, { path: "/mock/vault/Gamma.md", rel: "Gamma.md", mtime: Date.UTC(2026, 0, 1), ctime: Date.UTC(2020, 0, 1), size: 30 });
+  await page.waitForFunction(() => (window as unknown as { __saved: boolean }).__saved, null, { timeout: 10000 });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __read: number }).__read)).toBeGreaterThan(1);
+  await expect(editor).toContainText("from the phone", { timeout: 5000 });
+  await expect(page.locator(".conflict-label")).toHaveCount(0);
+});
+
 test("an old vault's change read across a switch stays out of the new vault", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("basalt.recentVaults", JSON.stringify([{ path: "/mock/other", name: "other", ts: Date.now() }]));

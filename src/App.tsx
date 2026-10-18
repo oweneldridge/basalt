@@ -860,8 +860,9 @@ export default function App() {
   // Accumulated external changes (rel -> absolute path), flushed after a debounce.
   const changedBuf = useRef<Map<string, ChangedNote>>(new Map());
   const changeSeq = useRef(0);
-  // Per note, the newest change whose stats it shows.
+  // Per note, the newest change whose stats it shows, and whose text.
   const statsSeq = useRef<Map<string, number>>(new Map());
+  const textSeq = useRef<Map<string, number>>(new Map());
   const watchTimer = useRef<number | undefined>(undefined);
   // Buffers changes and applies them after a short quiet spell (set up with
   // the watcher's listener below).
@@ -2034,6 +2035,7 @@ export default function App() {
       saveTimers.current.clear();
       selfWrites.current.clear();
       statsSeq.current.clear();
+      textSeq.current.clear();
       // Empty the stale note list immediately — the old vault's entries must not
       // be clickable while the new vault loads.
       setNotes([]);
@@ -2403,12 +2405,13 @@ export default function App() {
       if (!vault) return;
       const shown = showHiddenRef.current ? incoming : incoming.filter((c) => !isHiddenRel(c.rel));
       // A batch whose read was slow can land after a later change's stats.
-      const newest = (c: ChangedNote) => {
+      const newer = (seen: Map<string, number>, c: ChangedNote) => {
         const seq = c.seq ?? 0;
-        if ((statsSeq.current.get(c.rel) ?? -1) > seq) return false;
-        statsSeq.current.set(c.rel, seq);
+        if ((seen.get(c.rel) ?? -1) > seq) return false;
+        seen.set(c.rel, seq);
         return true;
       };
+      const newest = (c: ChangedNote) => newer(statsSeq.current, c);
       // Only times changed: new dates, nothing to read.
       const touched = shown.filter((c) => c.statsOnly && newest(c));
       if (touched.length > 0) setNotes((prev) => withStats(prev, touched));
@@ -2450,11 +2453,13 @@ export default function App() {
       const echo = (r: (typeof reads)[number]) =>
         r.ok && (selfWrites.current.get(r.rel) === r.content || isBeingWritten(r.path, r.content));
       // An echo's stats are the save's, as the disk has them.
-      const echoed = reads.filter((r) => echo(r) && newest(r.stats)).map((r) => r.stats);
+      const echoed = reads.filter((r) => echo(r) && newer(textSeq.current, r.stats) && newest(r.stats)).map((r) => r.stats);
       if (echoed.length > 0) setNotes((prev) => withStats(prev, echoed));
-      // A read landing after a newer change's: that change's text and stats stand.
-      const results = reads.filter((r) => !echo(r) && newest(r.stats));
+      // A read landing after a newer read: that one's text stands. A change of
+      // times alone since keeps its times, but the text read is still news.
+      const results = reads.filter((r) => !echo(r) && newer(textSeq.current, r.stats));
       if (results.length === 0) return;
+      const timed = new Set(results.filter((r) => newest(r.stats)));
 
       for (const r of results) {
         if (r.ok) {
@@ -2475,7 +2480,7 @@ export default function App() {
               next.push({ path: r.path, rel: r.rel, name: nameFromRel(r.rel), content: r.content, ...statsOf(r.stats, r.content) });
             } else {
               // Changed outside the app: its stats are new too.
-              next[i] = { ...next[i], content: r.content, ...statsOf(r.stats, r.content) };
+              next[i] = { ...next[i], content: r.content, ...(timed.has(r) ? statsOf(r.stats, r.content) : {}) };
             }
           } else if (i !== -1) {
             next = next.filter((n) => n.rel !== r.rel);
