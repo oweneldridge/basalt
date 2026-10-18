@@ -32,15 +32,13 @@ export function Palette<T>({
   summary,
 }: PaletteProps<T>) {
   const [query, setQuery] = useState(initialQuery);
-  const [active, setActive] = useState(0);
+  const [picked, setPicked] = useState(0);
   const listRef = useRef<HTMLDivElement | null>(null);
 
   const all = useMemo(() => getItems(query), [query, getItems]);
   const items = useMemo(() => all.slice(0, MAX_RENDER), [all]);
-
-  useEffect(() => {
-    setActive(0);
-  }, [query]);
+  // A row picked in a longer list falls back to the first when the list shrinks.
+  const active = picked < items.length ? picked : 0;
 
   // Keep the active row in view.
   useEffect(() => {
@@ -54,10 +52,10 @@ export function Palette<T>({
       onClose();
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActive((a) => Math.min(a + 1, items.length - 1));
+      setPicked(Math.min(active + 1, items.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActive((a) => Math.max(a - 1, 0));
+      setPicked(Math.max(active - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
       const item = items[active];
@@ -81,7 +79,10 @@ export function Palette<T>({
           aria-activedescendant={items.length ? optionId(active) : undefined}
           value={query}
           autoFocus
-          onChange={(e) => setQuery(e.currentTarget.value)}
+          onChange={(e) => {
+            setQuery(e.currentTarget.value);
+            setPicked(0);
+          }}
           onKeyDown={onKeyDown}
         />
         {summary && query.trim() && all.length > 0 && (
@@ -98,7 +99,7 @@ export function Palette<T>({
               aria-selected={i === active}
               tabIndex={-1}
               className={`palette-item${i === active ? " active" : ""}`}
-              onMouseEnter={() => setActive(i)}
+              onMouseMove={() => setPicked(i)}
               onClick={() => onSelect(item)}
             >
               {renderItem(item, i === active)}

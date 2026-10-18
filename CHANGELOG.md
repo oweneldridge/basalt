@@ -101,6 +101,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Enter in the command palette or a switcher runs the top match right after
+  typing. A row the mouse rested on in the longer list could stay picked, so
+  Enter did nothing. Only moving the mouse picks a row now, and a list that
+  shrinks, as when notes are deleted, falls back to its first row.
 - Links in Reading view go where they point. `[[Note#Heading]]` and block links
   scroll to their target, `[[#Heading]]` and `[text](#Heading)` scroll within
   the note, and a footnote number jumps to its footnote. Markdown links without
