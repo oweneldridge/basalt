@@ -217,6 +217,47 @@ test("a group dragged over a smaller one goes under it", async ({ page }) => {
   expect(await labelHits(page, "Small")).toBe("Group: Small");
 });
 
+test("a group resized over a smaller one goes under it", async ({ page }) => {
+  await openCanvas(page, "Grow", [
+    { id: "small", type: "group", label: "Small", x: 200, y: 20, width: 100, height: 80 },
+    { id: "big", type: "group", label: "Big", x: 0, y: 0, width: 150, height: 150 },
+    { id: "c", type: "text", text: "Far", x: 600, y: 300, width: 100, height: 60 },
+  ]);
+  await recordWrites(page);
+  const big = page.locator('[aria-label="Group: Big"]');
+  await page.locator(".canvas-group-label", { hasText: "Big" }).click();
+  const k = (await big.boundingBox())!.width / 150;
+  const h = (await big.locator(".canvas-handle").boundingBox())!;
+  await dragBy(page, { x: h.x + 5, y: h.y + 5 }, 250 * k, 50 * k);
+  await expect.poll(() => savedIds(page)).toEqual(["big", "small", "c"]);
+  expect(await labelHits(page, "Small")).toBe("Group: Small");
+});
+
+test("a group moved over a bigger one with the arrow keys goes on top of it", async ({ page }) => {
+  await openCanvas(page, "KeyIn", [
+    { id: "small", type: "group", label: "Small", x: 0, y: 0, width: 100, height: 80 },
+    { id: "big", type: "group", label: "Big", x: 200, y: -100, width: 400, height: 300 },
+  ]);
+  await recordWrites(page);
+  await page.locator('[aria-label="Group: Small"]').focus();
+  for (let i = 0; i < 3; i++) await page.keyboard.press("Shift+ArrowRight");
+  await expect.poll(() => savedIds(page)).toEqual(["big", "small"]);
+  expect(await labelHits(page, "Small")).toBe("Group: Small");
+});
+
+test("a duplicated group goes under the smaller ones it covers", async ({ page }) => {
+  await openCanvas(page, "Twin", [
+    { id: "big", type: "group", label: "Big", x: 0, y: 0, width: 150, height: 150 },
+    { id: "small", type: "group", label: "Small", x: 50, y: 50, width: 60, height: 60 },
+  ]);
+  await recordWrites(page);
+  await page.locator(".canvas-group-label", { hasText: "Big" }).click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Duplicate" }).click();
+  await expect(page.locator(".canvas-group")).toHaveCount(3);
+  await expect.poll(async () => (await savedIds(page)).at(-1)).toBe("small");
+  expect(await labelHits(page, "Small")).toBe("Group: Small");
+});
+
 test("moving a group moves what's inside it, by mouse or keyboard", async ({ page }) => {
   await openCanvas(page, "Holds", [
     { id: "outer", type: "group", label: "Outer", x: -40, y: -60, width: 520, height: 360 },

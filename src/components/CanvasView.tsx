@@ -393,7 +393,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
     const d = dataRef.current;
     const clones = d.nodes.filter((n) => sel.has(n.id)).map((n) => ({ ...n, id: newId(), x: n.x + 24, y: n.y + 24 }));
     if (clones.length === 0) return;
-    emit({ ...d, nodes: [...d.nodes, ...clones] });
+    emit({ ...d, nodes: orderGroups([...d.nodes, ...clones]) });
     setSelected(new Set(clones.map((c) => c.id)));
   }, [emit]);
 
@@ -453,7 +453,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
         const [dx, dy] = moves[e.key];
         const d = dataRef.current;
         const ids = withGroupContents(d.nodes, selectedRef.current);
-        emit({ ...d, nodes: d.nodes.map((m) => (ids.has(m.id) ? { ...m, x: m.x + dx, y: m.y + dy } : m)) });
+        emit({ ...d, nodes: orderGroups(d.nodes.map((m) => (ids.has(m.id) ? { ...m, x: m.x + dx, y: m.y + dy } : m))) });
       } else if (e.key === "Escape") {
         clearSel();
       } else {
@@ -582,7 +582,10 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
       move,
       up: () => {
         if (raf) cancelAnimationFrame(raf);
-        if (pending) patchNode(id, pending);
+        const size = pending;
+        if (!size) return;
+        const d = dataRef.current;
+        emit({ ...d, nodes: orderGroups(d.nodes.map((n) => (n.id === id ? { ...n, ...size } : n))) });
       },
       cancel: () => {
         if (raf) cancelAnimationFrame(raf);
