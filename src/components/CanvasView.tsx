@@ -462,7 +462,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
     const up = () => {
       if (raf) cancelAnimationFrame(raf);
       if (delta) {
-        // Commit all moved nodes in one emit (single undo step), last in the
+        // Commit all moved nodes in one emit, last in the
         // list as Obsidian saves them, so they draw on top, but groups stay
         // before cards, under them, and before the groups inside them.
         const d = dataRef.current;
