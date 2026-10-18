@@ -1342,3 +1342,30 @@ for (const [what, slow, act, done] of [
     await done(page);
   });
 }
+
+test("a recording's time stands still while a switch has it paused", async ({ page }) => {
+  test.setTimeout(60000);
+  await fakeRecorder(page);
+  await load(page);
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click();
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await page.keyboard.press("ControlOrMeta+p");
+  await page.locator(".palette-input").first().fill("Record audio");
+  await page.keyboard.press("Enter");
+  const shown = page.locator(".rec-indicator");
+  await expect(shown).toContainText("0:01");
+  await page.evaluate(() => {
+    const w = window as unknown as { __mockConfirm: () => boolean; __mockHook: (cmd: string) => unknown };
+    w.__mockConfirm = () => false;
+    w.__mockHook = (cmd) => (cmd === "write_note" ? new Promise(() => {}) : undefined);
+  });
+  await page.keyboard.type("x");
+  await page.waitForTimeout(900); // its save is out, and never answers
+  await pickVault(page, "/mock/other");
+  await expect.poll(() => page.evaluate(() => (globalThis as unknown as { __rec: string[] }).__rec)).toEqual(["pause"]);
+  const at = await shown.textContent();
+  await page.waitForTimeout(2500);
+  expect(await shown.textContent()).toBe(at);
+  await opened(page);
+  await expect(shown).not.toHaveText(at ?? "", { timeout: 3000 });
+});

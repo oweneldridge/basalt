@@ -3578,6 +3578,7 @@ export default function App() {
   const recorderRef = useRef<{ rec: MediaRecorder; chunks: BlobPart[]; stream: MediaStream } | null>(null);
   const [recSeconds, setRecSeconds] = useState<number | null>(null);
   const recTimer = useRef<number | null>(null);
+  const countRecording = () => (recTimer.current = window.setInterval(() => setRecSeconds((s) => (s ?? 0) + 1), 1000));
 
   const startRecording = useCallback(async () => {
     if (recorderRef.current) return;
@@ -3600,7 +3601,7 @@ export default function App() {
     rec.start();
     recorderRef.current = { rec, chunks, stream };
     setRecSeconds(0);
-    recTimer.current = window.setInterval(() => setRecSeconds((s) => (s ?? 0) + 1), 1000);
+    countRecording();
   }, []);
 
   const stopRecording = useCallback(
@@ -3634,8 +3635,12 @@ export default function App() {
     const cur = recorderRef.current;
     if (!cur) return null;
     if (cur.rec.state === "recording") cur.rec.pause();
+    // Its time stands still meanwhile.
+    if (recTimer.current) clearInterval(recTimer.current);
     return () => {
-      if (recorderRef.current === cur) cur.rec.resume();
+      if (recorderRef.current !== cur) return;
+      cur.rec.resume();
+      countRecording();
     };
   };
 
