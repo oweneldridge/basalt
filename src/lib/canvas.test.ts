@@ -14,9 +14,10 @@ describe("serializeCanvas", () => {
     });
     const once = serializeCanvas(parseCanvas(src)!);
     const back = parseCanvas(once)!;
-    expect(back.nodes.map((n) => [n.id, n.type])).toEqual([["t", "text"], ["f", "file"], ["l", "link"], ["g", "group"]]);
+    expect(back.nodes.map((n) => [n.id, n.type])).toEqual([["g", "group"], ["t", "text"], ["f", "file"], ["l", "link"]]);
     expect(back.nodes.find((n) => n.id === "f")).toMatchObject({ file: "notes/Foo.md", subpath: "#H" });
-    expect(back.edges[0]).toMatchObject({ id: "e1", fromNode: "t", toNode: "f", toEnd: "arrow", label: "rel" });
+    expect(back.edges[0]).toMatchObject({ id: "e1", fromNode: "t", toNode: "f", label: "rel" });
+    expect(once).not.toContain("toEnd");
     // idempotent: serializing the re-parsed data yields identical text
     expect(serializeCanvas(back)).toBe(once);
   });
@@ -276,16 +277,34 @@ describe("canvas layout on disk", () => {
     expect(saved.endsWith("\n}")).toBe(true);
   });
 
-  it("lays out a value an entry per line when it holds an object or array, as Obsidian 1.14 saves", () => {
-    // Saved by Obsidian after a drag, so their nodes and keys are in its order.
-    for (const saved of [
-      "{\n\t\"nodes\":[\n\t\t{\"id\":\"b2\",\"type\":\"text\",\"text\":\"Second card\",\"x\":400,\"y\":0,\"width\":250,\"height\":60},\n\t\t{\"id\":\"a1\",\"type\":\"text\",\"text\":\"Drag me a little\",\"x\":20,\"y\":0,\"width\":250,\"height\":60}\n\t],\n\t\"edges\":[\n\t\t{\"id\":\"e1\",\"fromNode\":\"a1\",\"fromSide\":\"right\",\"toNode\":\"b2\",\"toSide\":\"left\"}\n\t],\n\t\"groups\":[\n\t\t{\"id\":\"g1\",\"label\":\"one\"},\n\t\t{\"id\":\"g2\",\"label\":\"two\"}\n\t],\n\t\"tags\":[\"x\",\"y\"],\n\t\"empty\":[],\n\t\"meta\":{\n\t\t\"list\":[1,2],\n\t\t\"note\":\"kept\"\n\t}\n}",
-      "{\n\t\"nodes\":[\n\t\t{\n\t\t\t\"id\":\"n2\",\n\t\t\t\"type\":\"text\",\n\t\t\t\"text\":\"Two: click me once\",\n\t\t\t\"extra\":{\n\t\t\t\t\"a\":[1]\n\t\t\t},\n\t\t\t\"x\":0,\n\t\t\t\"y\":150,\n\t\t\t\"width\":250,\n\t\t\t\"height\":60\n\t\t},\n\t\t{\"id\":\"n3\",\"type\":\"text\",\"text\":\"Three\",\"x\":0,\"y\":300,\"width\":250,\"height\":60},\n\t\t{\n\t\t\t\"id\":\"n1\",\n\t\t\t\"type\":\"text\",\n\t\t\t\"text\":\"One: drag me\",\n\t\t\t\"styleAttributes\":{},\n\t\t\t\"x\":60,\n\t\t\t\"y\":0,\n\t\t\t\"width\":250,\n\t\t\t\"height\":60\n\t\t}\n\t],\n\t\"edges\":[],\n\t\"mixed\":[\n\t\t1,\n\t\t{\"a\":1}\n\t],\n\t\"arrOfArr\":[\n\t\t[1],\n\t\t[2,3]\n\t],\n\t\"deep\":{\n\t\t\"inner\":{\"x\":1},\n\t\t\"arr\":[\n\t\t\t[1,2],\n\t\t\t[3]\n\t\t],\n\t\t\"objs\":[\n\t\t\t{\"a\":1},\n\t\t\t{\"b\":2}\n\t\t],\n\t\t\"empty\":{}\n\t},\n\t\"emptyObj\":{},\n\t\"num\":5,\n\t\"str\":\"s\"\n}",
-    ])
-      expect(canvasText(JSON.parse(saved))).toBe(saved);
+  // Each file as written, the drag made on it in Obsidian 1.14, and the file
+  // Obsidian saved then.
+  const SAVES: [string, [string, number, number], string][] = [
+      ["{\"nodes\":[{\"id\":\"a1\",\"type\":\"text\",\"text\":\"Drag me a little\",\"x\":0,\"y\":0,\"width\":250,\"height\":60},{\"id\":\"b2\",\"type\":\"text\",\"text\":\"Second card\",\"x\":400,\"y\":0,\"width\":250,\"height\":60}],\"edges\":[{\"id\":\"e1\",\"fromNode\":\"a1\",\"fromSide\":\"right\",\"toNode\":\"b2\",\"toSide\":\"left\"}],\"groups\":[{\"id\":\"g1\",\"label\":\"one\"},{\"id\":\"g2\",\"label\":\"two\"}],\"tags\":[\"x\",\"y\"],\"empty\":[],\"meta\":{\"list\":[1,2],\"note\":\"kept\"}}", ["a1", 20, 0], "{\n\t\"nodes\":[\n\t\t{\"id\":\"b2\",\"type\":\"text\",\"text\":\"Second card\",\"x\":400,\"y\":0,\"width\":250,\"height\":60},\n\t\t{\"id\":\"a1\",\"type\":\"text\",\"text\":\"Drag me a little\",\"x\":20,\"y\":0,\"width\":250,\"height\":60}\n\t],\n\t\"edges\":[\n\t\t{\"id\":\"e1\",\"fromNode\":\"a1\",\"fromSide\":\"right\",\"toNode\":\"b2\",\"toSide\":\"left\"}\n\t],\n\t\"groups\":[\n\t\t{\"id\":\"g1\",\"label\":\"one\"},\n\t\t{\"id\":\"g2\",\"label\":\"two\"}\n\t],\n\t\"tags\":[\"x\",\"y\"],\n\t\"empty\":[],\n\t\"meta\":{\n\t\t\"list\":[1,2],\n\t\t\"note\":\"kept\"\n\t}\n}"],
+      ["{\"nodes\":[{\"id\":\"n1\",\"type\":\"text\",\"text\":\"One: drag me\",\"x\":0,\"y\":0,\"width\":250,\"height\":60,\"styleAttributes\":{}},{\"id\":\"n2\",\"type\":\"text\",\"text\":\"Two: click me once\",\"x\":0,\"y\":150,\"width\":250,\"height\":60,\"extra\":{\"a\":[1]}},{\"id\":\"n3\",\"type\":\"text\",\"text\":\"Three\",\"x\":0,\"y\":300,\"width\":250,\"height\":60}],\"edges\":[],\"mixed\":[1,{\"a\":1}],\"arrOfArr\":[[1],[2,3]],\"deep\":{\"inner\":{\"x\":1},\"arr\":[[1,2],[3]],\"objs\":[{\"a\":1},{\"b\":2}],\"empty\":{}},\"emptyObj\":{},\"num\":5,\"str\":\"s\"}", ["n1", 60, 0], "{\n\t\"nodes\":[\n\t\t{\n\t\t\t\"id\":\"n2\",\n\t\t\t\"type\":\"text\",\n\t\t\t\"text\":\"Two: click me once\",\n\t\t\t\"extra\":{\n\t\t\t\t\"a\":[1]\n\t\t\t},\n\t\t\t\"x\":0,\n\t\t\t\"y\":150,\n\t\t\t\"width\":250,\n\t\t\t\"height\":60\n\t\t},\n\t\t{\"id\":\"n3\",\"type\":\"text\",\"text\":\"Three\",\"x\":0,\"y\":300,\"width\":250,\"height\":60},\n\t\t{\n\t\t\t\"id\":\"n1\",\n\t\t\t\"type\":\"text\",\n\t\t\t\"text\":\"One: drag me\",\n\t\t\t\"styleAttributes\":{},\n\t\t\t\"x\":60,\n\t\t\t\"y\":0,\n\t\t\t\"width\":250,\n\t\t\t\"height\":60\n\t\t}\n\t],\n\t\"edges\":[],\n\t\"mixed\":[\n\t\t1,\n\t\t{\"a\":1}\n\t],\n\t\"arrOfArr\":[\n\t\t[1],\n\t\t[2,3]\n\t],\n\t\"deep\":{\n\t\t\"inner\":{\"x\":1},\n\t\t\"arr\":[\n\t\t\t[1,2],\n\t\t\t[3]\n\t\t],\n\t\t\"objs\":[\n\t\t\t{\"a\":1},\n\t\t\t{\"b\":2}\n\t\t],\n\t\t\"empty\":{}\n\t},\n\t\"emptyObj\":{},\n\t\"num\":5,\n\t\"str\":\"s\"\n}"],
+      ["{\"edges\":[{\"toNode\":\"f1\",\"label\":\"L\",\"color\":\"3\",\"toEnd\":\"arrow\",\"fromEnd\":\"none\",\"toSide\":\"top\",\"fromSide\":\"bottom\",\"fromNode\":\"t1\",\"id\":\"e1\",\"qq\":1}],\"extra\":1,\"nodes\":[{\"height\":60,\"color\":\"1\",\"x\":0,\"zz\":1,\"text\":\"Text: drag me\",\"width\":250,\"y\":0,\"type\":\"text\",\"id\":\"t1\"},{\"subpath\":\"#H\",\"y\":150,\"file\":\"Missing.md\",\"x\":0,\"id\":\"f1\",\"width\":250,\"height\":60,\"type\":\"file\",\"aa\":2,\"color\":\"2\"},{\"url\":\"https://example.com\",\"id\":\"l1\",\"type\":\"link\",\"x\":300,\"y\":150,\"width\":250,\"height\":60,\"color\":\"#ff0000\"},{\"label\":\"G\",\"background\":\"bg.png\",\"backgroundStyle\":\"cover\",\"type\":\"group\",\"id\":\"g1\",\"x\":-50,\"y\":400,\"width\":400,\"height\":200}]}", ["t1", 50, -40], "{\n\t\"edges\":[\n\t\t{\"id\":\"e1\",\"qq\":1,\"fromNode\":\"t1\",\"fromSide\":\"bottom\",\"toNode\":\"f1\",\"toSide\":\"top\",\"color\":\"3\",\"label\":\"L\"}\n\t],\n\t\"extra\":1,\n\t\"nodes\":[\n\t\t{\"backgroundStyle\":\"cover\",\"type\":\"group\",\"id\":\"g1\",\"x\":-50,\"y\":400,\"width\":400,\"height\":200,\"label\":\"G\",\"background\":\"bg.png\"},\n\t\t{\"subpath\":\"#H\",\"file\":\"Missing.md\",\"id\":\"f1\",\"type\":\"file\",\"aa\":2,\"x\":0,\"y\":150,\"width\":250,\"height\":60,\"color\":\"2\"},\n\t\t{\"url\":\"https://example.com\",\"id\":\"l1\",\"type\":\"link\",\"x\":300,\"y\":150,\"width\":250,\"height\":60,\"color\":\"#ff0000\"},\n\t\t{\"zz\":1,\"text\":\"Text: drag me\",\"type\":\"text\",\"id\":\"t1\",\"x\":50,\"y\":-40,\"width\":250,\"height\":60,\"color\":\"1\"}\n\t]\n}"],
+  ];
+
+  it("saves a dragged canvas as Obsidian 1.14 does", () => {
+    for (const [before, [id, x, y], saved] of SAVES) {
+      const data = parseCanvas(before)!;
+      const moved = { ...data.nodes.find((n) => n.id === id)!, x, y };
+      expect(serializeCanvas({ ...data, nodes: [...data.nodes.filter((n) => n.id !== id), moved] })).toBe(saved);
+    }
+  });
+
+  it("lays out a value an entry per line when it holds an object or array", () => {
+    for (const [, , saved] of SAVES) expect(canvasText(JSON.parse(saved))).toBe(saved);
     expect(canvasText({ nodes: [], edges: [], tags: ["a", ["b"]] })).toBe('{\n\t"nodes":[],\n\t"edges":[],\n\t"tags":[\n\t\t"a",\n\t\t["b"]\n\t]\n}');
     expect(canvasText({ a: 1, b: "x" })).toBe('{"a":1,"b":"x"}');
     expect(canvasText({})).toBe("{}");
+  });
+
+  it("writes an edge's ends only when they aren't the defaults", () => {
+    const edge = (ends: object) =>
+      JSON.parse(serializeCanvas(parseCanvas(JSON.stringify({ nodes: ["a", "b"].map((id) => ({ id, type: "text", text: "", x: 0, y: 0, width: 1, height: 1 })), edges: [{ id: "e", fromNode: "a", toNode: "b", ...ends }] }))!)).edges[0];
+    expect(edge({ fromEnd: "none", toEnd: "arrow" })).toEqual({ id: "e", fromNode: "a", toNode: "b" });
+    expect(edge({ fromEnd: "arrow", toEnd: "none" })).toEqual({ id: "e", fromNode: "a", fromEnd: "arrow", toNode: "b", toEnd: "none" });
   });
 
   it("keeps the file's key order and a __proto__ key on save", () => {

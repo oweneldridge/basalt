@@ -84,32 +84,45 @@ export function serializeCanvas(data: CanvasData): string {
     if (v === undefined || v === null || v === "") delete o[k];
     else o[k] = v;
   };
-  const nodes = data.nodes.map((n) => {
-    const o: Record<string, unknown> = { ...(n.raw ?? {}) };
+  // Obsidian keeps a node's or edge's keys where the file had them, but for
+  // these, which it writes last in this order.
+  const last = (raw: Record<string, unknown> | undefined, keys: string[]) => {
+    const o: Record<string, unknown> = { ...(raw ?? {}) };
+    for (const k of keys) delete o[k];
+    return o;
+  };
+  // Groups first, as Obsidian saves them, so they draw under the cards.
+  const ordered = [...data.nodes.filter((n) => n.type === "group"), ...data.nodes.filter((n) => n.type !== "group")];
+  const nodes = ordered.map((n) => {
+    const o = last(n.raw, n.type === "group" ? ["x", "y", "width", "height", "color", "label", "background"] : ["x", "y", "width", "height", "color"]);
     o.id = n.id;
     o.type = n.type;
-    o.x = r(n.x);
-    o.y = r(n.y);
-    o.width = r(n.width);
-    o.height = r(n.height);
-    put(o, "color", n.color);
     if (n.type === "text") o.text = n.text ?? ""; // required by the spec, even when empty
     else if (n.type === "file") {
       put(o, "file", n.file);
       put(o, "subpath", n.subpath);
     } else if (n.type === "link") put(o, "url", n.url);
-    else if (n.type === "group") put(o, "label", n.label);
+    o.x = r(n.x);
+    o.y = r(n.y);
+    o.width = r(n.width);
+    o.height = r(n.height);
+    put(o, "color", n.color);
+    if (n.type === "group") {
+      put(o, "label", n.label);
+      put(o, "background", n.raw?.background);
+    }
     return o;
   });
   const edges = data.edges.map((e) => {
-    const o: Record<string, unknown> = { ...(e.raw ?? {}) };
+    const o = last(e.raw, ["fromNode", "fromSide", "fromEnd", "toNode", "toSide", "toEnd", "color", "label"]);
     o.id = e.id;
     o.fromNode = e.fromNode;
-    o.toNode = e.toNode;
     put(o, "fromSide", e.fromSide);
+    // Ends Obsidian leaves out: none at the start, an arrow at the end.
+    put(o, "fromEnd", e.fromEnd === "none" ? undefined : e.fromEnd);
+    o.toNode = e.toNode;
     put(o, "toSide", e.toSide);
-    put(o, "fromEnd", e.fromEnd);
-    put(o, "toEnd", e.toEnd);
+    put(o, "toEnd", e.toEnd === "arrow" ? undefined : e.toEnd);
     put(o, "color", e.color);
     put(o, "label", e.label);
     return o;
