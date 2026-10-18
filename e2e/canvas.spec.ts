@@ -517,6 +517,41 @@ test("another pointer's moves, lift or cancel don't touch a card's drag", async 
   expect(await b.evaluate((el) => (el as HTMLElement).style.boxShadow)).toBe("");
 });
 
+for (const where of ["Node B", "empty space", "Node A's anchor"]) {
+  test(`a pen pressing ${where} during a mouse drag changes nothing`, async ({ page }) => {
+    await recordWrites(page);
+    const a = page.locator(nodeA);
+    const b = page.locator(".canvas-node", { hasText: "Node B" });
+    const box = (await a.boundingBox())!;
+    const b0 = (await b.boundingBox())!;
+    const view = (await page.locator(".canvas-view").boundingBox())!;
+    const transform = () => page.locator(".canvas-world").evaluate((el) => (el as HTMLElement).style.transform);
+    const t0 = await transform();
+    await page.mouse.move(box.x + 20, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 60, box.y + box.height / 2, { steps: 4 });
+    await expect(a).toBeFocused();
+    const anchor = await a.locator(".canvas-anchor-bottom").boundingBox();
+    const p = where === "Node B" ? { x: b0.x + 10, y: b0.y + 10 } : where === "empty space" ? { x: view.x + 10, y: view.y + view.height - 10 } : { x: anchor!.x + anchor!.width / 2, y: anchor!.y + 2 };
+    const cdp = await page.context().newCDPSession(page);
+    const pen = (type: string, x: number, y: number, buttons: number) =>
+      cdp.send("Input.dispatchMouseEvent", { type, x, y, button: "left", buttons, clickCount: 1, pointerType: "pen" });
+    await pen("mousePressed", p.x, p.y, 1);
+    await pen("mouseMoved", p.x + 50, p.y + 50, 1);
+    await pen("mouseReleased", p.x + 50, p.y + 50, 0);
+    await expect(a).toBeFocused();
+    await page.mouse.move(box.x + 80, box.y + box.height / 2, { steps: 2 });
+    await page.mouse.up();
+    await expect.poll(() => writes(page)).toBe(1);
+    await expect(a).toBeFocused();
+    expect(Math.round((await a.boundingBox())!.x - box.x)).toBe(60);
+    expect((await b.boundingBox())!).toEqual(b0);
+    expect(await transform()).toBe(t0);
+    expect(await b.evaluate((el) => (el as HTMLElement).style.boxShadow)).toBe("");
+    expect(await a.evaluate((el) => (el as HTMLElement).style.boxShadow)).not.toBe("");
+  });
+}
+
 test("a cancelled pan, rubber band, resize or connection stops where it was", async ({ page }) => {
   await recordWrites(page);
   await watchPointer(page);

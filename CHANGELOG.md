@@ -650,7 +650,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are left out.
 - Canvas drags work by touch and pen. A finger dragging a card, panning or
   drawing a connection is no longer taken over by the browser, a second
-  finger is ignored until the first lifts, and a drag the system cancels
+  finger or a pen is ignored until the first lifts, focus and selection
+  included, and a drag the system cancels
   ends there instead of staying stuck: a card it was moving or resizing goes
   back, and a selection box or connection it was drawing goes away.
 - A selected canvas card's connection points and resize handle show in full

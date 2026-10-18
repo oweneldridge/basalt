@@ -246,6 +246,12 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
     window.addEventListener("pointercancel", cancel);
     el?.addEventListener("lostpointercapture", cancel);
   };
+  // Another pointer pressed while a drag runs changes nothing, focus included.
+  const busy = (e: { preventDefault: () => void }) => {
+    if (dragPointer.current === null) return false;
+    e.preventDefault();
+    return true;
+  };
 
   // Pan (drag empty space) + zoom (wheel toward the cursor).
   useEffect(() => {
@@ -255,7 +261,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
     let lastX = 0;
     let lastY = 0;
     const onDown = (e: PointerEvent) => {
-      if (dragPointer.current !== null) return;
+      if (busy(e)) return;
       const el = e.target as HTMLElement;
       // Ignore drags starting on a node/handle/anchor, the toolbar, or an open
       // context menu — a native listener here would otherwise clear the
@@ -499,7 +505,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
   const startNodeDrag = (e: React.PointerEvent, id: string) => {
     if (!editable) return;
     e.stopPropagation();
-    if (dragPointer.current !== null) return;
+    if (busy(e)) return;
     // Establish the selection this drag operates on.
     const cur = selectedRef.current;
     let moveIds: string[];
@@ -576,7 +582,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
   const startResize = (e: React.PointerEvent, id: string) => {
     e.stopPropagation();
     const node = dataRef.current.nodes.find((n) => n.id === id);
-    if (!node || dragPointer.current !== null) return;
+    if (busy(e) || !node) return;
     const start = toWorld(e.clientX, e.clientY);
     const orig = { w: node.width, h: node.height };
     let raf = 0;
@@ -614,7 +620,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
   const startEdge = (e: React.PointerEvent, id: string, side: Side) => {
     e.stopPropagation();
     const from = dataRef.current.nodes.find((n) => n.id === id);
-    if (!from || dragPointer.current !== null) return;
+    if (busy(e) || !from) return;
     const a = anchor(from, side);
     setDrawingEdge({ from: id, side, x: a.x, y: a.y });
     const move = (ev: PointerEvent) => {
