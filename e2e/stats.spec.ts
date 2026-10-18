@@ -12,6 +12,7 @@ const view = (page: Page) => page.locator(".pane:not(.dock) .base-view");
 async function run(page: Page, label: string) {
   await page.keyboard.press("ControlOrMeta+p");
   await page.locator(".palette-input").first().fill(label);
+  await expect(page.locator(".palette-item").first()).toContainText(label);
   await page.keyboard.press("Enter");
 }
 const emit = (page: Page, c: object) =>
