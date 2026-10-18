@@ -43,6 +43,23 @@ async function pick(page: Page, root: string) {
 }
 const opened = (page: Page) => expect(page.locator("main.main")).not.toHaveAttribute("inert", { timeout: 15000 });
 
+// Counts its loads and live copies per vault, and while `__go` is set makes a
+// note and saves its data every 100 ms.
+const counter = [
+  'const { Plugin } = require("basalt");',
+  "module.exports = class extends Plugin {",
+  "  onload() {",
+  "    const g = globalThis; const mine = (this.mine = this.app.vault.getName());",
+  "    g.__loads = g.__loads || {}; g.__loads[mine] = (g.__loads[mine] || 0) + 1;",
+  "    g.__live = g.__live || {}; g.__live[mine] = (g.__live[mine] || 0) + 1;",
+  "    this.addRibbonIcon('R', 'Ribbon ' + mine, () => {});",
+  "    let n = 0;",
+  "    this.registerInterval(() => { if (!g.__go) return; this.app.vault.create(mine + ' ' + n++, mine).catch(() => {}); this.saveData({ from: mine, n }).catch(() => {}); }, 100);",
+  "  }",
+  "  onunload() { globalThis.__live[this.mine]--; }",
+  "};",
+].join("\n");
+
 test("a plugin turned off just before a switch writes nothing into the new vault", async ({ page }) => {
   const slow = [
     'const { Plugin } = require("basalt");',
@@ -115,3 +132,57 @@ test("a plugin whose onload a switch cuts off leaves nothing in the next vault",
   await page.locator(".palette-input").first().fill("Leaky late");
   await expect(page.getByText("No matching command")).toBeVisible();
 });
+
+test("a vault's plugins load once at startup and once at each switch", async ({ page }) => {
+  await setup(page, { vault: [plugin("p", counter)], b: [plugin("p", counter)] }, { vault: ["p"], b: ["p"] });
+  await expect.poll(() => g(page, "__loads")).toEqual({ vault: 1 });
+  await page.waitForTimeout(500);
+  await pick(page, "/mock/b");
+  await opened(page);
+  await expect(page.locator(".ribbon-plugin-btn")).toHaveCount(1);
+  await page.waitForTimeout(500);
+  expect(await g(page, "__loads")).toEqual({ vault: 1, b: 1 });
+  expect(await g(page, "__live")).toEqual({ vault: 0, b: 1 });
+});
+
+test("a vault left by a newer switch while it opens never loads its plugins", async ({ page }) => {
+  const all = { vault: [plugin("p", counter)], b: [plugin("p", counter)], c: [plugin("p", counter)] };
+  await setup(page, all, { b: ["p"], c: ["p"] }, { "open:/mock/b": 300, "config:b": 1200, "open:/mock/c": 1500 });
+  await pick(page, "/mock/b");
+  await page.waitForTimeout(700); // B is open; its settings are slow
+  await pick(page, "/mock/c");
+  await opened(page);
+  await expect(page.locator(".ribbon-plugin-btn")).toHaveCount(1);
+  await page.waitForTimeout(500);
+  expect(await g(page, "__loads")).toEqual({ c: 1 });
+});
+
+for (const [first, second] of [
+  [200, 200],
+  [700, 700],
+  [1100, 300],
+] as const) {
+  test(`switching A to B to C and back to A (${first}, ${second} ms apart) leaves A's plugin alone, writing to A`, async ({ page }) => {
+    test.setTimeout(60000);
+    const all = { vault: [plugin("p", counter)], b: [plugin("p", counter)], c: [plugin("p", counter)] };
+    const slow = { "open:/mock/b": 500, "open:/mock/c": 500, "open:/mock/vault": 500, "read:b": 800, "read:c": 800 };
+    await setup(page, all, { vault: ["p"], b: ["p"], c: ["p"] }, slow);
+    await page.evaluate(() => ((globalThis as unknown as { __go: boolean }).__go = true));
+    await expect.poll(() => g(page, "__loads")).toEqual({ vault: 1 });
+    await pick(page, "/mock/b");
+    await page.waitForTimeout(first);
+    await pick(page, "/mock/c");
+    await page.waitForTimeout(second);
+    await pick(page, "/mock/vault");
+    await opened(page);
+    await page.waitForTimeout(1000);
+    // Each in the vault of the plugin that wrote it.
+    const writes = await log(page);
+    const from = (l: string) => (l.includes(":create_note:") ? l.split(":")[2].split(" ")[0] : l.split(":")[3]);
+    expect(writes.filter((l) => l.split(":")[0] !== from(l))).toEqual([]);
+    expect(writes).toContainEqual(expect.stringMatching(/^vault:create_note:vault /));
+    const live = (await g(page, "__live")) as Record<string, number>;
+    expect(Object.entries(live).filter(([, n]) => n !== 0)).toEqual([["vault", 1]]);
+    await expect(page.locator(".ribbon-plugin-btn")).toHaveCount(1);
+  });
+}

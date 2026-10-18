@@ -703,6 +703,9 @@ export default function App() {
   // work for "this vault" waits. Settles when the last switch in flight does.
   const switching = useRef<Promise<void> | null>(null);
   const switchesInFlight = useRef(0);
+  // Switches begun, and the one whose vault is open: plugins load only for the latest.
+  const switchesBegun = useRef(0);
+  const shownSwitch = useRef(0);
   const switchesDone = useRef(() => {});
   // The vaults being switched to, oldest first.
   const switchTargets = useRef<{ name: string }[]>([]);
@@ -1949,7 +1952,7 @@ export default function App() {
   );
 
   const switchTo = useCallback(
-    async (path: string, openNoteRel?: string, restoring = false) => {
+    async (path: string, openNoteRel?: string, restoring = false, begun = switchesBegun.current) => {
       clearImageCache();
       const gen = ++vaultGen.current;
       // One switch's call at a time, so the vault asked for last is the one left
@@ -2001,6 +2004,7 @@ export default function App() {
       setReadingMode(localStorage.getItem(`basalt.reading.${root}`) === "1");
       setVault(root);
       vaultRef.current = root; // now, for anything that lands before the next render
+      shownSwitch.current = begun;
       setRecentVaults(pushRecentVault(root, Date.now()));
       if (WINDOW_LABEL === "main") {
         // The main window auto-restores its last vault on next launch.
@@ -2069,6 +2073,7 @@ export default function App() {
   const openVault = useCallback(
     async (path: string, openNoteRel?: string, restoring = false) => {
       const target = { name: vaultName(path) || path };
+      const begun = ++switchesBegun.current;
       switchTargets.current.push(target);
       if (switchesInFlight.current++ === 0) {
         switching.current = new Promise<void>((resolve) => (switchesDone.current = resolve));
@@ -2102,7 +2107,7 @@ export default function App() {
           if (await Promise.race([saved, new Promise<boolean>((r) => window.setTimeout(() => r(false), FLUSH_WAIT_MS))])) break;
         }
         if (!(await okToDropUnsaved("Switch vaults"))) return;
-        if (await switchTo(path, openNoteRel, restoring)) {
+        if (await switchTo(path, openNoteRel, restoring, begun)) {
           const done = `Opened ${target.name}`;
           setSwitchedTo(done);
           window.setTimeout(() => setSwitchedTo((x) => (x === done ? "" : x)), 4000);
@@ -4080,6 +4085,8 @@ export default function App() {
   const refreshPlugins = useCallback(async () => {
     const v = vaultRef.current;
     if (!v) return;
+    // Not for a vault a newer switch is leaving.
+    if (switchesInFlight.current > 0 && shownSwitch.current !== switchesBegun.current) return;
     pluginsFor.current = v;
     const epoch = pluginEpoch.current;
     // The vault switched, or a switch stopped the plugins, mid-load.
@@ -4137,13 +4144,17 @@ export default function App() {
     [showNotice],
   );
 
-  // (Re)load this vault's enabled plugins whenever the open vault changes.
+  // Load the vault's enabled plugins once it's open; a switch stops the last
+  // vault's, and loads them itself if no render has yet.
   useEffect(() => {
-    if (vault) void refreshPlugins();
-    return () => {
-      void unloadAll();
-    };
+    if (vault && pluginsFor.current !== vault) void refreshPlugins();
   }, [vault, refreshPlugins]);
+  useEffect(
+    () => () => {
+      void unloadAll();
+    },
+    [],
+  );
 
   // The vault's available CSS snippets + the set the user has DISABLED (per
   // vault, on this device). CSS only — it can style, never execute.
