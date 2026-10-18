@@ -705,6 +705,9 @@ export default function App() {
   const opening = useRef<Promise<void> | null>(null);
   // The latest switch whose call opened its vault: where a failed one leaves you.
   const openedGen = useRef(0);
+  // The switch whose vault the window shows. Work begun for it checks it with
+  // stillCurrent; unlike vaultGen it doesn't move while a switch is opening.
+  const shownGen = useRef(0);
   // While any switch is under way, from its flush to the new vault's
   // workspace: the notes take no edits and only another switch can run, and
   // work for "this vault" waits. Settles when the last switch in flight does.
@@ -1095,7 +1098,7 @@ export default function App() {
     async (path: string, doc: string, force = false) => {
       setSaving(true);
       const vault = vaultRef.current;
-      const gen = vaultGen.current;
+      const gen = shownGen.current;
       try {
         const known = notesRef.current.find((n) => n.path === path);
         if (!known && !force) {
@@ -1189,7 +1192,7 @@ export default function App() {
       } finally {
         savesDone.current++;
         // One that answers after a switch it was given up for says nothing there.
-        if (vaultGen.current === gen) setSaving(false);
+        if (shownGen.current === gen) setSaving(false);
       }
     },
     [bumpIndex, bumpStructure, rememberSelfWrite, addConflict, setBigBase],
@@ -1225,7 +1228,7 @@ export default function App() {
   const writeViewer = useCallback(
     async (path: string, doc: string, force = false) => {
       setSaving(true);
-      const gen = vaultGen.current;
+      const gen = shownGen.current;
       try {
         const att = attachmentsRef.current.find((a) => a.path === path);
         const rel = att?.rel;
@@ -1263,7 +1266,7 @@ export default function App() {
         retryLater();
       } finally {
         savesDone.current++;
-        if (vaultGen.current === gen) setSaving(false);
+        if (shownGen.current === gen) setSaving(false);
       }
     },
     [rememberSelfWrite, addConflict],
@@ -2021,6 +2024,7 @@ export default function App() {
       setReadingMode(localStorage.getItem(`basalt.reading.${root}`) === "1");
       setVault(root);
       vaultRef.current = root; // now, for anything that lands before the next render
+      shownGen.current = gen;
       shownSwitch.current = begun;
       setRecentVaults(pushRecentVault(root, Date.now()));
       if (WINDOW_LABEL === "main") {

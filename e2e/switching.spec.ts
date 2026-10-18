@@ -884,3 +884,64 @@ test("a recording whose file is still being saved when the switch goes on isn't 
   await page.waitForTimeout(6500); // the file is saved
   await expect(page.locator(".pane:not(.dock) .cm-content").first()).not.toContainText("Recording");
 });
+
+for (const [canvas, first] of [
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+] as const) {
+  test(`a ${canvas ? "canvas " : ""}retry save begun while a switch fails clears Saving when it answers${first ? " first" : ""}`, async ({ page }) => {
+    test.setTimeout(60000);
+    await page.addInitScript(() => {
+      localStorage.setItem("basalt.recentVaults", JSON.stringify([{ path: "/mock/bad", name: "bad", ts: Date.now() }]));
+    });
+    await page.goto("/app-harness.html");
+    await expect(page.locator(".sidebar")).toBeVisible();
+    if (canvas) {
+      await page.locator(".tree-row.attachment", { hasText: "Board" }).click();
+      await expect(page.locator(".canvas-node")).toHaveCount(3);
+    } else {
+      await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click();
+      await page.locator(".pane:not(.dock) .cm-content").first().click();
+    }
+    await page.evaluate((write) => {
+      const w = window as unknown as { __writes: number; __failOpen: () => void; __answer: () => void; __mockConfirm: () => boolean; __mockHook: (cmd: string) => unknown };
+      w.__writes = 0;
+      w.__mockConfirm = () => true;
+      w.__failOpen = () => {};
+      w.__answer = () => {};
+      w.__mockHook = (cmd) => {
+        if (cmd === "open_vault") return new Promise((_, j) => (w.__failOpen = () => j("not a folder")));
+        if (cmd !== write) return;
+        // Its save and the switch's fail; the retry hangs.
+        if (++w.__writes < 3) return Promise.reject("disk full");
+        return new Promise((r) => (w.__answer = () => r({ result: null })));
+      };
+    }, canvas ? "write_canvas" : "write_note");
+    const writes = () => page.evaluate(() => (window as unknown as { __writes: number }).__writes);
+    if (canvas) {
+      await page.locator(".canvas-node").first().click();
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await page.locator(".canvas-view").press("Delete");
+    } else {
+      await page.keyboard.press("ControlOrMeta+End");
+      await page.keyboard.type("z");
+    }
+    await expect.poll(writes).toBe(1); // a retry is set for 2 s on
+    await pickVault(page, "/mock/bad");
+    await expect.poll(writes, { timeout: 8000 }).toBe(3); // the retry, while the open is under way
+    await expect(page.locator("main.main")).toHaveAttribute("inert", "");
+    const answer = () => page.evaluate(() => (window as unknown as { __answer: () => void }).__answer());
+    const status = page.locator(".status").first();
+    if (first) {
+      await answer();
+      await expect(status).toHaveText("Saved");
+    }
+    await page.evaluate(() => (window as unknown as { __failOpen: () => void }).__failOpen());
+    await opened(page);
+    if (!first) await answer();
+    await expect(status).not.toContainText("Saving");
+    await expect(page.locator(".tree-row.file", { hasText: "Ideas" })).toHaveCount(1);
+  });
+}
