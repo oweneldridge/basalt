@@ -35,11 +35,16 @@ describe("the linear parsers", () => {
       "a \nb",
       "a\\\nb",
       "a    b  \nc",
+      "[a]:\rb",
+      "[a]: b\r'title'",
+      "[a]: b\r\n't'\r\nc",
+      "[a]: <b>\r(t)",
+      "a  \r\nb",
     ])
       expect(nodes(linear, md), JSON.stringify(md)).toBe(nodes(stock, md));
     let seed = 7;
-    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-    const parts = ["[a]:", "[a]: b", "[a]: <b>", "[a]: <b", " \"t\"", " 't'", " (t)", " \"t", " 't", " (t", "t\"", "t)", "x", " ", "  ", "\\", "\"", "(", ")", "> ", "- ", "===", "|a|b|", "|-|-|", "$$", "```", "", "[", "]", ":"];
+    const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
+    const parts = ["[a]:", "[a]: b", "[a]: <b>", "[a]: <b", " \"t\"", " 't'", " (t)", " \"t", " 't", " (t", "t\"", "t)", "x", " ", "  ", "\\", "\"", "(", ")", "> ", "- ", "===", "|a|b|", "|-|-|", "$$", "```", "", "[", "]", ":", "\r", " \r"];
     for (let n = 0; n < 3000; n++) {
       const lines: string[] = [];
       for (let l = 0, len = 1 + Math.floor(rnd() * 5); l < len; l++) {
