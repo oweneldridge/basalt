@@ -11,7 +11,7 @@
 // math, footnotes, tags and tasks of any status. `%%comments%%`, `^block` ids,
 // footnote definitions and frontmatter are taken out first, line for line, so
 // a task's checkbox still points at its source line.
-import { parser as baseParser, GFM } from "@lezer/markdown";
+import { parser as baseParser } from "@lezer/markdown";
 import type { BlockContext, DelimiterType, InlineContext, Line, MarkdownConfig } from "@lezer/markdown";
 import type { SyntaxNode } from "@lezer/common";
 import { blockDepths, frontmatterEnd, mdImageTarget, proseMask, TAG_BEFORE, TAG_NAME, wikilinkLabel } from "./markdown";
@@ -20,7 +20,7 @@ const TAG_AT = new RegExp(`^#(${TAG_NAME})`, "u");
 import { parseFm } from "./frontmatter";
 import { calloutColor, calloutIcon } from "./callouticons";
 import { ObsidianTasks } from "./mdTasks";
-import { ObsidianTables } from "./mdTables";
+import { ObsidianTables, SafeGFM } from "./mdTables";
 import { LinearParsers } from "./mdLinear";
 
 export function escapeHtml(s: string): string {
@@ -223,7 +223,7 @@ const ObsidianSyntax: MarkdownConfig = {
   ],
 };
 
-const mdParser = baseParser.configure([GFM, ObsidianTasks, ObsidianTables, ObsidianSyntax, LinearParsers]);
+const mdParser = baseParser.configure([...SafeGFM, ObsidianTasks, ObsidianTables, ObsidianSyntax, LinearParsers]);
 // The same blocks with no inline parse, for scans that only need blocks: most
 // of a parse's time goes on inline content.
 const blockParser = mdParser.configure({

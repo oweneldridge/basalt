@@ -25,12 +25,9 @@ import {
   closeBracketsKeymap,
 } from "@codemirror/autocomplete";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { insertNewlineContinueMarkupCommand, markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { commonmarkLanguage, insertNewlineContinueMarkupCommand, markdown } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
-import { GFM } from "@lezer/markdown";
-import { ObsidianTasks } from "../lib/mdTasks";
-import { ObsidianTables } from "../lib/mdTables";
-import { LinearParsers } from "../lib/mdLinear";
+import { editorMarkdown } from "./markdownExt";
 import { vim } from "@replit/codemirror-vim";
 
 import { markdownKeys } from "./markdownKeys";
@@ -332,7 +329,7 @@ export function createEditorState(
     spellcheckCompartment.of(
       EditorView.contentAttributes.of({ spellcheck: spellcheck ? "true" : "false" }),
     ),
-    markdown({ base: markdownLanguage, codeLanguages: languages, extensions: [GFM, ObsidianTasks, ObsidianTables, LinearParsers], addKeymap: false }),
+    markdown({ base: commonmarkLanguage, codeLanguages: languages, extensions: editorMarkdown, addKeymap: false }),
     // Enter on an empty item leaves the list in one press, without first
     // turning a tight list loose (Obsidian); Backspace eats list markup.
     Prec.high(
