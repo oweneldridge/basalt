@@ -649,12 +649,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Obsidian's order. Default ends (none at the start, an arrow at the end)
   are left out.
 - Canvas drags work by touch and pen. A finger dragging a card, panning or
-  drawing a connection is no longer taken over by the browser, a second
-  finger or a pen is ignored until the first lifts, focus and selection
-  included, a finger drags a card from anywhere on it, even a wide code
-  block, and a drag the system cancels
-  ends there instead of staying stuck: a card it was moving or resizing goes
-  back, and a selection box or connection it was drawing goes away.
+  drawing a connection is no longer taken over by the browser, and a finger
+  drags a card from anywhere on it, a wide code block included. A second
+  finger or a pen is ignored until the first lifts, and moves neither focus
+  nor the selection. A drag the system cancels ends there instead of staying
+  stuck: a card it was moving or resizing goes back, and a selection box or
+  connection it was drawing goes away.
 - A selected canvas card's connection points and resize handle show in full
   past its edge, so their middles can be pressed. A group's label too long for
   it ends in an ellipsis inside the group, with the whole label on hover, so
