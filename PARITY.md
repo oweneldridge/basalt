@@ -141,6 +141,12 @@ button for the rest; Obsidian scrolls through all of them.
 - Brought in line: relative links to the note's own folder or below have no
   `./`, `[text](<path>)` links keep their angle brackets, and canvases are
   written in Obsidian's layout, one line per card.
+- Canvas saves, checked by hand in a throwaway vault (2026-10-18): Obsidian
+  puts an entry per line in any object or array that holds another, even an
+  empty one, and saves a dragged card last. Basalt now does both.
+- Still different: Obsidian snaps a dragged card to a 20-unit grid and writes
+  a card's keys in its own order; Basalt doesn't snap and keeps the order it
+  read.
 - Still different, on purpose: Obsidian rewrote a link in a Latin-1 note and
   turned its `é` into a replacement character; Basalt leaves notes that
   aren't UTF-8 untouched, so the link there goes stale.

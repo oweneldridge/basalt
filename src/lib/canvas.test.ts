@@ -276,9 +276,15 @@ describe("canvas layout on disk", () => {
     expect(saved.endsWith("\n}")).toBe(true);
   });
 
-  it("lays out only nodes and edges one per line; other keys stay on their line", () => {
-    expect(canvasText({ nodes: [], edges: [], tags: ["a", ["b"]] })).toBe('{\n\t"nodes":[],\n\t"edges":[],\n\t"tags":["a",["b"]]\n}');
-    expect(canvasText({ nodes: [{ id: "a" }], edges: [{ id: "e" }] })).toBe('{\n\t"nodes":[\n\t\t{"id":"a"}\n\t],\n\t"edges":[\n\t\t{"id":"e"}\n\t]\n}');
+  it("lays out a value an entry per line when it holds an object or array, as Obsidian 1.14 saves", () => {
+    // Saved by Obsidian after a drag, so their nodes and keys are in its order.
+    for (const saved of [
+      "{\n\t\"nodes\":[\n\t\t{\"id\":\"b2\",\"type\":\"text\",\"text\":\"Second card\",\"x\":400,\"y\":0,\"width\":250,\"height\":60},\n\t\t{\"id\":\"a1\",\"type\":\"text\",\"text\":\"Drag me a little\",\"x\":20,\"y\":0,\"width\":250,\"height\":60}\n\t],\n\t\"edges\":[\n\t\t{\"id\":\"e1\",\"fromNode\":\"a1\",\"fromSide\":\"right\",\"toNode\":\"b2\",\"toSide\":\"left\"}\n\t],\n\t\"groups\":[\n\t\t{\"id\":\"g1\",\"label\":\"one\"},\n\t\t{\"id\":\"g2\",\"label\":\"two\"}\n\t],\n\t\"tags\":[\"x\",\"y\"],\n\t\"empty\":[],\n\t\"meta\":{\n\t\t\"list\":[1,2],\n\t\t\"note\":\"kept\"\n\t}\n}",
+      "{\n\t\"nodes\":[\n\t\t{\n\t\t\t\"id\":\"n2\",\n\t\t\t\"type\":\"text\",\n\t\t\t\"text\":\"Two: click me once\",\n\t\t\t\"extra\":{\n\t\t\t\t\"a\":[1]\n\t\t\t},\n\t\t\t\"x\":0,\n\t\t\t\"y\":150,\n\t\t\t\"width\":250,\n\t\t\t\"height\":60\n\t\t},\n\t\t{\"id\":\"n3\",\"type\":\"text\",\"text\":\"Three\",\"x\":0,\"y\":300,\"width\":250,\"height\":60},\n\t\t{\n\t\t\t\"id\":\"n1\",\n\t\t\t\"type\":\"text\",\n\t\t\t\"text\":\"One: drag me\",\n\t\t\t\"styleAttributes\":{},\n\t\t\t\"x\":60,\n\t\t\t\"y\":0,\n\t\t\t\"width\":250,\n\t\t\t\"height\":60\n\t\t}\n\t],\n\t\"edges\":[],\n\t\"mixed\":[\n\t\t1,\n\t\t{\"a\":1}\n\t],\n\t\"arrOfArr\":[\n\t\t[1],\n\t\t[2,3]\n\t],\n\t\"deep\":{\n\t\t\"inner\":{\"x\":1},\n\t\t\"arr\":[\n\t\t\t[1,2],\n\t\t\t[3]\n\t\t],\n\t\t\"objs\":[\n\t\t\t{\"a\":1},\n\t\t\t{\"b\":2}\n\t\t],\n\t\t\"empty\":{}\n\t},\n\t\"emptyObj\":{},\n\t\"num\":5,\n\t\"str\":\"s\"\n}",
+    ])
+      expect(canvasText(JSON.parse(saved))).toBe(saved);
+    expect(canvasText({ nodes: [], edges: [], tags: ["a", ["b"]] })).toBe('{\n\t"nodes":[],\n\t"edges":[],\n\t"tags":[\n\t\t"a",\n\t\t["b"]\n\t]\n}');
+    expect(canvasText({ a: 1, b: "x" })).toBe('{"a":1,"b":"x"}');
     expect(canvasText({})).toBe("{}");
   });
 

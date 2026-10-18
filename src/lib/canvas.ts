@@ -127,16 +127,27 @@ export function serializeCanvas(data: CanvasData): string {
   return canvasText(top);
 }
 
-/** A canvas's JSON laid out as Obsidian writes it: a tab per level, each node
- * and edge on a line of its own, other keys on one line, no newline at the end. */
+/** A canvas's JSON laid out as Obsidian writes it: an object or array that
+ * holds another, even an empty one, has an entry per line, a tab deeper; any
+ * other value stays on one line. No newline at the end. */
 export function canvasText(top: Record<string, unknown>): string {
-  const listed = (key: string, value: unknown): value is unknown[] =>
-    (key === "nodes" || key === "edges") && Array.isArray(value) && value.length > 0;
-  const entry = ([key, value]: [string, unknown]) =>
-    `\t${JSON.stringify(key)}:` +
-    (listed(key, value) ? `[\n${value.map((v) => "\t\t" + JSON.stringify(v)).join(",\n")}\n\t]` : JSON.stringify(value));
-  const entries = Object.entries(top);
-  return entries.length ? `{\n${entries.map(entry).join(",\n")}\n}` : "{}";
+  return laidOut(top, "") ?? "{}";
+}
+
+const isBox = (v: unknown): v is object => typeof v === "object" && v !== null;
+
+function laidOut(v: unknown, indent: string): string | undefined {
+  if (!isBox(v)) return JSON.stringify(v);
+  const list = Array.isArray(v);
+  if (!(list ? v : Object.values(v)).some(isBox)) return JSON.stringify(v);
+  const pad = indent + "\t";
+  const lines = list
+    ? v.map((x) => pad + (laidOut(x, pad) ?? "null"))
+    : Object.entries(v).flatMap(([k, x]) => {
+        const text = laidOut(x, pad);
+        return text === undefined ? [] : [`${pad}${JSON.stringify(k)}:${text}`];
+      });
+  return list ? `[\n${lines.join(",\n")}\n${indent}]` : `{\n${lines.join(",\n")}\n${indent}}`;
 }
 
 function num(v: unknown, fallback = 0): number {

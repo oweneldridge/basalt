@@ -592,8 +592,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   picked from the suggestions alike. An angled link whose new path has a `#`
   or something like `%41` in it is written encoded, so it still opens the
   same file. Saving a canvas keeps the order of its top-level keys, a
-  `__proto__` key included, and only its cards and connections are laid out
-  one per line.
+  `__proto__` key included. Any object or array in it that holds another,
+  even an empty one, gets an entry per line, as Obsidian 1.14 saves it, and
+  everything else stays on one line. A dragged card is saved last, as
+  Obsidian saves the card it brings to the front.
 - A quote or list item whose first line is empty no longer opens with a blank
   line in Reading view, and what's under it reads as in Obsidian: a link
   definition there is hidden and an indented line is code. This comes with

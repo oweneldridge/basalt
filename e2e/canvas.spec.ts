@@ -14,21 +14,42 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("shift-click selects multiple nodes and drag moves them together", async ({ page }) => {
-  const nodes = page.locator(".canvas-node");
-  const a0 = (await nodes.nth(0).boundingBox())!;
-  const b0 = (await nodes.nth(1).boundingBox())!;
-  await nodes.nth(0).click();
-  await nodes.nth(1).click({ modifiers: ["Shift"] });
+  const node = (t: string) => page.locator(".canvas-node", { hasText: t });
+  const a0 = (await node("Node A").boundingBox())!;
+  const b0 = (await node("Node B").boundingBox())!;
+  await node("Node A").click();
+  await node("Node B").click({ modifiers: ["Shift"] });
   await expect(page.locator(".canvas-selcount")).toHaveText("2 selected");
-  // Drag node 0 → both move by the same delta.
+  // Drag node A → both move by the same delta.
   await page.mouse.move(a0.x + a0.width / 2, a0.y + a0.height / 2);
   await page.mouse.down();
   await page.mouse.move(a0.x + a0.width / 2 + 90, a0.y + a0.height / 2, { steps: 6 });
   await page.mouse.up();
-  const a1 = (await page.locator(".canvas-node").nth(0).boundingBox())!;
-  const b1 = (await page.locator(".canvas-node").nth(1).boundingBox())!;
+  const a1 = (await node("Node A").boundingBox())!;
+  const b1 = (await node("Node B").boundingBox())!;
   expect(Math.round(a1.x - a0.x)).toBeGreaterThan(70);
   expect(Math.round(b1.x - b0.x)).toBeGreaterThan(70); // moved as a group
+});
+
+test("a dragged card is saved last, as Obsidian brings it to the front", async ({ page }) => {
+  await page.evaluate(() => {
+    const w = window as unknown as { __saved: string[]; __mockHook: (cmd: string, a: { content?: string }) => void };
+    w.__saved = [];
+    w.__mockHook = (cmd, a) => void (cmd === "write_canvas" && w.__saved.push(String(a.content)));
+  });
+  const box = (await page.locator(".canvas-node", { hasText: "Node A" }).boundingBox())!;
+  await page.locator(".canvas-node", { hasText: "Node B" }).click();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator(".canvas-node")).toHaveText([/Node B/, /Node C/, /Node A/]);
+  const ids = () =>
+    page.evaluate(() => {
+      const saved = (window as unknown as { __saved: string[] }).__saved;
+      return saved.length ? (JSON.parse(saved[saved.length - 1]).nodes as { id: string }[]).map((n) => n.id) : [];
+    });
+  await expect.poll(ids).toEqual(["a2", "a3", "a1"]);
 });
 
 test("delete removes the whole selection", async ({ page }) => {

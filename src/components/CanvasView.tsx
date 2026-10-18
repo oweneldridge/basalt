@@ -431,15 +431,14 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
       window.removeEventListener("pointerup", up);
       if (raf) cancelAnimationFrame(raf);
       if (delta) {
-        // Commit all moved nodes in one emit (single undo step).
+        // Commit all moved nodes in one emit (single undo step), last in the
+        // list as Obsidian saves them, so they draw on top.
         const d = dataRef.current;
-        emit({
-          ...d,
-          nodes: d.nodes.map((n) => {
-            const o = orig.get(n.id);
-            return o && delta ? { ...n, x: Math.round(o.x + delta.dx), y: Math.round(o.y + delta.dy) } : n;
-          }),
+        const moved = d.nodes.map((n) => {
+          const o = orig.get(n.id);
+          return o && delta ? { ...n, x: Math.round(o.x + delta.dx), y: Math.round(o.y + delta.dy) } : n;
         });
+        emit({ ...d, nodes: [...moved.filter((n) => !orig.has(n.id)), ...moved.filter((n) => orig.has(n.id))] });
       }
     };
     window.addEventListener("pointermove", move);
