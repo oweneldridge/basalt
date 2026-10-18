@@ -575,7 +575,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   succession, the later change's time is the one kept, even if reading the
   first change's text is slow. An older read that lands after a newer one
   no longer puts back its text or times, and a change read as the vault
-  switches stays out of the next vault.
+  switches stays out of the next vault. A change to a note's time alone
+  (iCloud, a touch) that comes in while an outside edit is being read keeps
+  its time, and the edit's text still reaches the editor and search.
 - While another vault opens, the notes take no typing and only another switch
   can run (the command palette offers just that), so nothing typed, and no
   daily note asked for, lands in the wrong vault. This holds until every
@@ -593,15 +595,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   finishes before a switch no longer asks whether to drop unsaved changes.
   A save that stops answering no longer holds a switch: once no save has
   landed for 4 seconds, Basalt asks whether to switch anyway and lose the
-  unsaved changes. The vault's plugins stop before it goes, so they write
-  nothing into the next one, and an `onunload` that never finishes is cut off
-  after 3 seconds. A daily note the old vault's plugins ask for is made in
-  neither vault, and the new vault's own plugins get theirs once it's open. A
-  switch closes any open dialog, a link to the vault that's going opens its
-  note after switching back to it, a Mac's Ctrl text keys (Ctrl-A, Ctrl-E and
-  the rest) still work in the palette and the vault picker, a recording
-  under way is saved into the old vault's note, and "Opened Work" is
-  announced only for the switch that ends up open.
+  unsaved changes, and the next vault doesn't show "Saving…" for it. A
+  rename, folder move, Link or Link all under way finishes in the old vault
+  first; one that stops answering is left there, and does nothing in the next
+  vault. The vault's plugins stop before it goes, so they write nothing into
+  the next one, one turned off just before included, and an `onunload` that
+  never finishes is cut off after 3 seconds. A plugin stopped before its
+  `onload` finished adds no commands, icons or timers after, and a stopped
+  plugin can't read the next vault. A vault opened only on the way to
+  another loads no plugins, and a vault's plugins load once when it opens. A
+  daily note the old vault's plugins ask for is made in neither vault, and
+  the new vault's own plugins get theirs once it's open. A switch closes any
+  open dialog, a link to the vault that's going opens its note after
+  switching back to it, a Mac's Ctrl text keys (Ctrl-A, Ctrl-E and the rest)
+  still work in the palette and the vault picker, a recording under way is
+  saved into the old vault's note (or goes on, if you turn the switch down),
+  and "Opened Work" is announced only for the switch that ends up open.
 - Renames and moves write links as Obsidian 1.14 does, checked against it by
   hand: a relative link to the note's own folder or below has no `./`, a
   `[text](<path>)` link keeps its angle brackets, and a canvas keeps
