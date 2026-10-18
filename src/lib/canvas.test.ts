@@ -371,6 +371,8 @@ describe("canvas groups", () => {
     )!;
     expect(passInGroups(data, new Set(["g"]))).toEqual([0, 1]);
     expect(passInGroups(data, new Set(["other"]))).toEqual([]);
+    const card = parseCanvas(JSON.stringify({ nodes: [{ id: "t", type: "text", text: "", x: 0, y: 0, width: 400, height: 300 }, { id: "p", type: "future", x: 10, y: 10, width: 5, height: 5 }] }))!;
+    expect(passInGroups(card, new Set(["t"]))).toEqual([]);
     expect(passInGroups({ ...data, passNodes: undefined }, new Set(["g"]))).toEqual([]);
     const moved = movePassNodes(data.passNodes, [0, 1], 20.4, -5.6)!;
     expect(moved[0]).toEqual({ id: "in", type: "future", x: 50, y: 144, width: 50, height: 50, extra: { a: 1 } });
