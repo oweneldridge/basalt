@@ -216,3 +216,33 @@ test("a group dragged over a smaller one goes under it", async ({ page }) => {
   await expect.poll(() => savedIds(page)).toEqual(["big", "small", "c1"]);
   expect(await labelHits(page, "Small")).toBe("Group: Small");
 });
+
+test("moving a group moves what's inside it, by mouse or keyboard", async ({ page }) => {
+  await openCanvas(page, "Holds", [
+    { id: "outer", type: "group", label: "Outer", x: -40, y: -60, width: 520, height: 360 },
+    { id: "inner", type: "group", label: "Inner", x: 20, y: 0, width: 260, height: 200 },
+    { id: "c1", type: "text", text: "In", x: 60, y: 60, width: 160, height: 60 },
+    { id: "c2", type: "text", text: "Half", x: 400, y: 0, width: 160, height: 60 },
+    { id: "c3", type: "text", text: "Out", x: 700, y: 0, width: 160, height: 60 },
+  ]);
+  await recordWrites(page);
+  const xy = () =>
+    page.evaluate(() => {
+      const s = (window as unknown as { __saved: string[] }).__saved;
+      const nodes = JSON.parse(s[s.length - 1]).nodes as { id: string; x: number; y: number }[];
+      return Object.fromEntries(nodes.map((n) => [n.id, [n.x, n.y]]));
+    });
+  const k = (await page.locator(".canvas-group", { hasText: "Outer" }).boundingBox())!.width / 520;
+  const label = (await page.locator(".canvas-group-label", { hasText: "Outer" }).boundingBox())!;
+  await dragBy(page, { x: label.x + 5, y: label.y + 5 }, 50 * k, 30 * k);
+  await expect.poll(() => writes(page)).toBe(1);
+  const moved = await xy();
+  const [dx, dy] = [moved.outer[0] + 40, moved.outer[1] + 60];
+  expect(dx).toBeGreaterThan(30);
+  expect(moved).toEqual({ outer: [-40 + dx, -60 + dy], inner: [20 + dx, dy], c1: [60 + dx, 60 + dy], c2: [400, 0], c3: [700, 0] });
+  // The inner group alone takes only its own card, and arrows do the same.
+  await page.locator(".canvas-node", { hasText: "Inner" }).first().focus();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => writes(page)).toBe(2);
+  expect(await xy()).toEqual({ ...moved, inner: [40 + dx, dy], c1: [80 + dx, 60 + dy] });
+});

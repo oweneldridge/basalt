@@ -6,6 +6,7 @@ import {
   canvasBounds,
   canvasColor,
   orderGroups,
+  withGroupContents,
   type CanvasData,
   type CanvasNode,
   type CanvasEdge,
@@ -357,9 +358,9 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
         else return;
       } else if (moves[e.key] && editable) {
         const [dx, dy] = moves[e.key];
-        const sel = selectedRef.current;
         const d = dataRef.current;
-        emit({ ...d, nodes: d.nodes.map((m) => (sel.has(m.id) ? { ...m, x: m.x + dx, y: m.y + dy } : m)) });
+        const ids = withGroupContents(d.nodes, selectedRef.current);
+        emit({ ...d, nodes: d.nodes.map((m) => (ids.has(m.id) ? { ...m, x: m.x + dx, y: m.y + dy } : m)) });
       } else if (e.key === "Escape") {
         clearSel();
       } else {
@@ -402,7 +403,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
       selectOne(id);
       moveIds = [id];
     }
-    const moveNodeIds = new Set(dataRef.current.nodes.filter((n) => moveIds.includes(n.id)).map((n) => n.id));
+    const moveNodeIds = withGroupContents(dataRef.current.nodes, moveIds);
     const node = dataRef.current.nodes.find((n) => n.id === id);
     if (!node) return;
     const start = toWorld(e.clientX, e.clientY);

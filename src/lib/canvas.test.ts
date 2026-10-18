@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCanvas, serializeCanvas, canvasBounds, canvasColor, canvasText, rewriteCanvasFileRefs, orderGroups, type CanvasNode } from "./canvas";
+import { parseCanvas, serializeCanvas, canvasBounds, canvasColor, canvasText, rewriteCanvasFileRefs, withGroupContents, orderGroups, type CanvasNode } from "./canvas";
 
 describe("serializeCanvas", () => {
   it("round-trips parse → serialize → parse", () => {
@@ -342,6 +342,17 @@ describe("canvas layout on disk", () => {
 describe("canvas groups", () => {
   const g = (id: string, x: number, y: number, width: number, height: number): CanvasNode => ({ id, type: "group", x, y, width, height });
   const t = (id: string, x: number, y: number): CanvasNode => ({ id, type: "text", text: id, x, y, width: 50, height: 20 });
+
+  it("a group moves with what lies wholly inside it, nested groups included", () => {
+    const nodes = [g("outer", 0, 0, 400, 300), g("inner", 20, 20, 200, 150), t("a", 30, 30), t("edge", 390, 10), t("out", 500, 0)];
+    expect([...withGroupContents(nodes, ["outer"])].sort()).toEqual(["a", "inner", "outer"]);
+    expect([...withGroupContents(nodes, ["inner"])].sort()).toEqual(["a", "inner"]);
+    expect([...withGroupContents(nodes, ["a"])]).toEqual(["a"]);
+    // Only a group holds things; a card over a smaller one moves alone.
+    expect([...withGroupContents([{ ...t("big", 0, 0), width: 500, height: 500 }, t("a", 10, 10)], ["big"])]).toEqual(["big"]);
+    // Touching the edges still counts as inside.
+    expect([...withGroupContents([g("box", 0, 0, 50, 20), t("fit", 0, 0)], ["box"])].sort()).toEqual(["box", "fit"]);
+  });
 
   it("orders a group before the smaller groups inside it, and otherwise keeps the order", () => {
     const ids = (ns: CanvasNode[]) => orderGroups(ns).map((n) => n.id);

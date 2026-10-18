@@ -342,6 +342,17 @@ export function canvasBounds(
 const inside = (a: CanvasNode, b: CanvasNode) =>
   b.x >= a.x && b.y >= a.y && b.x + b.width <= a.x + a.width && b.y + b.height <= a.y + a.height;
 
+/** The ids given, plus every node inside a group among them: moving a group
+ * moves what it holds, as in Obsidian. */
+export function withGroupContents(nodes: CanvasNode[], ids: Iterable<string>): Set<string> {
+  const out = new Set(ids);
+  for (const g of nodes) {
+    if (g.type !== "group" || !out.has(g.id)) continue;
+    for (const n of nodes) if (inside(g, n)) out.add(n.id);
+  }
+  return out;
+}
+
 /** Groups before cards, and a group before any smaller group inside it, so
  * none covers another it holds; otherwise the order is kept. */
 export function orderGroups(nodes: CanvasNode[]): CanvasNode[] {
