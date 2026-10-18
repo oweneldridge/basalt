@@ -625,6 +625,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and a connection's sides, ends, colour and label, which go last in
   Obsidian's order. Default ends (none at the start, an arrow at the end)
   are left out.
+- Canvas drags work by touch and pen. A finger dragging a card, panning or
+  drawing a connection is no longer taken over by the browser, a second
+  finger is ignored until the first lifts, and a drag the system cancels
+  ends there instead of staying stuck: a card it was moving or resizing goes
+  back, and a selection box or connection it was drawing goes away.
 - A quote or list item whose first line is empty no longer opens with a blank
   line in Reading view, and what's under it reads as in Obsidian: a link
   definition there is hidden and an indented line is code. This comes with

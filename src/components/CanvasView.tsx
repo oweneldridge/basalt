@@ -187,16 +187,50 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
     };
   }, []);
 
+  // One pointer drives a drag at a time: another finger is ignored until it
+  // ends, and a cancelled touch or pen, or lost capture, ends it as cancelled.
+  const dragPointer = useRef<number | null>(null);
+  const follow = (
+    e: { pointerId: number },
+    el: HTMLElement | null,
+    on: { move: (ev: PointerEvent) => void; up: (ev: PointerEvent) => void; cancel: () => void },
+  ) => {
+    const id = e.pointerId;
+    el?.setPointerCapture(id);
+    dragPointer.current = id;
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      el?.removeEventListener("lostpointercapture", cancel);
+      dragPointer.current = null;
+    };
+    const move = (ev: PointerEvent) => ev.pointerId === id && on.move(ev);
+    const up = (ev: PointerEvent) => {
+      if (ev.pointerId !== id) return;
+      end();
+      on.up(ev);
+    };
+    const cancel = (ev: PointerEvent) => {
+      if (ev.pointerId !== id) return;
+      end();
+      on.cancel();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    el?.addEventListener("lostpointercapture", cancel);
+  };
+
   // Pan (drag empty space) + zoom (wheel toward the cursor).
   useEffect(() => {
     const vp = viewport.current;
     if (!vp) return;
-    let panning = false;
-    let banding = false;
     let bandStart = { x: 0, y: 0 };
     let lastX = 0;
     let lastY = 0;
     const onDown = (e: PointerEvent) => {
+      if (dragPointer.current !== null) return;
       const el = e.target as HTMLElement;
       // Ignore drags starting on a node/handle/anchor, the toolbar, or an open
       // context menu — a native listener here would otherwise clear the
@@ -211,51 +245,49 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
         return;
       // Shift+drag on empty space = rubber-band select; plain drag = pan.
       if (editable && e.shiftKey) {
-        banding = true;
         bandStart = toWorld(e.clientX, e.clientY);
         setBand({ x0: bandStart.x, y0: bandStart.y, x1: bandStart.x, y1: bandStart.y });
-        vp.setPointerCapture(e.pointerId);
+        follow(e, vp, {
+          move: (ev) => {
+            const p = toWorld(ev.clientX, ev.clientY);
+            setBand({ x0: bandStart.x, y0: bandStart.y, x1: p.x, y1: p.y });
+          },
+          up: (ev) => {
+            const p = toWorld(ev.clientX, ev.clientY);
+            const x0 = Math.min(bandStart.x, p.x);
+            const y0 = Math.min(bandStart.y, p.y);
+            const x1 = Math.max(bandStart.x, p.x);
+            const y1 = Math.max(bandStart.y, p.y);
+            const hit = dataRef.current.nodes
+              .filter((n) => n.x < x1 && n.x + n.width > x0 && n.y < y1 && n.y + n.height > y0)
+              .map((n) => n.id);
+            setSelected(new Set(hit));
+            setBand(null);
+            vp.releasePointerCapture?.(ev.pointerId);
+          },
+          cancel: () => setBand(null),
+        });
         return;
       }
       clearSel();
-      panning = true;
       lastX = e.clientX;
       lastY = e.clientY;
-      vp.setPointerCapture(e.pointerId);
       vp.style.cursor = "grabbing";
-    };
-    const onMove = (e: PointerEvent) => {
-      if (banding) {
-        const p = toWorld(e.clientX, e.clientY);
-        setBand({ x0: bandStart.x, y0: bandStart.y, x1: p.x, y1: p.y });
-        return;
-      }
-      if (!panning) return;
-      t.current.x += e.clientX - lastX;
-      t.current.y += e.clientY - lastY;
-      lastX = e.clientX;
-      lastY = e.clientY;
-      apply();
-    };
-    const onUp = (e: PointerEvent) => {
-      if (banding) {
-        banding = false;
-        const p = toWorld(e.clientX, e.clientY);
-        const x0 = Math.min(bandStart.x, p.x);
-        const y0 = Math.min(bandStart.y, p.y);
-        const x1 = Math.max(bandStart.x, p.x);
-        const y1 = Math.max(bandStart.y, p.y);
-        const hit = dataRef.current.nodes
-          .filter((n) => n.x < x1 && n.x + n.width > x0 && n.y < y1 && n.y + n.height > y0)
-          .map((n) => n.id);
-        setSelected(new Set(hit));
-        setBand(null);
-        vp.releasePointerCapture?.(e.pointerId);
-        return;
-      }
-      panning = false;
-      vp.releasePointerCapture?.(e.pointerId);
-      vp.style.cursor = "grab";
+      const stop = () => (vp.style.cursor = "grab");
+      follow(e, vp, {
+        move: (ev) => {
+          t.current.x += ev.clientX - lastX;
+          t.current.y += ev.clientY - lastY;
+          lastX = ev.clientX;
+          lastY = ev.clientY;
+          apply();
+        },
+        up: (ev) => {
+          vp.releasePointerCapture?.(ev.pointerId);
+          stop();
+        },
+        cancel: stop,
+      });
     };
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -269,13 +301,9 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
       apply();
     };
     vp.addEventListener("pointerdown", onDown);
-    vp.addEventListener("pointermove", onMove);
-    vp.addEventListener("pointerup", onUp);
     vp.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       vp.removeEventListener("pointerdown", onDown);
-      vp.removeEventListener("pointermove", onMove);
-      vp.removeEventListener("pointerup", onUp);
       vp.removeEventListener("wheel", onWheel);
     };
   }, []);
@@ -391,6 +419,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
   const startNodeDrag = (e: React.PointerEvent, id: string) => {
     if (!editable) return;
     e.stopPropagation();
+    if (dragPointer.current !== null) return;
     // Establish the selection this drag operates on.
     const cur = selectedRef.current;
     let moveIds: string[];
@@ -409,7 +438,6 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
     const start = toWorld(e.clientX, e.clientY);
     // Original positions of every node moving in this drag.
     const orig = new Map(dataRef.current.nodes.filter((n) => moveNodeIds.has(n.id)).map((n) => [n.id, { x: n.x, y: n.y }]));
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
     let raf = 0;
     let delta: { dx: number; dy: number } | null = null;
     const move = (ev: PointerEvent) => {
@@ -430,9 +458,8 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
             }));
         });
     };
+    const putBack = () => setData((d) => ({ ...d, nodes: d.nodes.map((n) => ({ ...n, ...orig.get(n.id) })) }));
     const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
       if (raf) cancelAnimationFrame(raf);
       if (delta) {
         // Commit all moved nodes in one emit (single undo step), last in the
@@ -448,24 +475,29 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
           return Math.round(o.x + delta!.dx) === o.x && Math.round(o.y + delta!.dy) === o.y;
         });
         if (back) {
-          setData({ ...d, nodes: d.nodes.map((n) => ({ ...n, ...orig.get(n.id) })) });
+          putBack();
           return;
         }
         const order = [...moved.filter((n) => !orig.has(n.id)), ...moved.filter((n) => orig.has(n.id))];
         emit({ ...d, nodes: orderGroups(order) });
       }
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    follow(e, e.target as HTMLElement, {
+      move,
+      up,
+      cancel: () => {
+        if (raf) cancelAnimationFrame(raf);
+        if (delta) putBack();
+      },
+    });
   };
 
   const startResize = (e: React.PointerEvent, id: string) => {
     e.stopPropagation();
     const node = dataRef.current.nodes.find((n) => n.id === id);
-    if (!node) return;
+    if (!node || dragPointer.current !== null) return;
     const start = toWorld(e.clientX, e.clientY);
     const orig = { w: node.width, h: node.height };
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
     let raf = 0;
     let pending: { width: number; height: number } | null = null;
     const move = (ev: PointerEvent) => {
@@ -481,21 +513,24 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
             setData((d) => ({ ...d, nodes: d.nodes.map((n) => (n.id === id ? { ...n, ...pending } : n)) }));
         });
     };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      if (raf) cancelAnimationFrame(raf);
-      if (pending) patchNode(id, pending);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    follow(e, e.target as HTMLElement, {
+      move,
+      up: () => {
+        if (raf) cancelAnimationFrame(raf);
+        if (pending) patchNode(id, pending);
+      },
+      cancel: () => {
+        if (raf) cancelAnimationFrame(raf);
+        if (pending) setData((d) => ({ ...d, nodes: d.nodes.map((n) => (n.id === id ? { ...n, width: orig.w, height: orig.h } : n)) }));
+      },
+    });
   };
 
   // Drag from a side anchor → draw an edge to another node.
   const startEdge = (e: React.PointerEvent, id: string, side: Side) => {
     e.stopPropagation();
     const from = dataRef.current.nodes.find((n) => n.id === id);
-    if (!from) return;
+    if (!from || dragPointer.current !== null) return;
     const a = anchor(from, side);
     setDrawingEdge({ from: id, side, x: a.x, y: a.y });
     const move = (ev: PointerEvent) => {
@@ -503,8 +538,6 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
       setDrawingEdge((cur) => (cur ? { ...cur, x: p.x, y: p.y } : cur));
     };
     const up = (ev: PointerEvent) => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
       const p = toWorld(ev.clientX, ev.clientY);
       const target = dataRef.current.nodes.find(
         (n) => n.id !== id && p.x >= n.x && p.x <= n.x + n.width && p.y >= n.y && p.y <= n.y + n.height,
@@ -522,8 +555,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
         emit({ ...dataRef.current, edges: [...dataRef.current.edges, edge] });
       }
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    follow(e, null, { move, up, cancel: () => setDrawingEdge(null) });
   };
 
   // Double-click empty space → create a text node there and edit it.

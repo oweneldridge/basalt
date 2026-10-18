@@ -2001,7 +2001,7 @@ button.primary:hover {
 .embed-loading { color: var(--text-muted); }
 
 /* ------- Canvas editing ------- */
-.canvas-view { position: relative; }
+.canvas-view { position: relative; touch-action: none; }
 .canvas-node { user-select: none; }
 .canvas-text.editing { padding: 0; }
 .canvas-text-input {

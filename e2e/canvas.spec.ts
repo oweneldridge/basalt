@@ -246,3 +246,200 @@ test("moving a group moves what's inside it, by mouse or keyboard", async ({ pag
   await expect.poll(() => writes(page)).toBe(2);
   expect(await xy()).toEqual({ ...moved, inner: [40 + dx, dy], c1: [80 + dx, 60 + dy] });
 });
+
+// Sends a pointer event the browser itself would send for a touch or pen: a
+// cancel, lost capture, or a second finger.
+const send = (
+  page: import("@playwright/test").Page,
+  type: string,
+  at: string,
+  init: { second?: boolean; x?: number; y?: number; movedTo?: { x: number; y: number } } = {},
+) =>
+  page.evaluate(
+    ([type, at, init]) => {
+      const w = window as unknown as { __pid: number; __pressed: EventTarget };
+      const el = at === "window" ? window : at === "pressed" ? w.__pressed : document.querySelector(at)!;
+      const pointerId = init.second ? w.__pid + 7 : w.__pid;
+      // A last move in the same frame, so the cancel lands before it's drawn.
+      if (init.movedTo) window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId, clientX: init.movedTo.x, clientY: init.movedTo.y }));
+      el.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId, clientX: init.x ?? 0, clientY: init.y ?? 0 }));
+    },
+    [type, at, init] as const,
+  );
+const watchPointer = (page: import("@playwright/test").Page) =>
+  page.evaluate(() =>
+    window.addEventListener(
+      "pointerdown",
+      (e) => {
+        const w = window as unknown as { __pid: number; __pressed: EventTarget };
+        w.__pid = e.pointerId;
+        if (e.isTrusted) w.__pressed = e.target!;
+      },
+      true,
+    ),
+  );
+const nodeA = '.canvas-node[aria-label="Text: Node A"]';
+
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true });
+  test("a card follows a finger, and the browser doesn't take the drag to scroll", async ({ page }) => {
+    await recordWrites(page);
+    const a = page.locator(nodeA);
+    const box = (await a.boundingBox())!;
+    const cdp = await page.context().newCDPSession(page);
+    const at = (dx: number) => [{ x: box.x + 20 + dx, y: box.y + box.height / 2, id: 1 }];
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: at(0) });
+    for (let i = 1; i <= 8; i++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at(i * 10) });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect.poll(() => writes(page)).toBe(1);
+    expect(Math.round((await a.boundingBox())!.x - box.x)).toBe(80);
+  });
+
+  for (const where of ["Node B", "empty space", "the resize handle", "a connection anchor"]) {
+    test(`a second finger on ${where} mid-drag changes nothing`, async ({ page }) => {
+      await recordWrites(page);
+      const a = page.locator(nodeA);
+      const b = page.locator(".canvas-node", { hasText: "Node B" });
+      const box = (await a.boundingBox())!;
+      const b0 = (await b.boundingBox())!;
+      const view = (await page.locator(".canvas-view").boundingBox())!;
+      const transform = await page.locator(".canvas-world").evaluate((el) => (el as HTMLElement).style.transform);
+      const cdp = await page.context().newCDPSession(page);
+      const one = (dx: number) => ({ x: box.x + 20 + dx, y: box.y + box.height / 2, id: 1 });
+      const touch = (type: string, touchPoints: object[]) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints });
+      await touch("touchStart", [one(0)]);
+      for (let i = 1; i <= 4; i++) await touch("touchMove", [one(i * 10)]);
+      await expect.poll(async () => Math.round((await a.boundingBox())!.x - box.x)).toBe(40);
+      const spot = async () => {
+        if (where === "Node B") return { x: b0.x + 10, y: b0.y + 10 };
+        if (where === "empty space") return { x: view.x + 10, y: view.y + view.height - 10 };
+        const r = (await a.locator(where === "the resize handle" ? ".canvas-handle" : ".canvas-anchor-bottom").boundingBox())!;
+        // The card clips each one's outer half.
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 - 3 };
+      };
+      const p = await spot();
+      const two = (d: number) => ({ x: p.x + d, y: p.y + d, id: 2 });
+      await touch("touchStart", [one(40), two(0)]);
+      for (let i = 1; i <= 4; i++) await touch("touchMove", [one(40), two(i * 30)]);
+      await page.waitForTimeout(100);
+      expect(Math.round((await a.boundingBox())!.x - box.x)).toBe(40);
+      expect((await a.boundingBox())!.width).toBe(box.width);
+      await expect(page.locator(".canvas-edges path[stroke-dasharray]")).toHaveCount(0);
+      await touch("touchMove", [one(40)]);
+      for (let i = 5; i <= 6; i++) await touch("touchMove", [one(i * 10)]);
+      await touch("touchEnd", []);
+      await expect.poll(() => writes(page)).toBe(1);
+      expect(Math.round((await a.boundingBox())!.x - box.x)).toBe(60);
+      expect((await b.boundingBox())!).toEqual(b0);
+      expect(await page.locator(".canvas-world").evaluate((el) => (el as HTMLElement).style.transform)).toBe(transform);
+      expect(await b.evaluate((el) => (el as HTMLElement).style.boxShadow)).toBe("");
+      expect(await a.evaluate((el) => (el as HTMLElement).style.boxShadow)).not.toBe("");
+    });
+  }
+});
+
+for (const how of ["pointercancel", "lostpointercapture"]) {
+  test(`a card drag ended by ${how} puts the card back and saves nothing`, async ({ page }) => {
+    await recordWrites(page);
+    await watchPointer(page);
+    const a = page.locator(nodeA);
+    const box = (await a.boundingBox())!;
+    // Pressed on the card's text, which re-renders as the card moves.
+    await page.mouse.move(box.x + 20, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 80, box.y + box.height / 2, { steps: 4 });
+    await expect.poll(async () => (await a.boundingBox())!.x).toBeGreaterThan(box.x + 30);
+    // The browser sends a lost capture to the element that had it.
+    await send(page, how, how === "pointercancel" ? "window" : "pressed", { movedTo: { x: box.x + 120, y: box.y + box.height / 2 } });
+    await page.mouse.move(box.x + 160, box.y + box.height / 2, { steps: 4 });
+    await page.mouse.up();
+    await expect.poll(async () => Math.round((await a.boundingBox())!.x)).toBe(Math.round(box.x));
+    expect(await writes(page)).toBe(0);
+    // Nothing is left stuck: the next drag moves and saves.
+    await dragBy(page, { x: box.x + 20, y: box.y + box.height / 2 }, 60);
+    await expect.poll(() => writes(page)).toBe(1);
+  });
+}
+
+test("another pointer's moves, lift or cancel don't touch a card's drag", async ({ page }) => {
+  await recordWrites(page);
+  await watchPointer(page);
+  const a = page.locator(nodeA);
+  const b = page.locator(".canvas-node", { hasText: "Node B" });
+  const box = (await a.boundingBox())!;
+  const b0 = (await b.boundingBox())!;
+  await page.mouse.move(box.x + 20, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 60, box.y + box.height / 2, { steps: 4 });
+  await send(page, "pointerdown", '.canvas-node[aria-label="Text: Node B"]', { second: true, x: b0.x + 10, y: b0.y + 10 });
+  await send(page, "pointermove", "window", { second: true, x: box.x + 400, y: box.y + 300 });
+  await page.waitForTimeout(100);
+  expect(Math.round((await a.boundingBox())!.x - box.x)).toBe(40);
+  await send(page, "pointerup", "window", { second: true, x: box.x + 400, y: box.y + 300 });
+  await send(page, "pointercancel", "window", { second: true });
+  await page.mouse.move(box.x + 80, box.y + box.height / 2, { steps: 2 });
+  await page.mouse.up();
+  await expect.poll(() => writes(page)).toBe(1);
+  const after = (await a.boundingBox())!;
+  expect(Math.round(after.x - box.x)).toBe(60);
+  expect(Math.round(after.y - box.y)).toBe(0);
+  expect((await b.boundingBox())!).toEqual(b0);
+  await expect(page.locator(".canvas-selcount")).toHaveCount(0);
+  expect(await b.evaluate((el) => (el as HTMLElement).style.boxShadow)).toBe("");
+});
+
+test("a cancelled pan, rubber band, resize or connection stops where it was", async ({ page }) => {
+  await recordWrites(page);
+  await watchPointer(page);
+  const view = (await page.locator(".canvas-view").boundingBox())!;
+  const world = page.locator(".canvas-world");
+  const transform = () => world.evaluate((el) => (el as HTMLElement).style.transform);
+  // Pan from an empty corner; a second finger doesn't move it, a cancel ends it.
+  const x = view.x + 10;
+  const y = view.y + view.height - 10;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 40, y - 5, { steps: 4 });
+  const panned = await transform();
+  await send(page, "pointermove", "window", { second: true, x: x + 300, y: y - 300 });
+  expect(await transform()).toBe(panned);
+  await send(page, "pointercancel", "window");
+  await page.mouse.move(x + 120, y - 40, { steps: 4 });
+  expect(await transform()).toBe(panned);
+  await page.mouse.up();
+  await expect(page.locator(".canvas-view")).toHaveCSS("cursor", "grab");
+  // A rubber band over the cards, cancelled, selects nothing.
+  await page.keyboard.down("Shift");
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(view.x + view.width - 10, view.y + 10, { steps: 4 });
+  await expect(page.locator(".canvas-band")).toHaveCount(1);
+  await send(page, "pointercancel", "window");
+  await expect(page.locator(".canvas-band")).toHaveCount(0);
+  await page.mouse.up();
+  await page.keyboard.up("Shift");
+  await expect(page.locator(".canvas-selcount")).toHaveCount(0);
+  // A resize, cancelled, goes back to the size it had.
+  const a = page.locator(nodeA);
+  await a.click();
+  const size = (await a.boundingBox())!;
+  const handle = (await a.locator(".canvas-handle").boundingBox())!;
+  await page.mouse.move(handle.x + 5, handle.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + 65, handle.y + 45, { steps: 4 });
+  await expect.poll(async () => (await a.boundingBox())!.width).toBeGreaterThan(size.width + 30);
+  await send(page, "pointercancel", "window", { movedTo: { x: handle.x + 85, y: handle.y + 55 } });
+  await page.mouse.up();
+  await expect.poll(async () => Math.round((await a.boundingBox())!.width)).toBe(Math.round(size.width));
+  // A connection, cancelled over another card, isn't made.
+  const anchor = (await a.locator(".canvas-anchor-right").boundingBox())!;
+  const b = (await page.locator(".canvas-node", { hasText: "Node B" }).boundingBox())!;
+  await page.mouse.move(anchor.x + anchor.width / 2 - 3, anchor.y + anchor.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 4 });
+  await expect(page.locator(".canvas-edges path[stroke-dasharray]")).toHaveCount(1);
+  await send(page, "pointercancel", "window");
+  await expect(page.locator(".canvas-edges path[stroke-dasharray]")).toHaveCount(0);
+  await page.mouse.up();
+  expect(await writes(page)).toBe(0);
+});
