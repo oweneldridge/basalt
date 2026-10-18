@@ -4971,9 +4971,8 @@ export default function App() {
     return canvasKeys.current.get(path);
   };
   const carryCanvasKey = (from: string, to: string) => {
-    const k = canvasKeys.current.get(from);
+    canvasKeys.current.set(to, canvasKeys.current.get(from) ?? ++canvasSeq.current);
     canvasKeys.current.delete(from);
-    if (k !== undefined) canvasKeys.current.set(to, k);
   };
   const enqueueRename = useCallback(<T,>(job: () => Promise<T>): Promise<T> => {
     renameJobs.current++;

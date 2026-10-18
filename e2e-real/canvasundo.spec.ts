@@ -70,3 +70,26 @@ test("an edit made outside while a canvas is open can't be undone over", async (
   expect(vault.read("Board.canvas")).toBe(outside);
   await expect(page.locator(".canvas-node", { hasText: "Changed outside" })).toHaveCount(1);
 });
+
+test("a canvas made where a renamed one was starts with no history of its own", async ({ page, vault }) => {
+  await openApp(page, vault);
+  await page.locator(".tree-row.file", { hasText: "Board" }).first().click();
+  await addCard(page);
+  await expect.poll(() => ids(vault.read("Board.canvas")).length).toBe(2);
+  await page.locator(".tree-row.file", { hasText: "Board" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+  await page.locator(".prompt-input").fill("Plan");
+  await page.locator(".prompt-input").press("Enter");
+  await expect.poll(() => vault.exists("Plan.canvas")).toBe(true);
+  await settle(page, 1200);
+  const same = vault.read("Plan.canvas");
+  vault.write("Board.canvas", same);
+  await page.locator(".tree-row.file", { hasText: "Board" }).first().click();
+  await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toContainText("Board");
+  await expect(page.locator(".canvas-node")).toHaveCount(2);
+  await page.locator(".canvas-node").first().focus();
+  await page.keyboard.press("ControlOrMeta+z");
+  await settle(page, 1500);
+  expect(vault.read("Board.canvas")).toBe(same);
+  expect(vault.read("Plan.canvas")).toBe(same);
+});
