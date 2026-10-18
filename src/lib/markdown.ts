@@ -193,12 +193,16 @@ function maskFrom(lines: string[], start: number, mask: boolean[], depth: number
     const headText = line.text;
     let piped: boolean | undefined;
     let table = false;
+    let barred = false;
     while (++i < n) {
       read(i);
       if (line.pos === line.text.length) continue next;
-      if (line.indent < line.baseIndent + 4 && (interrupts(line, stack) || (tableAt(line, lines[i + 1]) && !(piped ??= hasPipe(headText, headPos))) || (table && rowEnds(line, headText.charCodeAt(headPos) === 124)))) continue next;
+      if (line.indent < line.baseIndent + 4 && (interrupts(line, stack) || (tableAt(line, lines[i + 1]) && !(piped ??= hasPipe(headText, headPos))) || (table && rowEnds(line, barred)))) continue next;
       if (ref?.nextLine(line.baseIndent ? " ".repeat(line.basePos) + line.text.slice(line.basePos) : line.text)) continue next;
-      if (i === head + 1 && delimiterAt(line) && (piped ??= hasPipe(headText, headPos))) table = cellsOf(headText, headPos) === cellsOf(line.text, line.pos);
+      if (i === head + 1 && delimiterAt(line) && (piped ??= hasPipe(headText, headPos))) {
+        table = cellsOf(headText, headPos) === cellsOf(line.text, line.pos);
+        barred = headText.slice(headPos).trimStart().startsWith("|");
+      }
       if (line.depth === stack.length && underlineAt(line)) {
         if (++i < n) read(i);
         continue next;
