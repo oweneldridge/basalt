@@ -22,6 +22,11 @@ describe("tableEdit", () => {
   it("returns null for non-tables", () => {
     expect(parseTable("just text\nmore text")).toBeNull();
   });
+  it("stays quick on a long run of spaces in the second line", () => {
+    const t0 = performance.now();
+    expect(parseTable("a|b\n-" + " ".repeat(40000) + "x")).toBeNull();
+    expect(performance.now() - t0).toBeLessThan(200);
+  });
   it("round-trips through serialize (padded + aligned)", () => {
     const t = parseTable(SRC)!;
     const out = serializeTable(t);

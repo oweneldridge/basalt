@@ -18,7 +18,7 @@ function splitCells(line: string): string[] {
 }
 
 function isDelimiter(line: string): boolean {
-  return line.includes("-") && /^\s*\|?[\s:|-]+\|?\s*$/.test(line);
+  return line.includes("-") && /^[\s:|-]+$/.test(line);
 }
 
 function parseAlign(cell: string): Align {
