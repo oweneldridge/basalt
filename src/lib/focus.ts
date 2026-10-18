@@ -2,8 +2,8 @@ const NOTE = ".cm-content, .reading-view[role='region']";
 const TAB = "[role='tab'][tabindex='0'], .pane-body > .placeholder";
 
 /** Focus the first of `sels`' matches that takes it. */
-function focusFirst(sels: string[]): boolean {
-  for (const sel of sels) {
+function focusFirst(sels: string[][]): boolean {
+  for (const sel of sels.flat()) {
     for (const to of document.querySelectorAll<HTMLElement>(sel)) {
       to.focus({ preventScroll: true });
       if (document.activeElement === to) return true;
@@ -12,11 +12,14 @@ function focusFirst(sels: string[]): boolean {
   return false;
 }
 
+// A stacked pane's active column first, as the others sit in the same pane.
 const inPanes = (scope: string, sel: string) =>
-  sel
-    .split(", ")
-    .map((s) => `${scope} ${s}`)
-    .join(", ");
+  [`${scope} .stacked-col.active`, scope].map((at) =>
+    sel
+      .split(", ")
+      .map((s) => `${at} ${s}`)
+      .join(", "),
+  );
 
 /** When focus was left on the page (what had it is gone), give it to the
  * focused note pane's note or Reading view, else that pane's tab or empty-pane

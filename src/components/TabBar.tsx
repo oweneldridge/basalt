@@ -36,12 +36,14 @@ interface Props {
   onToggleStacked: () => void;
   /** A sidebar dock pane — hides editor-only affordances (+, link, stack). */
   dock?: boolean;
+  /** "pane 2" when there are other note panes, so their tab lists' names differ. */
+  where?: string;
 }
 
 // A tab drag carries "<paneId>\n<path>" under this private MIME type.
 const TAB_MIME = "application/x-basalt-tab";
 
-export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onTogglePin, onTabDrop, onContextMenu, onDragStateChange, linked, onToggleLink, stacked, onToggleStacked, dock }: Props) {
+export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onTogglePin, onTabDrop, onContextMenu, onDragStateChange, linked, onToggleLink, stacked, onToggleStacked, dock, where }: Props) {
   // Index the drop indicator sits before (null = none, tabs.length = at end).
   const [dropAt, setDropAt] = useState<number | null>(null);
   // Whether focus is on this bar (a tab, or a menu one opened), so closing the
@@ -93,7 +95,7 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
         ref={strip}
         className="tab-strip"
         role="tablist"
-        aria-label={dock ? "Panel views" : "Open notes"}
+        aria-label={dock ? "Panel views" : where ? `Open notes, ${where}` : "Open notes"}
         onFocus={() => (holdsFocus.current = true)}
         onBlur={(e) => {
           const to = e.relatedTarget;
@@ -118,6 +120,19 @@ export function TabBar({ paneId, tabs, activePath, onSelect, onClose, onNew, onT
           // One Tab stop per bar (the active tab); arrows move between tabs.
           tabIndex={t.path === activePath || (i === 0 && !tabs.some((x) => x.path === activePath)) ? 0 : -1}
           aria-keyshortcuts={t.pinned ? undefined : "Delete"}
+          onFocus={
+            iconOnly
+              ? (e) => {
+                  // Its name shows under this tab, kept inside the bar.
+                  const tab = e.currentTarget;
+                  const bar = tab.parentElement;
+                  const name = tab.querySelector<HTMLElement>(".tab-name");
+                  if (!bar || !name) return;
+                  const x = Math.max(4, Math.min(tab.offsetLeft, bar.clientWidth - name.offsetWidth - 4));
+                  bar.style.setProperty("--name-x", `${x}px`);
+                }
+              : undefined
+          }
           onKeyDown={(e) => {
             const list = [...(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
             const at = list.indexOf(e.currentTarget);

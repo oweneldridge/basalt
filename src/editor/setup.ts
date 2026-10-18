@@ -181,6 +181,18 @@ export function reportCursor(state: EditorState, onCursor: EditorCallbacks["onCu
 }
 
 /** Toggle Vim keybindings on a live editor. */
+const labelCompartment = new Compartment();
+const editorLabel = (noteName: string, where?: string) =>
+  EditorView.contentAttributes.of({
+    "aria-label": (noteName ? `Editing ${noteName}` : "Note editor") + (where ? `, ${where}` : ""),
+  });
+
+/** Name a live editor by its pane too, as when another pane shows its note. */
+export function setEditorWhere(view: EditorView, where: string | undefined): void {
+  const noteName = view.state.facet(notePathFacet).split("/").pop()?.replace(/\.md$/i, "") ?? "";
+  view.dispatch({ effects: labelCompartment.reconfigure(editorLabel(noteName, where)) });
+}
+
 export function setVimMode(view: EditorView, on: boolean): void {
   view.dispatch({ effects: vimCompartment.reconfigure(on ? vim() : []) });
 }
@@ -288,7 +300,7 @@ export function createEditorState(
   const noteName = selfRel.split("/").pop()?.replace(/\.md$/i, "") ?? "";
   const extensions: Extension[] = [
     notePathFacet.of(selfRel),
-    EditorView.contentAttributes.of({ "aria-label": noteName ? `Editing ${noteName}` : "Note editor" }),
+    labelCompartment.of(editorLabel(noteName)),
     // Vim keybindings (Obsidian's optional Vim mode) — in a compartment, placed
     // FIRST so its keymap wins in normal mode; toggled live via setVimMode().
     vimCompartment.of(vimMode ? vim() : []),

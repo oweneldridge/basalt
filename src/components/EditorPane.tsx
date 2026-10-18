@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { EditorSelection, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { createEditorState, externalReload, reconfigurePlugins, reportCursor, setEditorTheme, setLineNumbers, setSourceMode, setSpellcheck, setVimMode, setRtl } from "../editor/setup";
+import { createEditorState, externalReload, reconfigurePlugins, reportCursor, setEditorTheme, setLineNumbers, setSourceMode, setSpellcheck, setVimMode, setRtl, setEditorWhere } from "../editor/setup";
 import type { EditorCallbacks } from "../editor/setup";
 import type { NoteRef } from "../editor/wikilink";
 import type { LinkFormat } from "../lib/rename";
@@ -45,6 +45,8 @@ interface Props {
   rtl: boolean;
   /** Line numbers in the gutter (the vault's "Show line number"). */
   lineNumbers?: boolean;
+  /** Set when another note pane shows this note, to tell their names apart. */
+  where?: string;
   /** Bumps when the plugin registry changes → re-apply plugin editor extensions
    * and re-render plugin code-blocks in this live editor. */
   pluginVersion: number;
@@ -193,6 +195,7 @@ export function EditorPane({
   vim,
   rtl,
   lineNumbers = false,
+  where,
   pluginVersion,
   apiRef,
   paneId,
@@ -509,6 +512,13 @@ export function EditorPane({
   useEffect(() => {
     if (view.current) setSpellcheck(view.current, spellcheck);
   }, [spellcheck]);
+
+  const named = useRef(false);
+  useEffect(() => {
+    if (!view.current || (!where && !named.current)) return;
+    setEditorWhere(view.current, where);
+    named.current = !!where;
+  }, [where]);
 
   // Toggle Vim keybindings in place.
   useEffect(() => {

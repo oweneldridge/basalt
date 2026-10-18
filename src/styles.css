@@ -470,11 +470,12 @@ button.primary:hover {
 /* The ring sits inside the tab, so the bar doesn't clip it, above the active
    tab's underline, in the tab's own text colour, which Dark Reader keeps
    readable. An icon tab shows its name under the bar while it has keyboard
-   focus, as a tooltip only shows on hover, without moving the tabs. */
+   focus, as a tooltip only shows on hover, without moving the tabs. It goes
+   below the whole bar, which wraps in a narrow dock, so it covers no tab. */
 .tab:focus-visible { outline: 2px solid currentColor; outline-offset: -4px; }
 .tab:focus-visible .tab-name.sr-only {
-  top: 36px;
-  left: 4px;
+  top: calc(100% + 2px);
+  left: var(--name-x, 4px);
   width: auto;
   height: auto;
   max-width: calc(100% - 8px);
@@ -721,12 +722,15 @@ button.primary:hover {
 .reading-view table.md-properties th { color: var(--text-muted); font-weight: 600; }
 .reading-view .md-callout {
   overflow-wrap: anywhere; /* a long link wraps, not the whole view sideways */
+  overflow-x: auto;
   border-left: 3px solid var(--cg, var(--accent));
   background: var(--cgbg, var(--accent-soft));
   border-radius: 4px;
   padding: 6px 12px;
   margin: 0.6em 0;
 }
+/* A table keeps its words whole; one too wide scrolls in the callout. */
+.reading-view .md-callout table { overflow-wrap: break-word; }
 .reading-view .md-callout-title { font-weight: 700; color: var(--cg, var(--accent)); }
 /* A callout's colour group, in both views. */
 .cm-callout, .md-callout { --cgbg: color-mix(in srgb, var(--cg) 8%, transparent); }
@@ -2671,7 +2675,7 @@ button.primary:hover {
 
 /* Sidebar dock panes (view tabs living in the layout tree) */
 .pane.dock { background: var(--bg-sidebar); }
-.pane.dock .tab-bar { background: var(--bg-sidebar); flex-wrap: wrap; height: auto; min-height: 34px; overflow-x: visible; }
+.pane.dock .tab-bar { position: relative; background: var(--bg-sidebar); flex-wrap: wrap; height: auto; min-height: 34px; overflow-x: visible; }
 .pane.dock .tab { height: 33px; min-width: 0; max-width: min(200px, 100%); }
 .pane.dock .tab.view-tab .tab-name { max-width: 8em; }
 .pane.dock .tab.view-tab { padding: 0; }

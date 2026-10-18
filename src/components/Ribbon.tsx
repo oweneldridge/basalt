@@ -52,7 +52,7 @@ export function Ribbon({
             <button
               key={a.id}
               className="ribbon-btn"
-              title={a.label}
+              title={off ? `${a.label}, once the vault is open` : a.label}
               aria-label={a.label}
               aria-disabled={off || undefined}
               onClick={off ? undefined : a.onClick}
@@ -65,7 +65,7 @@ export function Ribbon({
           <button
             key={`plugin:${r.pluginId}:${i}`}
             className="ribbon-btn ribbon-plugin-btn"
-            title={r.title}
+            title={held ? `${r.title}, once the vault is open` : r.title}
             aria-label={r.title}
             aria-disabled={held || undefined}
             onClick={held ? undefined : () => r.callback()}
@@ -77,7 +77,7 @@ export function Ribbon({
       <div className="ribbon-bottom">
         <button
           className="ribbon-btn"
-          title="Settings (⌘,)"
+          title={held ? "Settings (⌘,), once the vault is open" : "Settings (⌘,)"}
           aria-label="Settings"
           aria-disabled={held || undefined}
           onClick={held ? undefined : onSettings}

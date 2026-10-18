@@ -702,6 +702,7 @@ export default function App() {
   const switchesDone = useRef(() => {});
   // The vault being opened, announced while it loads.
   const [switchingVault, setSwitchingVault] = useState<string | null>(null);
+  const [switchedTo, setSwitchedTo] = useState("");
   const switchStatusRef = useRef<HTMLDivElement | null>(null);
   // Whether `gen` is still the vault switched to, once any newer switch's
   // call has settled (a failed one leaves this vault open).
@@ -1123,7 +1124,7 @@ export default function App() {
         if (!pending.current.has(path) && notesRef.current.some((n) => n.path === path)) {
           pending.current.set(path, doc);
         }
-        setSaveError(String(e));
+        setSaveError(`Not saved: ${e}`);
         retryLater();
       } finally {
         setSaving(false);
@@ -1195,7 +1196,7 @@ export default function App() {
         if (!pending.current.has(path) && attachmentsRef.current.some((a) => a.path === path)) {
           pending.current.set(path, doc);
         }
-        setSaveError(String(e));
+        setSaveError(`Not saved: ${e}`);
         retryLater();
       } finally {
         setSaving(false);
@@ -2042,6 +2043,9 @@ export default function App() {
         await flushAll();
         if (!(await okToDropUnsaved("Switch vaults"))) return;
         await switchTo(path, openNoteRel, restoring);
+        const done = `Opened ${vaultName(path) || path}`;
+        setSwitchedTo(done);
+        window.setTimeout(() => setSwitchedTo((x) => (x === done ? "" : x)), 4000);
       } finally {
         if (--switchesInFlight.current === 0) {
           switching.current = null;
@@ -5666,11 +5670,15 @@ export default function App() {
 
   // Render one pane's content: a tab bar + the live editor for its active note.
   // Mousedown anywhere in the pane focuses it (so it drives the right panel).
-  // "pane 2" when another note pane shows the same note, so their names differ.
-  const sameNoteAt = (id: string, path: string): string | undefined => {
-    const ids = layout ? leafIds(layout).filter((i) => panes[i] && !panes[i].dock) : [];
-    return ids.some((i) => i !== id && panes[i].active === path) ? `pane ${ids.indexOf(id) + 1}` : undefined;
+  // "pane 2" when there are other note panes, so names in each can differ.
+  const notePaneIds = () => (layout ? leafIds(layout).filter((i) => panes[i] && !panes[i].dock) : []);
+  const paneNo = (id: string): string | undefined => {
+    const ids = notePaneIds();
+    return ids.length > 1 && ids.includes(id) ? `pane ${ids.indexOf(id) + 1}` : undefined;
   };
+  // Only when another note pane shows the same note.
+  const sameNoteAt = (id: string, path: string): string | undefined =>
+    notePaneIds().some((i) => i !== id && panes[i].active === path) ? paneNo(id) : undefined;
   const renderPane = (id: string) => {
     const pane = panes[id];
     if (!pane) return null;
@@ -5704,6 +5712,7 @@ export default function App() {
             stacked={pane.stacked ?? false}
             onToggleStacked={() => toggleStacked(id)}
             dock={!!pane.dock}
+            where={pane.dock ? undefined : paneNo(id)}
             onNew={() => {
               focusPane(id);
               setModal("switcher");
@@ -5846,6 +5855,7 @@ export default function App() {
               continuesFrom={[...renameWindow.current].find(([, to]) => to === path)?.[0]}
               path={path}
               selfRel={rel}
+              where={sameNoteAt(id, path)}
               pluginVersion={pluginVersion}
               apiRef={id === focusedId ? editorApiRef : undefined}
               doc={docFor(pane)}
@@ -5993,7 +6003,7 @@ export default function App() {
           )}
           <span className="spacer" />
           <span className="sr-only" role="alert">
-            {saveError ? `Not saved: ${saveError}` : ""}
+            {saveError ?? ""}
           </span>
           <span className={saveError ? "status status-error" : "status"} title={saveError ?? ""}>
             {saveError
@@ -6024,8 +6034,17 @@ export default function App() {
           <div className="placeholder" tabIndex={-1}>Select a note, or press + to create one.</div>
         )}
       </main>
-      <div ref={switchStatusRef} className="switch-status" role="status" tabIndex={-1}>
+      <div
+        ref={switchStatusRef}
+        className="switch-status"
+        role="status"
+        tabIndex={-1}
+        aria-label={switchingVault !== null ? `Opening ${switchingVault}` : undefined}
+      >
         {switchingVault !== null ? `Opening ${switchingVault}…` : ""}
+      </div>
+      <div className="sr-only" role="status">
+        {switchingVault === null ? switchedTo : ""}
       </div>
       </div>
       <StatusBar
@@ -6394,14 +6413,16 @@ export default function App() {
               onClick={() => {
                 const path = fileMenu.path;
                 setFileMenu(null);
-                // Focus stays in the file tree, on the row next to the note's.
+                // Focus stays in the file tree, on the row next to the note's,
+                // even when the note was open and the next one's editor took it.
                 const rows = [...document.querySelectorAll<HTMLElement>(".sidebar .tree-row")];
                 const at = rows.findIndex((r) => r.dataset.path === path);
                 const near = at === -1 ? undefined : (rows[at + 1] ?? rows[at - 1]);
                 void handleDeleteNote(path).finally(() =>
                   requestAnimationFrame(() =>
                     requestAnimationFrame(() => {
-                      if (document.activeElement !== document.body) return;
+                      const now = document.activeElement;
+                      if (now !== document.body && !now?.closest(".pane:not(.dock)")) return;
                       if (near?.isConnected) near.focus({ preventScroll: true });
                       else refocusIfLost();
                     }),
