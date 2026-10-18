@@ -232,6 +232,13 @@ function templaterWontRun(cfg: ObsidianConfig | null, root: string, timedOut = f
   if (!listensFor("templater-lite", "create")) return "this copy of Templater Lite doesn't fill new notes, so update it";
   return null;
 }
+/** Keep `run` in `set` until it settles. */
+function track<T>(set: Set<Promise<unknown>>, run: Promise<T>): Promise<T> {
+  const done = () => void set.delete(run);
+  set.add(run);
+  run.then(done, done);
+  return run;
+}
 /** A note's stats as the watcher reported them (its size from `content` if
  * they're missing), leaving out any it couldn't read. */
 function statsOf(c: FileStats, content: string): FileStats {
@@ -709,8 +716,10 @@ export default function App() {
   const switchesDone = useRef(() => {});
   // The vaults being switched to, oldest first.
   const switchTargets = useRef<{ name: string }[]>([]);
-  // Saves answered, so a switch can tell a slow save from one that hangs.
+  // Saves answered (and link fixes), so a switch can tell a slow save from one that hangs.
   const savesDone = useRef(0);
+  // Renames, moves and Link all under way, which finish before the vault goes.
+  const vaultJobs = useRef<Set<Promise<unknown>>>(new Set());
   // The vault whose plugins are loaded (or loading); a switch stops them.
   const pluginsFor = useRef<string | null>(null);
   const pluginEpoch = useRef(0);
@@ -841,6 +850,8 @@ export default function App() {
   // Renames and moves running or waiting, link passes included. A vault
   // re-read waits for them: it would take a listing older than their writes.
   const renameJobs = useRef(0);
+  // The vault the rename under way began in, by its switch count.
+  const renameGen = useRef(0);
   // Old path -> new path for a rename or folder move whose repoint React hasn't
   // committed yet. Until then an editor (a pane's or a stacked column's) can
   // still report the old path; afterwards every editor knows the new one, so
@@ -2102,7 +2113,7 @@ export default function App() {
       setSwitchingVault(target.name);
       setSwitchedTo("");
       try {
-        // Held from here. Plugins, a recording and unsaved typing finish in the old vault.
+        // Held from here. Plugins, renames, a recording and unsaved typing finish in the old vault.
         await stopPlugins();
         // A save that never answers can't hold it: once none lands for a while, go on.
         const settle = async (work: Promise<unknown>) => {
@@ -2114,7 +2125,7 @@ export default function App() {
         };
         // A recording only pauses until it's sure the switch goes on.
         const resume = pauseRecordingRef.current();
-        await settle(flushAll());
+        await settle(Promise.allSettled(vaultJobs.current).then(() => flushAll()));
         const dropping = new Set(pending.current.keys());
         if (!(await okToDropUnsaved("Switch vaults"))) {
           resume?.();
@@ -4575,14 +4586,16 @@ export default function App() {
   // (authoritative — callers flushAll first, so pending canvas edits are saved).
   // A link pass's write joins the note's save queue: a save typed meanwhile
   // waits for it, then compares against the rewrite rather than the old text.
-  const queueWrite = useCallback(<T,>(path: string, job: () => Promise<T>): Promise<T> => {
-    const run = (saveChains.current.get(path) ?? Promise.resolve()).then(job);
+  const queueWrite = useCallback((path: string, job: () => Promise<void>): Promise<void> => {
+    // Not once another vault is opening: a switch that gave up waiting for the rename.
+    const run = (saveChains.current.get(path) ?? Promise.resolve()).then(() => (vaultGen.current === renameGen.current ? job() : undefined));
     const settled = run.then(
       () => undefined,
       () => undefined,
     );
     saveChains.current.set(path, settled);
     void settled.then(() => {
+      savesDone.current++;
       if (saveChains.current.get(path) === settled) saveChains.current.delete(path);
     });
     return run;
@@ -4950,9 +4963,14 @@ export default function App() {
   };
   const enqueueRename = useCallback(<T,>(job: () => Promise<T>): Promise<T> => {
     renameJobs.current++;
-    const run = renameQueue.current.then(job).finally(() => renameJobs.current--);
+    const run = renameQueue.current
+      .then(() => {
+        renameGen.current = vaultGen.current;
+        return job();
+      })
+      .finally(() => renameJobs.current--);
     renameQueue.current = run.catch(() => {});
-    return run;
+    return track(vaultJobs.current, run);
   }, []);
   const handleRenameNote = useCallback(
     (oldPath: string, newName: string) => enqueueRename(() => renameNoteNow(currentPath(oldPath), newName)),
@@ -5015,6 +5033,8 @@ export default function App() {
       } catch (e) {
         setSaveError(`Couldn't link mention: ${e}`);
         return null;
+      } finally {
+        savesDone.current++;
       }
       const note = notesRef.current.find((n) => n.path === sourcePath);
       if (note) {
@@ -5036,22 +5056,26 @@ export default function App() {
     (m: { path: string; line: number }) => {
       // The note the Backlinks panel shows, which a click there has unfocused.
       const target = notesRef.current.find((n) => n.path === lastNotePathRef.current);
-      if (target) void linkifyInNote(m.path, m.line, target).then(() => setMentionsLinked((x) => x + 1));
+      if (target) void track(vaultJobs.current, linkifyInNote(m.path, m.line, target)).then(() => setMentionsLinked((x) => x + 1));
     },
     [linkifyInNote],
   );
 
-  const handleLinkAllMentions = useCallback(
+  const linkAllMentions = useCallback(
     async (mentions: { path: string; line: number }[]) => {
       const target = notesRef.current.find((n) => n.path === lastNotePathRef.current);
       if (!target) return;
+      const gen = vaultGen.current;
+      // None once another vault is opening (a switch gave up waiting).
+      const link = (m: { path: string; line: number }) => (vaultGen.current === gen ? linkifyInNote(m.path, m.line, target) : Promise.resolve(null));
       // Snapshot the list; line numbers stay valid (linkify never adds lines).
-      for (const m of [...mentions]) await linkifyInNote(m.path, m.line, target);
+      for (const m of [...mentions]) await link(m);
       // A link can make a mention near it linkable (`*Foo*Foo`, or `o*Foo` then
       // `_*Foo` below), so the notes are read again while that keeps happening.
       const names = [target.name, ...index.current.aliasesOf(target.path)];
       const touched = [...new Set(mentions.map((m) => m.path))];
       await linkUntilSettled(async () => {
+        if (vaultGen.current !== gen) return 0;
         const fresh: VaultNote[] = [];
         for (const p of touched) {
           const note = notesRef.current.find((n) => n.path === p);
@@ -5059,12 +5083,16 @@ export default function App() {
           if (note && content !== null) fresh.push({ ...note, content });
         }
         let linked = 0;
-        for (const m of index.current.unlinkedMentionsFor(names, fresh, target.path)) if ((await linkifyInNote(m.path, m.line, target)) !== null) linked++;
+        for (const m of index.current.unlinkedMentionsFor(names, fresh, target.path)) if ((await link(m)) !== null) linked++;
         return linked;
       });
       setMentionsLinked((x) => x + 1);
     },
     [linkifyInNote],
+  );
+  const handleLinkAllMentions = useCallback(
+    (mentions: { path: string; line: number }[]) => track(vaultJobs.current, linkAllMentions(mentions)),
+    [linkAllMentions],
   );
 
   // Delete a whole folder to the vault trash (recoverable). All notes under it

@@ -48,7 +48,15 @@ const BAD = "/nonexistent/basalt-e2e-vault-B";
 // Models the desktop core: its commands run one at a time, and opening the
 // other vault takes `delay`; after it, every command goes to that vault.
 // `holdAfter` slows a command once the other vault is open; BAD fails to open.
-async function holdSwitch(page: Page, from: string, to: { url: string; root: string }, delay: number, holdAfter: Record<string, number> = {}) {
+// `holdBefore` slows a command (by its args) while the old vault is still open.
+async function holdSwitch(
+  page: Page,
+  from: string,
+  to: { url: string; root: string },
+  delay: number,
+  holdAfter: Record<string, number> = {},
+  holdBefore: (cmd: string, args: Record<string, unknown>) => number = () => 0,
+) {
   let backend = from;
   let queue: Promise<unknown> = Promise.resolve();
   const one = <T,>(fn: () => Promise<T>) => {
@@ -83,7 +91,11 @@ async function holdSwitch(page: Page, from: string, to: { url: string; root: str
     }
     const h = holdAfter[body.cmd];
     if (h && backend === to.url) await new Promise((r) => setTimeout(r, h));
-    const resp = await one(() => route.fetch({ url: `${backend}/api/invoke` }));
+    const resp = await one(async () => {
+      const before = backend === from ? holdBefore(body.cmd, body.args ?? {}) : 0;
+      if (before) await new Promise((r) => setTimeout(r, before));
+      return route.fetch({ url: `${backend}/api/invoke` });
+    });
     sent.push(`${body.cmd}@${backend === to.url ? "new" : "old"}`);
     return route.fulfill({ response: resp });
   });
@@ -616,6 +628,116 @@ test.describe("a plugin stopping as a switch starts", () => {
       await page.waitForTimeout(1500);
       expect(a.files()).toEqual(["Welcome A.md"]);
       expect(vault.exists(`XDaily/${today}.md`)).toBe(false);
+    } finally {
+      await a.stop();
+    }
+  });
+});
+
+const linking = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`Src ${i}.md`, `see [[Target]] ${i}\n`]));
+const mentioning = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`Src ${i}.md`, `Target ${i}\n`]));
+const srcPath = (args: Record<string, unknown>) => /\/Src \d+\.md$/.test(String(args.path ?? ""));
+// The old vault's link fixes (all of them, or from the `from`th on) each take
+// `ms`; the `hang`th takes 6 s, longer than a switch waits for one.
+const slowFixes = (ms: number, hang = -1) => {
+  let n = 0;
+  return (cmd: string, args: Record<string, unknown>) => (cmd === "write_note" && srcPath(args) ? (n++ === hang ? 6000 : ms) : 0);
+};
+
+async function renameTarget(page: Page) {
+  await page.locator(".tree-row.file", { hasText: "Target" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+  await page.locator(".prompt-input").fill("Renamed");
+  await page.locator(".prompt-input").press("Enter");
+}
+
+async function linkAllTarget(page: Page) {
+  await openNote(page, "Target");
+  await page.locator(".pane.dock .tab.view-tab", { hasText: "Backlinks" }).click();
+  const unlinked = page.locator(".panel-section").nth(1);
+  await expect(unlinked.locator(".ref-group")).toHaveCount(16);
+  await unlinked.locator(".link-all-btn").click();
+}
+
+for (const [what, files, start, fixed] of [
+  ["a rename", linking, renameTarget, (t: string) => t.includes("[[Renamed]]")],
+  ["Link all", mentioning, linkAllTarget, (t: string) => t.includes("[[Target]]")],
+] as const) {
+  test.describe(`${what} under way when a switch starts`, () => {
+    test.use({ vaultFiles: { "Target.md": "t\n", ...files } });
+    const sources = Object.keys(files);
+
+    for (const [how, ms] of [
+      ["", 150],
+      [", even one slower than a switch waits for a save,", 450],
+    ] as const) {
+      test(`finishes in the old vault first${how} and leaves the new one alone`, async ({ page, vault }) => {
+        test.setTimeout(90000);
+        const a = await otherVault({ "Welcome A.md": "a\n", ...files });
+        try {
+          const sent = await holdSwitch(page, vault.url, a, 0, {}, slowFixes(ms));
+          await openApp(page, vault);
+          await start(page);
+          await expect.poll(() => sent.filter((x) => x === "write_note@old").length).toBeGreaterThan(0);
+          await switchTo(page, a.root, true);
+          await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 30000 });
+          expect(sources.filter((f) => !fixed(vault.read(f)))).toEqual([]);
+          const { readFileSync } = await import("node:fs");
+          expect(sources.filter((f) => readFileSync(join(a.root, f), "utf8") !== files[f as keyof typeof files])).toEqual([]);
+          expect(sent.filter((x) => x === "write_note@new")).toEqual([]);
+        } finally {
+          await a.stop();
+        }
+      });
+    }
+
+    test("stops once the switch has stopped waiting for it, asking nothing of the new vault", async ({ page, vault }) => {
+      test.setTimeout(90000);
+      const a = await otherVault({ "Welcome A.md": "a\n", ...files });
+      try {
+        await holdSwitch(page, vault.url, a, 0, {}, slowFixes(50, 0));
+        // In the order they reach the core, which runs them one at a time.
+        const asked: string[] = [];
+        await page.route("**/api/invoke", (route) => {
+          const body = JSON.parse(route.request().postData() ?? "{}");
+          asked.push(`${body.cmd}:${String(body.args?.path ?? "")}`);
+          return route.fallback();
+        });
+        await openApp(page, vault);
+        await start(page);
+        await expect.poll(() => asked.filter((x) => x.startsWith("write_note:")).length).toBeGreaterThan(0);
+        await switchTo(page, a.root, true);
+        await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 30000 });
+        await page.waitForTimeout(3000); // the slow fix has answered
+        const later = asked.slice(asked.indexOf(`open_vault:${a.root}`));
+        expect(later.filter((x) => x.includes(vault.dir))).toEqual([]);
+        await expect(page.getByRole("alert")).toHaveText("");
+        await expect(page.locator(".notice")).toHaveCount(0);
+      } finally {
+        await a.stop();
+      }
+    });
+  });
+}
+
+test.describe("a Link under way when a switch starts", () => {
+  test.use({ vaultFiles: { "Target.md": "t\n", "Src 0.md": "Target here\n" } });
+
+  test("finishes in the old vault first", async ({ page, vault }) => {
+    test.setTimeout(60000);
+    const a = await otherVault({ "Welcome A.md": "a\n", "Src 0.md": "Target here\n" });
+    try {
+      const sent = await holdSwitch(page, vault.url, a, 0, {}, (cmd, args) => (cmd === "read_note" && srcPath(args) ? 1000 : 0));
+      await openApp(page, vault);
+      await openNote(page, "Target");
+      await page.locator(".pane.dock .tab.view-tab", { hasText: "Backlinks" }).click();
+      await page.locator(".panel-section").nth(1).locator(".ref-link-btn").first().click();
+      await switchTo(page, a.root, true);
+      await expect(page.locator(".tree-row.file", { hasText: "Welcome A" })).toBeVisible({ timeout: 20000 });
+      await page.waitForTimeout(1000);
+      expect(vault.read("Src 0.md")).toBe("[[Target]] here\n");
+      expect(sent.filter((x) => x === "write_note@new")).toEqual([]);
+      await expect(page.getByRole("alert")).toHaveText("");
     } finally {
       await a.stop();
     }
