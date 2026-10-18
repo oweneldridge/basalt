@@ -2,7 +2,7 @@ import { toggleTaskLine } from "./render";
 // Markdown→HTML rendering for Reading mode / export. Output is inserted via
 // innerHTML, so escaping is security-critical and gets first-class coverage.
 import { afterEach, describe, expect, it } from "vitest";
-import { renderMarkdown, renderInline, escapeHtml, setStrictLineBreaks, commentRanges, mayRunHtml } from "./render";
+import { renderMarkdown, renderInline, escapeHtml, setStrictLineBreaks, commentRanges, mathBlocks, mayRunHtml, stripBlockIds } from "./render";
 
 describe("escaping (XSS safety)", () => {
   it("escapes HTML in prose, code, and attributes", () => {
@@ -203,6 +203,26 @@ describe("stripBlockIds (^block markers)", () => {
     expect(renderMarkdown("a paragraph ^abc")).not.toContain("^abc");
     expect(renderMarkdown("a paragraph ^abc")).toContain("a paragraph");
     expect(renderMarkdown("para\n^xyz\nmore")).not.toContain("^xyz");
+  });
+  it("stays quick on a long run of spaces inside a line", () => {
+    const t0 = performance.now();
+    expect(stripBlockIds("a ^b\nx" + " ".repeat(60000) + "y")).toBe("a\nx" + " ".repeat(60000) + "y");
+    expect(performance.now() - t0).toBeLessThan(1000);
+  });
+});
+
+describe("mathBlocks", () => {
+  it("finds math blocks where Reading view shows them, up to its nesting limit", () => {
+    for (let n = 38; n <= 43; n++) {
+      for (const md of ["<p>x</p>\n".repeat(n) + "$$\nx\n$$", "- ".repeat(n) + "$$\n" + "  ".repeat(n) + "x\n" + "  ".repeat(n) + "$$"]) {
+        expect(mathBlocks(md).size, md.slice(0, 12) + n).toBe(renderMarkdown(md).includes('data-math="block"') ? 1 : 0);
+      }
+    }
+  });
+  it("reads thousands of HTML blocks one after another quickly", () => {
+    const t0 = performance.now();
+    expect(() => mathBlocks("$$x$$ Foo\n" + "<p>x</p>\n".repeat(4000))).not.toThrow();
+    expect(performance.now() - t0).toBeLessThan(1000);
   });
 });
 
@@ -690,7 +710,7 @@ describe("mayRunHtml", () => {
 
   it("answers as it did before", () => {
     let seed = 11;
-    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
     const chars = ["<", "<", ">", "\n", "a", "/", "!", "?", " ", "-", "1", ".", "x"];
     for (let n = 0; n < 50_000; n++) {
       let md = "";

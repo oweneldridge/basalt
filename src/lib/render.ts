@@ -251,12 +251,21 @@ interface Ctx {
   callouts: number; // callouts the block being rendered sits in
   // Set to read only where link definitions are: the lines Reading view hides
   // as one and the labels it knows, with no text rendered.
-  seen?: Definitions;
+  seen?: Seen;
+}
+
+interface Seen {
+  lines: Set<number>;
+  // The definitions each source line sees: those of the piece it's read in.
+  parts: Map<number, Doc["links"]>;
 }
 
 export interface Definitions {
   lines: Set<number>;
   labels: Set<string>;
+  // Lines read as a note of their own (after an HTML block's HTML), which see
+  // only the labels defined there.
+  own: Map<number, Set<string>>;
 }
 const newCtx = (defs = new Map<string, string>(), lines = false): Ctx => ({
   defs,
@@ -1101,7 +1110,7 @@ function renderDoc(text: string, map: number[] | undefined, ctx: Ctx, depth: num
   // A callout's body sees the note's link definitions, as the rest does.
   if (links) doc.links = links;
   collectLinks(doc, tree.topNode);
-  if (ctx.seen) for (const key of doc.links.keys()) ctx.seen.labels.add(key);
+  if (ctx.seen && !links) for (let l = 0; l < doc.lineStarts.length; l++) ctx.seen.parts.set(doc.map[l], doc.links);
   return new Blocks(doc, ctx, depth).children(tree.topNode).join("\n");
 }
 
@@ -1414,23 +1423,33 @@ const FRONTMATTER_START = /^\s*---/;
 export function mathBlocks(md: string): Map<number, number> {
   const { text, at } = withoutComments(md);
   const out = new Map<number, number>();
-  const read = (src: string, from: number) =>
+  // Each piece to read: its text, where it starts and how deep it sits.
+  const todo: [string, number, number][] = [[FRONTMATTER_START.test(text) ? blankFrontmatter(text) : text, 0, 0]];
+  for (let piece; (piece = todo.pop()); ) {
+    const [src, from, depth] = piece;
+    let nest = 0;
     blockParser.parse(src).iterate({
+      leave: (n) => {
+        if (NESTING.has(n.name)) nest--;
+      },
       enter: (n) => {
+        // Past Reading view's nesting limit a block shows as its source.
+        if (depth + nest > MAX_DEPTH) return false;
         if (n.name === "MathBlock") out.set(at(from + n.from), n.to > n.from ? at(from + n.to - 1) + 1 : at(from + n.from));
-        // What follows an HTML block's own HTML reads as a note of its own.
+        // What follows an HTML block's own HTML reads as a note of its own, a level deeper.
         else if (n.name === "HTMLBlock") {
           const lines = src.slice(n.from, n.to).split("\n");
           const k = lines[0].includes(">") ? htmlLines(lines) : -1;
           if (k >= 0) {
             const rest = n.from + lines.slice(0, k + 1).join("\n").length + 1;
-            read(src.slice(rest, n.to), from + rest);
+            todo.push([src.slice(rest, n.to), from + rest, depth + nest + 1]);
           }
         }
+        if (NESTING.has(n.name)) nest++;
         return n.type.isTop || NESTING.has(n.name) || n.name === "ListItem";
       },
     });
-  read(FRONTMATTER_START.test(text) ? blankFrontmatter(text) : text, 0);
+  }
   return out;
 }
 
@@ -1637,18 +1656,35 @@ export function renderMarkdown(src: string, opts: { lines?: boolean } = {}): str
 /** The lines Reading view hides as link reference definitions, and the labels
  * the note defines, as rendering it finds them. */
 export function linkDefinitions(src: string): Definitions {
-  const seen: Definitions = { lines: new Set(), labels: new Set() };
+  const seen: Seen = { lines: new Set(), parts: new Map() };
   const md = HUGE_NESTING.test(src) ? src.split("\n").map(shallower).join("\n") : src;
   render(md, {}, seen);
-  if (!md.includes("%%")) return seen;
+  // The note's first line is always in the note's own piece.
+  const top = seen.parts.get(0) ?? new Map();
+  const labels = new Set(top.keys());
+  const own = new Map<number, Set<string>>();
+  const sets = new Map([[top, labels]]);
+  for (const [l, links] of seen.parts) {
+    if (links === top) continue;
+    let set = sets.get(links);
+    if (!set) sets.set(links, (set = new Set(links.keys())));
+    own.set(l, set);
+  }
+  const defs = { lines: seen.lines, labels, own };
+  if (!md.includes("%%")) return defs;
   // A comment over lines joins them into one, all of it the definition's.
   const { map } = stripCommentsMapped(md);
   const lines = md.split("\n").length;
   for (let s = 0; s < map.length; s++) {
-    if (!seen.lines.has(map[s])) continue;
-    for (let l = map[s] + 1, end = s + 1 < map.length ? map[s + 1] : lines; l < end; l++) seen.lines.add(l);
+    const set = own.get(map[s]);
+    const hidden = seen.lines.has(map[s]);
+    if (!set && !hidden) continue;
+    for (let l = map[s] + 1, end = s + 1 < map.length ? map[s + 1] : lines; l < end; l++) {
+      if (hidden) seen.lines.add(l);
+      if (set) own.set(l, set);
+    }
   }
-  return seen;
+  return defs;
 }
 
 /** A line nested a thousand deep or more, cut to that depth (the parse takes
@@ -1662,7 +1698,7 @@ function shallower(line: string): string {
   return line.slice(0, cut) + line.slice(lead);
 }
 
-function render(src: string, opts: { lines?: boolean }, seen?: Definitions): string {
+function render(src: string, opts: { lines?: boolean }, seen?: Seen): string {
   const { text: stripped, map } = stripCommentsMapped(src);
   let md = stripBlockIds(stripped);
   const parts: string[] = [];
