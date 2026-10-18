@@ -307,11 +307,24 @@ describe("canvas layout on disk", () => {
     expect(canvasText({})).toBe("{}");
   });
 
-  it("writes an edge's ends only when they aren't the defaults", () => {
+  it("writes an edge's ends only when they aren't the defaults, each after its side", () => {
+    // Ends first in the file, so only the save puts them in their place.
     const edge = (ends: object) =>
-      JSON.parse(serializeCanvas(parseCanvas(JSON.stringify({ nodes: ["a", "b"].map((id) => ({ id, type: "text", text: "", x: 0, y: 0, width: 1, height: 1 })), edges: [{ id: "e", fromNode: "a", toNode: "b", ...ends }] }))!)).edges[0];
-    expect(edge({ fromEnd: "none", toEnd: "arrow" })).toEqual({ id: "e", fromNode: "a", toNode: "b" });
-    expect(edge({ fromEnd: "arrow", toEnd: "none" })).toEqual({ id: "e", fromNode: "a", fromEnd: "arrow", toNode: "b", toEnd: "none" });
+      JSON.stringify(JSON.parse(serializeCanvas(parseCanvas(JSON.stringify({ nodes: ["a", "b"].map((id) => ({ id, type: "text", text: "", x: 0, y: 0, width: 1, height: 1 })), edges: [{ ...ends, id: "e", fromNode: "a", toNode: "b" }] }))!)).edges[0]);
+    expect(edge({ fromEnd: "none", toEnd: "arrow" })).toBe('{"id":"e","fromNode":"a","toNode":"b"}');
+    expect(edge({ fromEnd: "arrow", toEnd: "none" })).toBe('{"id":"e","fromNode":"a","fromEnd":"arrow","toNode":"b","toEnd":"none"}');
+  });
+
+  it("writes a null value as it is, on a line with its card", () => {
+    expect(canvasText({ a: [null] })).toBe('{\n\t"a":[null]\n}');
+    const card = '{"id":"a","type":"text","text":"","foo":null,"x":0,"y":0,"width":1,"height":1}';
+    expect(serializeCanvas(parseCanvas(`{"nodes":[${card}],"edges":[]}`)!)).toBe(`{\n\t"nodes":[\n\t\t${card}\n\t],\n\t"edges":[]\n}`);
+  });
+
+  it("puts a group's place, colour and label after its other keys", () => {
+    const group = (keys: string) => serializeCanvas(parseCanvas(`{"nodes":[{"id":"g","type":"group",${keys}}],"edges":[]}`)!);
+    expect(group('"x":0,"zz":1,"y":0,"width":1,"height":1')).toContain('{"id":"g","type":"group","zz":1,"x":0,"y":0,"width":1,"height":1}');
+    expect(group('"color":"1","label":"L","x":0,"y":0,"width":1,"height":1')).toContain('{"id":"g","type":"group","x":0,"y":0,"width":1,"height":1,"color":"1","label":"L"}');
   });
 
   it("keeps the file's key order and a __proto__ key on save", () => {
