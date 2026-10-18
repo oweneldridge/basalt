@@ -93,3 +93,35 @@ test("a canvas made where a renamed one was starts with no history of its own", 
   expect(vault.read("Board.canvas")).toBe(same);
   expect(vault.read("Plan.canvas")).toBe(same);
 });
+
+test.describe("two canvases renamed while closed", () => {
+  test.use({ vaultFiles: { "One.canvas": canvas(card("o1", "One")), "Two.canvas": canvas(card("w1", "Two")) } });
+  test("each opens with a history of its own", async ({ page, vault }) => {
+    await openApp(page, vault);
+    for (const [from, to] of [["One", "One2"], ["Two", "Two2"]]) {
+      await page.locator(".tree-row.file", { hasText: from }).first().click({ button: "right" });
+      await page.locator(".ctx-item", { hasText: "Rename…" }).click();
+      await page.locator(".prompt-input").fill(to);
+      await page.locator(".prompt-input").press("Enter");
+      await expect.poll(() => vault.exists(`${to}.canvas`)).toBe(true);
+    }
+    await page.locator(".tree-row.file", { hasText: "One2" }).first().click();
+    await addCard(page);
+    await expect.poll(() => ids(vault.read("One2.canvas")).length).toBe(2);
+    await page.locator(".canvas-node").first().focus();
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect.poll(() => ids(vault.read("One2.canvas"))).toEqual(["o1"]);
+    await settle(page, 1200);
+    // The same text in the other, so only its own history tells them apart.
+    const same = vault.read("One2.canvas");
+    vault.write("Two2.canvas", same);
+    await settle(page, 1200);
+    await page.locator(".tree-row.file", { hasText: "Two2" }).first().click();
+    await expect(page.locator(".pane:not(.dock) .tab.active .tab-name").first()).toContainText("Two2");
+    await page.locator(".canvas-node").first().focus();
+    await page.keyboard.press("ControlOrMeta+Shift+z");
+    await settle(page, 1500);
+    expect(vault.read("Two2.canvas")).toBe(same);
+    await expect(page.locator('button[title="Redo"]')).toBeDisabled();
+  });
+});

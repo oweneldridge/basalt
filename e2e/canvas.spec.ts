@@ -731,6 +731,11 @@ test.describe("undo and redo", () => {
     const a = page.locator(nodeA);
     await a.click();
     const handle = (await a.locator(".canvas-handle").boundingBox())!;
+    // A press on the handle that doesn't move is no resize.
+    await page.mouse.click(handle.x + 5, handle.y + 5);
+    await page.waitForTimeout(700);
+    expect(await writes(page)).toBe(0);
+    await expect(page.locator('button[title="Undo"]')).toBeDisabled();
     await dragBy(page, { x: handle.x + 5, y: handle.y + 5 }, 60, 40);
     await expect.poll(() => writes(page)).toBe(1);
     const grown = await savedNode(page, "a1");
