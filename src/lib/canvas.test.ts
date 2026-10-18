@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCanvas, serializeCanvas, canvasBounds, canvasColor, canvasText, rewriteCanvasFileRefs } from "./canvas";
+import { parseCanvas, serializeCanvas, canvasBounds, canvasColor, canvasText, rewriteCanvasFileRefs, orderGroups, type CanvasNode } from "./canvas";
 
 describe("serializeCanvas", () => {
   it("round-trips parse → serialize → parse", () => {
@@ -336,5 +336,25 @@ describe("canvas layout on disk", () => {
     expect(Object.getOwnPropertyNames(JSON.parse(out))).toEqual(["__proto__", "nodes", "edges"]);
     // A canvas made here starts with nodes, then edges.
     expect(serializeCanvas({ nodes: [], edges: [] })).toBe('{\n\t"nodes":[],\n\t"edges":[]\n}');
+  });
+});
+
+describe("canvas groups", () => {
+  const g = (id: string, x: number, y: number, width: number, height: number): CanvasNode => ({ id, type: "group", x, y, width, height });
+  const t = (id: string, x: number, y: number): CanvasNode => ({ id, type: "text", text: id, x, y, width: 50, height: 20 });
+
+  it("orders a group before the smaller groups inside it, and otherwise keeps the order", () => {
+    const ids = (ns: CanvasNode[]) => orderGroups(ns).map((n) => n.id);
+    const inner = g("inner", 20, 20, 200, 150);
+    const outer = g("outer", 0, 0, 400, 300);
+    const other = g("other", 600, 0, 100, 100);
+    expect(ids([t("a", 30, 30), inner, other, outer])).toEqual(["other", "outer", "inner", "a"]);
+    expect(ids([other, outer, inner])).toEqual(["other", "outer", "inner"]);
+    expect(ids([g("deep", 40, 40, 50, 50), inner, outer])).toEqual(["outer", "inner", "deep"]);
+    // Two the same size can't hold each other; they keep their order.
+    expect(ids([g("b", 0, 0, 10, 10), g("a", 0, 0, 10, 10)])).toEqual(["b", "a"]);
+    // A group only partly over another, on any side, doesn't hold it.
+    for (const [x, y] of [[-50, 10], [10, -50], [350, 10], [10, 250]])
+      expect(ids([g("small", x, y, 100, 100), outer])).toEqual(["small", "outer"]);
   });
 });

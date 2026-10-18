@@ -338,6 +338,20 @@ export function canvasBounds(
   return { minX, minY, maxX, maxY };
 }
 
+// Whether `b` lies wholly inside `a`.
+const inside = (a: CanvasNode, b: CanvasNode) =>
+  b.x >= a.x && b.y >= a.y && b.x + b.width <= a.x + a.width && b.y + b.height <= a.y + a.height;
+
+/** Groups before cards, and a group before any smaller group inside it, so
+ * none covers another it holds; otherwise the order is kept. */
+export function orderGroups(nodes: CanvasNode[]): CanvasNode[] {
+  const holds = (a: CanvasNode, b: CanvasNode) => a.width * a.height > b.width * b.height && inside(a, b);
+  const left = nodes.filter((n) => n.type === "group");
+  const out: CanvasNode[] = [];
+  while (left.length) out.push(...left.splice(left.findIndex((g) => !left.some((h) => holds(h, g))), 1));
+  return [...out, ...nodes.filter((n) => n.type !== "group")];
+}
+
 /** JSON Canvas preset colors (1-6); a hex string passes through. */
 export function canvasColor(color: string | undefined, fallback: string): string {
   if (!color) return fallback;

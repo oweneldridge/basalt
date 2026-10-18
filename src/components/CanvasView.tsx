@@ -5,6 +5,7 @@ import {
   serializeCanvas,
   canvasBounds,
   canvasColor,
+  orderGroups,
   type CanvasData,
   type CanvasNode,
   type CanvasEdge,
@@ -435,7 +436,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
       if (delta) {
         // Commit all moved nodes in one emit (single undo step), last in the
         // list as Obsidian saves them, so they draw on top, but groups stay
-        // before cards, under them.
+        // before cards, under them, and before the groups inside them.
         const d = dataRef.current;
         const moved = d.nodes.map((n) => {
           const o = orig.get(n.id);
@@ -450,7 +451,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange,
           return;
         }
         const order = [...moved.filter((n) => !orig.has(n.id)), ...moved.filter((n) => orig.has(n.id))];
-        emit({ ...d, nodes: [...order.filter((n) => n.type === "group"), ...order.filter((n) => n.type !== "group")] });
+        emit({ ...d, nodes: orderGroups(order) });
       }
     };
     window.addEventListener("pointermove", move);

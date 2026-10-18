@@ -615,7 +615,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   even an empty one, gets an entry per line, as Obsidian 1.14 saves it, and
   everything else stays on one line. A dragged card is saved last, as
   Obsidian saves the card it brings to the front, and groups first, so after
-  a group is dragged its cards are still on top. A click that moves the
+  a group is dragged its cards are still on top. A group is also saved
+  before any smaller group inside it, so a group dragged over another never
+  hides it. A click that moves the
   pointer a pixel or two, or a drag that ends where it began, doesn't move or
   save anything. A group's `background` is kept as the file had it. Keys
   stay where the file had them, but for a card's position, size and colour

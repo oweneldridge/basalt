@@ -157,3 +157,62 @@ test("after a group is dragged its cards are still on top, to click and drag", a
   const hit = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest(".canvas-node")?.textContent ?? "", [card.x + card.width / 2, card.y + card.height / 2]);
   expect(hit).toContain("Inside");
 });
+
+const openCanvas = async (page: import("@playwright/test").Page, name: string, nodes: object[]) => {
+  await page.addInitScript(
+    ([name, nodes]) => {
+      (window as unknown as { __mockExtraFiles: Record<string, string> }).__mockExtraFiles = {
+        [`${name}.canvas`]: JSON.stringify({ nodes, edges: [] }),
+      };
+    },
+    [name, nodes] as const,
+  );
+  await page.reload();
+  await page.locator(".tree-row.attachment", { hasText: name }).click();
+  await expect(page.locator(".canvas-node")).toHaveCount(nodes.length);
+};
+const savedIds = (page: import("@playwright/test").Page) =>
+  page.evaluate(() => {
+    const s = (window as unknown as { __saved: string[] }).__saved;
+    return s.length ? (JSON.parse(s[s.length - 1]).nodes as { id: string }[]).map((n) => n.id) : [];
+  });
+// The card a click on this group's label would land on.
+const labelHits = async (page: import("@playwright/test").Page, label: string) => {
+  const b = (await page.locator(".canvas-group-label", { hasText: label }).boundingBox())!;
+  return page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest(".canvas-node")?.getAttribute("aria-label") ?? "", [b.x + 10, b.y + b.height / 2]);
+};
+const dragBy = async (page: import("@playwright/test").Page, from: { x: number; y: number }, dx: number, dy = 0) => {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + dx, from.y + dy, { steps: 6 });
+  await page.mouse.up();
+};
+
+test("a dragged group never covers a group inside it", async ({ page }) => {
+  await openCanvas(page, "Nested", [
+    { id: "outer", type: "group", label: "Outer", x: -40, y: -60, width: 520, height: 360 },
+    { id: "inner", type: "group", label: "Inner", x: 20, y: 0, width: 260, height: 200 },
+    { id: "c1", type: "text", text: "Card", x: 60, y: 60, width: 160, height: 60 },
+  ]);
+  await recordWrites(page);
+  expect(await labelHits(page, "Inner")).toBe("Group: Inner");
+  const outer = (await page.locator(".canvas-group-label", { hasText: "Outer" }).boundingBox())!;
+  await dragBy(page, { x: outer.x + 5, y: outer.y + 5 }, 20);
+  await expect.poll(() => savedIds(page)).toEqual(["outer", "inner", "c1"]);
+  expect(await labelHits(page, "Inner")).toBe("Group: Inner");
+});
+
+test("a group dragged over a smaller one goes under it", async ({ page }) => {
+  await openCanvas(page, "Over", [
+    { id: "small", type: "group", label: "Small", x: 300, y: 0, width: 120, height: 80 },
+    { id: "big", type: "group", label: "Big", x: -40, y: -60, width: 260, height: 200 },
+    { id: "c1", type: "text", text: "Card", x: 500, y: 200, width: 160, height: 60 },
+  ]);
+  await recordWrites(page);
+  const big = page.locator(".canvas-group", { hasText: "Big" });
+  const k = (await big.boundingBox())!.width / 260;
+  const label = (await page.locator(".canvas-group-label", { hasText: "Big" }).boundingBox())!;
+  await dragBy(page, { x: label.x + 5, y: label.y + 5 }, 270 * k, 20 * k);
+  await expect.poll(() => savedIds(page)).toEqual(["big", "small", "c1"]);
+  expect(await labelHits(page, "Small")).toBe("Group: Small");
+});

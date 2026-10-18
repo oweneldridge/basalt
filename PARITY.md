@@ -158,8 +158,9 @@ button for the rest; Obsidian scrolls through all of them.
 - Also not checked: how far the pointer must move before Obsidian counts a
   press as a drag (Basalt uses 4 pixels), whether a card moved with the arrow
   keys goes to the end (in Basalt it stays put), and how several or nested
-  groups are ordered after a drag (Basalt keeps groups before cards, in their
-  own order).
+  groups are ordered after a drag (Basalt keeps groups before cards, and a
+  group before any smaller group inside it, so none covers another it holds;
+  otherwise they keep their own order).
 - Still different, on purpose: Obsidian rewrote a link in a Latin-1 note and
   turned its `é` into a replacement character; Basalt leaves notes that
   aren't UTF-8 untouched, so the link there goes stale.
