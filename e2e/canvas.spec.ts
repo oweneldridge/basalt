@@ -424,6 +424,33 @@ test.describe("on a touch screen", () => {
     expect(Math.round((await a.boundingBox())!.x - box.x)).toBe(80);
   });
 
+  for (const id of ["code", "table"]) {
+    test(`a card follows a finger that starts on its wide ${id}`, async ({ page }) => {
+      await openCanvas(page, "Wide", [
+        { id: "code", type: "text", text: "```\nconst aVeryLongLineOfCode = somethingThatRunsOnAndOn(withArguments, andMore, andEvenMore);\n```", x: 0, y: 0, width: 200, height: 90 },
+        { id: "table", type: "text", text: "| a | b | c |\n|---|---|---|\n| one long cell value | another long cell | third cell value |", x: 0, y: 150, width: 180, height: 90 },
+      ]);
+      await recordWrites(page);
+      const card = page.locator(`[data-node-id="${id}"]`);
+      const inner = card.locator(id === "code" ? "pre" : "table");
+      expect(await inner.evaluate((el) => el.scrollWidth > el.clientWidth || el.parentElement!.scrollWidth > el.parentElement!.clientWidth)).toBe(true);
+      const ib = (await inner.boundingBox())!;
+      const cb = (await card.boundingBox())!;
+      const cdp = await page.context().newCDPSession(page);
+      const at = (dx: number) => [{ x: ib.x + 15 + dx, y: ib.y + Math.min(10, ib.height / 2), id: 1 }];
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: at(0) });
+      for (let i = 1; i <= 8; i++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at(i * 10) });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await expect.poll(() => writes(page)).toBe(1);
+      expect(Math.round((await card.boundingBox())!.x - cb.x)).toBe(80);
+    });
+  }
+
+  test("a card's text being edited still scrolls by touch", async ({ page }) => {
+    await page.locator(".canvas-node", { hasText: "Node A" }).dblclick();
+    await expect(page.locator(".canvas-text-input")).toHaveCSS("touch-action", "auto");
+  });
+
   for (const where of ["Node B", "empty space", "the resize handle", "a connection anchor"]) {
     test(`a second finger on ${where} mid-drag changes nothing`, async ({ page }) => {
       await recordWrites(page);

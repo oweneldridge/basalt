@@ -2010,6 +2010,9 @@ button.primary:hover {
 .canvas-view:focus:not(:focus-visible) { outline: none; }
 .canvas-view:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 .canvas-node { user-select: none; }
+/* A finger drags a card from anywhere on it, a wide code block included.
+   Text being edited still scrolls. */
+.canvas-node:not(.editing) * { touch-action: none; }
 .canvas-text.editing { padding: 0; }
 .canvas-text-input {
   width: 100%;
