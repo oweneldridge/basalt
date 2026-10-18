@@ -443,3 +443,16 @@ test("a cancelled pan, rubber band, resize or connection stops where it was", as
   await page.mouse.up();
   expect(await writes(page)).toBe(0);
 });
+
+test("a selected card's anchors and resize handle can be pressed in full", async ({ page }) => {
+  await page.locator(".canvas-node", { hasText: "Node A" }).click();
+  // Each one's middle, and a point beyond it, away from the card.
+  const out: [string, number, number][] = [[".canvas-anchor-top", 0, -3], [".canvas-anchor-right", 3, 0], [".canvas-anchor-bottom", 0, 3], [".canvas-anchor-left", -3, 0], [".canvas-handle", 3, 3]];
+  for (const [sel, dx, dy] of out) {
+    const r = (await page.locator(".canvas-node", { hasText: "Node A" }).locator(sel).boundingBox())!;
+    const [cx, cy] = [r.x + r.width / 2, r.y + r.height / 2];
+    for (const [x, y] of [[cx, cy], [cx + dx, cy + dy]]) {
+      expect(await page.evaluate(([x, y, sel]) => !!document.elementFromPoint(x as number, y as number)?.closest(sel as string), [x, y, sel] as const), `${sel} at ${x},${y}`).toBe(true);
+    }
+  }
+});

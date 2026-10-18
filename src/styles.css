@@ -802,7 +802,6 @@ button.primary:hover {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-elev);
-  overflow: hidden;
 }
 .canvas-group {
   background: rgba(124, 92, 208, 0.05);
@@ -2069,6 +2068,7 @@ button.primary:hover {
   width: 100%;
   height: 100%;
   overflow: hidden;
+  border-radius: inherit;
   padding: 8px 10px;
   box-sizing: border-box;
 }
