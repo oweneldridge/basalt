@@ -420,7 +420,8 @@ test.describe("a vault that opens its daily note from a Templater template, swit
           backend = body.args?.path === other.root ? other.url : vault.url;
           return route.fulfill({ contentType: "application/json", body: JSON.stringify({ result: backend === other.url ? other.root : rootA }) });
         }
-        return route.fulfill({ response: await route.fetch({ url: `${backend}/api/invoke` }) });
+        const res = await route.fetch({ url: `${backend}/api/invoke` }).catch(() => null);
+        return res ? route.fulfill({ response: res }).catch(() => {}) : undefined;
       });
       await openApp(next, vault);
       await settle(next, 1500);
@@ -470,7 +471,8 @@ test.describe("a vault that opens its daily note, switched away from while it lo
           return route.fulfill({ contentType: "application/json", body: JSON.stringify({ result: toOther ? other.root : rootA }) });
         }
         const target = backend;
-        const res = await route.fetch({ url: `${target}/api/invoke` });
+        const res = await route.fetch({ url: `${target}/api/invoke` }).catch(() => null);
+        if (!res) return;
         if (body.cmd === "read_vault" && !held && target === vault.url) {
           held = true;
           await switched;
@@ -601,7 +603,8 @@ test.describe("a vault that opens its daily note, switched away from twice, the 
           backend = to ? to.url : vault.url; // the core switches as it answers
           return route.fulfill({ contentType: "application/json", body: JSON.stringify({ result: to ? to.root : rootA }) });
         }
-        return route.fulfill({ response: await route.fetch({ url: `${backend}/api/invoke` }) });
+        const res = await route.fetch({ url: `${backend}/api/invoke` }).catch(() => null);
+        return res ? route.fulfill({ response: res }).catch(() => {}) : undefined;
       });
       await openApp(page, vault);
       await settle(page, 800);
@@ -673,7 +676,8 @@ test.describe("a vault switched away from three times, the first slow, the other
           backend = vault.url;
           return route.fulfill({ contentType: "application/json", body: JSON.stringify({ result: rootX }) });
         }
-        return route.fulfill({ response: await route.fetch({ url: `${backend}/api/invoke` }) });
+        const res = await route.fetch({ url: `${backend}/api/invoke` }).catch(() => null);
+        return res ? route.fulfill({ response: res }).catch(() => {}) : undefined;
       });
       await openApp(page, vault);
       await expect(page.locator(".tree-row.file", { hasText: "Welcome X" })).toBeVisible();

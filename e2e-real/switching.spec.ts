@@ -94,10 +94,12 @@ async function holdSwitch(
     const resp = await one(async () => {
       const before = backend === from ? holdBefore(body.cmd, body.args ?? {}) : 0;
       if (before) await new Promise((r) => setTimeout(r, before));
-      return route.fetch({ url: `${backend}/api/invoke` });
+      // A vault's server stops when its test ends, maybe with a call on the way.
+      return route.fetch({ url: `${backend}/api/invoke` }).catch(() => null);
     });
+    if (!resp) return;
     sent.push(`${body.cmd}@${backend === to.url ? "new" : "old"}`);
-    return route.fulfill({ response: resp });
+    return route.fulfill({ response: resp }).catch(() => {});
   });
   return sent;
 }
@@ -846,7 +848,8 @@ for (const [what, cmd, row, to] of [
         await page.route("**/api/invoke", async (route) => {
           const body = JSON.parse(route.request().postData() ?? "{}");
           if (body.cmd !== cmd) return route.fallback();
-          const resp = await route.fetch({ url: `${vault.url}/api/invoke` });
+          const resp = await route.fetch({ url: `${vault.url}/api/invoke` }).catch(() => null);
+          if (!resp) return;
           await new Promise((r) => setTimeout(r, 8000));
           return route.fulfill({ response: resp });
         });
@@ -1030,7 +1033,8 @@ test.describe("a Link that stops answering", () => {
       if (body.cmd === "open_vault" && body.args?.path === BAD) await new Promise((r) => setTimeout(r, 6000));
       if (body.cmd !== "read_note" || !srcPath(body.args ?? {}) || sent) return route.fallback();
       sent = true;
-      const resp = await route.fetch({ url: `${vault.url}/api/invoke` });
+      const resp = await route.fetch({ url: `${vault.url}/api/invoke` }).catch(() => null);
+          if (!resp) return;
       await new Promise((r) => setTimeout(r, 7000));
       return route.fulfill({ response: resp });
     });
@@ -1106,7 +1110,8 @@ for (const [what, cmd, act, shown] of [
           const body = JSON.parse(route.request().postData() ?? "{}");
           if (body.cmd !== cmd) return route.fallback();
           sent = true;
-          const resp = await route.fetch({ url: `${vault.url}/api/invoke` });
+          const resp = await route.fetch({ url: `${vault.url}/api/invoke` }).catch(() => null);
+          if (!resp) return;
           await new Promise((r) => setTimeout(r, 8000));
           return route.fulfill({ response: resp });
         });
