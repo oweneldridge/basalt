@@ -3530,7 +3530,7 @@ export default function App() {
 
   /** Persist a pasted/dropped file into the vault (honoring Obsidian's
    * attachmentFolderPath) and return the embed link target. */
-  const handleSaveAttachment = useCallback(async (file: File): Promise<string | null> => {
+  const saveAttachmentNow = useCallback(async (file: File): Promise<string | null> => {
     if (!vaultRef.current) return null;
     const gen = shownGen.current;
     // Capture the source note BEFORE any await — a note switch mid-encode must
@@ -3574,6 +3574,8 @@ export default function App() {
       return null;
     }
   }, [stillCurrent]);
+  // A switch waits for it, so the note it saves has the embed.
+  const handleSaveAttachment = useCallback((file: File) => track(vaultJobs.current, saveAttachmentNow(file)), [saveAttachmentNow]);
 
   // Audio recorder (Obsidian's core recorder): capture from the mic, save as an
   // attachment, and embed it at the cursor. `recSeconds` drives the UI (null =
@@ -5199,6 +5201,7 @@ export default function App() {
         recents.current = recents.current.filter((r) => !r.startsWith(prefix));
         bumpStructure();
       } catch (e) {
+        if (vaultGen.current !== gen && !(await stillCurrent(gen))) return;
         setSaveError(`Couldn't delete folder: ${e}`);
       }
     },

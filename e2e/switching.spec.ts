@@ -1220,10 +1220,10 @@ test("a copy whose read answers after a switch makes nothing in the next vault",
 test("an image pasted just before a switch is saved in neither vault once the switch has opened the next", async ({ page }) => {
   test.setTimeout(60000);
   await page.addInitScript(() => {
-    // Reading the pasted file takes a while.
+    // Reading the pasted file takes longer than a switch waits.
     const read = Blob.prototype.arrayBuffer;
     Blob.prototype.arrayBuffer = function () {
-      return new Promise((r) => setTimeout(r, 3000)).then(() => read.call(this));
+      return new Promise((r) => setTimeout(r, 12000)).then(() => read.call(this));
     };
   });
   await load(page);
@@ -1237,10 +1237,76 @@ test("an image pasted just before a switch is saved in neither vault once the sw
   });
   await pickVault(page, "/mock/other");
   await opened(page);
-  await page.waitForTimeout(3500);
+  await page.waitForTimeout(9000);
   expect((await calls(page)).filter((l) => /:write_attachment:/.test(l))).toEqual([]);
   await expect(page.locator(".tree-row", { hasText: "shot" })).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveText("");
+});
+
+test("an image pasted just before a switch is in the old vault's note when the switch goes on", async ({ page }) => {
+  test.setTimeout(60000);
+  await page.addInitScript(() => {
+    const read = Blob.prototype.arrayBuffer;
+    Blob.prototype.arrayBuffer = function () {
+      return new Promise((r) => setTimeout(r, 1500)).then(() => read.call(this));
+    };
+  });
+  await load(page);
+  await page.locator(".tree-row.file", { hasText: "Ideas" }).first().click();
+  await page.locator(".pane:not(.dock) .cm-content").first().click();
+  await otherWithProjects(page, (cmd, a) => {
+    const w = window as unknown as { __writes?: string[] };
+    if (cmd === "write_note") (w.__writes ??= []).push(String(a.content));
+  });
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["png"], "shot.png", { type: "image/png" }));
+    document.querySelector(".pane:not(.dock) .cm-content")!.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  await pickVault(page, "/mock/other");
+  await opened(page);
+  const l = await calls(page);
+  const open = l.findIndex((x) => x.startsWith("vault:open_vault:"));
+  expect(l.findIndex((x) => x.startsWith("vault:write_attachment:"))).toBeGreaterThan(-1);
+  expect(l.findIndex((x) => x.startsWith("vault:write_attachment:"))).toBeLessThan(open);
+  const writes = await page.evaluate(() => (window as unknown as { __writes?: string[] }).__writes ?? []);
+  expect(writes.at(-1)).toContain("![[shot.png]]");
+  expect(writes.at(-1)).not.toContain("uploading-");
+});
+
+test("a folder delete that fails once the next vault opened says nothing there", async ({ page }) => {
+  test.setTimeout(60000);
+  await load(page);
+  await otherWithProjects(page, (cmd) => {
+    if (cmd === "delete_folder") return new Promise((_, j) => setTimeout(() => j("disk full"), 2000));
+  });
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Delete folder" }).click();
+  await expect.poll(async () => (await calls(page)).filter((l) => l.startsWith("vault:delete_folder:"))).toHaveLength(1);
+  await pickVault(page, "/mock/other");
+  await opened(page);
+  await expect(page.locator(".tree-row.file", { hasText: "Hub" })).toHaveCount(1);
+  await page.waitForTimeout(2500);
+  await expect(page.getByRole("alert")).toHaveText("");
+});
+
+test("a folder delete that fails while a switch that didn't wait for it fails says so", async ({ page }) => {
+  test.setTimeout(60000);
+  await loadWithBad(page);
+  await otherWithProjects(page, (cmd) => {
+    const w = window as unknown as { __failDelete: () => void };
+    if (cmd === "delete_folder") return new Promise((_, j) => (w.__failDelete = () => j("disk full")));
+  });
+  await page.locator(".tree-row.folder", { hasText: "Projects" }).first().click({ button: "right" });
+  await page.locator(".ctx-item", { hasText: "Delete folder" }).click();
+  await expect.poll(async () => (await calls(page)).filter((l) => l.startsWith("vault:delete_folder:"))).toHaveLength(1);
+  await pickVault(page, "/mock/bad");
+  await expect.poll(async () => (await calls(page)).filter((l) => l.startsWith("vault:open_vault:"))).toHaveLength(1);
+  await failOpen(page);
+  await expect(page.getByRole("alert")).toContainText("Couldn't open vault");
+  await page.evaluate(() => (window as unknown as { __failDelete: () => void }).__failDelete());
+  await expect(page.getByRole("alert")).toContainText("Couldn't delete folder: disk full");
+  await expect(page.locator(".tree-row.folder", { hasText: "Projects" })).toHaveCount(1);
 });
 
 for (const [what, slow, act, done] of [
