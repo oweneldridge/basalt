@@ -15,7 +15,7 @@ import type { DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { isInExcludedRegion } from "./regions";
 
-const CALLOUT_HEAD = /^(\s*>\s*)\[!(\w+)\]([+-]?)/;
+const CALLOUT_HEAD = /^(\s*>\s*)\[!([\w-]+)\]([+-]?)/;
 
 /** Toggle the fold override for the callout whose title line starts at `pos`. */
 const toggleFold = StateEffect.define<number>();
@@ -103,6 +103,8 @@ function build(state: EditorState): DecorationSet {
       if (!m) return false;
       if (isInExcludedRegion(state, startLine.from)) return false;
       const marker = m[3];
+      // Only a callout marked foldable (`-` closed, `+` open) folds, as in Obsidian.
+      if (marker !== "-" && marker !== "+") return false;
       const titlePos = startLine.from;
       // A chevron widget at the very start of the title line.
       ranges.push(

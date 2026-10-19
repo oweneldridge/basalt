@@ -13,12 +13,29 @@ interface Props {
 
 /** Divider between two children of a split; dragging shifts their two sizes.
  * Reports the drag as a fraction of the split container's size. */
-function Resizer({ dir, onDelta }: { dir: "row" | "col"; onDelta: (fraction: number) => void }) {
+function Resizer({ dir, share, onDelta }: { dir: "row" | "col"; share: number; onDelta: (fraction: number) => void }) {
   const last = useRef(0);
   const span = useRef(1);
   return (
     <div
       className={dir === "row" ? "pane-resizer pane-resizer-v" : "pane-resizer pane-resizer-h"}
+      role="separator"
+      tabIndex={0}
+      aria-label="Resize panes"
+      // A vertical bar between side-by-side panes, a horizontal one between stacked panes.
+      aria-orientation={dir === "row" ? "vertical" : "horizontal"}
+      aria-valuenow={Math.round(share * 100)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      onKeyDown={(e) => {
+        const step = e.shiftKey ? 0.1 : 0.02;
+        const back = dir === "row" ? "ArrowLeft" : "ArrowUp";
+        const fwd = dir === "row" ? "ArrowRight" : "ArrowDown";
+        if (e.key === back) onDelta(-step);
+        else if (e.key === fwd) onDelta(step);
+        else return;
+        e.preventDefault();
+      }}
       onPointerDown={(e) => {
         e.preventDefault();
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -57,7 +74,13 @@ export function PaneTree({ node, renderPane, onSizes, path = [] }: Props) {
           <div className="pane-cell" style={{ flexGrow: node.sizes[i] }}>
             <PaneTree node={child} renderPane={renderPane} onSizes={onSizes} path={[...path, i]} />
           </div>
-          {i < node.children.length - 1 && <Resizer dir={node.dir} onDelta={(f) => shift(i, f)} />}
+          {i < node.children.length - 1 && (
+            <Resizer
+              dir={node.dir}
+              share={node.sizes[i] / (node.sizes[i] + node.sizes[i + 1] || 1)}
+              onDelta={(f) => shift(i, f)}
+            />
+          )}
         </Fragment>
       ))}
     </div>

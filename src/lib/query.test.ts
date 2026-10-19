@@ -58,6 +58,10 @@ describe("parseQuery", () => {
   it("parses TABLE WITHOUT ID, LIST expr, TASK, GROUP BY, FLATTEN", () => {
     expect(parseQuery("TABLE WITHOUT ID file.name").withoutId).toBe(true);
     expect(parseQuery("LIST file.link").listExpr).toBe("file.link");
+    expect(parseQuery("TABLEX nonsense FROM").error).toMatch(/Unknown query type: "TABLEX"/);
+    expect(parseQuery("LISTING").error).toMatch(/Unknown query type/);
+    expect(parseQuery("TASKS").error).toMatch(/Unknown query type/);
+    expect(parseQuery("table file.name").error).toBeUndefined();
     expect(parseQuery("TASK WHERE !checked").kind).toBe("TASK");
     expect(parseQuery("LIST GROUP BY status").groupBy).toBe("status");
     const fl = parseQuery("LIST FROM #x FLATTEN file.tags AS tag");
@@ -354,5 +358,15 @@ describe("review fixes (DoS + correctness)", () => {
     expect(ev('contains(xs, "Apple")', c)).toBe(true);
     expect(ev('contains(xs, "apple")', c)).toBe(false);
     expect(ev('icontains(xs, "apple")', c)).toBe(true);
+  });
+});
+
+describe("extractTasks", () => {
+  it("skips checkboxes inside code fences and frontmatter", () => {
+    const doc = ["---", "todo: \"- [ ] not a task\"", "---", "- [ ] real", "```markdown", "- [ ] example only", "```", "- [x] done"].join("\n");
+    expect(extractTasks(doc, "N.md").map((t) => [t.text, t.line])).toEqual([
+      ["real", 3],
+      ["done", 7],
+    ]);
   });
 });

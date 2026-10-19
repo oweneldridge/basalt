@@ -2,9 +2,13 @@
 // (e.g. table cells) where the CodeMirror tree decorations don't reach. Builds
 // real DOM nodes (never innerHTML) and reuses the app's link classes, so clicks
 // inside a table are handled by the same delegated handlers as everywhere else.
-import { parseMarkdownLink, targetNoteName } from "../lib/markdown";
+import type { EditorView } from "@codemirror/view";
+import { parseMarkdownLink, TAG_BEFORE, TAG_NAME, wikilinkLabel } from "../lib/markdown";
+import { fillMath } from "./mathRender";
 
-// One alternation: inline code | wikilink | md-link/image | bold | italic.
+// One alternation: inline code | wikilink | md-link/image | math | highlight |
+// strikethrough | bold | italic | tag | <br>. Math comes before emphasis, so
+// `$a*b$` stays math.
 // The bracket classes exclude `[` so a run of `[`/`![` fails fast at the first
 // inner bracket instead of rescanning to end-of-line (would be O(n²) — ReDoS).
 // `_` emphasis requires word boundaries so snake_case isn't mangled. The md-link
@@ -15,15 +19,21 @@ const INLINE_RE = new RegExp(
     /(`[^`]+`)/, // 1: inline code
     /(\[\[[^\][\n]+?\]\])/, // 2: wikilink
     /(!?\[[^\][\n]*?\]\((?:[^()\n]|\([^()\n]*\))*\))/, // 3: md link / image
-    /(\*\*[^*\n]+?\*\*|(?<![A-Za-z0-9])__[^_\n]+?__(?![A-Za-z0-9]))/, // 4: bold
-    /(\*[^*\n]+?\*|(?<![A-Za-z0-9])_[^_\n]+?_(?![A-Za-z0-9]))/, // 5: italic
+    /(\$(?!\s)(?:\\.|[^$\n\\`])+?(?<!\s)\$(?!\d))/, // 4: inline math ($5 and $10 is text)
+    /(==[^=\n]+?==)/, // 5: highlight
+    /(~~[^~\n]+?~~)/, // 6: strikethrough
+    /(\*\*[^*\n]+?\*\*|(?<![A-Za-z0-9])__[^_\n]+?__(?![A-Za-z0-9]))/, // 7: bold
+    /(\*[^*\n]+?\*|(?<![A-Za-z0-9])_[^_\n]+?_(?![A-Za-z0-9]))/, // 8: italic
+    new RegExp(`((?<=^|${TAG_BEFORE.source})#${TAG_NAME})`), // 9: tag
+    /(<[bB][rR]\s*\/?>)/, // 10: a line break, as tables write one
   ]
     .map((r) => r.source)
     .join("|"),
   "g",
 );
 
-export function renderInline(text: string): DocumentFragment {
+/** `view` is redrawn once KaTeX has loaded, if a formula here had to wait. */
+export function renderInline(text: string, view?: EditorView): DocumentFragment {
   const frag = document.createDocumentFragment();
   // Belt-and-suspenders: never run the tokenizer on an absurdly long cell.
   if (text.length > 2000) {
@@ -46,8 +56,8 @@ export function renderInline(text: string): DocumentFragment {
       const [rawTarget, alias] = inner.split("|");
       const span = document.createElement("span");
       span.className = "cm-wikilink";
-      span.dataset.target = targetNoteName(rawTarget);
-      span.textContent = (alias ?? rawTarget).trim();
+      span.dataset.target = rawTarget.trim();
+      span.textContent = alias !== undefined ? alias.trim() : wikilinkLabel(rawTarget);
       frag.append(span);
     } else if (m[3]) {
       const parsed = parseMarkdownLink(tok);
@@ -61,13 +71,36 @@ export function renderInline(text: string): DocumentFragment {
         frag.append(document.createTextNode(tok));
       }
     } else if (m[4]) {
+      const span = document.createElement("span");
+      span.className = "cm-math";
+      fillMath(span, tok.slice(1, -1), false, view);
+      frag.append(span);
+    } else if (m[5]) {
+      const mark = document.createElement("mark");
+      mark.className = "cm-highlight";
+      mark.textContent = tok.slice(2, -2);
+      frag.append(mark);
+    } else if (m[6]) {
+      const s = document.createElement("s");
+      s.textContent = tok.slice(2, -2);
+      frag.append(s);
+    } else if (m[7]) {
       const strong = document.createElement("strong");
       strong.textContent = tok.slice(2, -2); // both ** and __ are 2-char delimiters
       frag.append(strong);
-    } else if (m[5]) {
+    } else if (m[8]) {
       const em = document.createElement("em");
       em.textContent = tok.slice(1, -1);
       frag.append(em);
+    } else if (m[10]) {
+      frag.append(document.createElement("br"));
+    } else if (/^#\d+$/.test(tok)) {
+      frag.append(document.createTextNode(tok)); // a number isn't a tag
+    } else {
+      const span = document.createElement("span");
+      span.className = "cm-tag";
+      span.textContent = tok;
+      frag.append(span);
     }
     last = m.index + tok.length;
   }

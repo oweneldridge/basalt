@@ -7,13 +7,21 @@ test("Import from Obsidian applies appearance + hotkeys and reports plugins", as
   await page.evaluate(() => localStorage.clear());
   await page.reload();
   await page.waitForSelector(".sidebar");
-  await page.keyboard.press("Meta+,");
+  await page.keyboard.press("ControlOrMeta+,");
   await expect(page.locator(".settings")).toBeVisible();
   await page.locator(".settings-row", { hasText: "Import settings from Obsidian" }).locator("button").click();
 
   // Appearance applied to the live CSS vars.
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim())).toBe("#ff8800");
-  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--font-size").trim())).toBe("19px");
+  // The size is stored in rem (so it follows zoom); 19px at the default 16px root.
+  await expect.poll(() => page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.fontSize = "var(--font-size)";
+    document.body.append(probe);
+    const px = getComputedStyle(probe).fontSize;
+    probe.remove();
+    return px;
+  })).toBe("19px");
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe("dark");
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--font-text").trim())).toContain("Inter");
   // Community theme palette bridged onto Basalt vars (fixture theme is dark).

@@ -9,6 +9,7 @@ import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import { renderQuerySource } from "../lib/queryHost";
+import { blockEdges } from "./blockEdges";
 
 /** The vault-relative path (with .md) of the note this editor is showing —
  * the `this`/self note for any query block in it. */
@@ -84,4 +85,4 @@ const queryClick = EditorView.domEventHandlers({
   },
 });
 
-export const query: Extension = [queryField, queryClick];
+export const query: Extension = [queryField, queryClick, blockEdges(queryField)];

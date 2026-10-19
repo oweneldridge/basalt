@@ -185,3 +185,42 @@ describe("calendar view", () => {
     expect(opened).toContain(emptyKey);
   });
 });
+
+describe("calendar with the host's daily notes", () => {
+  const dailyOpened: string[] = [];
+  let withNote = "";
+  beforeEach(async () => {
+    await unloadAll();
+    files = [];
+    created.length = 0;
+    dailyOpened.length = 0;
+    installHost({
+      ...fakeHost(),
+      openDailyNote: async (d) => {
+        dailyOpened.push(K.dailyKey(d));
+      },
+      hasDailyNote: (d) => K.dailyKey(d) === withNote,
+    });
+    await loadPlugin(info());
+  });
+
+  it("asks the host which days have notes and opens days through it", async () => {
+    // A custom-format daily note the filename heuristic couldn't find.
+    withNote = K.dailyKey(new Date());
+    files.push({ path: "Journal/03.10.2026.md", name: "03.10.2026" });
+    const container = makeEl("div");
+    pluginRightViews()
+      .find((v) => v.id === "calendar")!
+      .mount(container as unknown as HTMLElement);
+    const cells = allBy(container, cls("cal-day"));
+    const today = cells.find((c) => c["data-date"] === withNote)!;
+    expect(cls("has-note")(today)).toBe(true);
+    expect(today["aria-current"]).toBe("date");
+    expect(cells.filter(cls("has-note"))).toHaveLength(1);
+    const other = cells.find((c) => !cls("is-outside")(c) && c["data-date"] !== withNote)!;
+    fire(other, "click");
+    await flush();
+    expect(dailyOpened).toEqual([other["data-date"]]);
+    expect(created).toHaveLength(0);
+  });
+});

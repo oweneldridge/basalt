@@ -9,8 +9,8 @@
 // widget gets the EditorView in toDOM(view) and dispatches directly; inputs are
 // plain DOM (no CM transaction while typing), so the widget is stable until a
 // commit rebuilds it.
-import { RangeSetBuilder, StateField } from "@codemirror/state";
-import type { EditorState, EditorSelection, Extension } from "@codemirror/state";
+import { EditorSelection, EditorState as State, RangeSetBuilder, StateField } from "@codemirror/state";
+import type { EditorState, Extension } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType } from "@codemirror/view";
 import type { DecorationSet } from "@codemirror/view";
 import { frontmatterRange } from "./regions";
@@ -64,6 +64,13 @@ class PropertiesWidget extends WidgetType {
     const wrap = document.createElement("div");
     wrap.className = "cm-properties";
     wrap.contentEditable = "false";
+    // CodeMirror ignores clicks in the box, so a click on blank space (padding,
+    // a key, the footer's gaps) would let the browser drop the caret in front
+    // of `---`, where the next key breaks the frontmatter. Only the controls
+    // take a click.
+    wrap.addEventListener("mousedown", (e) => {
+      if (!(e.target instanceof Element && e.target.closest("input, textarea, select, button, a"))) e.preventDefault();
+    });
     const parsed = parseFm(this.source);
     const props = parsed?.props ?? [];
 
@@ -181,9 +188,12 @@ class PropertiesWidget extends WidgetType {
       };
       values.append(input);
     } else {
-      // text scalar / empty: a single editable (quoted) value
+      // text scalar / empty: a single editable (quoted) value. Only an edit
+      // writes: a field just focused and left keeps the note as it is.
       const input = this.valueInput(p.values[0] ?? "");
-      const fire = () => this.commit(view, (src) => setProp(src, p.key, [input.value], false));
+      const fire = () => {
+        if (input.value !== (p.values[0] ?? "")) this.commit(view, (src) => setProp(src, p.key, [input.value], false));
+      };
       input.onblur = fire;
       input.onkeydown = (e) => {
         if (e.key === "Enter") {
@@ -217,9 +227,10 @@ class PropertiesWidget extends WidgetType {
     const pill = document.createElement("span");
     pill.className = "cm-prop-pill";
     const input = this.valueInput(value);
-    const commitAll = () =>
-      this.commit(view, (src) => setProp(src, key, rereadValues(), multi));
-    input.onblur = commitAll;
+    // Only an edit writes, as for a single value.
+    input.onblur = () => {
+      if (input.value !== value) this.commit(view, (src) => setProp(src, key, rereadValues(), multi));
+    };
     input.onkeydown = (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -310,6 +321,8 @@ interface FmState {
   range: { from: number; to: number } | null;
 }
 
+const AFTER_PROPERTIES = Decoration.line({ class: "cm-after-properties" });
+
 function compute(state: EditorState): FmState {
   const range = frontmatterRange(state);
   if (!range) return { deco: Decoration.none, range: null };
@@ -322,6 +335,13 @@ function compute(state: EditorState): FmState {
     range.to,
     Decoration.replace({ widget: new PropertiesWidget(source), block: true }),
   );
+  // The gap under the box belongs to the first body line, not the widget: a
+  // click there puts the caret on that line, never in front of `---`.
+  // (CodeMirror measures a block widget without its margins, so it has none.)
+  if (range.to < state.doc.length) {
+    const next = state.doc.lineAt(range.to + 1);
+    builder.add(next.from, next.from, AFTER_PROPERTIES);
+  }
   return { deco: builder.finish(), range };
 }
 
@@ -344,4 +364,27 @@ const fmField = StateField.define<FmState>({
   provide: (field) => EditorView.decorations.from(field, (v) => v.deco),
 });
 
-export const frontmatter: Extension = [fmField];
+// A click, double-click or drag that CodeMirror resolves into the rendered
+// Properties block (a pixel row along its border, or the gutter beside it,
+// maps to the hidden `---` lines) starts on the first body line instead:
+// typing there would break the frontmatter. Each range is moved on its own,
+// so cursors added with Cmd-click keep the others.
+const edgeClick = State.transactionFilter.of((tr) => {
+  if (!tr.isUserEvent("select.pointer") || tr.docChanged || !tr.selection) return tr;
+  const range = frontmatterRange(tr.startState);
+  if (!range || range.to >= tr.startState.doc.length) return tr;
+  if (touches(range, tr.startState.selection)) return tr; // raw already showing
+  const body = range.to + 1;
+  const hidden = (pos: number) => pos >= range.from && pos <= range.to;
+  const sel = tr.newSelection;
+  if (!sel.ranges.some((r) => hidden(r.anchor) || hidden(r.head))) return tr;
+  // A drag between the body and the very top of the note selects the whole
+  // block on purpose, to copy or replace it.
+  const moves = (pos: number, other: number) => hidden(pos) && (hidden(other) || pos !== range.from);
+  const ranges = sel.ranges.map((r) =>
+    EditorSelection.range(moves(r.anchor, r.head) ? body : r.anchor, moves(r.head, r.anchor) ? body : r.head),
+  );
+  return [tr, { selection: EditorSelection.create(ranges, sel.mainIndex), sequential: true }];
+});
+
+export const frontmatter: Extension = [fmField, edgeClick];

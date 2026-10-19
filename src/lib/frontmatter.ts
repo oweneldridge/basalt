@@ -10,6 +10,8 @@
 // Anything else is preserved but not offered for structured editing (edit the
 // raw YAML instead).
 
+import { parse as parseYaml } from "yaml";
+
 // "complex" = a value the simple model can't safely round-trip (block scalar
 // `|`/`>`, nested map, flow map, anchor/alias/tag). The UI shows it read-only.
 export type PropKind = "scalar" | "inline" | "list" | "empty" | "complex";
@@ -167,14 +169,23 @@ export function parseFm(source: string): ParsedFm | null {
       // Block list, block scalar / nested map (incl. blank-line-separated), or
       // a truly empty value.
       if (i + 1 < body.length && /^\s*-\s+/.test(body[i + 1])) {
-        prop.kind = "list";
-        let j = i + 1;
-        for (; j < body.length; j++) {
+        // A plain list only if every item is a scalar. Items that are maps
+        // (`- name: Ann` + indented keys), flow collections or multi-line make
+        // it complex, since list edits would rewrite them as strings.
+        let complex = false;
+        for (let j = i + 1; j < body.length; j++) {
           const li = /^\s*-\s+(.*)$/.exec(body[j]);
-          if (!li) break;
-          prop.values.push(unquote(li[1]));
-          prop.end = j;
+          if (li) {
+            const v = li[1].trim();
+            if (/^[[{]/.test(v) || /^[^"'][^:]*:(\s|$)/.test(v)) complex = true;
+            prop.values.push(unquote(li[1]));
+            prop.end = j;
+          } else if (body[j].trim() !== "" && /^\s+\S/.test(body[j])) {
+            complex = true;
+            prop.end = j;
+          } else break;
         }
+        prop.kind = complex ? "complex" : "list";
         i = prop.end;
       } else if (nextNonBlankIndented(i)) {
         prop.kind = "complex"; // nested map / block scalar body (maybe after a blank)
@@ -296,4 +307,166 @@ export function deleteProp(source: string, key: string): string {
   const body = parsed.body.slice();
   body.splice(existing.start, existing.end - existing.start + 1);
   return rebuild(parsed, body);
+}
+
+/** A template's properties and body, split the way Obsidian's Templates plugin
+ * splits one before inserting it anywhere but the very top of a note.
+ * `offset` is where the body starts in `text`. Null without frontmatter. */
+export function splitTemplate(text: string): { props: string[]; body: string; offset: number } | null {
+  const parsed = parseFm(text);
+  if (!parsed) return null;
+  const lines = text.split("\n");
+  const close = parsed.body.length + 1;
+  const offset = lines.slice(0, close + 1).join("\n").length + (close + 1 < lines.length ? 1 : 0);
+  return { props: parsed.body, body: text.slice(offset), offset };
+}
+
+/** A property's name: its key, or the text inside a quoted key. */
+function keyName(p: FmProp): string {
+  const q = /^\s*(["'])(.*?)\1\s*:/.exec(p.key);
+  return q ? q[2] : p.key;
+}
+
+const isScalar = (x: unknown) => x === null || ["string", "number", "boolean"].includes(typeof x);
+
+/** A list item as YAML: strings quoted when needed, numbers and booleans bare.
+ * In a flow list `[a, b]`, commas and brackets also need quotes; a JSON string
+ * is a valid double-quoted YAML scalar. */
+function itemYaml(x: unknown, flow: boolean): string {
+  if (typeof x !== "string") return String(x);
+  if (flow && (/[,[\]{}]/.test(x) || needsQuote(x))) return JSON.stringify(x);
+  return serializeScalar(x);
+}
+
+/** Obsidian treats these as lists even when a note holds a single value. */
+const LIST_KEYS = new Set(["tags", "tag", "aliases", "alias", "cssclasses", "cssclass"]);
+
+/** Split a value on commas outside quotes (how aliases and tags written as
+ * `a, b` are read), keeping each part's own quoting. */
+function splitCommas(value: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let q = "";
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (q === '"' && ch === "\\") {
+      cur += ch + (value[++i] ?? "");
+    } else if (q) {
+      cur += ch;
+      if (ch === q) q = "";
+    } else if (ch === '"' || ch === "'") {
+      cur += ch;
+      q = ch;
+    } else if (ch === ",") {
+      out.push(cur.trim());
+      cur = "";
+    } else cur += ch;
+  }
+  out.push(cur.trim());
+  return out.filter((p) => p !== "");
+}
+
+/** Whether the value on line `end` goes on below it (the next non-blank line
+ * is indented): a wrapped flow list or a plain value over several lines. */
+function continuesBelow(body: string[], end: number): boolean {
+  let i = end + 1;
+  while (i < body.length && body[i].trim() === "") i++;
+  return i < body.length && /^\s+\S/.test(body[i]);
+}
+
+/** A line's value text after `key:`, without a trailing comment. A `#` inside
+ * quotes is part of the value. */
+function rawValue(line: string): string {
+  const v = line.slice(line.indexOf(":") + 1);
+  let quote: string | null = null;
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i];
+    if (quote) {
+      if (quote === '"' && c === "\\") i++;
+      else if (c === quote) {
+        if (quote === "'" && v[i + 1] === "'") i++;
+        else quote = null;
+      }
+    } else if ((c === '"' || c === "'") && v.slice(0, i).trim() === "") {
+      quote = c;
+    } else if (c === "#" && (i === 0 || /\s/.test(v[i - 1]))) {
+      return v.slice(0, i).trim();
+    }
+  }
+  return v.trim();
+}
+
+/**
+ * Merge a template's property lines into a note, close to Obsidian's
+ * insertProperties: new keys are added, a template value replaces a single
+ * value, and a list gains the template's items it lacks. Unlike Obsidian, lists
+ * never lose items: a single value meeting a list (either way round) joins it.
+ * An empty template value leaves the note's alone, and shapes that can't be
+ * extended safely (nested lists or maps, values spanning lines) stay as they
+ * are. Only keys that change are rewritten; template values keep their
+ * formatting. Throws if the template's YAML is invalid.
+ */
+export function mergeTemplateProps(note: string, props: string[]): string {
+  const values: unknown = parseYaml(props.join("\n")) ?? {};
+  if (typeof values !== "object" || Array.isArray(values)) throw new Error("template properties aren't a map");
+  const tpl = parseFm(["---", ...props, "---"].join("\n"));
+  if (!tpl || tpl.props.length === 0) return note;
+  if (!parseFm(note)) {
+    const nl = note.includes("\r\n") ? "\r\n" : "\n";
+    return ["---", ...props, "---", note].join(nl);
+  }
+  let out = note;
+  for (const tp of tpl.props) {
+    const name = keyName(tp);
+    const v = (values as Record<string, unknown>)[name];
+    const cur = parseFm(out)!;
+    const lines = tpl.body.slice(tp.start, tp.end + 1);
+    const np = cur.props.find((p) => keyName(p) === name);
+    const body = cur.body.slice();
+    if (!np) {
+      body.push(...lines);
+    } else if (v === null || v === undefined || v === "") {
+      continue; // an empty template value never wipes the note's
+    } else if (np.kind === "empty") {
+      body.splice(np.start, np.end - np.start + 1, ...lines);
+    } else if (np.kind === "complex" || (typeof v === "object" && !Array.isArray(v))) {
+      continue; // nested lists and maps aren't merged
+    } else if (Array.isArray(v) || np.kind === "list" || np.kind === "inline" || LIST_KEYS.has(name.toLowerCase())) {
+      // A template single value joins a list the note already has.
+      const items = Array.isArray(v) ? v : [v];
+      if (!items.every(isScalar)) continue;
+      const have = np.values;
+      const add = items.filter((x) => x !== null && !have.includes(String(x)));
+      if (add.length === 0) continue;
+      if (np.kind === "list") {
+        const indent = /^(\s*)-/.exec(cur.body[np.start + 1] ?? "")?.[1] ?? "  ";
+        body.splice(np.end + 1, 0, ...add.map((x) => `${indent}- ${itemYaml(x, false)}`));
+      } else if (np.kind === "inline") {
+        const line = cur.body[np.start];
+        const close = line.lastIndexOf("]");
+        const head = line.slice(0, close).replace(/\s+$/, "");
+        const sep = head.endsWith("[") ? "" : head.endsWith(",") ? " " : ", ";
+        body[np.start] = head + sep + add.map((x) => itemYaml(x, true)).join(", ") + line.slice(close);
+      } else {
+        // A single value meets a list: it becomes the list's first item (or
+        // items, for aliases and tags written `a, b`). A value spanning lines,
+        // or a flow collection behind a comment, stays as it is.
+        const raw = rawValue(cur.body[np.start]);
+        if (np.end !== np.start || continuesBelow(cur.body, np.end) || /^[[{]/.test(raw)) continue;
+        const parts = LIST_KEYS.has(name.toLowerCase()) ? splitCommas(raw) : [raw];
+        const quoted = (p: string) => /^(["']).*\1$/.test(p);
+        const plain = parts.map((p) => (quoted(p) ? p.slice(1, -1) : p));
+        const extra = add.filter((x) => !plain.includes(String(x)));
+        if (extra.length === 0) continue;
+        const items = parts.length === 1 ? parts : parts.map((p, i) => (quoted(p) ? p : itemYaml(plain[i], false)));
+        const keyPart = cur.body[np.start].slice(0, cur.body[np.start].indexOf(":") + 1);
+        body.splice(np.start, 1, keyPart, ...[...items, ...extra.map((x) => itemYaml(x, false))].map((x) => `  - ${x}`));
+      }
+    } else {
+      if (continuesBelow(cur.body, np.end)) continue; // a value over several lines stays
+      body.splice(np.start, np.end - np.start + 1, ...lines);
+    }
+    out = rebuild(cur, body);
+  }
+  return out;
 }

@@ -24,6 +24,12 @@ describe("htmlBlockRanges", () => {
     expect(htmlBlockRanges(src)).toEqual([]);
   });
 
+  it("finds a block after a line that starts with inline code", () => {
+    const src = "```ls``` lists files\n\n<div>\nhello\n</div>\n";
+    expect(htmlBlockRanges(src)).toEqual([{ fromLine: 2, toLine: 4 }]);
+    expect(readingBlocks(src)).toBe(1);
+  });
+
   it("skips leading frontmatter and finds a block after it", () => {
     const src = "---\ntitle: x\n---\n\n<center>Hi</center>\n";
     expect(htmlBlockRanges(src)).toEqual([{ fromLine: 4, toLine: 4 }]);
@@ -40,5 +46,29 @@ describe("htmlBlockRanges", () => {
     for (const s of samples) {
       expect(htmlBlockRanges(s).length).toBe(readingBlocks(s));
     }
+  });
+});
+
+describe("inline SVG", () => {
+  const svg = [
+    "### The picture",
+    "",
+    '<svg viewBox="0 0 420 320" width="420" xmlns="http://www.w3.org/2000/svg" style="max-width:100%">',
+    '<line x1="40" y1="290" x2="395" y2="290" stroke="#e8710a" stroke-width="1"/>',
+    '<text x="55" y="48" font-size="12" fill="#1a73e8">orange: slope 5</text>',
+    "</svg>",
+    "",
+    "- after",
+  ].join("\n");
+
+  it("is a block in both views right under a paragraph too", () => {
+    const tight = 'Some text.\n<svg viewBox="0 0 10 10">\n<line stroke="#e8710a"/>\n</svg>\n\nafter';
+    expect(htmlBlockRanges(tight)).toEqual([{ fromLine: 1, toLine: 3 }]);
+    expect(readingBlocks(tight)).toBe(1);
+  });
+
+  it("is one HTML block in both views", () => {
+    expect(htmlBlockRanges(svg)).toEqual([{ fromLine: 2, toLine: 5 }]);
+    expect(readingBlocks(svg)).toBe(1);
   });
 });

@@ -28,6 +28,18 @@ export function isInExcludedRegion(state: EditorState, pos: number): boolean {
   return false;
 }
 
+const HTMLISH = new Set(["HTMLBlock", "HTMLTag", "CommentBlock", "Comment"]);
+
+/** True if `pos` is inside raw HTML (a block, or an inline tag's markup). */
+export function isInHtml(state: EditorState, pos: number): boolean {
+  let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1);
+  while (node) {
+    if (HTMLISH.has(node.name)) return true;
+    node = node.parent;
+  }
+  return false;
+}
+
 const LINKISH = new Set(["Link", "Image", "URL", "Autolink", "LinkReference"]);
 
 /** True if `pos` is inside a link/image/url node — used so tag scanning doesn't

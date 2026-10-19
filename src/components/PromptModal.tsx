@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Modal } from "./Modal";
 
 interface Props {
   title: string;
@@ -28,7 +29,7 @@ export function PromptModal({ title, defaultValue, confirmLabel, onConfirm, onCl
   };
 
   return (
-    <div className="palette-overlay" onMouseDown={onClose}>
+    <Modal className="palette-overlay" label={title} onClose={onClose}>
       <div className="prompt" onMouseDown={(e) => e.stopPropagation()}>
         <div className="prompt-title">{title}</div>
         <input
@@ -55,6 +56,6 @@ export function PromptModal({ title, defaultValue, confirmLabel, onConfirm, onCl
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

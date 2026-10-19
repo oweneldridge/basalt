@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
-import { ensureSyntaxTree } from "@codemirror/language";
-import { headingSectionAt, listItemSectionAt } from "./headingFold";
+import { ensureSyntaxTree, foldEffect, foldedRanges } from "@codemirror/language";
+import { headingFold, headingSectionAt, listItemSectionAt } from "./headingFold";
 
 function stateFor(doc: string): EditorState {
   const state = EditorState.create({
@@ -78,5 +78,117 @@ describe("listItemSectionAt", () => {
   });
   it("handles ordered lists and nested depth", () => {
     expect(listFold("1. a\n   1. deep\n      - deeper\n2. b", 1)).toEqual([1, 3]);
+  });
+});
+
+describe("deleting next to a folded section", () => {
+  const doc = "# A\nhidden one\nhidden two\n# B\nafter";
+  const folded = () => {
+    const base = EditorState.create({ doc, extensions: [markdown({ base: markdownLanguage, extensions: GFM }), headingFold] });
+    ensureSyntaxTree(base, doc.length, 5000);
+    const range = headingSectionAt(base, 0)!;
+    return { state: base.update({ effects: foldEffect.of(range) }).state, range };
+  };
+  const del = (state: EditorState, from: number, to: number) =>
+    state.update({ changes: { from, to }, userEvent: "delete.backward" }).state;
+
+  it("opens it instead of joining the next line onto it", () => {
+    const { state, range } = folded();
+    const after = del(state, range.to, range.to + 1);
+    expect(after.doc.toString()).toBe(doc);
+    expect(foldedRanges(after).size).toBe(0);
+  });
+  it("opens it instead of pulling its text up into the heading", () => {
+    const { state, range } = folded();
+    const after = del(state, range.from, range.from + 1);
+    expect(after.doc.toString()).toBe(doc);
+    expect(foldedRanges(after).size).toBe(0);
+  });
+  it("deletes a selection the user made, hidden text and all", () => {
+    const { state } = folded();
+    const all = state.update({ selection: { anchor: 0, head: state.doc.length } }).state;
+    for (const userEvent of ["delete.backward", "delete.cut"]) {
+      const after = all.update({ changes: { from: 0, to: all.doc.length }, userEvent }).state;
+      expect(after.doc.toString()).toBe("");
+    }
+  });
+  it("lets Shift-Tab take indentation from a folded section's lines", () => {
+    const list = "- a\n\t- b\n\t\t- c";
+    const base = EditorState.create({ doc: list, extensions: [markdown({ base: markdownLanguage, extensions: GFM }), headingFold] });
+    ensureSyntaxTree(base, list.length, 5000);
+    const range = listItemSectionAt(base, base.doc.line(2).from)!;
+    const state = base.update({ effects: foldEffect.of(range), selection: { anchor: base.doc.line(2).to } }).state;
+    const after = state.update({ changes: [{ from: base.doc.line(2).from, to: base.doc.line(2).from + 1 }, { from: base.doc.line(3).from, to: base.doc.line(3).from + 1 }], userEvent: "delete.dedent" }).state;
+    expect(after.doc.toString()).toBe("- a\n- b\n\t- c");
+  });
+  it("still opens a section a cursor's cut would take", () => {
+    const { state, range } = folded();
+    const after = state.update({ changes: { from: 0, to: range.to + 1 }, userEvent: "delete.cut" }).state;
+    expect(after.doc.toString()).toBe(doc);
+    expect(foldedRanges(after).size).toBe(0);
+  });
+  it("opens it when text is typed at its hidden end, so the text shows where it goes", () => {
+    const { state, range } = folded();
+    const after = state.update({ changes: { from: range.to, insert: "Z" }, userEvent: "input.type" }).state;
+    expect(after.doc.toString()).toBe("# A\nhidden one\nhidden twoZ\n# B\nafter");
+    expect(foldedRanges(after).size).toBe(0);
+  });
+  it("keeps it folded when Enter starts a line after it", () => {
+    const { state, range } = folded();
+    const after = state.update({ changes: { from: range.to, insert: "\n" }, userEvent: "input" }).state;
+    expect(after.doc.toString()).toBe("# A\nhidden one\nhidden two\n\n# B\nafter");
+    expect(foldedRanges(after).size).toBe(1);
+  });
+  it("opens it when a selection only seems to cover the heading", () => {
+    const { state, range } = folded();
+    const sel = state.update({ selection: { anchor: 2, head: range.to } }).state;
+    for (const [userEvent, insert] of [["delete.backward", ""], ["delete.cut", ""], ["input.type", "New"], ["input.paste", "x"]]) {
+      const after = sel.update({ changes: { from: 2, to: range.to, insert }, userEvent }).state;
+      expect(after.doc.toString(), userEvent).toBe(doc);
+      expect(foldedRanges(after).size).toBe(0);
+      expect(after.selection.main.empty && after.selection.main.head).toBe(2);
+    }
+  });
+  it("opens it rather than move or reformat what it hides", () => {
+    const { state, range } = folded();
+    for (const userEvent of ["move.line", "input", "move.drop"]) {
+      const after = state.update({ changes: { from: range.from - 1, to: range.to, insert: "x" }, userEvent }).state;
+      expect(after.doc.toString(), userEvent).toBe(doc);
+    }
+  });
+  it("lets a selection into the text after it, or the whole note, delete it", () => {
+    const { state, range } = folded();
+    const past = state.update({ selection: { anchor: 0, head: range.to + 2 } }).state;
+    expect(past.update({ changes: { from: 0, to: range.to + 2 }, userEvent: "delete.backward" }).state.doc.toString()).toBe(" B\nafter");
+    const tail = "# A\nhidden";
+    const base = EditorState.create({ doc: tail, extensions: [markdown({ base: markdownLanguage, extensions: GFM }), headingFold] });
+    ensureSyntaxTree(base, tail.length, 5000);
+    const end = base.update({ effects: foldEffect.of(headingSectionAt(base, 0)!), selection: { anchor: 0, head: tail.length } }).state;
+    expect(end.update({ changes: { from: 0, to: tail.length }, userEvent: "delete.backward" }).state.doc.toString()).toBe("");
+  });
+  it("opens it when a selection ends with the line it heads (a triple-click)", () => {
+    const { state, range } = folded();
+    const line = state.update({ selection: { anchor: 0, head: range.to + 1 } }).state;
+    const after = line.update({ changes: { from: 0, to: range.to + 1, insert: "# Fresh" }, userEvent: "input.type" }).state;
+    expect(after.doc.toString()).toBe(doc);
+    expect(foldedRanges(after).size).toBe(0);
+  });
+  it("lets the app's own edits through, and opens it for a drop at its end", () => {
+    const { state, range } = folded();
+    expect(state.update({ changes: { from: range.from, to: range.to } }).state.doc.toString()).toBe("# A\n# B\nafter");
+    const dropped = state.update({ changes: { from: range.to, insert: "x" }, userEvent: "input.drop" }).state;
+    expect(dropped.doc.toString()).toBe("# A\nhidden one\nhidden twox\n# B\nafter");
+    expect(foldedRanges(dropped).size).toBe(0);
+  });
+  it("lets undo bring back what it hid", () => {
+    const { state, range } = folded();
+    const after = state.update({ changes: { from: range.from, to: range.to }, userEvent: "undo" }).state;
+    expect(after.doc.toString()).toBe("# A\n# B\nafter");
+  });
+  it("still deletes the heading's own text", () => {
+    const { state, range } = folded();
+    const after = del(state, range.from - 1, range.from);
+    expect(after.doc.toString()).toBe("# \nhidden one\nhidden two\n# B\nafter");
+    expect(foldedRanges(after).size).toBe(1);
   });
 });

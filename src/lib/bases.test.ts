@@ -3,6 +3,7 @@ import {
   parseProperties,
   parseBase,
   serializeBase,
+  listOptions,
   validateExpr,
   asFlatFilter,
   fromFlat,
@@ -746,5 +747,128 @@ describe("validateExpr", () => {
   it("flags an unknown top-level function", () => {
     expect(validateExpr("frobnicate(1)")).toMatch(/unknown function/);
     expect(validateExpr("date(now())")).toBeNull(); // known fns nest fine
+  });
+});
+
+describe("Bases vocabulary added in Obsidian 1.9 to 1.10", () => {
+  it("median and stddev on lists", () => {
+    const on = (xs: unknown[]) => mkCtx({ properties: { xs } });
+    expect(ev("xs.median()", on([1, 2, 3, 4]))).toBe(2.5);
+    expect(ev("xs.median()", on([3, 1, 2]))).toBe(2);
+    expect(ev("xs.stddev()", on([2, 4, 4, 4, 5, 5, 7, 9]))).toBe(2);
+    expect(ev("xs.stddev()", on([]))).toBeNull();
+  });
+  it("file.backlinks and file.embeds come from the row's accessors", () => {
+    const ctx = mkCtx({ backlinks: () => ["Daily/2026-10-03", "Index"], embeds: () => ["pic.png"] });
+    expect(ev("file.backlinks.length", ctx)).toBe(2);
+    expect(toText(ev("file.backlinks", ctx))).toContain("Index");
+    expect(toText(ev("file.embeds", ctx))).toContain("pic.png");
+    expect(ev("file.backlinks.length", mkCtx())).toBe(0);
+  });
+  it("a Stddev summary", () => {
+    const def = parseBase("views:\n  - type: table\n    order: [note.n]\n    summaries:\n      note.n: Stddev\n")!;
+    const rows = [2, 4, 4, 4, 5, 5, 7, 9].map((n, i) => row({ path: `N${i}.md`, properties: { n } }));
+    const res = runView(def, def.views[0], rows, { nowMs: NOW });
+    expect(res.summary).toEqual(["2"]);
+  });
+});
+
+describe("this (the file a base is shown for)", () => {
+  const alpha = row({ path: "Projects/Alpha.md", name: "Alpha.md", basename: "Alpha", folder: "Projects", properties: { status: "active", "due-date": "2026-10-10" } });
+  const withThis = (over: Partial<BaseRow> = {}) => ({ ...mkCtx(over), thisRow: alpha });
+  it("reads the embedding file's name and properties", () => {
+    expect(ev("this.file.name", withThis())).toBe("Alpha.md");
+    expect(ev("this.file.folder", withThis())).toBe("Projects");
+    expect(ev("this.status", withThis())).toBe("active");
+    expect(ev('this["due-date"]', withThis())).toBe("2026-10-10");
+  });
+  it("is null when the base isn't shown for a file", () => {
+    expect(ev("this", mkCtx())).toBeNull();
+    expect(ev("this.file.name", mkCtx())).toBeNull();
+  });
+  it("filters rows that link to the embedding note", () => {
+    const def = parseBase("filters: 'file.hasLink(this.file)'\nviews:\n  - type: table\n    order: [file.name]\n")!;
+    const rows = [
+      row({ path: "A.md", name: "A.md", basename: "A", linkKeys: ["alpha", "projects/alpha"] }),
+      row({ path: "B.md", name: "B.md", basename: "B", linkKeys: ["beta"] }),
+      row({ path: "C.md", name: "C.md", basename: "C", linkKeys: ["projects/alpha"] }),
+    ];
+    const res = runView(def, def.views[0], rows, { nowMs: NOW, thisRow: alpha });
+    expect(res.rows.map((r) => r.row.path)).toEqual(["A.md", "C.md"]);
+    expect(runView(def, def.views[0], rows, { nowMs: NOW }).total).toBe(0);
+  });
+});
+
+describe("groupOrder (Obsidian 1.14)", () => {
+  const src = "views:\n  - type: table\n    name: T\n    groupBy:\n      property: status\n      direction: ASC\n    groupOrder:\n      - todo\n      - done\n";
+  it("is kept while the view still groups by the same property", () => {
+    const def = parseBase(src)!;
+    const out = serializeBase({ ...def, views: [{ ...def.views[0], limit: 5 }] });
+    expect(out).toContain("groupOrder");
+  });
+  it("is dropped when the group property changes or grouping is removed", () => {
+    const def = parseBase(src)!;
+    const regrouped = serializeBase({ ...def, views: [{ ...def.views[0], groupBy: { property: "owner", direction: "ASC" } }] });
+    expect(regrouped).not.toContain("groupOrder");
+    const ungrouped = serializeBase({ ...def, views: [{ ...def.views[0], groupBy: undefined }] });
+    expect(ungrouped).not.toContain("groupOrder");
+  });
+});
+
+describe("list view options", () => {
+  const view = (yaml: string) => parseBase(`views:\n  - type: list\n    name: L\n${yaml}`)!.views[0];
+
+  it("defaults to bullets, no indent and a comma separator", () => {
+    expect(listOptions(view(""))).toEqual({ markers: "bullet", indent: false, separator: ", " });
+  });
+
+  it("reads markers, indentProperties and separator", () => {
+    const v = view("    markers: number\n    indentProperties: true\n    separator: ' | '\n");
+    expect(listOptions(v)).toEqual({ markers: "number", indent: true, separator: " | " });
+    expect(listOptions(view("    markers: none\n")).markers).toBe("none");
+  });
+
+  it("falls back like Obsidian on an unknown marker or empty separator", () => {
+    expect(listOptions(view("    markers: stars\n")).markers).toBe("bullet");
+    expect(listOptions(view("    separator: ''\n")).separator).toBe(", ");
+  });
+
+  it("keeps the options through a save", () => {
+    const def = parseBase("views:\n  - type: list\n    name: L\n    markers: number\n    indentProperties: true\n")!;
+    const out = parseBase(serializeBase({ ...def, views: [{ ...def.views[0], name: "Renamed" }] }))!.views[0];
+    expect(out.type).toBe("list");
+    expect(listOptions(out)).toMatchObject({ markers: "number", indent: true });
+  });
+});
+
+describe("serializeBase keeps views it didn't change", () => {
+  const src = [
+    "views:",
+    "  - type: table",
+    "    name: First",
+    "  # the second view",
+    "  - type: cards",
+    "    name: Second",
+    "    order: [file.name, status] # flow style",
+    "    limit: 5",
+    "",
+  ].join("\n");
+  const second = ["  # the second view", "  - type: cards", "    name: Second", "    order: [file.name, status] # flow style"];
+
+  it("editing one view leaves the others byte for byte", () => {
+    const def = parseBase(src)!;
+    const out = serializeBase({ ...def, views: def.views.map((v, i) => (i === 0 ? { ...v, limit: 3 } : v)) });
+    for (const line of second) expect(out).toContain(line);
+    expect(parseBase(out)!.views[0].limit).toBe(3);
+  });
+
+  it("deleting or adding a view keeps the rest", () => {
+    const def = parseBase(src)!;
+    const dropped = serializeBase({ ...def, views: def.views.slice(1) });
+    expect(dropped).toContain("order: [file.name, status] # flow style");
+    expect(parseBase(dropped)!.views.map((v) => v.name)).toEqual(["Second"]);
+    const added = serializeBase({ ...def, views: [...def.views, { type: "list", name: "Third" }] });
+    for (const line of second) expect(added).toContain(line);
+    expect(parseBase(added)!.views.map((v) => v.name)).toEqual(["First", "Second", "Third"]);
   });
 });

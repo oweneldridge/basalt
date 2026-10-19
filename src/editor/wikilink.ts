@@ -14,15 +14,19 @@ import {
   EditorView,
   ViewPlugin,
   WidgetType,
+  keymap,
 } from "@codemirror/view";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import {
   autocompletion,
 } from "@codemirror/autocomplete";
 import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
-import { normalizeName, wikilinkRegex } from "../lib/markdown";
+import { internalLinkTarget, mdLinkRegexGlobal, normalizeName, parseMarkdownLink, wikilinkLabel, wikilinkRegex } from "../lib/markdown";
 import { linkTargetForFormat, type LinkFormat } from "../lib/rename";
+import { linkpathDest } from "../lib/linkpath";
 import { isInExcludedRegion, treeChanged } from "./regions";
+import { notePathFacet } from "./query";
+import { linkResolves } from "../lib/transclude";
 
 /** What completion needs to know about a note. */
 export interface NoteRef {
@@ -55,15 +59,16 @@ class WikilinkWidget extends WidgetType {
   constructor(
     readonly target: string,
     readonly display: string,
+    readonly unresolved = false,
   ) {
     super();
   }
   eq(other: WikilinkWidget): boolean {
-    return other.target === this.target && other.display === this.display;
+    return other.target === this.target && other.display === this.display && other.unresolved === this.unresolved;
   }
   toDOM(): HTMLElement {
     const span = document.createElement("span");
-    span.className = "cm-wikilink";
+    span.className = this.unresolved ? "cm-wikilink is-unresolved" : "cm-wikilink";
     span.textContent = this.display;
     span.dataset.target = this.target;
     span.setAttribute("role", "link");
@@ -80,6 +85,7 @@ function buildDecorations(view: EditorView): DecorationSet {
   const sel = view.state.selection;
   const touches = (from: number, to: number): boolean =>
     sel.ranges.some((r) => r.from <= to && r.to >= from);
+  const self = view.state.facet(notePathFacet);
 
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
@@ -95,11 +101,12 @@ function buildDecorations(view: EditorView): DecorationSet {
       // A `[[…]]` preceded by `!` is an embed — handled by embeds.ts.
       if (view.state.doc.sliceString(start - 1, start) === "!") continue;
       const target = m[1].trim();
-      const display = (m[2] ?? m[1]).trim();
+      const display = m[2] !== undefined ? m[2].trim() : wikilinkLabel(target);
       if (touches(start, end)) {
         builder.add(start, end, Decoration.mark({ class: "cm-wikilink-source" }));
       } else {
-        builder.add(start, end, Decoration.replace({ widget: new WikilinkWidget(target, display) }));
+        const widget = new WikilinkWidget(target, display, !linkResolves(target, self));
+        builder.add(start, end, Decoration.replace({ widget }));
       }
     }
   }
@@ -179,9 +186,11 @@ function wikilinkCompletions(opts: WikilinkCompletionOptions) {
         // compute the link per the vault's newLinkFormat (read at apply time).
         const relNoExt = note.rel.replace(/\.md$/i, "");
         const taken = notes.filter((n) => normalizeName(n.name) === normalizeName(note.name)).length > 1;
+        const here = opts.getActiveRel();
+        const files = notes.filter((n) => !n.alias);
         const target = note.alias
           ? note.name
-          : linkTargetForFormat(opts.getLinkFormat(), relNoExt, taken, opts.getActiveRel());
+          : linkTargetForFormat(opts.getLinkFormat(), relNoExt, taken, here, linkReaches(files, here, note.rel));
         insert(target)(view, _completion, from, to);
       },
     }));
@@ -189,9 +198,22 @@ function wikilinkCompletions(opts: WikilinkCompletionOptions) {
     // note is created lazily when the inserted `[[name]]` link is clicked.
     const typed = before.text.slice(2).trim();
     if (typed && !notes.some((n) => normalizeName(n.name) === normalizeName(typed))) {
-      options.push({ label: typed, detail: "Create new note", type: "text", boost: -99, apply: insert(typed) });
+      // Matched on a label that can't be a prefix match, so any note whose name
+      // starts with what was typed ranks above it; shown as the typed name.
+      options.push({ label: `\u200b${typed}`, displayLabel: typed, detail: "Create new note", type: "text", boost: -99, apply: insert(typed) });
     }
     return { from: before.from + 2, options, filter: true };
+  };
+}
+
+/** Whether a link text in `fromRel` finds `toRel` as the index resolves it: among notes of its file name. */
+export function linkReaches(files: readonly { rel: string }[], fromRel: string | null, toRel: string): (text: string) => boolean {
+  const stem = (rel: string) => normalizeName((rel.split("/").pop() ?? "").replace(/\.md$/i, ""));
+  return (text) => {
+    const last = text.split(/[/\\]/).pop() ?? "";
+    let named = files.filter((n) => stem(n.rel) === normalizeName(last.replace(/\.md$/i, "")));
+    if (named.length === 0 && /\.md$/i.test(last)) named = files.filter((n) => stem(n.rel) === normalizeName(last));
+    return linkpathDest(text, fromRel, named, (n) => n.rel, ".md")?.rel === toRel;
   };
 }
 
@@ -256,3 +278,40 @@ export function wikilinkModClickFollow(onOpen: (target: string) => void): Extens
     },
   });
 }
+
+/** Alt-Enter follows the link under the caret (Obsidian's default for "Follow
+ * link under cursor"): a wikilink, a markdown link, or a bare URL. */
+export function followLinkAtCursor(onOpen: (target: string) => void, onOpenUrl: (url: string) => void): Extension {
+  return keymap.of([
+    {
+      key: "Alt-Enter",
+      run: (view) => {
+        const pos = view.state.selection.main.head;
+        const line = view.state.doc.lineAt(pos);
+        const at = pos - line.from;
+        const hit = (re: RegExp, f: (m: RegExpExecArray) => void) => {
+          let m: RegExpExecArray | null;
+          while ((m = re.exec(line.text))) {
+            if (at >= m.index && at <= m.index + m[0].length) {
+              f(m);
+              return true;
+            }
+          }
+          return false;
+        };
+        return (
+          hit(wikilinkRegex(), (m) => onOpen(m[1].trim())) ||
+          hit(mdLinkRegexGlobal(), (m) => {
+            const parsed = parseMarkdownLink(m[0].replace(/^!/, ""));
+            if (!parsed) return;
+            const internal = internalLinkTarget(parsed.href);
+            if (internal !== null) onOpen(internal);
+            else onOpenUrl(parsed.href);
+          }) ||
+          hit(/\bhttps?:\/\/[^\s<>()[\]]+/g, (m) => onOpenUrl(m[0]))
+        );
+      },
+    },
+  ]);
+}
+

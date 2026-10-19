@@ -61,12 +61,20 @@ export interface FileCache {
 /** The concrete capabilities App wires into the host. Keeping the host UI- and
  * Tauri-agnostic makes it unit-testable and keeps the trust surface explicit. */
 export interface HostDeps {
+  /** A note's text as the app last saw it on disk, without a round trip
+   * (null when it doesn't hold it, e.g. a note over the index cap). */
+  cachedRead?: (rel: string) => string | null;
   /** Vault notes. `ctime`/`mtime` are epoch-ms (for Dataview-style file dates);
    * older callers may omit them. */
   getMarkdownFiles: () => { path: string; name: string; ctime?: number; mtime?: number }[];
+  /** Every file in the vault, notes and attachments (vault-relative paths). */
+  getFiles?: () => { path: string; ctime?: number; mtime?: number; size?: number }[];
+  /** Every folder in the vault (vault-relative paths). */
+  getFolders?: () => string[];
   readNote: (path: string) => Promise<string>;
   createNote: (path: string, content: string) => Promise<void>;
-  modifyNote: (path: string, content: string) => Promise<void>;
+  /** With `expected`, the write is refused unless the note still reads so. */
+  modifyNote: (path: string, content: string, expected?: string) => Promise<void>;
   /** Move a note (by vault-relative path) to the vault trash. */
   deleteNote: (path: string) => Promise<void>;
   /** Rename/move a note; `newPath` is a vault-relative path (with or without .md). */
@@ -76,14 +84,27 @@ export interface HostDeps {
   getActiveNotePath: () => string | null;
   openNote: (target: string) => void;
   vaultName: () => string;
+  /** The open vault's path; a plugin acts only on the vault it was loaded for. */
+  vaultPath?: () => string | null;
   savePluginData: (id: string, json: string) => Promise<void>;
   notice: (message: string, timeoutMs?: number) => void;
   /** Parsed metadata for a note (by vault-relative path), or null if unknown. */
   getFileCache: (path: string) => FileCache | null;
+  /** Obsidian's resolvedLinks: source note → the files it links to → count. */
+  resolvedLinks?: () => Record<string, Record<string, number>>;
+  /** Obsidian's unresolvedLinks: source note → names it links to that aren't
+   * in the vault → count. */
+  unresolvedLinks?: () => Record<string, Record<string, number>>;
   /** Insert text at the focused editor's caret (replacing any selection); place
    * the caret `caretOffset` chars into the inserted text. No-op if no editor.
    * Optional so older host wirings still satisfy the type. */
   insertAtCursor?: (text: string, caretOffset?: number) => void;
+  /** Open (creating if needed) the daily note for a date, using the vault's
+   * Daily notes settings: folder, date format and template. `folderIfUnset` is
+   * used only when the vault has no Daily notes settings. */
+  openDailyNote?: (date: Date, folderIfUnset?: string) => Promise<void>;
+  /** Whether the daily note for a date exists. */
+  hasDailyNote?: (date: Date, folderIfUnset?: string) => boolean;
   /** Re-render open editors/reading views after processors/commands change. */
   onRegistryChanged: () => void;
 }
@@ -98,7 +119,7 @@ export interface PluginCommand {
 }
 
 // Languages Basalt renders itself — a plugin can't shadow them.
-const RESERVED_LANGS = new Set(["mermaid", "dataview", "query", "basalt-query"]);
+const RESERVED_LANGS = new Set(["mermaid", "dataview", "query", "basalt-query", "base"]);
 
 const commands = new Map<string, PluginCommand>();
 const processors = new Map<string, { pluginId: string; fn: CodeBlockProcessor }>();
@@ -123,6 +144,14 @@ type Listener = (...args: unknown[]) => void;
 
 const vaultListeners = new Map<string, Set<Listener>>();
 const workspaceListeners = new Map<string, Set<Listener>>();
+// Live vault subscriptions per plugin and event ("id:event"), so the host can
+// tell whether a plugin will act on a note it makes.
+const listening = new Map<string, number>();
+
+/** Whether plugin `id` is subscribed to vault event `name` right now. */
+export function listensFor(id: string, name: VaultEventName): boolean {
+  return (listening.get(`${id}:${name}`) ?? 0) > 0;
+}
 
 function subscribe(map: Map<string, Set<Listener>>, name: string, cb: Listener): EventRef {
   let set = map.get(name);
@@ -223,7 +252,7 @@ export function installHost(d: HostDeps | null): void {
 interface LoadedPlugin {
   info: PluginInfo;
   instance: PluginInstance;
-  cleanups: (() => void)[];
+  ctx: PluginContext;
 }
 const loaded = new Map<string, LoadedPlugin>();
 
@@ -231,17 +260,56 @@ const loaded = new Map<string, LoadedPlugin>();
 export function isLoaded(id: string): boolean {
   return loaded.has(id);
 }
+// Plugins whose onload hasn't finished.
+const starting = new Set<string>();
+/** Whether a plugin is loaded and its onload has finished. */
+export function isStarted(id: string): boolean {
+  return loaded.has(id) && !starting.has(id);
+}
 export function loadedIds(): string[] {
   return [...loaded.keys()];
 }
 
 class PluginContext {
   cleanups: (() => void)[] = [];
-  constructor(public readonly info: PluginInfo) {}
+  /** Its event subscriptions, registered or not: none outlives it. */
+  subscriptions = new Set<() => void>();
+  /** Unloaded: its leftover timers and promises can't change the vault. */
+  stopped = false;
+  constructor(
+    public readonly info: PluginInfo,
+    public readonly vault: string | null,
+  ) {}
 }
+
+/** How long unloading waits for a plugin's onunload. */
+export const UNLOAD_WAIT_MS = 3000;
 
 /** The `basalt` module returned to plugins via require("basalt"). */
 function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
+  const here = () => !host.vaultPath || host.vaultPath() === ctx.vault;
+  const live = <T,>(act: () => Promise<T>): Promise<T> =>
+    ctx.stopped
+      ? Promise.reject(new Error(`Plugin ${ctx.info.id} is unloaded`))
+      : !here()
+        ? Promise.reject(new Error("Not done: Basalt opened another vault meanwhile"))
+        : act();
+  // What a stopped plugin, or one whose vault has gone, sees of the vault.
+  const seen = <T,>(none: T, get: () => T): T => (ctx.stopped || !here() ? none : get());
+  const ownName = host.vaultName();
+  // A handler that runs only in the plugin's own vault, and ends with it.
+  const listen = (map: Map<string, Set<Listener>>, name: string, cb: (...args: unknown[]) => void, ended?: () => void): EventRef => {
+    const ref = subscribe(map, name, (...args: unknown[]) => {
+      if (here()) cb(...args);
+    });
+    const off = () => {
+      if (!ctx.subscriptions.delete(off)) return;
+      ref.off();
+      ended?.();
+    };
+    ctx.subscriptions.add(off);
+    return { off };
+  };
   class Notice {
     constructor(message: string, timeoutMs = 4000) {
       host.notice(String(message), timeoutMs);
@@ -265,53 +333,134 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     }
   }
 
+  // Files and folders shaped like Obsidian's TFile and TFolder.
+  const fileOf = (f: { path: string; ctime?: number; mtime?: number; size?: number }) => {
+    const name = f.path.split("/").pop() ?? f.path;
+    const dot = name.lastIndexOf(".");
+    return {
+      path: f.path,
+      name,
+      basename: dot > 0 ? name.slice(0, dot) : name,
+      extension: dot > 0 ? name.slice(dot + 1) : "",
+      stat: { ctime: f.ctime ?? 0, mtime: f.mtime ?? 0, size: f.size ?? 0 },
+    };
+  };
+  const allFiles = () => seen([], () => host.getFiles?.() ?? host.getMarkdownFiles().map((f) => ({ ...f, path: f.path }))).map(fileOf);
+  type Folder = { path: string; name: string; children: unknown[]; parent: Folder | null };
+  const allLoaded = () => {
+    const root: Folder = { path: "/", name: "", children: [], parent: null };
+    const folders = new Map<string, Folder>([["", root]]);
+    for (const rel of [...seen([], () => host.getFolders?.() ?? [])].sort()) {
+      folders.set(rel, { path: rel, name: rel.split("/").pop() ?? rel, children: [], parent: null });
+    }
+    const parentOf = (path: string) => folders.get(path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "") ?? root;
+    for (const [rel, folder] of folders) {
+      if (!rel) continue;
+      folder.parent = parentOf(rel);
+      folder.parent.children.push(folder);
+    }
+    const files = allFiles().map((f) => {
+      const parent = parentOf(f.path);
+      const file = { ...f, parent };
+      parent.children.push(file);
+      return file;
+    });
+    return [...folders.values(), ...files];
+  };
+
   const app = {
     vault: {
-      getName: () => host.vaultName(),
-      getMarkdownFiles: () => host.getMarkdownFiles(),
+      getName: () => seen(ownName, () => host.vaultName()),
+      getMarkdownFiles: () => seen([], () => host.getMarkdownFiles()),
+      /** Every file, notes and attachments, as Obsidian's TFile. */
+      getFiles: () => allLoaded().filter((f) => !("children" in f)),
+      /** Every file and folder, the vault's root first, as Obsidian gives them. */
+      getAllLoadedFiles: () => allLoaded(),
       read: (file: { path: string } | string) =>
-        host.readNote(typeof file === "string" ? file : file.path),
-      create: (path: string, content: string) => host.createNote(path, content),
+        live(() => host.readNote(typeof file === "string" ? file : file.path)),
+      /** Obsidian's cachedRead: the app's copy when it has one, else a read. */
+      cachedRead: async (file: { path: string } | string) => {
+        const rel = typeof file === "string" ? file : file.path;
+        return live(async () => host.cachedRead?.(rel) ?? host.readNote(rel));
+      },
+      create: (path: string, content: string) => live(() => host.createNote(path, content)),
       modify: (file: { path: string } | string, content: string) =>
-        host.modifyNote(typeof file === "string" ? file : file.path, content),
+        live(() => host.modifyNote(typeof file === "string" ? file : file.path, content)),
+      /** Obsidian's process: change a note from its current text in one step;
+       * refused if the note changes between the read and the write. */
+      process: async (file: { path: string } | string, fn: (data: string) => string) => {
+        const rel = typeof file === "string" ? file : file.path;
+        const current = await live(() => host.readNote(rel));
+        const next = fn(current);
+        if (next !== current) await live(() => host.modifyNote(rel, next, current));
+        return next;
+      },
       delete: (file: { path: string } | string) =>
-        host.deleteNote(typeof file === "string" ? file : file.path),
+        live(() => host.deleteNote(typeof file === "string" ? file : file.path)),
       rename: (file: { path: string } | string, newPath: string) =>
-        host.renameNote(typeof file === "string" ? file : file.path, newPath),
-      createFolder: (path: string) => host.createFolder(path),
+        live(() => host.renameNote(typeof file === "string" ? file : file.path, newPath)),
+      createFolder: (path: string) => live(() => host.createFolder(path)),
       /** Subscribe to a vault event: create/delete/modify → (file); rename →
        * (file, oldPath). Pass the returned ref to plugin.registerEvent(). */
-      on: (name: VaultEventName, cb: (...args: unknown[]) => void): EventRef =>
-        subscribe(vaultListeners, name, cb),
+      on: (name: VaultEventName, cb: (...args: unknown[]) => void): EventRef => {
+        if (ctx.stopped) return { off: () => {} };
+        const key = `${ctx.info.id}:${name}`;
+        // Its own handler each time, so subscribing twice runs it twice (as in
+        // Obsidian) and each off() ends one subscription.
+        listening.set(key, (listening.get(key) ?? 0) + 1);
+        return listen(vaultListeners, name, cb, () => listening.set(key, (listening.get(key) ?? 1) - 1));
+      },
     },
+    /** Daily notes as the vault's Daily notes settings define them. Absent on
+     * hosts that don't provide them. */
+    dailyNotes:
+      host.openDailyNote && host.hasDailyNote
+        ? {
+            open: (date: Date, folderIfUnset?: string) => live(() => host.openDailyNote!(date, folderIfUnset)),
+            has: (date: Date, folderIfUnset?: string) => seen(false, () => host.hasDailyNote!(date, folderIfUnset)),
+          }
+        : undefined,
     metadataCache: {
       /** Parsed metadata for a note (accepts a `{path}` or a rel string). */
       getFileCache: (file: { path: string } | string): FileCache | null =>
-        host.getFileCache(typeof file === "string" ? file : file.path),
+        seen(null, () => host.getFileCache(typeof file === "string" ? file : file.path)),
+      /** Each note's resolved links, as Obsidian's `resolvedLinks`. */
+      get resolvedLinks(): Record<string, Record<string, number>> {
+        return seen({}, () => host.resolvedLinks?.() ?? {});
+      },
+      /** Each note's links to files that aren't there, as Obsidian's `unresolvedLinks`. */
+      get unresolvedLinks(): Record<string, Record<string, number>> {
+        return seen({}, () => host.unresolvedLinks?.() ?? {});
+      },
     },
     workspace: {
       getActiveFile: () => {
-        const p = host.getActiveNotePath();
+        const p = seen(null, () => host.getActiveNotePath());
         return p ? { path: p } : null;
       },
-      openLinkText: (target: string) => host.openNote(target),
+      openLinkText: (target: string) => {
+        if (!ctx.stopped && here()) host.openNote(target);
+      },
       /** The focused editor (Obsidian-shaped: `activeEditor.editor`), or null.
        * The editor exposes replaceSelection + a Basalt insertAtCursor that can
        * place the caret inside the inserted text. */
       get activeEditor() {
-        return host.getActiveNotePath() ? { editor } : null;
+        return seen(null, () => host.getActiveNotePath()) ? { editor } : null;
       },
       /** Subscribe to a workspace event: file-open → (file|null);
        * active-leaf-change → (file|null). */
       on: (name: WorkspaceEventName, cb: (...args: unknown[]) => void): EventRef =>
-        subscribe(workspaceListeners, name, cb),
+        ctx.stopped ? { off: () => {} } : listen(workspaceListeners, name, cb), // each its own, as vault.on
     },
   };
 
   const editor = {
-    replaceSelection: (text: string) => host.insertAtCursor?.(String(text)),
-    insertAtCursor: (text: string, caretOffset?: number) =>
-      host.insertAtCursor?.(String(text), caretOffset),
+    replaceSelection: (text: string) => {
+      if (!ctx.stopped && here()) host.insertAtCursor?.(String(text));
+    },
+    insertAtCursor: (text: string, caretOffset?: number) => {
+      if (!ctx.stopped && here()) host.insertAtCursor?.(String(text), caretOffset);
+    },
   };
 
   class Plugin {
@@ -319,12 +468,14 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     manifest = ctx.info;
     /** Register a command in the palette; auto-removed on unload. */
     addCommand(cmd: { id: string; name: string; callback: () => void }) {
+      if (ctx.stopped) return;
       const id = `${ctx.info.id}:${cmd.id}`;
       commands.set(id, { id, name: cmd.name, callback: cmd.callback });
       ctx.cleanups.push(() => commands.delete(id));
       host.onRegistryChanged();
     }
     registerMarkdownCodeBlockProcessor(lang: string, fn: CodeBlockProcessor) {
+      if (ctx.stopped) return;
       const key = lang.toLowerCase();
       if (RESERVED_LANGS.has(key)) {
         host.notice(`Plugin ${ctx.info.id}: "${key}" is a built-in block and can't be overridden`);
@@ -337,6 +488,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
       host.onRegistryChanged();
     }
     registerEditorExtension(ext: Extension) {
+      if (ctx.stopped) return;
       const entry = { pluginId: ctx.info.id, ext };
       editorExtensions.push(entry);
       ctx.cleanups.push(() => {
@@ -347,6 +499,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     }
     /** Register a settings panel shown under this plugin in Settings. */
     addSettingTab(tab: SettingTab) {
+      if (ctx.stopped) return;
       settingTabs.set(ctx.info.id, tab);
       ctx.cleanups.push(() => {
         if (settingTabs.get(ctx.info.id) === tab) settingTabs.delete(ctx.info.id);
@@ -355,6 +508,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     }
     /** Add a ribbon icon (an emoji/text glyph + tooltip) that runs `callback`. */
     addRibbonIcon(icon: string, title: string, callback: () => void) {
+      if (ctx.stopped) return;
       const entry: RibbonItem = { pluginId: ctx.info.id, icon, title, callback };
       ribbonItems.push(entry);
       ctx.cleanups.push(() => {
@@ -366,6 +520,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     /** Register a custom right-panel view (shown as an extra tab). `mount` fills
      * the given container and may return a cleanup run when the view hides. */
     registerView(id: string, name: string, mount: (container: HTMLElement) => (() => void) | void) {
+      if (ctx.stopped) return;
       const view: PluginView = { pluginId: ctx.info.id, id, name, mount };
       pluginViews.set(id, view);
       ctx.cleanups.push(() => {
@@ -377,6 +532,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     addStatusBarItem(): HTMLElement {
       const el = document.createElement("span");
       el.className = "status-bar-item plugin-status-item";
+      if (ctx.stopped) return el;
       const entry = { pluginId: ctx.info.id, el };
       statusBarItems.push(entry);
       ctx.cleanups.push(() => {
@@ -389,19 +545,23 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     }
     /** Register an arbitrary cleanup run on unload. */
     register(cleanup: () => void) {
-      ctx.cleanups.push(cleanup);
+      if (ctx.stopped) cleanup();
+      else ctx.cleanups.push(cleanup);
     }
     /** Track an event subscription so it's removed on unload. */
     registerEvent(ref: EventRef) {
-      ctx.cleanups.push(() => ref.off());
+      if (ctx.stopped) ref.off();
+      else ctx.cleanups.push(() => ref.off());
     }
     /** Add a DOM listener that's removed on unload. */
     registerDomEvent(el: EventTarget, type: string, cb: (ev: Event) => void) {
+      if (ctx.stopped) return;
       el.addEventListener(type, cb);
       ctx.cleanups.push(() => el.removeEventListener(type, cb));
     }
     /** Start an interval cleared on unload; returns the id. */
     registerInterval(cb: () => void, ms: number): number {
+      if (ctx.stopped) return 0;
       const id = setInterval(cb, ms) as unknown as number;
       ctx.cleanups.push(() => clearInterval(id));
       return id;
@@ -417,7 +577,7 @@ function makeBasaltApi(ctx: PluginContext, host: HostDeps) {
     async saveData(data: unknown): Promise<void> {
       const json = JSON.stringify(data ?? null);
       ctx.info.data = json;
-      await host.savePluginData(ctx.info.id, json);
+      await live(() => host.savePluginData(ctx.info.id, json));
     }
   }
 
@@ -456,9 +616,10 @@ function instantiate(mod: PluginModule, ctx: PluginContext): PluginInstance {
 export async function loadPlugin(info: PluginInfo): Promise<void> {
   if (!deps) throw new Error("plugin host not installed");
   if (loaded.has(info.id)) return;
-  const ctx = new PluginContext(info);
-  const entry: LoadedPlugin = { info, instance: {}, cleanups: ctx.cleanups };
+  const ctx = new PluginContext(info, deps.vaultPath?.() ?? null);
+  const entry: LoadedPlugin = { info, instance: {}, ctx };
   loaded.set(info.id, entry);
+  starting.add(info.id);
   try {
     const mod = evalPluginModule(ctx, deps);
     entry.instance = instantiate(mod, ctx);
@@ -466,21 +627,39 @@ export async function loadPlugin(info: PluginInfo): Promise<void> {
   } catch (e) {
     await unloadPlugin(info.id); // undo any partial registrations
     throw e;
+  } finally {
+    starting.delete(info.id);
   }
   deps.onRegistryChanged();
 }
 
+// Unloads under way, so unloading everything waits for them too.
+const unloading = new Set<Promise<void>>();
+
 /** Stop and unregister a plugin. Never throws. */
-export async function unloadPlugin(id: string): Promise<void> {
+export function unloadPlugin(id: string): Promise<void> {
   const lp = loaded.get(id);
-  if (!lp) return;
+  if (!lp) return Promise.resolve();
   loaded.delete(id);
+  const run = stop(id, lp);
+  unloading.add(run);
+  void run.then(() => unloading.delete(run));
+  return run;
+}
+
+async function stop(id: string, lp: LoadedPlugin): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await lp.instance.onunload?.();
+    // One that never finishes doesn't hold up the rest, or a vault switch.
+    await Promise.race([lp.instance.onunload?.(), new Promise((r) => (timer = setTimeout(r, UNLOAD_WAIT_MS)))]);
   } catch (e) {
     console.error(`Plugin ${id} onunload failed:`, e);
+  } finally {
+    clearTimeout(timer);
   }
-  for (const c of lp.cleanups.splice(0).reverse()) {
+  lp.ctx.stopped = true;
+  for (const off of [...lp.ctx.subscriptions]) off();
+  for (const c of lp.ctx.cleanups.splice(0).reverse()) {
     try {
       c();
     } catch (e) {
@@ -492,6 +671,7 @@ export async function unloadPlugin(id: string): Promise<void> {
 
 export async function unloadAll(): Promise<void> {
   for (const id of [...loaded.keys()]) await unloadPlugin(id);
+  await Promise.all(unloading);
 }
 
 // ---------------------------------------------------------------------------
@@ -517,3 +697,73 @@ export function saveEnabled(vault: string, ids: string[]): void {
     /* quota — non-fatal */
   }
 }
+
+// A plugin is enabled for the code the user agreed to run: its main.js hash is
+// recorded on enable, and changed code (a sync peer replacing the file) stays
+// off until the user turns it on again.
+const hashesKey = (vault: string) => `basalt.plugins.hashes.${vault}`;
+
+export async function codeHash(code: string): Promise<string> {
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle) {
+    const buf = await subtle.digest("SHA-256", new TextEncoder().encode(code));
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  // No WebCrypto (a plain-http page): FNV-1a plus length, enough to notice edits.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < code.length; i++) h = Math.imul(h ^ code.charCodeAt(i), 0x01000193) >>> 0;
+  return `fnv-${h.toString(16)}-${code.length}`;
+}
+
+function loadHashes(vault: string): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(hashesKey(vault));
+    const v = raw ? (JSON.parse(raw) as unknown) : {};
+    return v && typeof v === "object" ? (v as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveHashes(vault: string, hashes: Record<string, string>): void {
+  try {
+    localStorage.setItem(hashesKey(vault), JSON.stringify(hashes));
+  } catch {
+    /* quota, non-fatal */
+  }
+}
+
+/** Record the code the user just enabled. */
+export async function rememberPluginCode(vault: string, info: PluginInfo): Promise<void> {
+  const hashes = loadHashes(vault);
+  hashes[info.id] = await codeHash(info.code);
+  saveHashes(vault, hashes);
+}
+
+/** Split the enabled plugins into those safe to run and those whose code
+ * changed since they were enabled (which get switched off). A plugin enabled
+ * before hashes were recorded is trusted once and recorded now. */
+export async function vetEnabledPlugins(
+  vault: string,
+  infos: PluginInfo[],
+): Promise<{ run: PluginInfo[]; changed: PluginInfo[] }> {
+  const enabled = new Set(loadEnabled(vault));
+  const hashes = loadHashes(vault);
+  const run: PluginInfo[] = [];
+  const changed: PluginInfo[] = [];
+  for (const info of infos) {
+    if (!enabled.has(info.id)) continue;
+    const h = await codeHash(info.code);
+    if (hashes[info.id] === undefined || hashes[info.id] === h) {
+      hashes[info.id] = h;
+      run.push(info);
+    } else {
+      changed.push(info);
+      enabled.delete(info.id);
+    }
+  }
+  saveHashes(vault, hashes);
+  if (changed.length) saveEnabled(vault, [...enabled]);
+  return { run, changed };
+}
+

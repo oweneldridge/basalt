@@ -19,6 +19,8 @@ interface Props {
   onSettings: () => void;
   /** Bumps when the plugin registry changes → re-read plugin ribbon icons. */
   pluginVersion: number;
+  /** A vault is opening: only the command palette (to switch again) works. */
+  held?: boolean;
 }
 
 export function Ribbon({
@@ -29,6 +31,7 @@ export function Ribbon({
   onToggleSidebar,
   onSettings,
   pluginVersion,
+  held = false,
 }: Props) {
   // Plugin-contributed icons (re-read on registry change).
   void pluginVersion;
@@ -43,25 +46,42 @@ export function Ribbon({
   return (
     <div className="ribbon" role="toolbar" aria-label="Ribbon">
       <div className="ribbon-top">
-        {top.map((a) => (
-          <button key={a.id} className="ribbon-btn" title={a.label} aria-label={a.label} onClick={a.onClick}>
-            {a.icon}
-          </button>
-        ))}
+        {top.map((a) => {
+          const off = held && a.id !== "palette" && a.id !== "sidebar";
+          return (
+            <button
+              key={a.id}
+              className="ribbon-btn"
+              title={off ? `${a.label}, once the vault is open` : a.label}
+              aria-label={a.label}
+              aria-disabled={off || undefined}
+              onClick={off ? undefined : a.onClick}
+            >
+              {a.icon}
+            </button>
+          );
+        })}
         {pluginIcons.map((r, i) => (
           <button
             key={`plugin:${r.pluginId}:${i}`}
             className="ribbon-btn ribbon-plugin-btn"
-            title={r.title}
+            title={held ? `${r.title}, once the vault is open` : r.title}
             aria-label={r.title}
-            onClick={() => r.callback()}
+            aria-disabled={held || undefined}
+            onClick={held ? undefined : () => r.callback()}
           >
             {r.icon}
           </button>
         ))}
       </div>
       <div className="ribbon-bottom">
-        <button className="ribbon-btn" title="Settings (⌘,)" aria-label="Settings" onClick={onSettings}>
+        <button
+          className="ribbon-btn"
+          title={held ? "Settings (⌘,), once the vault is open" : "Settings (⌘,)"}
+          aria-label="Settings"
+          aria-disabled={held || undefined}
+          onClick={held ? undefined : onSettings}
+        >
           ⚙
         </button>
       </div>

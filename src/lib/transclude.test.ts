@@ -118,6 +118,11 @@ describe("subpathToLine + extractHeadings", () => {
     expect(subpathToLine(doc, "Details")).toBe(6);
     expect(subpathToLine(doc, "Nope")).toBeNull();
   });
+  it("finds a heading by the id a converted document gave it", () => {
+    const g = ["# Notes", "### 00:00:00 {#00:00:00}", "x", "## **Appendix** {#appendix}"].join("\n");
+    expect(subpathToLine(g, "00:00:00")).toBe(2);
+    expect(subpathToLine(g, "appendix")).toBe(4);
+  });
   it("finds the line of a ^block id", () => {
     expect(subpathToLine(doc, "^b1")).toBe(7);
     expect(subpathToLine(doc, "^missing")).toBeNull();

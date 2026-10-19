@@ -12,6 +12,7 @@
 // limited `dv.pages("a" or "b")` source algebra. Runs JavaScript from your
 // notes — enable only in trusted vaults.
 const { Plugin } = require("basalt");
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 // ---- minimal Luxon DateTime ---------------------------------------------
 // Backed by a native Date in local time. Covers the surface real dataviewjs
@@ -23,9 +24,13 @@ const pad2 = (n) => String(Math.abs(n)).padStart(2, "0");
 
 function parseISOish(s) {
   const str = String(s).trim();
-  const m = /^(-?\d{4,})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?/.exec(str);
+  const m = /^(-?\d{4,})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d+))?)?\s*(Z|([+-])(\d{2}):?(\d{2})?)?)?/i.exec(str);
   if (m) {
-    return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0), +((m[7] || "0") + "00").slice(0, 3));
+    const parts = [+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0), +((m[7] || "0") + "00").slice(0, 3)];
+    if (!m[8]) return new Date(...parts);
+    // A time with `Z` or an offset is that instant, shown in local time.
+    const offset = m[9] ? (m[9] === "-" ? -1 : 1) * (+m[10] * 60 + +(m[11] || 0)) : 0;
+    return new Date(Date.UTC(...parts) - offset * 60000);
   }
   const t = Date.parse(str);
   return Number.isNaN(t) ? null : new Date(t);
@@ -49,6 +54,10 @@ class DateTime {
   }
   static fromJSDate(d) {
     return new DateTime(new Date(d.getTime()));
+  }
+  // The formats notes use (yyyy-MM-dd, with or without a time) read as ISO.
+  static fromFormat(s, _format) {
+    return DateTime.fromISO(s);
   }
   static fromISO(s) {
     const d = parseISOish(s);
@@ -275,46 +284,231 @@ const luxon = { DateTime, Duration: { fromObject: (o) => parseDuration(JSON.stri
 // ---- legacy moment shim (kept for older blocks) --------------------------
 const M_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 function momentTime(o) {
-  if (o && typeof o.valueOf === "function") return o.valueOf();
+  if (o === undefined) return Date.now();
+  if (o === null) return NaN;
+  if (typeof o === "number") return o;
+  if (o && typeof o === "object") {
+    if (typeof o.valueOf === "function" && typeof o.valueOf() === "number") return o.valueOf();
+    return momentParts(o);
+  }
   const d = parseISOish(o);
   return d ? d.getTime() : new Date(o).getTime();
 }
-function makeMoment(input) {
-  const d = input == null ? new Date() : parseISOish(input) || new Date(input);
-  const valid = !Number.isNaN(d.getTime());
-  const pad = (n) => String(n).padStart(2, "0");
-  return {
-    _isMoment: true,
-    isValid: () => valid,
-    valueOf: () => d.getTime(),
-    toDate: () => d,
-    isBefore: (o) => d.getTime() < momentTime(o),
-    isAfter: (o) => d.getTime() > momentTime(o),
-    isSame: (o) => d.getTime() === momentTime(o),
-    isSameOrBefore: (o) => d.getTime() <= momentTime(o),
-    isSameOrAfter: (o) => d.getTime() >= momentTime(o),
-    diff: (o, unit) => {
-      const ms = d.getTime() - momentTime(o);
-      return unit === "days" ? Math.trunc(ms / 86400000) : ms;
-    },
-    format: (fmt) =>
-      (fmt || "YYYY-MM-DD").replace(/YYYY|MMMM|MM|DD|dddd|HH|mm|ss/g, (t) => {
-        if (t === "YYYY") return String(d.getFullYear());
-        if (t === "MMMM") return L_MONTHS[d.getMonth()];
-        if (t === "MM") return pad(d.getMonth() + 1);
-        if (t === "DD") return pad(d.getDate());
-        if (t === "dddd") return M_DAYS[d.getDay()];
-        if (t === "HH") return pad(d.getHours());
-        if (t === "mm") return pad(d.getMinutes());
-        if (t === "ss") return pad(d.getSeconds());
-        return t;
-      }),
-  };
+// moment's array and object input, `[y, M, d, h, m, s, ms]` or `{ year, month,
+// day, ... }`: the date parts left off before the first one given are today's,
+// the rest are zero. An empty one is now.
+function momentParts(o) {
+  let parts;
+  if (Array.isArray(o)) parts = o;
+  else {
+    const f = {};
+    for (const [k, v] of Object.entries(o)) f[momentUnit(k) ?? k] = v;
+    parts = [f.year, f.month, f.day ?? f.date, f.hour, f.minute, f.second, f.millisecond];
+  }
+  if (parts.every((p) => p == null)) return Date.now();
+  const now = new Date();
+  const today = [now.getFullYear(), now.getMonth(), now.getDate()];
+  const a = [...parts];
+  let i = 0;
+  for (; i < 3 && a[i] == null; i++) a[i] = today[i];
+  for (; i < 7; i++) a[i] = a[i] == null ? (i === 2 ? 1 : 0) : Number(a[i]);
+  const t = new Date(a[0], a[1], a[2], a[3], a[4], a[5], a[6]);
+  if (a[0] >= 0 && a[0] < 100) t.setFullYear(a[0]);
+  return t.getTime();
 }
-const moment = (input) => makeMoment(input);
+// moment's unit names: a shorthand as written (`M` month, `m` minute, `D`
+// date, `W` ISO week), else the name or its plural in any case.
+const M_SHORT = { y: "year", Q: "quarter", M: "month", w: "week", W: "isoWeek", d: "day", D: "date", h: "hour", m: "minute", s: "second", ms: "millisecond" };
+const M_UNITS = ["year", "quarter", "month", "week", "isoWeek", "day", "date", "hour", "minute", "second", "millisecond"];
+function momentUnit(unit) {
+  if (typeof unit !== "string") return undefined;
+  if (M_SHORT[unit]) return M_SHORT[unit];
+  const u = unit.toLowerCase();
+  return M_SHORT[u] ?? M_UNITS.find((name) => name.toLowerCase() === u || name.toLowerCase() + "s" === u);
+}
+// Local midnight of a day, years 0-99 included.
+const M_400_YEARS = 146097 * 86400000;
+const localDay = (y, m, d) => (y >= 0 && y < 100 ? new Date(y + 400, m, d).getTime() - M_400_YEARS : new Date(y, m, d).getTime());
+const M_MS = { hour: 3600000, minute: 60000, second: 1000 };
+const M_TOKENS = /\[[^\]]*\]|YYYY|YY|MMMM|MMM|MM|M|Do|DD|D|dddd|ddd|dd|HH|H|hh|h|mm|m|ss|s|SSS|SS|S|A|a/g;
+function momentFormat(d, fmt) {
+  if (Number.isNaN(d.getTime())) return "Invalid date";
+  const pad = (n) => String(n).padStart(2, "0");
+  const h12 = d.getHours() % 12 || 12;
+  const ord = (n) => n + (n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th");
+  const map = {
+    YYYY: String(d.getFullYear()),
+    YY: String(d.getFullYear()).slice(-2),
+    MMMM: L_MONTHS[d.getMonth()],
+    MMM: L_MONTHS[d.getMonth()].slice(0, 3),
+    MM: pad(d.getMonth() + 1),
+    M: String(d.getMonth() + 1),
+    Do: ord(d.getDate()),
+    DD: pad(d.getDate()),
+    D: String(d.getDate()),
+    dddd: M_DAYS[d.getDay()],
+    ddd: M_DAYS[d.getDay()].slice(0, 3),
+    dd: M_DAYS[d.getDay()].slice(0, 2),
+    HH: pad(d.getHours()),
+    H: String(d.getHours()),
+    hh: pad(h12),
+    h: String(h12),
+    mm: pad(d.getMinutes()),
+    m: String(d.getMinutes()),
+    ss: pad(d.getSeconds()),
+    s: String(d.getSeconds()),
+    SSS: String(d.getMilliseconds()).padStart(3, "0"),
+    SS: pad(Math.floor(d.getMilliseconds() / 10)),
+    S: String(Math.floor(d.getMilliseconds() / 100)),
+    A: d.getHours() < 12 ? "AM" : "PM",
+    a: d.getHours() < 12 ? "am" : "pm",
+  };
+  return String(fmt || "YYYY-MM-DDTHH:mm:ss").replace(M_TOKENS, (t) => (t[0] === "[" ? t.slice(1, -1) : map[t]));
+}
+function makeMoment(input) {
+  const d =
+    input === undefined
+      ? new Date()
+      : input === null
+        ? new Date(NaN)
+        : input instanceof Date
+          ? new Date(input.getTime())
+          : typeof input === "number" || (input && typeof input.valueOf === "function" && typeof input.valueOf() === "number")
+            ? new Date(Number(input.valueOf()))
+            : typeof input === "object"
+              ? new Date(momentParts(input))
+              : parseISOish(input) || new Date(input);
+  // A duration in moment's units; a bare number is milliseconds.
+  const shift = (n, unit, sign) => {
+    // A number where the unit goes swaps the two, as moment's old order did.
+    if (unit != null && !Number.isNaN(+unit)) [n, unit] = [unit, n];
+    if (n && typeof n === "object") {
+      for (const [k, v] of Object.entries(n)) shift(v, k, sign);
+      return;
+    }
+    const u = unit ? momentUnit(unit) : "millisecond";
+    const k = sign * (Number(n) || 0);
+    // Days and months round half away from zero, as moment rounds them.
+    const round = (x) => (x < 0 ? -Math.round(-x) : Math.round(x));
+    if (u === "year" || u === "quarter" || u === "month") {
+      const months = round(k * (u === "year" ? 12 : u === "quarter" ? 3 : 1));
+      const day = d.getDate();
+      d.setDate(1);
+      d.setMonth(d.getMonth() + months);
+      d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
+    } else if (u === "week" || u === "isoWeek" || u === "day") d.setDate(d.getDate() + round(k * (u === "day" ? 1 : 7)));
+    else if (u === "hour" || u === "minute" || u === "second") d.setTime(d.getTime() + k * M_MS[u]);
+    else if (u === "millisecond") d.setTime(d.getTime() + k);
+  };
+  // Where the year, quarter, month, week (Sunday first, as moment's default
+  // locale), ISO week, day, hour, minute or second holding the date starts,
+  // and where the next one does.
+  const span = (u) => {
+    const y = d.getFullYear();
+    const mo = d.getMonth();
+    const day = d.getDate();
+    if (u === "year") return [localDay(y, 0, 1), localDay(y + 1, 0, 1)];
+    if (u === "quarter") return [localDay(y, mo - (mo % 3), 1), localDay(y, mo - (mo % 3) + 3, 1)];
+    if (u === "month") return [localDay(y, mo, 1), localDay(y, mo + 1, 1)];
+    if (u === "week" || u === "isoWeek") {
+      const first = day - (u === "isoWeek" ? (d.getDay() + 6) % 7 : d.getDay());
+      return [localDay(y, mo, first), localDay(y, mo, first + 7)];
+    }
+    if (u === "day" || u === "date") return [localDay(y, mo, day), localDay(y, mo, day + 1)];
+    const size = M_MS[u];
+    const t = d.getTime();
+    const local = u === "hour" ? t - d.getTimezoneOffset() * 60000 : t;
+    const start = t - (((local % size) + size) % size);
+    return [start, start + size];
+  };
+  const edge = (unit, end) => {
+    const u = momentUnit(unit);
+    if (!u || u === "millisecond" || Number.isNaN(d.getTime())) return;
+    const [start, next] = span(u);
+    d.setTime(end ? next - 1 : start);
+  };
+  // Is `o` before, after or in the same unit as this date, as moment counts.
+  const compare = (o, unit) => {
+    const t = momentTime(o);
+    const u = momentUnit(unit);
+    if (!u || u === "millisecond") return { before: d.getTime() < t, after: d.getTime() > t, same: d.getTime() === t };
+    const [start, next] = span(u);
+    return { before: next - 1 < t, after: t < start, same: start <= t && t <= next - 1 };
+  };
+  const monthDiff = (a, b) => {
+    if (a.getDate() < b.getDate()) return -monthDiff(b, a);
+    const whole = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+    const plus = (k) => makeMoment(a).add(k, "months").valueOf();
+    const anchor = plus(whole);
+    const adjust = b - anchor < 0 ? (b - anchor) / (anchor - plus(whole - 1)) : (b - anchor) / (plus(whole + 1) - anchor);
+    return -(whole + adjust) || 0;
+  };
+  const m = {
+    _isMoment: true,
+    isValid: () => !Number.isNaN(d.getTime()),
+    valueOf: () => d.getTime(),
+    toDate: () => new Date(d.getTime()),
+    toISOString: () => d.toISOString(),
+    clone: () => makeMoment(d),
+    isBefore: (o, unit) => compare(o, unit).before,
+    isAfter: (o, unit) => compare(o, unit).after,
+    isSame: (o, unit) => compare(o, unit).same,
+    isSameOrBefore: (o, unit) => compare(o, unit).same || compare(o, unit).before,
+    isSameOrAfter: (o, unit) => compare(o, unit).same || compare(o, unit).after,
+    diff: (o, unit, asFloat) => {
+      const other = makeMoment(o);
+      const that = new Date(other.valueOf());
+      if (Number.isNaN(d.getTime()) || Number.isNaN(that.getTime())) return NaN;
+      const u = momentUnit(unit) ?? "millisecond";
+      const zone = (d.getTimezoneOffset() - that.getTimezoneOffset()) * 60000;
+      const out =
+        u === "year" || u === "quarter" || u === "month"
+          ? monthDiff(d, that) / (u === "year" ? 12 : u === "quarter" ? 3 : 1)
+          : u === "week"
+            ? (d - that - zone) / 6048e5
+            : u === "day"
+              ? (d - that - zone) / 864e5
+              : (d - that) / (M_MS[u] ?? 1);
+      return asFloat ? out : out < 0 ? Math.ceil(out) || 0 : Math.floor(out);
+    },
+    add: (n, unit) => (shift(n, unit, 1), m),
+    subtract: (n, unit) => (shift(n, unit, -1), m),
+    startOf: (unit) => (edge(unit, false), m),
+    endOf: (unit) => (edge(unit, true), m),
+    isBetween: (a, b, unit, inclusive) => {
+      const inc = inclusive || "()";
+      const lo = compare(a, unit);
+      const hi = compare(b, unit);
+      return (inc[0] === "(" ? lo.after : !lo.before) && (inc[1] === ")" ? hi.before : !hi.after);
+    },
+    format: (fmt) => momentFormat(d, fmt),
+    toString: () => d.toString(),
+  };
+  return m;
+}
+// moment(text, format): the formats notes use are ISO-shaped, which the parse
+// above already reads. moment.utc reads the same way.
+const moment = (input, _format) => makeMoment(input);
+moment.utc = (input) => makeMoment(input);
 
 // ---- DataArray: a chainable list of pages/values -------------------------
 class DataArray extends Array {
+  static from(items, mapFn) {
+    const arr = super.from(items, mapFn);
+    return new Proxy(arr, {
+      get(target, prop, receiver) {
+        if (typeof prop === "symbol" || prop in target) return Reflect.get(target, prop, receiver);
+        // `pages.file.tasks`: map the property over every element, flattening lists.
+        const out = [];
+        for (const v of target) {
+          const x = v == null ? undefined : v[prop];
+          if (Array.isArray(x)) out.push(...x);
+          else if (x !== undefined) out.push(x);
+        }
+        return DataArray.from(out);
+      },
+    });
+  }
   where(fn) {
     return DataArray.from([...this].filter(fn));
   }
@@ -364,6 +558,17 @@ class DataArray extends Array {
   }
   array() {
     return [...this];
+  }
+}
+
+// A file link: renders as a link, and prints as [[path|name]] in text.
+class Link {
+  constructor(path, display) {
+    this.path = path;
+    this.display = display;
+  }
+  toString() {
+    return `[[${this.path.replace(/\.md$/i, "")}|${this.display}]]`;
   }
 }
 
@@ -420,15 +625,36 @@ function fileDay(name, frontmatter) {
   return m ? DateTime.fromISO(m[1]) : null;
 }
 
-// ---- page index (built once per render, briefly cached) -----------------
+// ---- page index (built once, kept until the vault changes) --------------
 let _cache = null; // { at, pages, byPath }
+const MAX_AGE = 60000;
+function clearIndex() {
+  _cache = null;
+}
 async function buildIndex(app) {
   const files = app.vault.getMarkdownFiles();
   const now = typeof Date !== "undefined" && Date.now ? Date.now() : 0;
-  if (_cache && now - _cache.at < 1000) return _cache;
+  if (_cache && now - _cache.at < MAX_AGE) return _cache;
 
-  const contents = await Promise.all(files.map((f) => app.vault.read(f.path).catch(() => "")));
+  // The app's own copy of each note (no request per note); a host without one
+  // is read a few files at a time rather than all at once.
+  const read = (path) => (app.vault.cachedRead ? app.vault.cachedRead(path) : app.vault.read(path)).catch(() => "");
+  const contents = [];
+  for (let k = 0; k < files.length; k += 32) {
+    contents.push(...(await Promise.all(files.slice(k, k + 32).map((f) => read(f.path)))));
+  }
   const byPath = new Map();
+  // Links both ways, as Dataview's file.outlinks and file.inlinks.
+  const resolved = app.metadataCache.resolvedLinks || {};
+  const unresolved = app.metadataCache.unresolvedLinks || {};
+  const linkTo = (path) => new Link(path, (path.split("/").pop() || path).replace(/\.md$/i, ""));
+  const inlinks = new Map();
+  for (const [from, targets] of Object.entries(resolved)) {
+    for (const to of Object.keys(targets)) {
+      if (!inlinks.has(to)) inlinks.set(to, []);
+      inlinks.get(to).push(linkTo(from));
+    }
+  }
   const pages = DataArray.from(
     files.map((f, i) => {
       const content = contents[i];
@@ -443,7 +669,7 @@ async function buildIndex(app) {
           name,
           path: f.path,
           folder,
-          link: { path: f.path, display: name },
+          link: new Link(f.path, name),
           ctime: DateTime.fromMillis(ctime),
           mtime: DateTime.fromMillis(mtime),
           cday: DateTime.fromMillis(ctime).startOf("day"),
@@ -453,7 +679,9 @@ async function buildIndex(app) {
           tasks: DataArray.from(parseTasks(content, f.path)),
           tags: (cache.tags || []).map((t) => (t[0] === "#" ? t : "#" + t)),
           etags: cache.tags || [],
-          outlinks: cache.links || [],
+          outlinks: DataArray.from([...Object.keys(resolved[f.path] || {}), ...Object.keys(unresolved[f.path] || {})].map(linkTo)),
+          inlinks: DataArray.from(inlinks.get(f.path) || []),
+          aliases: DataArray.from([].concat(fm.aliases || fm.alias || []).map(String)),
         },
         tags: (cache.tags || []).map((t) => (t[0] === "#" ? t : "#" + t)),
       };
@@ -492,13 +720,13 @@ function buildDv(idx, el, notePath) {
   };
   // Render a string into `parent`, turning [[wikilinks]] and [text](url) into
   // clickable links (like Dataview's dv.paragraph, which renders markdown).
-  const INLINE_LINK = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+  const INLINE_LINK = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*|`([^`\n]+)`/g;
   const appendInline = (parent, text) => {
     const str = String(text);
     let last = 0;
     let m;
-    INLINE_LINK.lastIndex = 0;
-    while ((m = INLINE_LINK.exec(str))) {
+    const re = new RegExp(INLINE_LINK.source, "g"); // fresh: bold/italic recurse into this
+    while ((m = re.exec(str))) {
       if (m.index > last) parent.appendChild(document.createTextNode(str.slice(last, m.index)));
       if (m[1] !== undefined) {
         const target = m[1].trim().replace(/\.md$/i, "");
@@ -511,6 +739,12 @@ function buildDv(idx, el, notePath) {
           openLink(target);
         });
         parent.appendChild(a);
+      } else if (m[5] !== undefined || m[6] !== undefined || m[7] !== undefined) {
+        const tag = m[5] !== undefined ? "strong" : m[6] !== undefined ? "em" : "code";
+        const e = document.createElement(tag);
+        if (tag === "code") e.textContent = m[7];
+        else appendInline(e, m[5] ?? m[6]);
+        parent.appendChild(e);
       } else {
         const a = document.createElement("a");
         a.href = m[4];
@@ -548,11 +782,13 @@ function buildDv(idx, el, notePath) {
       },
     pages: (source) => filterSource(pages, source),
     pagePaths: (source) => filterSource(pages, source).map((p) => p.file.path),
-    page: (path) => byPath.get(path) || byPath.get(String(path).replace(/\.md$/i, "")),
+    // By path (with or without .md) or by name, as Dataview finds a page.
+    page: (path) => byPath.get(path) || byPath.get(`${path}.md`) || byPath.get(String(path).replace(/\.md$/i, "")),
     array: (x) => DataArray.from(x),
+    io: { load: (path) => idx.read(String(path)) },
     date: (x) => (x == null ? DateTime.now() : x instanceof DateTime ? x : DateTime.fromISO(x)),
     duration: (x) => parseDuration(x),
-    fileLink: (path, _embed, display) => ({ path, display: display || (path.split("/").pop() || path).replace(/\.md$/i, "") }),
+    fileLink: (path, _embed, display) => new Link(path, display || (path.split("/").pop() || path).replace(/\.md$/i, "")),
     paragraph: (md) => {
       const p = document.createElement("p");
       p.className = "dvjs-p";
@@ -630,6 +866,7 @@ function buildDv(idx, el, notePath) {
 
 module.exports = class DataviewJs extends Plugin {
   onload() {
+    for (const ev of ["create", "modify", "delete", "rename"]) this.registerEvent(this.app.vault.on(ev, clearIndex));
     this.registerMarkdownCodeBlockProcessor("dataviewjs", (source, el, ctx) => {
       el.replaceChildren();
       const loading = document.createElement("div");
@@ -640,12 +877,15 @@ module.exports = class DataviewJs extends Plugin {
       buildIndex(this.app)
         .then((idx) => {
           idx.openLinkText = (t) => this.app.workspace.openLinkText(t);
+          idx.read = (p) => this.app.vault.read(p);
           el.replaceChildren();
           const dv = buildDv(idx, el, ctx.notePath);
           try {
-            // The block's JS runs with `dv` and `moment` in scope (like Dataview).
-            const fn = new Function("dv", "moment", `"use strict";\n${source}`);
-            const result = fn(dv, moment);
+            // The block's JS runs with `dv`, `moment` and `app` in scope, as in
+            // Dataview inside Obsidian, in a block of its own so it can declare
+            // those names itself.
+            const fn = new AsyncFunction("dv", "moment", "app", `"use strict";\n{\n${source}\n}`);
+            const result = fn(dv, moment, this.app);
             if (result && typeof result.catch === "function") {
               result.catch((e) => this.error(el, e));
             }

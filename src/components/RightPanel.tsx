@@ -80,7 +80,7 @@ export function RightPanel({
   onSearch,
 }: Props) {
   return (
-    <aside className="right-panel">
+    <aside className="right-panel" aria-label="Note details">
       <div className="right-tabs">
         {TABS.map((t) => (
           <button
@@ -105,7 +105,9 @@ export function RightPanel({
         {pluginViews.filter((v) => v.id === tab).map((v) => (
           <PluginViewMount key={v.id} view={v} />
         ))}
-        {tab === "properties" && <Properties doc={propertiesDoc} onChange={onEditProperties} />}
+        {tab === "properties" && (
+          <Properties doc={propertiesDoc} onChange={(edit) => propertiesDoc !== null && onEditProperties(edit(propertiesDoc))} />
+        )}
         {tab === "backlinks" && (
           <Backlinks
             noteName={noteName}

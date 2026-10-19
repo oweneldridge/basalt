@@ -2,8 +2,11 @@
 // byte 0, so the central guarantee is: editing one property NEVER disturbs any
 // other line — comments, blanks, block scalars, nested maps all survive.
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import {
   parseFm,
+  splitTemplate,
+  mergeTemplateProps,
   needsQuote,
   serializeScalar,
   serializeProp,
@@ -262,5 +265,125 @@ describe("3d review regressions", () => {
       expect(needsQuote(v)).toBe(true);
       expect(serializeScalar(v)).toBe(`"${v}"`);
     }
+  });
+});
+
+describe("lists that aren't plain", () => {
+  it("treats a list of maps or flow items as complex", () => {
+    const maps = parseFm("---\npeople:\n  - name: Ann\n    role: lead\n  - name: Cy\nnext: 1\n---\n")!;
+    expect(maps.props.find((p) => p.key === "people")?.kind).toBe("complex");
+    expect(maps.props.find((p) => p.key === "next")?.values).toEqual(["1"]);
+    const flow = parseFm("---\nxs:\n  - [a, b]\n---\n")!;
+    expect(flow.props[0].kind).toBe("complex");
+  });
+  it("keeps plain scalar lists editable, including URLs and quoted links", () => {
+    const fm = parseFm('---\nsee:\n  - "[[Note]]"\n  - https://example.com/a\n  - 10:30\n---\n')!;
+    expect(fm.props[0].kind).toBe("list");
+    expect(fm.props[0].values).toEqual(["[[Note]]", "https://example.com/a", "10:30"]);
+  });
+});
+
+describe("templates with properties", () => {
+  it("splits a template into its property lines and body", () => {
+    const t = "---\ntags: [a]\nstatus: draft\n---\n## Body\n";
+    const s = splitTemplate(t)!;
+    expect(s.props).toEqual(["tags: [a]", "status: draft"]);
+    expect(s.body).toBe("## Body\n");
+    expect(t.slice(s.offset)).toBe(s.body);
+    expect(splitTemplate("## No properties\n")).toBeNull();
+  });
+
+  it("adds a frontmatter block to a note without one", () => {
+    expect(mergeTemplateProps("Hello\n", ["status: draft"])).toBe("---\nstatus: draft\n---\nHello\n");
+  });
+
+  it("merges like Obsidian and leaves every other line alone", () => {
+    const note = "---\n# keep me\ntags:\n  - a\nstatus: done\nowner: Ann\nmeta:\n  x: 1\n---\nBody\n";
+    const out = mergeTemplateProps(note, ["tags: [a, b]", "status: 'draft'", "owner:", "meta:", "  y: 2", "due: 2026-10-04"]);
+    expect(out).toBe(
+      "---\n# keep me\ntags:\n  - a\n  - b\nstatus: 'draft'\nowner: Ann\nmeta:\n  x: 1\ndue: 2026-10-04\n---\nBody\n",
+    );
+  });
+
+  it("rejects invalid template YAML", () => {
+    expect(() => mergeTemplateProps("---\na: 1\n---\n", ["a: [unclosed"])).toThrow();
+  });
+});
+
+describe("template merge keeps what the note has", () => {
+  const m = (note: string, props: string[]) => mergeTemplateProps(`---\n${note}\n---\nBody\n`, props);
+  it("a single value meeting a template list becomes a list of both", () => {
+    expect(m("tags: work", ["tags: [meeting]"])).toBe("---\ntags:\n  - work\n  - meeting\n---\nBody\n");
+  });
+  it("adds only missing items, keeps the note's lines and types", () => {
+    expect(m("nums:\n  - 1\n  - 2", ["nums: [2, 3]"])).toBe("---\nnums:\n  - 1\n  - 2\n  - 3\n---\nBody\n");
+    expect(m("tags: [a]", ["tags: [b, 'c, d']"])).toBe('---\ntags: [a, b, "c, d"]\n---\nBody\n');
+    const same = "tags: [a, b]";
+    expect(m(same, ["tags: [a]"])).toBe(`---\n${same}\n---\nBody\n`);
+  });
+  it("never writes a list of maps as strings, and an empty value wipes nothing", () => {
+    expect(m("people:\n  - Ann", ["people:", "  - name: Bob"])).toBe("---\npeople:\n  - Ann\n---\nBody\n");
+    expect(m("status: active", ['status: ""'])).toBe("---\nstatus: active\n---\nBody\n");
+  });
+  it("matches a quoted template key to the note's key", () => {
+    expect(m("title: old", ['"title": new'])).toBe('---\n"title": new\n---\nBody\n');
+  });
+});
+
+describe("template merge, second pass", () => {
+  const m = (note: string, props: string[]) => mergeTemplateProps(`---\n${note}\n---\nBody\n`, props);
+  it("keeps a quoted value whole when it becomes a list", () => {
+    expect(m('tags: "#a #b"', ["tags: [meeting]"])).toBe('---\ntags:\n  - "#a #b"\n  - meeting\n---\nBody\n');
+  });
+  it("a template single value joins the note's list instead of replacing it", () => {
+    expect(m("tags:\n  - work", ["tags: meeting"])).toBe("---\ntags:\n  - work\n  - meeting\n---\nBody\n");
+    expect(m("tags: [work]", ["tags: work"])).toBe("---\ntags: [work]\n---\nBody\n");
+  });
+  it("leaves shapes it can't extend safely alone", () => {
+    expect(m("tags: [a] # mine", ["tags: [b]"])).toBe("---\ntags: [a] # mine\n---\nBody\n");
+    expect(m("note: first\n  continued", ["note: [x]"])).toBe("---\nnote: first\n  continued\n---\nBody\n");
+  });
+  it("quotes flow items that need it as valid YAML", () => {
+    const out = m("tags: [a]", ['tags: ["line\\nnext, more"]']);
+    expect(out).toBe('---\ntags: [a, "line\\nnext, more"]\n---\nBody\n');
+  });
+});
+
+describe("template merge, third pass", () => {
+  const m = (note: string, props: string[]) => mergeTemplateProps(`---\n${note}\n---\nBody\n`, props);
+  it("leaves a flow list that wraps onto more lines alone", () => {
+    const note = "tags: [project, meeting,\n  client-x]";
+    expect(m(note, ["tags: q3"])).toBe(`---\n${note}\n---\nBody\n`);
+  });
+  it("appends after a trailing comma without a doubled one", () => {
+    expect(m("tags: [a, b,]", ["tags: [meeting]"])).toBe("---\ntags: [a, b, meeting]\n---\nBody\n");
+    expect(m("tags: [a, ]", ["tags: b"])).toBe("---\ntags: [a, b]\n---\nBody\n");
+  });
+  it("leaves a value continued after a blank line alone", () => {
+    const note = "note: first\n\n  continued";
+    expect(m(note, ["note: [x]"])).toBe(`---\n${note}\n---\nBody\n`);
+  });
+  it("merges a single tag or alias with the template's instead of replacing it", () => {
+    expect(m("tags: work", ["tags: meeting"])).toBe("---\ntags:\n  - work\n  - meeting\n---\nBody\n");
+    expect(m("aliases: Old", ["aliases: New"])).toBe("---\naliases:\n  - Old\n  - New\n---\nBody\n");
+    expect(m("status: done", ["status: draft"])).toBe("---\nstatus: draft\n---\nBody\n");
+  });
+});
+
+describe("template merge with comma-separated aliases and tags", () => {
+  const m = (note: string, props: string[]) => mergeTemplateProps(`---\n${note}\n---\nBody\n`, props);
+  it("keeps each comma-separated alias or tag as its own item", () => {
+    expect(m("aliases: Foo, Bar", ["aliases: New"])).toBe("---\naliases:\n  - Foo\n  - Bar\n  - New\n---\nBody\n");
+    expect(m("tags: work, home", ["tags: [home, q3]"])).toBe("---\ntags:\n  - work\n  - home\n  - q3\n---\nBody\n");
+    expect(m('aliases: "Smith, John"', ["aliases: JS"])).toBe('---\naliases:\n  - "Smith, John"\n  - JS\n---\nBody\n');
+    expect(m("aliases: Foo, *Bar", ["aliases: New"])).toBe('---\naliases:\n  - Foo\n  - "*Bar"\n  - New\n---\nBody\n');
+  });
+  it("keeps an escaped quote inside a quoted alias", () => {
+    const out = m('aliases: "a\\"b, c"', ["aliases: New"]);
+    expect(parse(out.split("---")[1])).toEqual({ aliases: ['a"b, c', "New"] });
+  });
+  it("leaves the note alone when the template adds nothing new", () => {
+    const note = "---\naliases: Foo, Bar\n---\nBody\n";
+    expect(mergeTemplateProps(note, ["aliases: Bar"])).toBe(note);
   });
 });

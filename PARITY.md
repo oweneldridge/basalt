@@ -4,9 +4,194 @@ _Point-in-time audit, 2026-07-07. Method: a multi-agent sweep — for each featu
 
 ## Verdict
 
+_The verdict below is from the July audit. Since then, CRLF files keep their
+line endings, renames update canvas and base links, and markdown links open in
+the editor; a non-UTF-8 file is still refused, now with a clear message, on
+purpose. See "Fixed since this audit" below, and the October 2026 update for
+what's still different from Obsidian._
+
 Basalt clears the bar for a credible core-app foundation but not for full core-app parity: ~67% weighted parity, with 37 of 84 in-scope features at full parity and a striking 38 partials. The everyday note-taking loop — markdown Live Preview, wikilinks, backlinks, tags, full-text search, file tree, canvas, and properties — is present and mostly usable, so the pattern is breadth over depth: most features exist as thin implementations that stop well short of Obsidian's controls, panels, and configurability. The most serious holes are in data safety and interop: opening and editing any note silently rewrites CRLF to LF, non-UTF8 files are unreadable, and rename does not rewrite references inside .canvas/.base files (leaving dangling links) — real deviations from the "plain files, untouched" promise. There is also a concrete editor bug (internal [text](note.md) links do not navigate in edit mode, only in reading view) and four wholly missing core-plugin equivalents (note composer, random note, slides, audio recorder), plus no plugin-extensibility for settings tabs, ribbon, or status bar. Graph view, tables, canvas node types, and Bases are functional but shallow, so this reads as a strong pre-1.0 alternative that is close on surface coverage yet clearly behind on depth and safety guarantees.
 
 **Weighted parity: ~67%** ((full + 0.5·partial) / in-scope features). Of 85 in-scope features: **37 full, 38 partial, 9 missing, 1 bonus**.
+
+## October 2026 update
+
+A second audit (2026-10-03) checked Obsidian's changelog from 1.9.0 through
+1.14.4 against the code, and ran security, data-loss, write-path and
+accessibility reviews with a new real-disk end-to-end suite
+(`npm run test:e2e:real`). Obsidian 1.14 went public on 2026-10-05; the table
+below is current to it.
+
+Two earlier claims here were wrong and are corrected:
+
+- **Link resolution.** Obsidian does prefer the linking note's folder. It
+  takes an exact or relative path first, then candidates under the source
+  note's folder, then the rest, each group by shortest path. Basalt now
+  resolves links the same way (`src/lib/linkpath.ts`).
+- **"The parity backlog is cleared."** Obsidian has shipped a lot since July;
+  see the table below.
+
+Obsidian features since 1.9 and where Basalt stands:
+
+| Obsidian | Feature | Basalt |
+|---|---|---|
+| 1.11.0 | Links in properties rewritten on rename; markdown links in properties | Done (whole quoted values, as Obsidian counts them) |
+| 1.9 to 1.10 | Embedded bases: `![[x.base#View]]`, `base` code blocks, `this` | Done, read-only (view changes aren't saved back yet) |
+| 1.10 | Bases list layout | Done: bullets, numbers or none, indented properties, custom separator, editable in the view editor |
+| 1.14 | Bases kanban layout; groups you can reorder, hide, add and collapse | Missing (a stale `groupOrder` is dropped when the group-by changes) |
+| 1.9 to 1.10 | `file.backlinks`, `file.embeds`, `median`/`stddev` list methods | Done |
+| 1.12.0 | Canvas files count as backlinks and graph links | Missing |
+| 1.11 | `obsidian://` URI actions with `paneType` | Missing (Basalt has `basalt://open`) |
+| 1.11 to 1.12 | Files & links: default file to open, attachment cleanup on delete | Missing |
+| 1.12 to 1.13 | Image drag-resize and lightbox | Partial (reads `\|width` only) |
+| 1.13.0 | Mermaid needs a one-time opt-in per vault | Missing |
+| 1.14 | Colour highlights (`==🔴text==`), suggested after typing `==` | Missing |
+| 1.14 | Open a Markdown file from outside the vault, and be the default app for `.md` | Missing (Basalt opens vault folders only) |
+| 1.14 | Math rendered with MathJax 4 | Partial (Basalt renders math with KaTeX, so some macros and spacing differ) |
+| 1.14 | Fuzzy matching in link suggestions and the quick switcher | Done (Basalt's own ranking; results can order differently) |
+| 1.14 | File explorer search matches full paths; `-term` hides matches | Partial (name or path match; no `-term`) |
+| 1.14 | Fix: `![](` no longer swallows the rest of the note | Not affected (Basalt reads `![](` as text in the editor and Reading view) |
+| 1.12 | Obsidian CLI | Partial (Basalt's own CLI, seven commands, works without the app) |
+
+To look at after PR #2: Pele (`pele` on npm, MIT, github.com/obsidianmd/pele),
+a Mermaid renderer the Obsidian team built for Obsidian, themed with CSS
+variables. Not checked yet whether a released Obsidian uses it; if it does,
+its diagrams may lay out differently from Basalt's mermaid 11.
+
+### Second pass on real notes (2026-10-07)
+
+Notes from a copy of Owen's vault were checked in Basalt. Obsidian itself
+wasn't run for this pass; the parity runs in `parity/` check these against
+Obsidian in use. Brought in line:
+
+- Word count: frontmatter left out, Obsidian's word pattern, the selection
+  counted on its own, hidden for anything but a note.
+- Cmd-B and Cmd-I: a bare caret formats its word, steps out of closing markers,
+  and spaces stay outside the markers.
+- Link text: the whole link with `#` read as " > ", folder included.
+- Live Preview shows `%%comments%%` dimmed and hides escape backslashes until
+  the caret reaches them.
+- Tags: Obsidian's character set and its rule for what may come before `#`.
+- Tables end at the first line without a `|` and keep cells past the header.
+- Callout colours by type, from Obsidian's colour groups.
+- Reading view links to headings, blocks and footnotes scroll there; hover
+  previews show the linked section.
+- Pasting HTML follows Obsidian's converter settings: no escaping, `==` for
+  highlights, `|` and line breaks in cells written as `\|` and `<br>`, list
+  numbers from `start`. Basalt still writes italics with `*` where Obsidian
+  writes `_`, and keeps code copied from an editor as plain text where
+  Obsidian converts it and loses the indentation.
+- Attachments, canvases and bases rename and move with their links, and the
+  tree tags their extension.
+- Backlink and mention counts are per match; `resolvedLinks` and
+  `unresolvedLinks` count every link, attachments included.
+- "Default file to open: Daily note" opens today's daily note with the vault.
+  From a Templater template it waits for the plugins and is made only where
+  Templater Lite will fill it; Obsidian makes it either way, with the tags
+  unfilled if Templater isn't set to run.
+- `[[[Note]]]` links to "[Note", as in Obsidian, in the index, Live Preview,
+  renames and Reading view alike, and a tag right after a quote's marks
+  (`>#tag`) counts.
+- Numbered lists renumber after every edit, as in Obsidian, but by the list
+  as it renders. Obsidian renumbers any line that starts with a number, so a
+  keystroke can change numbered lines in code, math, comments, frontmatter and
+  paragraphs, and it counts levels in tabs and 4-space runs, so items under a
+  3-space child restart. Basalt leaves those lines alone, nests by the list's
+  own indentation, keeps `01.` padded and reads a `1)` list after a `1.` list
+  as a list of its own. Over 37,000 one-key edits in a real vault, Obsidian's
+  rules made 2,629 correct numbers wrong and changed 83 lines in code or
+  paragraphs; Basalt changed neither. When an edit splits a list in two (a
+  paragraph pasted between items), both parts keep their numbers, where
+  Obsidian restarts the second part at the list's first number, and Basalt
+  leaves a number alone when the new one would stop the line being a list
+  item.
+- Links in canvas text cards follow renames.
+
+Still different: Backlinks leaves out a mention Link all can't link without
+breaking it or changing the page, where Obsidian lists it and its Link does
+both: one in raw HTML, right after `[` (Obsidian writes `[[[Foo]]]`, a link to
+"[Foo"), after a `[[` nothing on its line closes, or whose brackets would undo
+or start bold, italics or a highlight around it (in a paragraph of more than
+3,000 characters, any mention right next to them, as checking each would be
+slow). Two mentions that share emphasis marks (`Foo*_*Foo`) are both listed,
+but linking one leaves the other unlinkable, so Link all links one of them. A
+`[[` inside a link's target (`[[a [[b]]`) links to "a [[b" in Reading view but
+to "b" in the index and Live Preview; which one Obsidian reads hasn't been
+checked. Where the editor's parser and CommonMark disagree on a `#` and a tab
+or a backtick after an escaped one, Link all leaves alone what either reads as
+code. Two rare gaps are left: after a link whose address holds a backtick
+(`[](a`b)`), Link all can still write into a code span that follows; and
+Link all reads an HTML comment opened inside a line as closing at the next
+`-->`, even past the end of its paragraph. A mention in a callout's title
+that Reading view shows as plain text (a title that reads as a heading or a
+link definition) is offered. Reading
+view shows callouts more than four inside one another as quotes, to keep long
+chains quick; whether Obsidian has a limit hasn't been checked. A line under a
+callout's title with no `>` keeps its own indent, so a tab-indented one is
+code, as Obsidian 1.14 shows it (checked by hand). Past 1,000 quotes and lists inside one another, the index reads
+further markers as text, where the editor's parser keeps nesting. The index counts links and
+tags inside HTML blocks, which Reading view shows as raw HTML; whether Obsidian
+counts them is what `Notes/Blocks.md` in the rename parity run shows. A table
+whose header and delimiter rows have different cell counts isn't read as a
+table (Obsidian draws one), and Basalt's link colours fade less than Obsidian's
+for unresolved links, to keep their contrast. A large pasted `data:` image is
+left out, where Obsidian saves it as an attachment. Bases show 300 rows with a
+button for the rest; Obsidian scrolls through all of them.
+
+### Rename parity run (2026-10-13, Obsidian 1.14.4)
+
+- The same four renames and moves were done by hand in Obsidian and by
+  Basalt, in three vaults (shortest, relative and absolute links), and the
+  files compared (`parity/rename.md`).
+- Brought in line: relative links to the note's own folder or below have no
+  `./`, `[text](<path>)` links keep their angle brackets, and canvases are
+  written in Obsidian's layout, one line per card.
+- Canvas saves, checked by hand in a throwaway vault (2026-10-18), and now
+  matched byte for byte: an entry per line in any object or array that holds
+  another, even an empty one; groups first and a dragged card last; each
+  card's position, size and colour (and a group's label and background), and
+  each connection's ends, sides, colour and label, written last in a fixed
+  order; default ends left out.
+- Not checked: where Obsidian puts a non-default `fromEnd` or `toEnd` among
+  the other keys (Basalt writes them after their side), and whether a card
+  only selected, not dragged, moves to the end.
+- Also not checked: how far the pointer must move before Obsidian counts a
+  press as a drag (Basalt uses 4 pixels), whether a card moved with the arrow
+  keys goes to the end (in Basalt it stays put), and how several or nested
+  groups are ordered after a drag, resize, arrow-key move or duplicate
+  (Basalt keeps groups before cards, and a group before any smaller group
+  inside it, so none covers another it holds; otherwise they keep their own
+  order).
+- Moving a group moves the cards and groups wholly inside it, with the mouse
+  or the arrow keys, as Obsidian's help says ("When you move the group, the
+  cards inside it move too"). What's inside is taken when a drag, or a run of
+  arrow-key moves, begins, so a group doesn't pick up the cards it passes
+  over. Not checked: whether Obsidian also takes a card only partly inside,
+  and where it saves them (after a drag Basalt saves them with the group,
+  after what stayed put; arrow keys keep the order, but for groups).
+- Canvas undo and redo follow Obsidian's help: Cmd-Z (Ctrl-Z) undoes, Cmd-Shift-Z
+  or Cmd-Y (Ctrl-Shift-Z or Ctrl-Y) redoes, and the canvas controls have Undo
+  and Redo. Each edit is one step: a whole drag, a resize, a new card, a
+  delete, a colour, a connection or a card's text. Basalt keeps the last 100
+  steps, starts afresh when the file changes outside, keeps the history
+  through a rename or move, and leaves the keys to a card's text editor while
+  it's open. Not checked: how many steps Obsidian keeps, and what it selects
+  after an undo (Basalt keeps the selection that's still there).
+- Still different, on purpose: Obsidian rewrote a link in a Latin-1 note and
+  turned its `é` into a replacement character; Basalt leaves notes that
+  aren't UTF-8 untouched, so the link there goes stale.
+- Not covered by the run: where the bare relative path would open another
+  note (a note at the vault root with that path, which the resolver prefers),
+  Basalt keeps the `./` so the link still opens the note it was written for;
+  whether Obsidian does too is unchecked. Likewise an angled link whose new
+  path has a `#` or a `%XX` in its name is written encoded, since the raw
+  path would read back as another file.
+- Still different: after moving a note under relative links, Obsidian wrote
+  `[[Sub/Leaf]]` (relative to where the note was, and found only by its path's
+  end), where Basalt writes the note's real relative path,
+  `[[../Folder2/Sub/Leaf]]`.
+- Not covered: this run's vaults predate `Notes/Blocks.md`, so whether
+  Obsidian counts links in HTML blocks is still open.
 
 ## Fixed since this audit (2026-07-07)
 
@@ -113,9 +298,9 @@ A follow-up pass closed ~17 more MEDIUM/LOW gaps from the list below:
   namespaces / `file.*` members / methods) and **live validation** (parse +
   unknown-function check, shown inline).
 
-**The parity backlog is cleared** — including the "nice-to-have" expression
-editor. Only the by-design exclusions remain out of scope: Sync/Publish, mobile,
-and the community-plugin/theme marketplaces.
+That cleared the July backlog. For what Obsidian has shipped since, see the
+October 2026 update above. Sync/Publish, mobile, and the community-plugin and
+theme marketplaces stay out of scope by design.
 
 ## Scored matrix
 
@@ -144,12 +329,12 @@ and the community-plugin/theme marketplaces.
 | **medium** | large | partial | Interactive table editor | Editing is raw-pipe markdown only; no in-place cell WYSIWYG, insert/delete row-column controls, alignment toggles, or Tab-between-cells. |
 | **medium** | large | partial | Full-text search operators | Subset only (path/file/tag/exclude/phrase/regex + bare-term AND); missing OR/parentheses, line:/block:/section:, task:/task-todo:/task-done:, [key:value], match-case:, content:. |
 | **medium** | large | partial | Global graph filters/colors/display/forces | Only global/local mode switch + pan/zoom; no search/tag/orphan filters, color groups, display settings (arrows/fade/node size/link thickness), or force sliders. |
-| **medium** | large | partial | Canvas node types (file embed, create file/link/group, group containment) | File nodes show a filename/image card instead of embedded live note content; only text nodes are creatable (no drag-drop/menu for file/link/group); group nodes are inert (moving a group doesn't move contained nodes). |
+| **medium** | large | partial | Canvas node types (file embed, create file/link/group) | File nodes show a filename or image card instead of the note's live content, and only text cards can be created (no drag-drop or menu for file, link or group nodes). Groups are no longer inert: since 2026-10-18 moving one moves what lies wholly inside it. |
 | **medium** | large | partial | Bases editing (columns/types/formulas/filters/sort/group) | Display-name, property type/widget, formulas, and nested and/or/not filters are read-only; sort order, groupBy, per-column summaries, and cards image key round-trip via view.raw but aren't editable. |
 | **medium** | large | missing | Vim key bindings | No Vim mode toggle in editor settings. |
 | **medium** | medium | partial | Callout per-type icons + full type set | ~25 callout types collapse into 6 color groups (tip/success/check/hint/important all identical green) with NO per-type icons and no custom callout types. |
 | **medium** | medium | partial | List / indentation folding | Only heading-section folding exists; nested list items cannot be collapsed (Obsidian's 'Fold indent'). |
-| **medium** | medium | partial | Raw HTML in Live Preview | Block and inline HTML (<sup>/<mark>/etc.) show as literal text while editing; only Reading mode/export render it. Obsidian renders HTML inline in LP. |
+| **low** | small | partial | Raw HTML in Live Preview | Block HTML (including inline SVG) and the safe inline tags render in Live Preview and Reading view. Block detection uses a fixed tag list (`HTML_BLOCK` in render.ts), not CommonMark's full HTML-block rules. |
 | **medium** | medium | partial | Backlinks pane grouping/filter/sort/context | Renders an ungrouped, uncollapsible, unsortable, unfilterable flat list; no per-source headers, filter box, sort, or 'show more context'. |
 | **medium** | medium | partial | Unlinked mentions Link/Link all + alias search | No per-mention 'Link' or 'Link all' action (only navigates), and only the note NAME is searched — aliases (aliasesOf exists) are not surfaced. |
 | **medium** | medium | partial | Tag pane hierarchy + sort | Nested tags (#project/foo) shown as flat rows instead of a collapsible hierarchy with roll-up counts; sort fixed at count-desc (no frequency/name). |
@@ -158,6 +343,7 @@ and the community-plugin/theme marketplaces.
 | **medium** | medium | partial | Export to PDF (dedicated, with options) | PDF only via OS/webview print dialog's 'Save as PDF'; no direct export and none of Obsidian's options (page size, margins, orientation, downscale, title). |
 | **medium** | medium | partial | Canvas node interactions (resize/multi-select/context menu) | Resize only from single bottom-right handle, no marquee/shift multi-select for group move/delete, and delete only via keyboard (no right-click menu). |
 | **medium** | medium | partial | Canvas edge property editing | No UI to add/edit edge labels or colors, cannot reconnect/reroute endpoints, and new edges always get a single toEnd arrow with no direction/none toggle. |
+| **medium** | medium | done | Canvas undo and redo | Done 2026-10-18: Cmd-Z, Cmd-Shift-Z and Cmd-Y (Ctrl elsewhere) and Undo and Redo buttons, one step per edit, as Obsidian's help describes. |
 | **medium** | medium | partial | Properties UI (rename key/reorder/autocomplete) | Existing property keys cannot be renamed (static div; input only for new props), no drag-reorder, and no name/value autocomplete or vault-wide suggestions. |
 | **medium** | medium | missing | Note composer (merge/split/extract) | No 'merge with another file', 'split by headings', or 'extract selection/heading into new note' commands. |
 | **medium** | medium | partial | Custom hotkeys — rebind built-in commands | Built-ins preventDefault first and the custom handler bails on defaultPrevented, so built-in chords can't be remapped; built-ins never appear in the Hotkeys manager and reassignment yields a silent dead key with no conflict warning. |
@@ -208,7 +394,7 @@ and the community-plugin/theme marketplaces.
 | Tags #tag | ✅ Full | src/editor/tags.ts:11-32 tagRegex() marks #tag/#nested/tag with cm-tag chip class; skips pure-numeric (Obsidian rule), frontmatter YAML tags: lines, code/table regions (isInExcludedRegion), and link contexts (isInLinkContext).<br>**Gap:** Tags are style-only marks (no click-to-search in the editor yet, per the file's own comment), but tag recognition/rendering is complete. |
 | Block refs ^id and heading # link targets | ✅ Full | src/editor/wikilink.ts:116-158 completion: [[Note#^ suggests block ids via getBlockIds (id+snippet), [[Note# suggests headings via getHeadings; apply absorbs existing ]] closer; onOpen passes the full target incl. #heading/#^block (wikilink.ts:214-216, 246).<br>**Gap:** Whether opening [[Note#heading]] scrolls to the anchor is app-level navigation (not verified in editor scope); the editor correctly captures and forwards the anchored target. |
 | Transclusion / embeds ![[Note#h]] / #^block | ✅ Full | src/editor/embeds.ts:12-50 image embeds ![[img.png]] via ImgWidget (with \|width parsing); src/editor/transcludeBlocks.ts:70-98 StateField renders note/heading/block transclusions (TranscludeWidget via renderEmbedSource) and audio/video/pdf (MediaWidget via buildMediaElement); caret-inside reveals raw. |
-| Raw HTML in markdown | 🟡 Partial | src/lib/render.ts:193-338 HTML_BLOCK detects block HTML -> data-basalt-html placeholder; inline safe tags via m[15] (render.ts:172-174); src/lib/sanitize.ts DOMPurify. BUT grep shows data-basalt-html/raw-html only in src/lib (reading mode + export) — NOT in src/editor/. livePreview.ts has no HTML handling.<br>**Gap:** Raw HTML renders only in Reading mode and export, NOT in the editor Live Preview (block HTML and inline <sup>/<mark>/etc. show as literal text while editing). Obsidian renders HTML inline in Live Preview. |
+| Raw HTML in markdown | 🟡 Partial | src/lib/render.ts `HTML_BLOCK` detects block HTML (inline SVG included since 2026-10-05) for Reading view and export; src/editor/htmlBlock.ts renders the same blocks in Live Preview, and src/editor/htmlInline.ts the safe inline tags. src/lib/sanitize.ts runs DOMPurify with the HTML and SVG profiles and forbids scripts, styles, handlers, foreignObject and SVG animation; colours like `#e8710a` inside HTML aren't read as tags.<br>**Gap:** Block detection uses a fixed tag list rather than CommonMark's HTML-block rules, so an unlisted block tag stays literal. |
 | Editing keys (Mod-B/I/K, Tab indent, list continuation, auto-pair, multi-cursor) | ✅ Full | src/editor/markdownKeys.ts:101-105 Mod-b/i/k with syntax-tree-based toggle/unwrap (enclosing()); setup.ts:38-46 smartTab (indent lists, literal tab elsewhere), :239 closeBrackets, :242 allowMultipleSelections, :245 wrapSelectionOnType, :279 Tab/shift-indentLess, :282 searchKeymap (Mod-D select-next), :236 rectangularSelection (Alt-drag), list continuation via markdown() keymap (:274).<br>**Gap:** Mod-K inserts a standard [](url) link (not a wikilink), matching Obsidian's default. |
 | Spellcheck | ✅ Full | src/App.tsx:326-329 spellcheck state + localStorage('basalt-spellcheck') persistence, :2959 toggle command; src/editor/setup.ts:139-148 spellcheckCompartment reconfigures EditorView.contentAttributes({spellcheck}); initial value threaded via createEditorState (setup.ts:250-252). |
 | Vim key bindings | ❌ Missing | grep -rni 'vim' src/ returns ZERO matches; no @replit/codemirror-vim or @codemirror/vim in package.json dependencies.<br>**Gap:** No Vim mode. Obsidian offers a Vim keybindings toggle in Editor settings. |
@@ -275,7 +461,7 @@ and the community-plugin/theme marketplaces.
 |---|---|---|
 | Open .canvas (pan/zoom) | ✅ Full | /Users/oweneldridge/projects/basalt/src/components/CanvasView.tsx:156-206 (pan via pointer drag on empty space, zoom via wheel toward cursor), :124-144 (fit-to-view on external load only, preserving user pan/zoom on edits); parseCanvas tolerant load /Users/oweneldridge/projects/basalt/src/lib/canvas.ts:134-227<br>**Gap:** Behavioral deviation from Obsidian: the wheel ALWAYS zooms (line 185-195), whereas Obsidian scroll-pans and reserves zoom for pinch/cmd+scroll; two-finger trackpad scroll therefore zooms instead of panning. No zoom-control buttons (zoom in/out/fit/zoom-to-selection) that Obsidian provides. Pan still reachable via empty-space drag, so both actions work. |
 | Create/move/resize/delete nodes | 🟡 Partial | Create: double-click empty space + '+ Card' button both create TEXT nodes only (CanvasView.tsx:334-352, :367-388). Move: startNodeDrag :235-265. Resize: startResize :267-297. Delete: Delete/Backspace keyhandler :208-231.<br>**Gap:** Real shortfalls vs Obsidian: (1) resize is only from a SINGLE bottom-right handle (:568, startResize grows w/h from that corner) — Obsidian resizes from any edge/corner. (2) NO multi-select — `selected` is a single string (:86); you cannot marquee/shift-select to move or delete multiple nodes together, a core Obsidian canvas interaction. (3) Delete only via keyboard, no right-click context menu. (4) Only text nodes are creatable (see node-types feature). |
-| Node types: text, file, link, group | 🟡 Partial | All four parse (canvas.ts:172-179) and render (CanvasView.tsx:572-650): group as bordered/labeled box, file as image or 📄 filename card, link as 🔗 url card, text as rendered markdown.<br>**Gap:** Significant display/authoring deviations: (1) FILE nodes render only as a filename card (:589-602) or image — Obsidian embeds the actual note's live content inline; subpath is parsed but never shown. (2) Only TEXT nodes can be CREATED via UI — no drag-drop, no menu to add file/link/group nodes (grep confirms no onDrop/DataTransfer, no type:'file'/'link'/'group' creation). (3) GROUP nodes are inert boxes: moving a group does NOT move contained nodes (no containment logic), unlike Obsidian groups. |
+| Node types: text, file, link, group | 🟡 Partial | All four parse (canvas.ts:266-275) and render (CanvasView.tsx:884-1059): a group as a bordered box with its label, a file as an image or 📄 filename card, a link as a 🔗 URL card, text as rendered Markdown. Moving a group moves the cards, groups and unmodeled nodes wholly inside it (withGroupContents, passInGroups and movePassNodes, canvas.ts:349-381).<br>**Gap:** (1) FILE nodes render only as a filename card (CanvasView.tsx:984-1008) or an image, while Obsidian embeds the note's live content inline; the subpath is parsed but never shown. (2) Only TEXT nodes can be created in the UI: no drag-drop and no menu to add file, link or group nodes. |
 | Edges between nodes | 🟡 Partial | Create by dragging side anchor onto a target node (CanvasView.tsx:299-332, auto-picks toSide, defaults toEnd:'arrow'). Render as bezier with arrow markers (:413-444), labels (:437-441) and edge color (:432) drawn from parsed data. Delete via selecting edge + Delete (:224-226). Parser validates/round-trips fromSide/toSide/fromEnd/toEnd/color/label (canvas.ts:207-218).<br>**Gap:** Edge EDITING is largely absent vs Obsidian: (1) no UI to add/edit an edge label (labels only render from file — grep found no label input/prompt). (2) no UI to set edge color. (3) cannot reconnect/re-route an existing edge's endpoints by dragging them. (4) new edges always get a single toEnd arrow; no way to toggle arrowhead direction or make it none. So creation+display+delete work but property editing does not. |
 | Node colors | ✅ Full | canvasColor maps presets 1-6 (canvas.ts:248-264) with prototype-safe guard; hex passes through. Toolbar shows 6 preset dots + 'No color' for the selected node and writes via patchNode (CanvasView.tsx:389-400); applied to node/group border (:518-524); clearing color drops the key on serialize (canvas.ts:77-89).<br>**Gap:** Two deviations from Obsidian's color menu: (1) UI offers only the 6 presets + none — no CUSTOM hex color picker (hex round-trips from file but cannot be authored in-app, COLORS array is [undefined,'1'..'6']). (2) color tints only the BORDER; Obsidian also applies a subtle background tint to the node. |
 

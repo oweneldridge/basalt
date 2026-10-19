@@ -10,10 +10,18 @@ import {
   isLoaded,
   loadEnabled,
   saveEnabled,
+  rememberPluginCode,
+  vetEnabledPlugins,
   emitVaultEvent,
   emitWorkspaceEvent,
+  listensFor,
+  isStarted,
   pluginSettingTabs,
   pluginRightViews,
+  pluginRibbonItems,
+  pluginStatusBarItems,
+  pluginEditorExtensions,
+  UNLOAD_WAIT_MS,
   type HostDeps,
   type PluginInfo,
 } from "./plugins";
@@ -114,6 +122,201 @@ describe("plugin host", () => {
     expect(pluginCommands()).toHaveLength(0);
     expect(hasCodeBlockProcessor("x")).toBe(false);
     expect(notices).toEqual(["bye", "cleanup"]); // onunload, then cleanups (LIFO)
+  });
+
+  it("an unloaded plugin's leftovers can't change the vault, but its onunload saves", async () => {
+    const made: string[] = [];
+    const inserted: string[] = [];
+    const { host, saved } = fakeHost({
+      createNote: async (p) => void made.push(p),
+      openDailyNote: async () => void made.push("daily"),
+      hasDailyNote: () => false,
+      insertAtCursor: (t) => void inserted.push(t),
+    });
+    installHost(host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() { globalThis.__left = this; }
+        async onunload() { await this.saveData({ bye: 1 }); }
+      };
+    `;
+    await loadPlugin(info({ id: "left", code }));
+    const p = (globalThis as unknown as { __left: { app: any; saveData: (d: unknown) => Promise<void> } }).__left;
+    await p.app.vault.create("Before.md", "x");
+    await unloadPlugin("left");
+    expect(saved.left).toBe('{"bye":1}');
+    const tries = [
+      p.app.vault.create("After.md", "x"),
+      p.app.vault.modify("A.md", "x"),
+      p.app.vault.process("A.md", () => "y"),
+      p.app.vault.delete("A.md"),
+      p.app.vault.rename("A.md", "B"),
+      p.app.vault.createFolder("F"),
+      p.app.dailyNotes.open(new Date()),
+      p.saveData({ late: 1 }),
+    ];
+    for (const t of await Promise.allSettled(tries)) expect(t).toMatchObject({ status: "rejected", reason: expect.objectContaining({ message: "Plugin left is unloaded" }) });
+    p.app.workspace.activeEditor?.editor.insertAtCursor("late");
+    p.app.workspace.openLinkText("A");
+    expect(made).toEqual(["Before.md"]);
+    expect(inserted).toEqual([]);
+    expect(saved.left).toBe('{"bye":1}');
+  });
+
+  it("an onunload that never finishes doesn't hold up unloading", async () => {
+    vi.useFakeTimers();
+    try {
+      const { host, notices } = fakeHost();
+      installHost(host);
+      const code = `
+        const { Plugin, Notice } = require("basalt");
+        module.exports = class extends Plugin {
+          onload() { this.register(() => new Notice("cleaned")); }
+          onunload() { return new Promise(() => {}); }
+        };
+      `;
+      await loadPlugin(info({ id: "stuck", code }));
+      let done = false;
+      const unloading = unloadPlugin("stuck").then(() => (done = true));
+      await vi.advanceTimersByTimeAsync(UNLOAD_WAIT_MS - 1);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await unloading;
+      expect(notices).toEqual(["cleaned"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("unloading everything waits for an unload already under way", async () => {
+    const { host } = fakeHost();
+    installHost(host);
+    let finish = () => {};
+    (globalThis as any).__slowBye = new Promise<void>((r) => (finish = r));
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin { onunload() { return globalThis.__slowBye; } };
+    `;
+    await loadPlugin(info({ id: "slow-bye", code }));
+    void unloadPlugin("slow-bye");
+    let all = false;
+    const done = unloadAll().then(() => (all = true));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(all).toBe(false);
+    finish();
+    await done;
+    expect(all).toBe(true);
+  });
+
+  it("a plugin stopped mid-onload registers nothing after", async () => {
+    const { host } = fakeHost();
+    installHost(host);
+    vi.stubGlobal("document", { createElement: () => ({ className: "", remove() {} }) });
+    let go = () => {};
+    const g = globalThis as any;
+    g.__late = new Promise<void>((r) => (go = r));
+    g.__el = new EventTarget();
+    g.__hits = [];
+    g.__cleaned = [];
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        async onload() {
+          await globalThis.__late;
+          const hit = (what) => () => globalThis.__hits.push(what);
+          this.addCommand({ id: "c", name: "C", callback: () => {} });
+          this.registerMarkdownCodeBlockProcessor("late", () => {});
+          this.registerEditorExtension({ late: true });
+          this.addSettingTab({ containerEl: {}, display: () => {} });
+          this.addRibbonIcon("L", "Late", () => {});
+          this.registerView("late-view", "Late", () => {});
+          globalThis.__item = this.addStatusBarItem();
+          this.register(() => globalThis.__cleaned.push("register"));
+          this.registerEvent({ off: () => globalThis.__cleaned.push("event") });
+          this.registerDomEvent(globalThis.__el, "late", hit("dom"));
+          globalThis.__iv = this.registerInterval(hit("interval"), 5);
+          this.app.vault.on("modify", hit("vault"));
+          this.app.workspace.on("file-open", hit("workspace"));
+        }
+      };
+    `;
+    const loading = loadPlugin(info({ id: "late", code }));
+    await unloadPlugin("late");
+    go();
+    await loading;
+    await new Promise((r) => setTimeout(r, 30));
+    g.__el.dispatchEvent(new Event("late"));
+    emitVaultEvent("modify", { path: "A.md", name: "A" });
+    emitWorkspaceEvent("file-open", { path: "A.md", name: "A" });
+    expect(pluginCommands()).toEqual([]);
+    expect(hasCodeBlockProcessor("late")).toBe(false);
+    expect(pluginEditorExtensions()).toEqual([]);
+    expect(pluginSettingTabs()).toEqual([]);
+    expect(pluginRibbonItems()).toEqual([]);
+    expect(pluginRightViews()).toEqual([]);
+    expect(pluginStatusBarItems()).toEqual([]);
+    expect(g.__item).toBeTruthy();
+    expect(g.__iv).toBe(0);
+    expect(listensFor("late", "modify")).toBe(false);
+    expect(g.__hits).toEqual([]);
+    expect(g.__cleaned).toEqual(["register", "event"]);
+    vi.unstubAllGlobals();
+  });
+
+  it("a plugin acts only on the vault it was loaded for", async () => {
+    let open: string | null = "/v/one";
+    const made: string[] = [];
+    const { host, saved } = fakeHost({
+      vaultPath: () => open,
+      createNote: async (p) => void made.push(p),
+      readNote: async () => "text",
+      getFolders: () => ["F"],
+      openDailyNote: async () => void made.push("daily"),
+      hasDailyNote: () => true,
+      resolvedLinks: () => ({ "A.md": { "B.md": 1 } }),
+      unresolvedLinks: () => ({ "A.md": { X: 1 } }),
+    });
+    installHost(host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin { onload() { globalThis.__mine = this; } };
+    `;
+    await loadPlugin(info({ id: "mine", code }));
+    const p = (globalThis as any).__mine;
+    const looks = () => [
+      p.app.vault.getMarkdownFiles().length,
+      p.app.vault.getFiles().length,
+      p.app.vault.getAllLoadedFiles().length,
+      p.app.metadataCache.getFileCache("A.md") !== null,
+      Object.keys(p.app.metadataCache.resolvedLinks).length,
+      Object.keys(p.app.metadataCache.unresolvedLinks).length,
+      p.app.workspace.getActiveFile() !== null,
+      p.app.workspace.activeEditor !== null,
+      p.app.dailyNotes.has(new Date()),
+    ];
+    expect(looks()).toEqual([1, 1, 3, true, 1, 1, true, true, true]);
+    await expect(p.app.vault.read("A.md")).resolves.toBe("text");
+    open = "/v/two";
+    expect(looks()).toEqual([0, 0, 1, false, 0, 0, false, false, false]);
+    let processed: string | undefined;
+    const tries = [
+      p.app.vault.read("A.md"),
+      p.app.vault.cachedRead("A.md"),
+      p.app.vault.process("A.md", (t: string) => ((processed = t), "y")),
+      p.app.vault.create("New.md", "x"),
+      p.app.dailyNotes.open(new Date()),
+      p.saveData({ x: 1 }),
+    ];
+    for (const t of await Promise.allSettled(tries)) expect(t).toMatchObject({ status: "rejected", reason: expect.objectContaining({ message: expect.stringMatching(/another vault/) }) });
+    expect(processed).toBeUndefined();
+    expect(made).toEqual([]);
+    expect(saved.mine).toBeUndefined();
+    open = "/v/one";
+    await unloadPlugin("mine");
+    await expect(p.app.vault.read("A.md")).rejects.toThrow("Plugin mine is unloaded");
+    await expect(p.app.vault.cachedRead("A.md")).rejects.toThrow("Plugin mine is unloaded");
+    expect(looks()).toEqual([0, 0, 1, false, 0, 0, false, false, false]);
   });
 
   it("supports a plain-object module and loadData/saveData", async () => {
@@ -228,6 +431,145 @@ describe("plugin events", () => {
     expect((globalThis as any).__events).toEqual([]);
   });
 
+  it("a stopped plugin, or one whose vault has gone, hears nothing and does nothing in the next vault", async () => {
+    let open = "/v/one";
+    const opened: string[] = [];
+    const inserted: string[] = [];
+    installHost(
+      fakeHost({
+        vaultPath: () => open,
+        vaultName: () => open.split("/").pop()!,
+        openNote: (t) => void opened.push(t),
+        insertAtCursor: (t) => void inserted.push(t),
+      }).host,
+    );
+    const g = globalThis as any;
+    g.__heard = [];
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin { onload() {
+        globalThis["__" + this.manifest.id] = this;
+        this.app.vault.on("create", (f) => globalThis.__heard.push(this.manifest.id + ":" + f.path));
+        this.app.workspace.on("file-open", (f) => globalThis.__heard.push(this.manifest.id + ":open:" + f.path));
+      } };`;
+    await loadPlugin(info({ id: "left", code }));
+    await loadPlugin(info({ id: "gone", code }));
+    emitVaultEvent("create", { path: "Mine.md", name: "Mine" });
+    expect(g.__heard).toEqual(["left:Mine.md", "gone:Mine.md"]);
+    const editors = [g.__left, g.__gone].map((p) => p.app.workspace.activeEditor.editor);
+    await unloadPlugin("gone");
+    open = "/v/two";
+    g.__heard = [];
+    emitVaultEvent("create", { path: "Secret.md", name: "Secret" });
+    emitWorkspaceEvent("file-open", { path: "Secret.md", name: "Secret" });
+    expect(g.__heard).toEqual([]);
+    expect(listensFor("gone", "create")).toBe(false);
+    for (const p of [g.__left, g.__gone]) {
+      expect(p.app.vault.getName()).toBe("one");
+      p.app.workspace.openLinkText("Secret");
+    }
+    for (const e of editors) {
+      e.insertAtCursor("x");
+      e.replaceSelection("x");
+    }
+    expect(opened).toEqual([]);
+    expect(inserted).toEqual([]);
+    open = "/v/one";
+    emitVaultEvent("create", { path: "Back.md", name: "Back" });
+    expect(g.__heard).toEqual(["left:Back.md"]);
+    const once = g.__left.app.vault.on("modify", () => {});
+    once.off();
+    once.off();
+    g.__left.app.vault.on("modify", () => {});
+    expect(listensFor("left", "modify")).toBe(true);
+  });
+
+  it("tells which plugins listen for a vault event, until they unload or let go", async () => {
+    installHost(fakeHost().host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          this.registerEvent(this.app.vault.on("create", () => {}));
+          const once = this.app.vault.on("modify", () => {});
+          once.off();
+          once.off();
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "tpl", code }));
+    expect(listensFor("tpl", "create")).toBe(true);
+    expect(listensFor("tpl", "modify")).toBe(false); // let go, and twice counts once
+    expect(listensFor("other", "create")).toBe(false);
+    await unloadPlugin("tpl");
+    expect(listensFor("tpl", "create")).toBe(false);
+  });
+
+  it("counts one callback subscribed twice as two subscriptions, as Obsidian runs it", async () => {
+    installHost(fakeHost().host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          const cb = () => { globalThis.__twice = (globalThis.__twice ?? 0) + 1; };
+          const a = this.app.vault.on("create", cb);
+          globalThis.__second = this.app.vault.on("create", cb);
+          a.off();
+        }
+      };
+    `;
+    (globalThis as any).__twice = 0;
+    await loadPlugin(info({ id: "twice", code }));
+    expect(listensFor("twice", "create")).toBe(true);
+    emitVaultEvent("create", { path: "A.md", name: "A" });
+    expect((globalThis as any).__twice).toBe(1);
+    (globalThis as any).__second.off();
+    expect(listensFor("twice", "create")).toBe(false);
+    emitVaultEvent("create", { path: "B.md", name: "B" });
+    expect((globalThis as any).__twice).toBe(1);
+    await unloadPlugin("twice");
+  });
+
+  it("runs a workspace callback subscribed twice twice, and each off() ends one", async () => {
+    installHost(fakeHost().host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        onload() {
+          const cb = () => { globalThis.__opened = (globalThis.__opened ?? 0) + 1; };
+          globalThis.__first = this.app.workspace.on("file-open", cb);
+          this.registerEvent(this.app.workspace.on("file-open", cb));
+        }
+      };
+    `;
+    (globalThis as any).__opened = 0;
+    await loadPlugin(info({ id: "ws-twice", code }));
+    emitWorkspaceEvent("file-open", null);
+    expect((globalThis as any).__opened).toBe(2);
+    (globalThis as any).__first.off();
+    emitWorkspaceEvent("file-open", null);
+    expect((globalThis as any).__opened).toBe(3);
+    await unloadPlugin("ws-twice");
+  });
+
+  it("isn't started until its onload has finished", async () => {
+    installHost(fakeHost().host);
+    let finish = () => {};
+    (globalThis as any).__gate = new Promise<void>((r) => (finish = r));
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin { async onload() { await globalThis.__gate; } };
+    `;
+    const loading = loadPlugin(info({ id: "slow-start", code }));
+    await Promise.resolve();
+    expect(isStarted("slow-start")).toBe(false);
+    finish();
+    await loading;
+    expect(isStarted("slow-start")).toBe(true);
+    await unloadPlugin("slow-start");
+    expect(isStarted("slow-start")).toBe(false);
+  });
+
   it("registerInterval + registerDomEvent are cleared on unload", async () => {
     const { host } = fakeHost();
     installHost(host);
@@ -329,5 +671,55 @@ describe("plugin vault mutations", () => {
     `;
     await loadPlugin(info({ id: "vmut", code }));
     expect(calls).toEqual(["delete:A.md", "rename:A.md->B.md", "mkdir:Folder"]);
+  });
+
+  it("process writes only over the text it read, and not at all when unchanged", async () => {
+    const writes: [string, string, string | undefined][] = [];
+    const { host } = fakeHost({
+      readNote: async () => "old text",
+      modifyNote: async (pth, content, expected) => { writes.push([pth, content, expected]); },
+    });
+    installHost(host);
+    const code = `
+      const { Plugin } = require("basalt");
+      module.exports = class extends Plugin {
+        async onload() {
+          await this.app.vault.process("A.md", (s) => s.toUpperCase());
+          await this.app.vault.process("A.md", (s) => s);
+        }
+      };
+    `;
+    await loadPlugin(info({ id: "vproc", code }));
+    expect(writes).toEqual([["A.md", "OLD TEXT", "old text"]]);
+  });
+});
+
+describe("enabled plugins are tied to their code", () => {
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    });
+  });
+  const plugin = (code: string): PluginInfo => ({ id: "p", name: "P", version: "1", description: "", author: "", minAppVersion: "", code, data: null });
+
+  it("runs the enabled code, and switches a plugin off when its code changes", async () => {
+    store.clear();
+    saveEnabled("/v", ["p"]);
+    await rememberPluginCode("/v", plugin("v1"));
+    expect((await vetEnabledPlugins("/v", [plugin("v1")])).run.map((p) => p.id)).toEqual(["p"]);
+    const swapped = await vetEnabledPlugins("/v", [plugin("v2 from a sync peer")]);
+    expect(swapped.run).toEqual([]);
+    expect(swapped.changed.map((p) => p.id)).toEqual(["p"]);
+    expect(loadEnabled("/v")).toEqual([]);
+  });
+
+  it("trusts a plugin enabled before hashes existed, once", async () => {
+    store.clear();
+    saveEnabled("/v", ["p"]);
+    expect((await vetEnabledPlugins("/v", [plugin("old")])).run).toHaveLength(1);
+    expect((await vetEnabledPlugins("/v", [plugin("new")])).changed).toHaveLength(1);
   });
 });

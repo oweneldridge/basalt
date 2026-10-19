@@ -62,7 +62,13 @@ export interface CanvasData {
   passEdges?: unknown[];
   /** Top-level canvas keys other than nodes/edges, preserved on save. */
   topRaw?: Record<string, unknown>;
+  /** The file's top-level keys in order, so a save keeps it. */
+  topKeys?: string[];
 }
+
+// Sets `k` as an own key, `__proto__` included.
+const own = (o: Record<string, unknown>, k: string, v: unknown) =>
+  Object.defineProperty(o, k, { value: v, enumerable: true, writable: true, configurable: true });
 
 /** Serialize a CanvasData back to JSON Canvas text (tab-indented, like
  * Obsidian). Fields Basalt models are written from the live node/edge; any OTHER
@@ -78,42 +84,83 @@ export function serializeCanvas(data: CanvasData): string {
     if (v === undefined || v === null || v === "") delete o[k];
     else o[k] = v;
   };
-  const nodes = data.nodes.map((n) => {
-    const o: Record<string, unknown> = { ...(n.raw ?? {}) };
+  // Obsidian keeps a node's or edge's keys where the file had them, but for
+  // these, which it writes last in this order.
+  const last = (raw: Record<string, unknown> | undefined, keys: string[]) => {
+    const o: Record<string, unknown> = { ...(raw ?? {}) };
+    for (const k of keys) delete o[k];
+    return o;
+  };
+  // Groups first, as Obsidian saves them, so they draw under the cards.
+  const ordered = [...data.nodes.filter((n) => n.type === "group"), ...data.nodes.filter((n) => n.type !== "group")];
+  const nodes = ordered.map((n) => {
+    const o = last(n.raw, n.type === "group" ? ["x", "y", "width", "height", "color", "label", "background"] : ["x", "y", "width", "height", "color"]);
     o.id = n.id;
     o.type = n.type;
+    if (n.type === "text") o.text = n.text ?? ""; // required by the spec, even when empty
+    else if (n.type === "file") {
+      put(o, "file", n.file);
+      put(o, "subpath", n.subpath);
+    } else if (n.type === "link") put(o, "url", n.url);
     o.x = r(n.x);
     o.y = r(n.y);
     o.width = r(n.width);
     o.height = r(n.height);
     put(o, "color", n.color);
-    if (n.type === "text") put(o, "text", n.text);
-    else if (n.type === "file") {
-      put(o, "file", n.file);
-      put(o, "subpath", n.subpath);
-    } else if (n.type === "link") put(o, "url", n.url);
-    else if (n.type === "group") put(o, "label", n.label);
+    if (n.type === "group") {
+      put(o, "label", n.label);
+      if (n.raw && "background" in n.raw) o.background = n.raw.background;
+    }
     return o;
   });
   const edges = data.edges.map((e) => {
-    const o: Record<string, unknown> = { ...(e.raw ?? {}) };
+    const o = last(e.raw, ["fromNode", "fromSide", "fromEnd", "toNode", "toSide", "toEnd", "color", "label"]);
     o.id = e.id;
     o.fromNode = e.fromNode;
-    o.toNode = e.toNode;
     put(o, "fromSide", e.fromSide);
+    // Ends Obsidian leaves out: none at the start, an arrow at the end.
+    put(o, "fromEnd", e.fromEnd === "none" ? undefined : e.fromEnd);
+    o.toNode = e.toNode;
     put(o, "toSide", e.toSide);
-    put(o, "fromEnd", e.fromEnd);
-    put(o, "toEnd", e.toEnd);
+    put(o, "toEnd", e.toEnd === "arrow" ? undefined : e.toEnd);
     put(o, "color", e.color);
     put(o, "label", e.label);
     return o;
   });
   // Re-append verbatim the entries Basalt didn't model, and preserve any
   // top-level keys, so a save is non-destructive.
-  const top: Record<string, unknown> = { ...(data.topRaw ?? {}) };
-  top.nodes = [...nodes, ...(data.passNodes ?? [])];
-  top.edges = [...edges, ...(data.passEdges ?? [])];
-  return JSON.stringify(top, null, "\t");
+  const raw = data.topRaw ?? {};
+  const all: Record<string, unknown> = {
+    ...raw,
+    nodes: [...nodes, ...(data.passNodes ?? [])],
+    edges: [...edges, ...(data.passEdges ?? [])],
+  };
+  const top: Record<string, unknown> = {};
+  for (const k of [...(data.topKeys ?? []), ...Object.keys(all)]) own(top, k, all[k]);
+  return canvasText(top);
+}
+
+/** A canvas's JSON laid out as Obsidian writes it: an object or array that
+ * holds another, even an empty one, has an entry per line, a tab deeper; any
+ * other value stays on one line. No newline at the end. */
+export function canvasText(top: Record<string, unknown>): string {
+  return laidOut(top, "") ?? "{}";
+}
+
+const isBox = (v: unknown): v is object => typeof v === "object" && v !== null;
+
+function laidOut(v: unknown, indent: string): string | undefined {
+  if (!isBox(v)) return JSON.stringify(v);
+  const list = Array.isArray(v);
+  if (!(list ? v : Object.values(v)).some(isBox)) return JSON.stringify(v);
+  const pad = indent + "\t";
+  const lines = list
+    ? v.map((x) => pad + (laidOut(x, pad) ?? "null"))
+    : Object.entries(v).flatMap(([k, x]) => {
+        const text = laidOut(x, pad);
+        return text === undefined ? [] : [`${pad}${JSON.stringify(k)}:${text}`];
+      });
+  return list ? `[\n${lines.join(",\n")}\n${indent}]` : `{\n${lines.join(",\n")}\n${indent}}`;
 }
 
 function num(v: unknown, fallback = 0): number {
@@ -131,12 +178,17 @@ function end(v: unknown): End | undefined {
 
 /** Rewrite `file:` references in a canvas's file-nodes using `relMap`
  * (oldRel → newRel), for keeping canvas embeds pointing at a renamed/moved
- * note. This is a MINIMAL edit of the raw JSON — it changes only matched `file`
+ * note. This is a MINIMAL edit of the raw JSON: it changes only matched `file`
  * fields and re-stringifies, so it never rounds geometry or drops fields the
  * canvas modeler doesn't understand (unlike serializeCanvas). Returns the new
  * JSON, or null if nothing changed / the JSON is unparseable. A file-node's
- * subpath lives in a separate field, so `Note.md#heading` embeds keep it. */
-export function rewriteCanvasFileRefs(json: string, relMap: Map<string, string>): string | null {
+ * subpath lives in a separate field, so `Note.md#heading` embeds keep it.
+ * With `fixText`, each text card's text goes through it too. */
+export function rewriteCanvasFileRefs(
+  json: string,
+  relMap: Map<string, string>,
+  fixText?: (text: string) => string | null,
+): string | null {
   let data: unknown;
   try {
     data = JSON.parse(json);
@@ -151,7 +203,16 @@ export function rewriteCanvasFileRefs(json: string, relMap: Map<string, string>)
   let changed = false;
   for (const n of (data as { nodes: unknown[] }).nodes) {
     if (!n || typeof n !== "object") continue;
-    const node = n as { type?: unknown; file?: unknown };
+    const node = n as { type?: unknown; file?: unknown; text?: unknown };
+    // A text card's links, as Obsidian fixes them on a rename.
+    if (node.type === "text" && typeof node.text === "string" && fixText) {
+      const text = fixText(node.text);
+      if (text !== null && text !== node.text) {
+        node.text = text;
+        changed = true;
+      }
+      continue;
+    }
     if (node.type !== "file" || typeof node.file !== "string") continue;
     const to = relMap.get(node.file) ?? lower.get(node.file.toLowerCase());
     if (to !== undefined && to !== node.file) {
@@ -159,7 +220,7 @@ export function rewriteCanvasFileRefs(json: string, relMap: Map<string, string>)
       changed = true;
     }
   }
-  return changed ? JSON.stringify(data, null, "\t") : null;
+  return changed ? canvasText(data as Record<string, unknown>) : null;
 }
 
 /** Parse JSON Canvas text. Returns null only if the JSON itself is unparseable;
@@ -254,9 +315,9 @@ export function parseCanvas(json: string): CanvasData | null {
   // Preserve any top-level keys besides nodes/edges (Obsidian metadata, etc.).
   const topRaw: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(d as Record<string, unknown>)) {
-    if (k !== "nodes" && k !== "edges") topRaw[k] = v;
+    if (k !== "nodes" && k !== "edges") own(topRaw, k, v);
   }
-  return { nodes, edges, passNodes, passEdges, topRaw };
+  return { nodes, edges, passNodes, passEdges, topRaw, topKeys: Object.keys(d) };
 }
 
 /** Bounding box over all nodes (for fit-to-view). Null when empty. */
@@ -275,6 +336,88 @@ export function canvasBounds(
     maxY = Math.max(maxY, n.y + n.height);
   }
   return { minX, minY, maxX, maxY };
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+
+// Whether `b` lies wholly inside `a`.
+const inside = (a: Box, b: Box) =>
+  b.x >= a.x && b.y >= a.y && b.x + b.width <= a.x + a.width && b.y + b.height <= a.y + a.height;
+
+/** The ids given, plus every node inside a group among them: moving a group
+ * moves what it holds, as in Obsidian. */
+export function withGroupContents(nodes: CanvasNode[], ids: Iterable<string>): Set<string> {
+  const out = new Set(ids);
+  for (const g of nodes) {
+    if (g.type !== "group" || !out.has(g.id)) continue;
+    for (const n of nodes) if (inside(g, n)) out.add(n.id);
+  }
+  return out;
+}
+
+/** Where in `passNodes` the nodes Basalt doesn't model lie wholly inside a
+ * group among `ids`, so they move with it too. */
+export function passInGroups(data: CanvasData, ids: Set<string>): number[] {
+  const groups = data.nodes.filter((g) => g.type === "group" && ids.has(g.id));
+  const box = (v: unknown): Box | null => {
+    const o = (v ?? {}) as Record<string, unknown>;
+    return [o.x, o.y, o.width, o.height].every((n) => Number.isFinite(n)) ? (o as Box) : null;
+  };
+  return (data.passNodes ?? []).flatMap((v, i) => {
+    const b = box(v);
+    return b && groups.some((g) => inside(g, b)) ? [i] : [];
+  });
+}
+
+/** `passNodes` with the ones at `at` moved by dx, dy, every other field and
+ * the key order kept. */
+export function movePassNodes(pass: unknown[] | undefined, at: number[], dx: number, dy: number): unknown[] | undefined {
+  if (!pass || at.length === 0) return pass;
+  return pass.map((v, i) => {
+    if (!at.includes(i)) return v;
+    const o = v as Box;
+    return { ...o, x: Math.round(o.x + dx), y: Math.round(o.y + dy) };
+  });
+}
+
+/** Groups before cards, and a group before any smaller group inside it, so
+ * none covers another it holds; otherwise the order is kept. */
+export function orderGroups(nodes: CanvasNode[]): CanvasNode[] {
+  const holds = (a: CanvasNode, b: CanvasNode) => a.width * a.height > b.width * b.height && inside(a, b);
+  const left = nodes.filter((n) => n.type === "group");
+  const out: CanvasNode[] = [];
+  while (left.length) out.push(...left.splice(left.findIndex((g) => !left.some((h) => holds(h, g))), 1));
+  return [...out, ...nodes.filter((n) => n.type !== "group")];
+}
+
+/** A canvas's undo history: the states before the one shown, oldest first,
+ * and the ones undone, latest undone last. Steps share their nodes, as edits
+ * never change a node in place. */
+export interface CanvasHistory {
+  past: CanvasData[];
+  future: CanvasData[];
+}
+
+export const CANVAS_HISTORY_LIMIT = 100;
+
+/** The history after an edit that replaced `before`: the edit is one step,
+ * only the last `limit` are kept, and what was undone can't be redone. */
+export function pushHistory(h: CanvasHistory, before: CanvasData, limit = CANVAS_HISTORY_LIMIT): CanvasHistory {
+  return { past: [...h.past, before].slice(-limit), future: [] };
+}
+
+/** One step back or forward from `shown`, or null when there's none. */
+export function stepHistory(
+  h: CanvasHistory,
+  shown: CanvasData,
+  dir: "undo" | "redo",
+): { history: CanvasHistory; data: CanvasData } | null {
+  const from = dir === "undo" ? h.past : h.future;
+  if (from.length === 0) return null;
+  const data = from[from.length - 1];
+  const rest = from.slice(0, -1);
+  const history = dir === "undo" ? { past: rest, future: [...h.future, shown] } : { past: [...h.past, shown], future: rest };
+  return { history, data };
 }
 
 /** JSON Canvas preset colors (1-6); a hex string passes through. */

@@ -21,6 +21,7 @@ export function noteRow(
   v: number,
   tagsOf: (p: string) => string[],
   linkKeysOf: (p: string) => string[],
+  extra?: { backlinksOf?: (p: string) => string[]; embedsOf?: (p: string) => string[] },
 ): BaseRow {
   const hit = rowCache.get(n);
   if (hit && hit.v === v) return hit.row;
@@ -36,6 +37,8 @@ export function noteRow(
     tags: tagsOf(n.path).map((t) => t.replace(/^#/, "").toLowerCase()),
     linkKeys: linkKeysOf(n.path),
     properties: parseProperties(n.content),
+    backlinks: extra?.backlinksOf ? () => extra.backlinksOf!(n.path) : undefined,
+    embeds: extra?.embedsOf ? () => extra.embedsOf!(n.path) : undefined,
   };
   rowCache.set(n, { v, row });
   return row;

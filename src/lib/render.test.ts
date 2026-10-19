@@ -1,8 +1,8 @@
 import { toggleTaskLine } from "./render";
 // Markdown→HTML rendering for Reading mode / export. Output is inserted via
 // innerHTML, so escaping is security-critical and gets first-class coverage.
-import { describe, expect, it } from "vitest";
-import { renderMarkdown, renderInline, escapeHtml } from "./render";
+import { afterEach, describe, expect, it } from "vitest";
+import { renderMarkdown, renderInline, escapeHtml, setStrictLineBreaks, commentRanges, mathBlocks, mayRunHtml, stripBlockIds } from "./render";
 
 describe("escaping (XSS safety)", () => {
   it("escapes HTML in prose, code, and attributes", () => {
@@ -16,7 +16,7 @@ describe("escaping (XSS safety)", () => {
   it("never emits a raw script tag from user input", () => {
     const html = renderMarkdown("# <img src=x onerror=alert(1)>\n\ntext");
     expect(html).not.toMatch(/<img src=x/);
-    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).not.toContain("onerror"); // inline HTML keeps only harmless attributes
   });
   it("escapes double-quotes in attribute values (no breakout)", () => {
     // The injected `"` becomes &quot;, so it stays INSIDE the attribute value
@@ -46,8 +46,9 @@ describe("inline", () => {
   it("wikilinks (alias + heading) and md links", () => {
     expect(renderInline("[[Foo|bar]]")).toContain('data-target="Foo">bar</a>');
     // Raw target kept (folder + heading) so resolution matches the editor;
-    // display falls back to the bare note name.
-    expect(renderInline("[[notes/Foo#H]]")).toContain('data-target="notes/Foo#H">Foo</a>');
+    // the text is the link text with `#` read as " > ", as Obsidian shows it.
+    expect(renderInline("[[notes/Foo#H]]")).toContain('data-target="notes/Foo#H">notes/Foo &gt; H</a>');
+    expect(renderInline("[[#H]]")).toContain('data-target="#H">H</a>');
     expect(renderInline("[text](https://a.com)")).toBe(
       '<a class="md-link" data-href="https://a.com">text</a>',
     );
@@ -72,7 +73,7 @@ describe("blocks", () => {
     expect(renderMarkdown("# A\n## B")).toBe("<h1>A</h1>\n<h2>B</h2>");
   });
   it("paragraphs join soft-wrapped lines", () => {
-    expect(renderMarkdown("one\ntwo\n\nthree")).toBe("<p>one\ntwo</p>\n<p>three</p>");
+    expect(renderMarkdown("one\ntwo\n\nthree")).toBe("<p>one<br>\ntwo</p>\n<p>three</p>");
   });
   it("horizontal rule", () => {
     expect(renderMarkdown("---")).toBe("<hr />");
@@ -95,7 +96,7 @@ describe("blocks", () => {
   it("bullet list with task checkboxes", () => {
     const html = renderMarkdown("- a\n- [ ] todo\n- [x] done");
     expect(html).toContain("<ul><li>a</li>");
-    expect(html).toContain('<li class="md-task"><input type="checkbox" class="md-task-check" data-task-line="1" /> todo</li>');
+    expect(html).toContain('<li class="md-task" data-task=" "><input type="checkbox" class="md-task-check" data-task-line="1" /> todo</li>');
     expect(html).toContain('data-task-line="2" checked /> done');
   });
   it("nested lists", () => {
@@ -108,7 +109,7 @@ describe("blocks", () => {
   it("blockquote and callout", () => {
     expect(renderMarkdown("> quoted")).toBe("<blockquote><p>quoted</p></blockquote>");
     const c = renderMarkdown("> [!warning] Heads up\n> body text");
-    expect(c).toContain('<div class="md-callout md-callout-warning">');
+    expect(c).toContain('<div class="md-callout md-callout-warning md-callout-color-orange">');
     expect(c).toContain('<div class="md-callout-title"><span class="md-callout-icon">⚠️</span>Heads up</div>');
     expect(c).toContain("body text");
   });
@@ -124,6 +125,62 @@ describe("blocks", () => {
     expect(html).toContain("<th>tags</th><td>a, b</td>");
     expect(html).toContain("<p>Body.</p>");
     expect(html).not.toContain("title: Hi");
+  });
+});
+
+describe("line breaks (Obsidian's Strict line breaks setting)", () => {
+  afterEach(() => setStrictLineBreaks(false));
+
+  it("keeps every line break when the setting is off, as Obsidian does by default", () => {
+    expect(renderMarkdown("y = x^2\nx = 4\ny = 16")).toBe("<p>y = x^2<br>\nx = 4<br>\ny = 16</p>");
+    expect(renderMarkdown("two spaces  \nnext")).toBe("<p>two spaces<br>\nnext</p>");
+  });
+
+  it("breaks only after two spaces or a backslash when the setting is on", () => {
+    setStrictLineBreaks(true);
+    expect(renderMarkdown("one\ntwo")).toBe("<p>one\ntwo</p>");
+    expect(renderMarkdown("one  \ntwo")).toBe("<p>one<br>\ntwo</p>");
+    expect(renderMarkdown("one\\\ntwo")).toBe("<p>one<br>\ntwo</p>");
+  });
+
+  it("keeps a line under a list item in that item", () => {
+    expect(renderMarkdown("- item one\n  more of one\n- item two")).toBe(
+      "<ul><li>item one<br>\nmore of one</li><li>item two</li></ul>",
+    );
+    expect(renderMarkdown("1. first\nlazy line")).toBe("<ol><li>first<br>\nlazy line</li></ol>");
+    setStrictLineBreaks(true);
+    expect(renderMarkdown("- item one\n  more of one")).toBe("<ul><li>item one\nmore of one</li></ul>");
+  });
+
+  it("still ends a list at a heading, a quote or a fence", () => {
+    expect(renderMarkdown("- a\n# H")).toBe("<ul><li>a</li></ul>\n<h1>H</h1>");
+    expect(renderMarkdown("- a\n> q")).toContain("<blockquote>");
+    expect(renderMarkdown("- a\n```\ncode\n```")).toContain("<pre");
+  });
+});
+
+describe("dollar amounts aren't math", () => {
+  it("leaves prices as text, as Obsidian does", () => {
+    expect(renderMarkdown("Copay +$25 and OOP +$25.")).not.toContain("data-math");
+    expect(renderMarkdown("was $268.18 (2026), so **$1,059.20/yr** total")).not.toContain("data-math");
+    expect(renderMarkdown("was $268.18 (2026), so **$1,059.20/yr** total")).toContain("<strong>$1,059.20/yr</strong>");
+    expect(renderMarkdown("price $5 and `$var`")).toContain("<code");
+  });
+  it("still renders real inline math", () => {
+    expect(renderMarkdown("area $x^2$ here")).toContain('data-tex="x^2"');
+    expect(renderMarkdown("$a$5")).not.toContain("data-math");
+  });
+});
+
+describe("tasks with other statuses", () => {
+  it("render as checkboxes, including in numbered lists", () => {
+    const html = renderMarkdown("- [/] doing\n- [-] dropped\n1. [ ] numbered");
+    expect(html.match(/md-task-check/g)).toHaveLength(3);
+    expect(html.match(/ checked/g)).toHaveLength(2);
+  });
+  it("toggle back to open, and numbered tasks toggle too", () => {
+    expect(toggleTaskLine("- [/] doing", 0)).toBe("- [ ] doing");
+    expect(toggleTaskLine("1. [ ] numbered", 0)).toBe("1. [x] numbered");
   });
 });
 
@@ -146,6 +203,26 @@ describe("stripBlockIds (^block markers)", () => {
     expect(renderMarkdown("a paragraph ^abc")).not.toContain("^abc");
     expect(renderMarkdown("a paragraph ^abc")).toContain("a paragraph");
     expect(renderMarkdown("para\n^xyz\nmore")).not.toContain("^xyz");
+  });
+  it("stays quick on a long run of spaces inside a line", () => {
+    const t0 = performance.now();
+    expect(stripBlockIds("a ^b\nx" + " ".repeat(60000) + "y")).toBe("a\nx" + " ".repeat(60000) + "y");
+    expect(performance.now() - t0).toBeLessThan(1000);
+  });
+});
+
+describe("mathBlocks", () => {
+  it("finds math blocks where Reading view shows them, up to its nesting limit", () => {
+    for (let n = 38; n <= 43; n++) {
+      for (const md of ["<p>x</p>\n".repeat(n) + "$$\nx\n$$", "- ".repeat(n) + "$$\n" + "  ".repeat(n) + "x\n" + "  ".repeat(n) + "$$"]) {
+        expect(mathBlocks(md).size, md.slice(0, 12) + n).toBe(renderMarkdown(md).includes('data-math="block"') ? 1 : 0);
+      }
+    }
+  });
+  it("reads thousands of HTML blocks one after another quickly", () => {
+    const t0 = performance.now();
+    expect(() => mathBlocks("$$x$$ Foo\n" + "<p>x</p>\n".repeat(4000))).not.toThrow();
+    expect(performance.now() - t0).toBeLessThan(1000);
   });
 });
 
@@ -219,7 +296,7 @@ describe("foldable callouts", () => {
   });
   it("a plain callout (no +/-) stays a non-foldable div", () => {
     const out = renderMarkdown("> [!info] Note\n> body");
-    expect(out).toContain('class="md-callout md-callout-info"');
+    expect(out).toContain('class="md-callout md-callout-info md-callout-color-blue"');
     expect(out).not.toContain("<details");
   });
 });
@@ -242,10 +319,20 @@ describe("raw HTML", () => {
     expect(out).not.toContain("raw-html"); // stays a paragraph
     expect(out).toContain("<sup>");
   });
-  it("escapes arbitrary inline HTML that isn't on the safe list", () => {
-    const out = renderMarkdown("hi <span onclick=alert(1)>x</span>");
-    expect(out).not.toContain("<span onclick");
-    expect(out).toContain("&lt;span");
+  it("leaves a quote's marks and a list's indent out of code that runs over lines", () => {
+    expect(renderMarkdown("> `a\n> b` c")).toBe('<blockquote><p><code class="md-code-inline">a b</code> c</p></blockquote>');
+    expect(renderMarkdown("- `a\n  b`")).toBe('<ul><li><code class="md-code-inline">a b</code></li></ul>');
+  });
+  it("keeps inline HTML on the safe list without its attributes, escapes the rest", () => {
+    const out = renderMarkdown("hi <span onclick=alert(1)>x</span> and <iframe src=x>");
+    expect(out).not.toContain("onclick");
+    expect(out).toContain("<span>x</span>"); // shown as markup, as in Obsidian
+    expect(out).toContain("&lt;iframe"); // not on the list: text
+    // text keeps its line breaks, even where the parser read a tag over one
+    expect(renderMarkdown("x <\nFoo>")).toBe("<p>x &lt;<br>\nFoo&gt;</p>");
+    expect(renderMarkdown("><\n>Foo>")).toBe("<blockquote><p>&lt;<br>\nFoo&gt;</p></blockquote>");
+    // a tag over a quote's lines is a tag, without the quote's marks
+    expect(renderMarkdown("> x <span\n> title=a>y</span>")).toBe('<blockquote><p>x <span title="a">y</span></p></blockquote>');
   });
   it("treats a <font>-led line as a raw-HTML block (Obsidian daily-note header)", () => {
     // A common Obsidian daily-note template: <font color=…><center>…<cite>…</cite></center></font>
@@ -295,5 +382,340 @@ describe("toggleTaskLine", () => {
   it("returns null for a non-task line or out of range", () => {
     expect(toggleTaskLine("- [ ] a", 1)).toBeNull();
     expect(toggleTaskLine("plain text", 0)).toBeNull();
+  });
+});
+
+describe("reading-view task lines", () => {
+  const lineOf = (html: string, label: string) => {
+    const m = new RegExp(`data-task-line="(\\d+)"[^>]*/> ${label}`).exec(html);
+    return m ? Number(m[1]) : null;
+  };
+  it("points tasks inside callouts and blockquotes at their source line", () => {
+    const doc = ["- [ ] Pay rent", "- [ ] Call mom", "", "> [!todo] Today", "> - [ ] Write report", "", "> - [ ] Quoted"].join("\n");
+    const html = renderMarkdown(doc);
+    expect(lineOf(html, "Write report")).toBe(4);
+    expect(lineOf(html, "Quoted")).toBe(6);
+    expect(toggleTaskLine(doc, 4)).toBe(doc.replace("> - [ ] Write report", "> - [x] Write report"));
+  });
+  it("keeps line numbers after a multi-line comment", () => {
+    const doc = ["%%", "hidden", "%%", "- [ ] A", "- [ ] B", "- [ ] C"].join("\n");
+    const html = renderMarkdown(doc);
+    expect(lineOf(html, "C")).toBe(5);
+    expect(toggleTaskLine(doc, 5)).toBe(doc.replace("- [ ] C", "- [x] C"));
+  });
+  it("maps a task in a nested callout", () => {
+    const doc = ["> [!note] Outer", "> > [!todo] Inner", "> > - [ ] Deep"].join("\n");
+    expect(lineOf(renderMarkdown(doc), "Deep")).toBe(2);
+    expect(toggleTaskLine(doc, 2)).toBe(doc.replace("[ ] Deep", "[x] Deep"));
+  });
+});
+
+
+describe("markdown image paths", () => {
+  it("names the decoded vault file, as Obsidian writes spaces and # encoded", () => {
+    expect(renderInline("![s](Media/shot%20one.png)")).toContain('data-basalt-img="Media/shot one.png"');
+    expect(renderInline("![s](a%23b.png)")).toContain('data-basalt-img="a#b.png"');
+    expect(renderInline("![s](<Media/shot one.png>)")).toContain('data-basalt-img="Media/shot one.png"');
+    expect(renderInline("![s](100%.png)")).toContain('data-basalt-img="100%.png"');
+    expect(renderInline("![s](https://x.test/a%20b.png)")).toContain('data-basalt-img="https://x.test/a%20b.png"');
+  });
+});
+
+describe("CommonMark and Obsidian fidelity (Reading view hunt)", () => {
+  it("resolves reference images and links, hiding their definitions", () => {
+    const html = renderMarkdown("![][image1] and [text][r] and [r]\n\n[image1]: <data:image/png;base64,AAA>\n[r]: https://x.com");
+    expect(html).toContain('data-basalt-img="data:image/png;base64,AAA"');
+    expect(html).toContain('<a class="md-link" data-href="https://x.com">text</a>');
+    expect(html).toContain('<a class="md-link" data-href="https://x.com">r</a>');
+    expect(html).not.toContain("base64,AAA&gt;");
+    expect(renderMarkdown("[no def] stays")).toContain("[no def] stays");
+  });
+
+  it("keeps lists whole: wrapped items, start numbers, code inside items, type changes", () => {
+    const html = renderMarkdown("3. **Stray core** wrapped\n   onto two lines\n4. next\n   ```\n   code\n   ```\n- bullet");
+    expect(html).toContain('<ol start="3">');
+    expect(html).toContain("<strong>Stray core</strong> wrapped<br>\nonto two lines");
+    expect(html).toContain('<pre class="md-code"><code>code</code></pre>');
+    expect(html.match(/<ol/g)).toHaveLength(1);
+    expect(html).toContain("<ul><li>bullet</li></ul>");
+  });
+
+  it("lets emphasis wrap onto the next line", () => {
+    expect(renderMarkdown("**bold that wraps\nonto the next line** end")).toContain("<strong>bold that wraps<br>\nonto the next line</strong>");
+  });
+
+  it("keeps footnotes after a blockquote or a callout", () => {
+    const html = renderMarkdown("one[^a]\n\n> quote\n\n> [!note]\n> in callout[^c]\n\ntwo[^b]\n\n[^a]: A\n[^b]: B\n[^c]: C");
+    expect(html.match(/class="footnote-ref"/g)).toHaveLength(3);
+    for (const t of ["A", "B", "C"]) expect(html).toMatch(new RegExp(`<li id="fn-[abc]">${t} <a`));
+  });
+
+  it("labels same-note heading links", () => {
+    expect(renderInline("[[#Local]]")).toContain(">Local</a>");
+  });
+
+  it("finds a link definition inside a quote or a list", () => {
+    expect(renderMarkdown("> [a]: https://e.com/q\n\n- [b]: https://e.com/l\n\n[x][a] [y][b]")).toMatch(/href="https:\/\/e\.com\/q"[\s\S]*href="https:\/\/e\.com\/l"/);
+  });
+
+  it("survives a list nested thousands deep on one line", () => {
+    expect(() => renderMarkdown("- ".repeat(5000) + "a")).not.toThrow();
+  });
+
+  it("reads a callout's body as a note of its own, past the quote's own markers", () => {
+    expect(renderMarkdown("> > [!note] T\n> > body")).toContain('<div class="md-callout-body"><p>body</p></div>');
+    expect(renderMarkdown("- - > [!note] T\n    > body")).toContain('<div class="md-callout-body"><p>body</p></div>');
+    expect(renderMarkdown("> [!note] T\n> 2. ```\n>    Foo")).toContain("<pre");
+    expect(renderMarkdown("> [!tip] Run\n> ```bash\n> x\n> ```\n> after")).toContain('<code class="language-bash">x</code></pre>\n<p>after</p>');
+    expect(renderMarkdown("> [!note] Title A\n> body text\n> ---")).toContain("<h2>body text</h2>");
+    expect(renderMarkdown("> [!warning] B\n> first\n> second\n> ===")).toContain("<h1>first");
+    expect(renderMarkdown("> [!info] Stats\n> | Metric | Value |\n> |---|---|\n> | Notes | 42 |")).toContain("<table");
+    expect(renderMarkdown("> [!tip]- C\n> folded body\n> ---\n> after rule")).toContain("folded body");
+    expect(renderMarkdown("> [!note] T\n> Body line one", { lines: true })).toMatch(/<p data-line="1">Body line one/);
+  });
+
+  it("runs a callout body's lazy lines on as text, as in a quote", () => {
+    expect(renderMarkdown("> [!note] T\n> a\n    # Foo")).toContain("<p>a<br>\n# Foo</p>");
+    expect(renderMarkdown("> [!note] T\n> a\n    ```\n> b")).not.toContain("<pre");
+    expect(renderMarkdown("> [!note] T\n> a\n2. b", { lines: true })).toContain("<p data-line=\"1\">a<br>\n2. b</p>");
+  });
+
+  it("renders a callout's body as its lines read on their own", () => {
+    const body = (html: string) => html.slice(html.indexOf('md-callout-body">') + 17, html.lastIndexOf("</div></div>"));
+    for (const [note, lines] of [
+      ["> [!note] T\n> plain text\n> - item\n>\n> more", "plain text\n- item\n\nmore"],
+      ["> [!note] T *a\n> b* c", "b* c"],
+      ["> [!note] T `a\n> b` c", "b` c"],
+      ["> [!note] T\n>     indented", "    indented"],
+      ["> [!note] T\n> 2. two", "2. two"],
+      ["> [!note] T\n> -\n> x", "-\nx"],
+      ["> [!note] T\n> a\n    indented", "a\n    indented"],
+      ["- > [!bug] L\n  > a\n  > *", "a\n*"],
+      ["> > [!bug] L\n> > \t- item\n> > b* c", "\t- item\nb* c"],
+      ["> [!note] T\n> $$ x\n>   - nested", "$$ x\n  - nested"],
+      ["> [!note] T\n> <span>x</span>\n> b**", "<span>x</span>\nb**"],
+      ["[a]: /u\n\n> [!note] T\n> see [a]", "[a]: /u\n\nsee [a]"],
+      ["> [!note] T\n> | a | b |\n> | - | - |\n> | x | y |", "| a | b |\n| - | - |\n| x | y |"],
+      ["> [!note] Steps\n> - First step\n>\n>   More about it", "- First step\n\n  More about it"],
+      ["> [!tip] L\n> 1. one\n>\n> 2. two", "1. one\n\n2. two"],
+      ["> [!note] T\n> a|b\n  >|-|-", "a|b\n|-|-"],
+      ["> [!note] T\n> b\n>a|b\n >|-|", "b\na|b\n|-|"],
+      [">> [!note] T\n>>x|\n>>a|b\n> >|-|", "x|\na|b\n|-|"],
+    ] as const)
+      expect(body(renderMarkdown(note)), note).toBe(renderMarkdown(lines));
+    expect(renderMarkdown("> [!note] T\n> a\n> b", { lines: true })).toContain('<p data-line="1">a<br>');
+    // A tab after a `>` gives it one column, as in CommonMark.
+    expect(body(renderMarkdown("> [!bug] L\n> \t- item"))).toBe("<ul><li>item</li></ul>");
+    // Tabs inside the body's own quotes are left to the parser.
+    expect(renderMarkdown("> [!bug] L\n> > \tx\n> > > [!info] deeper\n> >\nafter")).toContain('<div class="md-callout-body"><blockquote><p>x</p>');
+    // Right under the title too, so a tab-indented line is code, as Obsidian shows it.
+    expect(body(renderMarkdown("> [!note] Title\n\t- item"))).toBe('<pre class="md-code"><code>- item</code></pre>');
+    // A lazy line keeps its indent in the body of a callout inside another.
+    expect(renderMarkdown("> > [!info]+ T\n> > > > [!info] deeper\n    indented\n> > `a\n> > ```")).toContain(
+      '<div class="md-callout-body"><pre class="md-code"><code>indented</code></pre>\n<p>`a</p></div>',
+    );
+    // Near the nesting limit too, where each list and quote in the body counts.
+    expect(renderMarkdown("> [!note] T\n> " + "- > ".repeat(20) + "x Foo\n> b")).toContain("<p>x Foo\nb</p>");
+    // And its definitions are the note's.
+    expect(renderMarkdown("> [!note] T\n> [a]: /u\n\nsee [a]")).toMatch(/<p>see <a [^>]*>a<\/a><\/p>/);
+  });
+  it("shows an HTML block that closes on its last line as HTML alone", () => {
+    expect(renderMarkdown("<div>\nx\n</div>")).toBe('<div class="raw-html" data-basalt-html="&lt;div&gt;\nx\n&lt;/div&gt;"></div>');
+  });
+  it("shows no body for a callout whose body shows nothing", () => {
+    expect(renderMarkdown(">[!e]\n>\n>[1]:e")).not.toContain("md-callout-body");
+    expect(renderMarkdown("> [!e] T\n> [a]: /u")).not.toContain("md-callout-body");
+  });
+  it("reads a list in a quote as loose where a line of its quote marks alone parts it", () => {
+    expect(renderMarkdown("> * a\n>\n>   x")).toBe("<blockquote><ul><li><p>a</p>\n<p>x</p></li></ul></blockquote>");
+    expect(renderMarkdown("> > - a\n> >\n> > - b")).toContain("<li><p>a</p></li><li><p>b</p></li>");
+    expect(renderMarkdown("- a\r\n\r\n- b")).toMatch(/^<ul><li><p>a\s*<\/p><\/li><li><p>b<\/p><\/li><\/ul>$/);
+    // A quote's own empty line inside an item doesn't part the list's items.
+    expect(renderMarkdown("- > a\n  >\n- b")).toBe("<ul><li><blockquote><p>a</p></blockquote></li><li>b</li></ul>");
+    expect(renderMarkdown("> - a\n> - b")).toBe("<blockquote><ul><li>a</li><li>b</li></ul></blockquote>");
+  });
+  it("ends a heading's text before its underline's quote marks", () => {
+    expect(renderMarkdown("> a\n> ===")).toBe("<blockquote><h1>a</h1></blockquote>");
+    expect(renderMarkdown("> > a\n> > b\n> > ---")).toBe("<blockquote><blockquote><h2>a<br>\nb</h2></blockquote></blockquote>");
+    expect(renderMarkdown("a\n===")).toBe("<h1>a</h1>");
+  });
+  it("starts nothing on a quote's or an item's empty first line", () => {
+    expect(renderMarkdown("> \n> x")).toBe("<blockquote><p>x</p></blockquote>");
+    expect(renderMarkdown(">\n> [a]: b 'T'\n\n[x][a]")).not.toContain("[a]:");
+    expect(renderMarkdown("> \nx")).toBe("<blockquote></blockquote>\n<p>x</p>");
+    expect(renderMarkdown(">\n> [!note] T\n> body")).toBe("<blockquote><p>[!note] T<br>\nbody</p></blockquote>");
+  });
+  it("reads callouts more than four inside one another as quotes", () => {
+    const nest = (n: number) => Array.from({ length: n }, (_, i) => "> ".repeat(i + 1) + "[!note] T" + i).join("\n");
+    expect(renderMarkdown(nest(4)).match(/md-callout-title/g)).toHaveLength(4);
+    expect(renderMarkdown(nest(6)).match(/md-callout-title/g)).toHaveLength(4);
+  });
+
+  it("reads a callout title the first line holds, whatever block it starts", () => {
+    expect(renderMarkdown("> [!note]: x")).toContain('<div class="md-callout-title"><span class="md-callout-icon">🗒️</span>: x</div>');
+  });
+
+  it("shows a callout's body and a task past the depth limit as source", () => {
+    const q = (n: number) => "> ".repeat(n);
+    expect(renderMarkdown(q(40) + "[!note] T\n" + q(40) + "**b**")).toContain("<p><strong>b</strong></p>");
+    expect(renderMarkdown(q(41) + "[!note] T\n" + q(41) + "**b**")).toContain("<p>**b**</p>");
+    expect(renderMarkdown("- ".repeat(40) + "[ ] task")).toContain('type="checkbox"');
+    expect(renderMarkdown("- ".repeat(41) + "[ ] task")).not.toContain('type="checkbox"');
+  });
+
+  it("uses the first of two definitions of a label", () => {
+    expect(renderMarkdown("[a]: one\n[a]: two\n\n[a]")).toContain('data-href="one"');
+  });
+
+  it("survives absurdly deep blockquotes", () => {
+    expect(() => renderMarkdown(">".repeat(2000) + " deep")).not.toThrow();
+  });
+
+  it("follows CommonMark emphasis rules", () => {
+    expect(renderMarkdown("2 * 3 * 4")).toContain("2 * 3 * 4");
+    expect(renderMarkdown("***both***")).toMatch(/<em><strong>both<\/strong><\/em>|<strong><em>both<\/em><\/strong>/);
+  });
+
+  it("keeps a heading's own closing #", () => {
+    expect(renderMarkdown("## Learning C#")).toContain("<h2>Learning C#</h2>");
+  });
+
+  it("handles backslash escapes", () => {
+    const html = renderMarkdown("\\*not em\\* and \\$5 and \\#not-a-tag");
+    expect(html).toContain("*not em* and $5 and #not-a-tag");
+    expect(html).not.toContain("md-tag");
+    expect(html).not.toContain("<em>");
+  });
+
+  it("hides HTML comments and links bare URLs", () => {
+    const html = renderMarkdown("see <!-- hidden --> https://example.com/a. and www.example.org");
+    expect(html).not.toContain("hidden");
+    expect(html).toContain('data-href="https://example.com/a"');
+    expect(html).toContain('data-href="https://www.example.org"');
+  });
+
+  it("reads tags as Obsidian does", () => {
+    expect(renderMarkdown("issue #42 here")).not.toContain("md-tag");
+    expect(renderMarkdown("a #café tag")).toContain('<span class="md-tag">#café</span>');
+    expect(renderMarkdown("&#169; and &copy;")).not.toContain("md-tag");
+    expect(renderMarkdown("&#169; and &copy;")).toContain("&#169; and &copy;");
+  });
+
+  it("renders linked images and sized images", () => {
+    expect(renderMarkdown("[![a](i.png)](https://u.com)")).toMatch(/<a class="md-link" data-href="https:\/\/u.com"><img [^>]*data-basalt-img="i.png"/);
+    expect(renderMarkdown("![[pic.png|300]]")).toContain('width="300"');
+    expect(renderMarkdown("![[pic.png|300x100]]")).toContain('width="300" height="100"');
+    expect(renderMarkdown("![shot|150](x.png)")).toMatch(/alt="shot" width="150"/);
+  });
+
+  it("reads setext headings, lazy quote lines, and code spans with backticks", () => {
+    expect(renderMarkdown("Title\n===")).toContain("<h1>Title</h1>");
+    expect(renderMarkdown("> quoted\nlazy line")).toMatch(/<blockquote><p>quoted<br>\nlazy line<\/p><\/blockquote>/);
+    expect(renderMarkdown("``a ` b``")).toContain('<code class="md-code-inline">a ` b</code>');
+    expect(renderMarkdown("    indented code")).toContain('<pre class="md-code"><code>indented code</code></pre>');
+  });
+
+  it("aligns table columns and pads short rows", () => {
+    const html = renderMarkdown("| a | b | c |\n|:-|:-:|-:|\n| 1 |");
+    expect(html).toContain('<th style="text-align:center">b</th>');
+    expect(html).toContain('<td style="text-align:right"></td>');
+    expect(html.match(/<td/g)).toHaveLength(3);
+  });
+});
+
+describe("source lines", () => {
+  const src = "---\na: 1\n---\n# Title\n\npara\n\n- one\n- two\n\n> [!note]\n> ## Inside\n\n%% gone\nstill gone %%\n\nlast ^blk\n";
+  it("mark each block with the line it starts on when asked", () => {
+    const html = renderMarkdown(src, { lines: true });
+    expect(html).toContain('<h1 data-line="3">');
+    expect(html).toContain('<p data-line="5">para</p>');
+    expect(html).toContain('<li data-line="7">one</li><li data-line="8">two</li>');
+    expect(html).toContain('<h2 data-line="11">');
+    expect(html).toContain('<p data-line="16">last</p>');
+  });
+  it("leave the output unchanged otherwise", () => {
+    expect(renderMarkdown(src)).not.toContain("data-line");
+  });
+});
+
+describe("HTML comments", () => {
+  it("hide, but text after one on its line stays", () => {
+    expect(renderMarkdown("<!-- only -->\n\npara")).toBe("<p>para</p>");
+    expect(renderMarkdown("<!-- c --> visible tail\n\npara")).toContain("visible tail");
+  });
+  it("over several lines show only what follows, and an unclosed one hides the rest", () => {
+    const multi = renderMarkdown("<!--\nprivate draft notes\n--> tail text\n\npara");
+    expect(multi).toContain("tail text");
+    expect(multi).not.toContain("private draft");
+    expect(renderMarkdown("<!-- open\n# Head\n**b**\n")).not.toMatch(/Head|\*\*b/);
+    const two = renderMarkdown("<!-- a --> visible <!-- b -->\n");
+    expect(two).toContain("visible");
+    expect(two).not.toContain(" a ");
+  });
+});
+
+describe("table rows wider than the header", () => {
+  it("keep their extra cells, as Obsidian shows them", () => {
+    const html = renderMarkdown("| a | b |\n| - | - |\n| 1 | 2 | 3 |\n");
+    expect(html).toContain("<td>1</td><td>2</td><td>3</td>");
+  });
+});
+
+describe("property values", () => {
+  it("make their links live", () => {
+    const html = renderMarkdown('---\nup: "[[Ideas]]"\nsee: "x [[A|the a]] y"\nurl: https://example.com\nplain: <b>\n---\nbody\n');
+    expect(html).toContain('<a class="md-wikilink" data-target="Ideas">Ideas</a>');
+    expect(html).toContain('x <a class="md-wikilink" data-target="A">the a</a> y');
+    expect(html).toContain('<a class="md-link" data-href="https://example.com">https://example.com</a>');
+    expect(html).toContain("&lt;b&gt;");
+  });
+});
+
+describe("%% inside code", () => {
+  it("stays in an indented code block, and a comment after it still goes", () => {
+    const html = renderMarkdown("para\n\n    x = 10 %% 3\n\nafter %%gone%% end\n");
+    expect(html).toContain("x = 10 %% 3");
+    expect(html).not.toContain("gone");
+    expect(commentRanges("para\n\n    x %% y\n\n%% real %%")).toEqual([[18, 28]]);
+  });
+  it("still goes from an indented line that continues a list item", () => {
+    expect(renderMarkdown("- item\n\n    more %%hidden%% text\n")).not.toContain("hidden");
+  });
+  it("stays as written in Reading view", () => {
+    expect(renderMarkdown("~~~\nx = 10 %% 3\ny = 7 %% 2\n~~~\n")).toContain("x = 10 %% 3\ny = 7 %% 2");
+    expect(renderMarkdown("see `` a %% b %% `` here\n")).toContain("a %% b %%");
+  });
+});
+
+describe("mayRunHtml", () => {
+  const before = (md: string): boolean => {
+    if (!md.includes("<")) return false;
+    if (/<(?:[!?]|[A-Za-z/][^>\n]*\n)/.test(md)) return true;
+    for (let i = md.indexOf("<"); i >= 0; i = md.indexOf("<", i + 1)) {
+      if (!/[A-Za-z/]/.test(md[i + 1] ?? "")) continue;
+      let k = i;
+      while (k > 0 && i - k < 40 && " \t>-*+.)0123456789".includes(md[k - 1])) k--;
+      if ((k === 0 || md[k - 1] === "\n") && /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]*)*$/.test(md.slice(k, i))) return true;
+    }
+    return false;
+  };
+
+  it("stays linear on many tags that close late", () => {
+    for (const md of ["Foo is here\n" + "a<b ".repeat(100_000) + "c>d\nend", "x " + "a<b ".repeat(100_000)]) {
+      const t0 = performance.now();
+      expect(mayRunHtml(md)).toBe(false);
+      expect(performance.now() - t0).toBeLessThan(100);
+    }
+  });
+
+  it("answers as it did before", () => {
+    let seed = 11;
+    const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
+    const chars = ["<", "<", ">", "\n", "a", "/", "!", "?", " ", "-", "1", ".", "x"];
+    for (let n = 0; n < 50_000; n++) {
+      let md = "";
+      for (let k = 0, len = 1 + Math.floor(rnd() * 40); k < len; k++) md += chars[Math.floor(rnd() * chars.length)];
+      expect(mayRunHtml(md), JSON.stringify(md)).toBe(before(md));
+    }
   });
 });

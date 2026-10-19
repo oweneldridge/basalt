@@ -1,15 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { clickedLink } from "../lib/anchors";
 import {
   parseCanvas,
   serializeCanvas,
   canvasBounds,
   canvasColor,
+  orderGroups,
+  withGroupContents,
+  passInGroups,
+  movePassNodes,
+  pushHistory,
+  stepHistory,
   type CanvasData,
+  type CanvasHistory,
   type CanvasNode,
   type CanvasEdge,
   type Side,
 } from "../lib/canvas";
 import { renderMarkdown } from "../lib/render";
+import { ContextMenu } from "./ContextMenu";
 
 interface Props {
   /** The .canvas file's JSON content. */
@@ -20,9 +29,12 @@ interface Props {
   /** When provided, the canvas is EDITABLE and calls this with the new JSON on
    * every committed change (move/resize/create/edit/delete/color/edge). */
   onChange?: (json: string) => void;
+  /** The file's path, marked on the canvas so the app can find it. */
+  path?: string;
 }
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|svg|webp|bmp|avif|ico)$/i;
+const isMac = /Mac/.test(navigator.platform);
 const COLORS: (string | undefined)[] = [undefined, "1", "2", "3", "4", "5", "6"];
 
 function anchor(n: CanvasNode, s: Side): { x: number; y: number } {
@@ -64,7 +76,16 @@ function newId(): string {
 const SIDES: Side[] = ["top", "right", "bottom", "left"];
 
 /** JSON Canvas viewer/editor. Read-only unless `onChange` is provided. */
-export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange }: Props) {
+// A link in a card's rendered text opens like any other link, never in place
+// of the app.
+function openCardLink(e: React.MouseEvent, onOpenUrl: (url: string) => void): void {
+  const link = clickedLink(e.target);
+  if (!link) return;
+  e.preventDefault();
+  if (link.href) onOpenUrl(link.href);
+}
+
+export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange, path }: Props) {
   const editable = !!onChange;
   const parsed = useMemo(() => parseCanvas(doc) ?? { nodes: [], edges: [] }, [doc]);
   const [data, setData] = useState<CanvasData>(parsed);
@@ -76,12 +97,21 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
   // Fit-to-view runs only on an EXTERNAL doc change (initial load / reload), not
   // on our own edits — otherwise every drag would reset the user's pan/zoom.
   const pendingFit = useRef(true);
+  // Undo history, and the canvas as last committed, which a drag in progress
+  // hasn't changed. A change from outside starts a fresh history, so an undo
+  // never writes over it.
+  const history = useRef<CanvasHistory>({ past: [], future: [] });
+  const shown = useRef(parsed);
+  const shownJson = useRef<string | null>(null);
   useEffect(() => {
     if (doc !== lastEmitted.current) {
-      setData(parseCanvas(doc) ?? { nodes: [], edges: [] });
+      setData(parsed);
+      shown.current = parsed;
+      shownJson.current = null;
+      history.current = { past: [], future: [] };
       pendingFit.current = true;
     }
-  }, [doc]);
+  }, [doc, parsed]);
 
   // Multi-select: a set of selected node/edge ids (Obsidian canvas parity).
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -117,16 +147,26 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
     }
   };
 
-  // Emit the current data as JSON (commit a change to disk via the parent).
-  const emit = useCallback(
-    (next: CanvasData) => {
+  // Show `next` and save it as JSON through the parent.
+  const commit = useCallback(
+    (next: CanvasData, json: string) => {
       setData(next);
-      if (!onChange) return;
-      const json = serializeCanvas(next);
+      shown.current = next;
+      shownJson.current = json;
       lastEmitted.current = json;
-      onChange(json);
+      onChange?.(json);
     },
     [onChange],
+  );
+
+  // An edit: one undo step, unless it changed nothing.
+  const emit = useCallback(
+    (next: CanvasData) => {
+      const json = serializeCanvas(next);
+      if (json !== (shownJson.current ?? serializeCanvas(shown.current))) history.current = pushHistory(history.current, shown.current);
+      commit(next, json);
+    },
+    [commit],
   );
 
   const patchNode = useCallback(
@@ -172,16 +212,56 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
     };
   }, []);
 
+  // One pointer drives a drag at a time: another finger is ignored until it
+  // ends, and a cancelled touch or pen, or lost capture, ends it as cancelled.
+  const dragPointer = useRef<number | null>(null);
+  const follow = (
+    e: { pointerId: number },
+    el: HTMLElement | null,
+    on: { move: (ev: PointerEvent) => void; up: (ev: PointerEvent) => void; cancel: () => void },
+  ) => {
+    const id = e.pointerId;
+    el?.setPointerCapture(id);
+    dragPointer.current = id;
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      el?.removeEventListener("lostpointercapture", cancel);
+      dragPointer.current = null;
+    };
+    const move = (ev: PointerEvent) => ev.pointerId === id && on.move(ev);
+    const up = (ev: PointerEvent) => {
+      if (ev.pointerId !== id) return;
+      end();
+      on.up(ev);
+    };
+    const cancel = (ev: PointerEvent) => {
+      if (ev.pointerId !== id) return;
+      end();
+      on.cancel();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    el?.addEventListener("lostpointercapture", cancel);
+  };
+  // Another pointer pressed while a drag runs changes nothing, focus included.
+  const busy = (e: { preventDefault: () => void }) => {
+    if (dragPointer.current === null) return false;
+    e.preventDefault();
+    return true;
+  };
+
   // Pan (drag empty space) + zoom (wheel toward the cursor).
   useEffect(() => {
     const vp = viewport.current;
     if (!vp) return;
-    let panning = false;
-    let banding = false;
     let bandStart = { x: 0, y: 0 };
     let lastX = 0;
     let lastY = 0;
     const onDown = (e: PointerEvent) => {
+      if (busy(e)) return;
       const el = e.target as HTMLElement;
       // Ignore drags starting on a node/handle/anchor, the toolbar, or an open
       // context menu — a native listener here would otherwise clear the
@@ -196,51 +276,49 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
         return;
       // Shift+drag on empty space = rubber-band select; plain drag = pan.
       if (editable && e.shiftKey) {
-        banding = true;
         bandStart = toWorld(e.clientX, e.clientY);
         setBand({ x0: bandStart.x, y0: bandStart.y, x1: bandStart.x, y1: bandStart.y });
-        vp.setPointerCapture(e.pointerId);
+        follow(e, vp, {
+          move: (ev) => {
+            const p = toWorld(ev.clientX, ev.clientY);
+            setBand({ x0: bandStart.x, y0: bandStart.y, x1: p.x, y1: p.y });
+          },
+          up: (ev) => {
+            const p = toWorld(ev.clientX, ev.clientY);
+            const x0 = Math.min(bandStart.x, p.x);
+            const y0 = Math.min(bandStart.y, p.y);
+            const x1 = Math.max(bandStart.x, p.x);
+            const y1 = Math.max(bandStart.y, p.y);
+            const hit = dataRef.current.nodes
+              .filter((n) => n.x < x1 && n.x + n.width > x0 && n.y < y1 && n.y + n.height > y0)
+              .map((n) => n.id);
+            setSelected(new Set(hit));
+            setBand(null);
+            vp.releasePointerCapture?.(ev.pointerId);
+          },
+          cancel: () => setBand(null),
+        });
         return;
       }
       clearSel();
-      panning = true;
       lastX = e.clientX;
       lastY = e.clientY;
-      vp.setPointerCapture(e.pointerId);
       vp.style.cursor = "grabbing";
-    };
-    const onMove = (e: PointerEvent) => {
-      if (banding) {
-        const p = toWorld(e.clientX, e.clientY);
-        setBand({ x0: bandStart.x, y0: bandStart.y, x1: p.x, y1: p.y });
-        return;
-      }
-      if (!panning) return;
-      t.current.x += e.clientX - lastX;
-      t.current.y += e.clientY - lastY;
-      lastX = e.clientX;
-      lastY = e.clientY;
-      apply();
-    };
-    const onUp = (e: PointerEvent) => {
-      if (banding) {
-        banding = false;
-        const p = toWorld(e.clientX, e.clientY);
-        const x0 = Math.min(bandStart.x, p.x);
-        const y0 = Math.min(bandStart.y, p.y);
-        const x1 = Math.max(bandStart.x, p.x);
-        const y1 = Math.max(bandStart.y, p.y);
-        const hit = dataRef.current.nodes
-          .filter((n) => n.x < x1 && n.x + n.width > x0 && n.y < y1 && n.y + n.height > y0)
-          .map((n) => n.id);
-        setSelected(new Set(hit));
-        setBand(null);
-        vp.releasePointerCapture?.(e.pointerId);
-        return;
-      }
-      panning = false;
-      vp.releasePointerCapture?.(e.pointerId);
-      vp.style.cursor = "grab";
+      const stop = () => (vp.style.cursor = "grab");
+      follow(e, vp, {
+        move: (ev) => {
+          t.current.x += ev.clientX - lastX;
+          t.current.y += ev.clientY - lastY;
+          lastX = ev.clientX;
+          lastY = ev.clientY;
+          apply();
+        },
+        up: (ev) => {
+          vp.releasePointerCapture?.(ev.pointerId);
+          stop();
+        },
+        cancel: stop,
+      });
     };
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -254,16 +332,52 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
       apply();
     };
     vp.addEventListener("pointerdown", onDown);
-    vp.addEventListener("pointermove", onMove);
-    vp.addEventListener("pointerup", onUp);
     vp.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       vp.removeEventListener("pointerdown", onDown);
-      vp.removeEventListener("pointermove", onMove);
-      vp.removeEventListener("pointerup", onUp);
       vp.removeEventListener("wheel", onWheel);
     };
   }, []);
+
+  // Focus left on nothing, as when the card that had it is gone, goes back to
+  // the canvas, so its keys still work.
+  const keepFocus = useCallback(
+    () =>
+      requestAnimationFrame(() => {
+        const at = document.activeElement;
+        if (!at || at === document.body || (at as HTMLButtonElement).disabled) viewport.current?.focus({ preventScroll: true });
+      }),
+    [],
+  );
+
+  // One step back or forward. Not mid-drag, as the drag would commit over it.
+  // The selection keeps what's still there.
+  const undoRedo = useCallback(
+    (dir: "undo" | "redo") => {
+      if (dragPointer.current !== null) return;
+      const s = stepHistory(history.current, shown.current, dir);
+      if (!s) return;
+      history.current = s.history;
+      commit(s.data, serializeCanvas(s.data));
+      const ids = new Set([...s.data.nodes, ...s.data.edges].map((x) => x.id));
+      setSelected((prev) => new Set([...prev].filter((id) => ids.has(id))));
+      keepFocus();
+    },
+    [commit, keepFocus],
+  );
+
+  // Cmd-Z undoes, Cmd-Shift-Z or Cmd-Y redoes (Ctrl elsewhere), as in
+  // Obsidian. A card's text editor keeps these for its own undo.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const mod = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+    const key = e.key.toLowerCase();
+    const dir = key === "z" ? (e.shiftKey ? "redo" : "undo") : key === "y" && !e.shiftKey ? "redo" : null;
+    if (!editable || !mod || e.altKey || !dir) return;
+    if ((e.target as HTMLElement).tagName === "TEXTAREA") return;
+    e.preventDefault();
+    e.stopPropagation();
+    undoRedo(dir);
+  };
 
   // Delete every selected node (+ its edges) and any selected edges.
   const deleteSelection = useCallback(() => {
@@ -277,7 +391,8 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
       edges: d.edges.filter((ed) => !sel.has(ed.id) && !nodeIds.has(ed.fromNode) && !nodeIds.has(ed.toNode)),
     });
     setSelected(new Set());
-  }, [emit]);
+    keepFocus();
+  }, [emit, keepFocus]);
 
   // Clone the selected nodes (offset +24,+24, fresh ids) and select the copies.
   const duplicateSelection = useCallback(() => {
@@ -285,7 +400,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
     const d = dataRef.current;
     const clones = d.nodes.filter((n) => sel.has(n.id)).map((n) => ({ ...n, id: newId(), x: n.x + 24, y: n.y + 24 }));
     if (clones.length === 0) return;
-    emit({ ...d, nodes: [...d.nodes, ...clones] });
+    emit({ ...d, nodes: orderGroups([...d.nodes, ...clones]) });
     setSelected(new Set(clones.map((c) => c.id)));
   }, [emit]);
 
@@ -298,6 +413,76 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
     },
     [emit, selectOne],
   );
+
+  // Keyboard: Tab moves between cards, focus selects (so Delete works), Enter
+  // edits a text card or opens a note or link, arrows move the selection
+  // (Shift for bigger steps), Escape deselects.
+  const refocusAfterEdit = useRef<string | null>(null);
+  // Key moves in a row, with nothing else edited or selected between them,
+  // carry what was inside a group when they began, as a drag does.
+  const keyRun = useRef<{ at: CanvasData; sel: Set<string>; ids: Set<string>; pass: number[] } | null>(null);
+  const revealNode = (n: CanvasNode) => {
+    const vp = viewport.current;
+    if (!vp) return;
+    // Focus can scroll the clipped viewport; the pan lives in the transform.
+    vp.scrollLeft = 0;
+    vp.scrollTop = 0;
+    const { x, y, k } = t.current;
+    const left = n.x * k + x;
+    const top = n.y * k + y;
+    if (left >= 0 && top >= 0 && left + n.width * k <= vp.clientWidth && top + n.height * k <= vp.clientHeight) return;
+    t.current = { k, x: vp.clientWidth / 2 - (n.x + n.width / 2) * k, y: vp.clientHeight / 2 - (n.y + n.height / 2) * k };
+    apply();
+  };
+  const nodeKeys = (n: CanvasNode): React.HTMLAttributes<HTMLDivElement> & { "data-node-id": string } => ({
+    tabIndex: 0,
+    role: "group",
+    "aria-roledescription": "card",
+    "aria-label": nodeLabel(n),
+    "data-node-id": n.id,
+    onFocus: (e) => {
+      if (e.target !== e.currentTarget) return;
+      if (!selectedRef.current.has(n.id)) selectOne(n.id);
+      revealNode(n);
+    },
+    onKeyDown: (e) => {
+      if (e.target !== e.currentTarget) return;
+      const step = e.shiftKey ? 100 : 20;
+      const moves: Record<string, [number, number]> = {
+        ArrowLeft: [-step, 0],
+        ArrowRight: [step, 0],
+        ArrowUp: [0, -step],
+        ArrowDown: [0, step],
+      };
+      if (e.key === "Enter") {
+        if (n.type === "text" && editable) setEditingId(n.id);
+        else if (n.type === "file") onOpenFile(n.file, n.subpath);
+        else if (n.type === "link") onOpenUrl(n.url);
+        else return;
+      } else if (moves[e.key] && editable) {
+        const [dx, dy] = moves[e.key];
+        const d = dataRef.current;
+        const run = keyRun.current;
+        const sel = selectedRef.current;
+        const same = run && run.at === shown.current && run.sel === sel;
+        const ids = same ? run.ids : withGroupContents(d.nodes, sel);
+        const pass = same ? run.pass : passInGroups(d, ids);
+        const next = {
+          ...d,
+          nodes: orderGroups(d.nodes.map((m) => (ids.has(m.id) ? { ...m, x: m.x + dx, y: m.y + dy } : m))),
+          passNodes: movePassNodes(d.passNodes, pass, dx, dy),
+        };
+        emit(next);
+        keyRun.current = { at: next, sel, ids, pass };
+      } else if (e.key === "Escape") {
+        clearSel();
+      } else {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+    },
+  });
 
   // Delete the selection with Delete/Backspace (when not editing text).
   useEffect(() => {
@@ -319,6 +504,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
   const startNodeDrag = (e: React.PointerEvent, id: string) => {
     if (!editable) return;
     e.stopPropagation();
+    if (busy(e)) return;
     // Establish the selection this drag operates on.
     const cur = selectedRef.current;
     let moveIds: string[];
@@ -331,16 +517,18 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
       selectOne(id);
       moveIds = [id];
     }
-    const moveNodeIds = new Set(dataRef.current.nodes.filter((n) => moveIds.includes(n.id)).map((n) => n.id));
+    const moveNodeIds = withGroupContents(dataRef.current.nodes, moveIds);
     const node = dataRef.current.nodes.find((n) => n.id === id);
     if (!node) return;
     const start = toWorld(e.clientX, e.clientY);
     // Original positions of every node moving in this drag.
     const orig = new Map(dataRef.current.nodes.filter((n) => moveNodeIds.has(n.id)).map((n) => [n.id, { x: n.x, y: n.y }]));
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    const pass = passInGroups(dataRef.current, moveNodeIds);
     let raf = 0;
     let delta: { dx: number; dy: number } | null = null;
     const move = (ev: PointerEvent) => {
+      // A click's small wobble isn't a drag.
+      if (!delta && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 4) return;
       const p = toWorld(ev.clientX, ev.clientY);
       delta = { dx: p.x - start.x, dy: p.y - start.y };
       if (!raf)
@@ -356,33 +544,46 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
             }));
         });
     };
+    const putBack = () => setData((d) => ({ ...d, nodes: d.nodes.map((n) => ({ ...n, ...orig.get(n.id) })) }));
     const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
       if (raf) cancelAnimationFrame(raf);
       if (delta) {
-        // Commit all moved nodes in one emit (single undo step).
+        // Commit all moved nodes in one emit, last in the
+        // list as Obsidian saves them, so they draw on top, but groups stay
+        // before cards, under them, and before the groups inside them.
         const d = dataRef.current;
-        emit({
-          ...d,
-          nodes: d.nodes.map((n) => {
-            const o = orig.get(n.id);
-            return o && delta ? { ...n, x: Math.round(o.x + delta.dx), y: Math.round(o.y + delta.dy) } : n;
-          }),
+        const moved = d.nodes.map((n) => {
+          const o = orig.get(n.id);
+          return o && delta ? { ...n, x: Math.round(o.x + delta.dx), y: Math.round(o.y + delta.dy) } : n;
         });
+        const back = d.nodes.filter((n) => orig.has(n.id)).every((n) => {
+          const o = orig.get(n.id)!;
+          return Math.round(o.x + delta!.dx) === o.x && Math.round(o.y + delta!.dy) === o.y;
+        });
+        if (back) {
+          putBack();
+          return;
+        }
+        const order = [...moved.filter((n) => !orig.has(n.id)), ...moved.filter((n) => orig.has(n.id))];
+        emit({ ...d, nodes: orderGroups(order), passNodes: movePassNodes(d.passNodes, pass, delta.dx, delta.dy) });
       }
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    follow(e, e.target as HTMLElement, {
+      move,
+      up,
+      cancel: () => {
+        if (raf) cancelAnimationFrame(raf);
+        if (delta) putBack();
+      },
+    });
   };
 
   const startResize = (e: React.PointerEvent, id: string) => {
     e.stopPropagation();
     const node = dataRef.current.nodes.find((n) => n.id === id);
-    if (!node) return;
+    if (busy(e) || !node) return;
     const start = toWorld(e.clientX, e.clientY);
     const orig = { w: node.width, h: node.height };
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
     let raf = 0;
     let pending: { width: number; height: number } | null = null;
     const move = (ev: PointerEvent) => {
@@ -398,21 +599,27 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
             setData((d) => ({ ...d, nodes: d.nodes.map((n) => (n.id === id ? { ...n, ...pending } : n)) }));
         });
     };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      if (raf) cancelAnimationFrame(raf);
-      if (pending) patchNode(id, pending);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    follow(e, e.target as HTMLElement, {
+      move,
+      up: () => {
+        if (raf) cancelAnimationFrame(raf);
+        const size = pending;
+        if (!size) return;
+        const d = dataRef.current;
+        emit({ ...d, nodes: orderGroups(d.nodes.map((n) => (n.id === id ? { ...n, ...size } : n))) });
+      },
+      cancel: () => {
+        if (raf) cancelAnimationFrame(raf);
+        if (pending) setData((d) => ({ ...d, nodes: d.nodes.map((n) => (n.id === id ? { ...n, width: orig.w, height: orig.h } : n)) }));
+      },
+    });
   };
 
   // Drag from a side anchor → draw an edge to another node.
   const startEdge = (e: React.PointerEvent, id: string, side: Side) => {
     e.stopPropagation();
     const from = dataRef.current.nodes.find((n) => n.id === id);
-    if (!from) return;
+    if (busy(e) || !from) return;
     const a = anchor(from, side);
     setDrawingEdge({ from: id, side, x: a.x, y: a.y });
     const move = (ev: PointerEvent) => {
@@ -420,8 +627,6 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
       setDrawingEdge((cur) => (cur ? { ...cur, x: p.x, y: p.y } : cur));
     };
     const up = (ev: PointerEvent) => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
       const p = toWorld(ev.clientX, ev.clientY);
       const target = dataRef.current.nodes.find(
         (n) => n.id !== id && p.x >= n.x && p.x <= n.x + n.width && p.y >= n.y && p.y <= n.y + n.height,
@@ -439,8 +644,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
         emit({ ...dataRef.current, edges: [...dataRef.current.edges, edge] });
       }
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    follow(e, null, { move, up, cancel: () => setDrawingEdge(null) });
   };
 
   // Double-click empty space → create a text node there and edit it.
@@ -467,7 +671,7 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
   const b = canvasBounds(data.nodes);
 
   if (data.nodes.length === 0 && !editable) {
-    return <div className="canvas-view canvas-empty">Empty canvas</div>;
+    return <div className="canvas-view canvas-empty" data-path={path}>Empty canvas</div>;
   }
 
   const selectedNodes = data.nodes.filter((n) => selected.has(n.id));
@@ -482,7 +686,15 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
   };
 
   return (
-    <div className="canvas-view" ref={viewport} onDoubleClick={onDoubleClick} onContextMenu={onEmptyContextMenu}>
+    <div
+      className="canvas-view"
+      data-path={path}
+      ref={viewport}
+      tabIndex={editable ? -1 : undefined}
+      onKeyDown={onKeyDown}
+      onDoubleClick={onDoubleClick}
+      onContextMenu={onEmptyContextMenu}
+    >
       {editable && (
         <div className="canvas-toolbar">
           <button
@@ -506,6 +718,12 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
             }}
           >
             + Card
+          </button>
+          <button className="link-btn" title="Undo" disabled={history.current.past.length === 0} onClick={() => undoRedo("undo")}>
+            Undo
+          </button>
+          <button className="link-btn" title="Redo" disabled={history.current.future.length === 0} onClick={() => undoRedo("redo")}>
+            Redo
           </button>
           {colorRef && (
             <div className="canvas-colors">
@@ -615,17 +833,24 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
             onStartDrag={(e) => startNodeDrag(e, n.id)}
             onStartResize={(e) => startResize(e, n.id)}
             onStartEdge={(e, side) => startEdge(e, n.id, side)}
+            a11y={nodeKeys(n)}
             onBeginEdit={() => editable && n.type === "text" && setEditingId(n.id)}
+            onEscapeEdit={() => (refocusAfterEdit.current = n.id)}
             onCommitText={(text) => {
               setEditingId(null);
               if (n.type === "text" && text !== n.text) patchNode(n.id, { text } as Partial<CanvasNode>);
+              if (refocusAfterEdit.current === n.id) {
+                refocusAfterEdit.current = null;
+                requestAnimationFrame(() =>
+                  viewport.current?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(n.id)}"]`)?.focus(),
+                );
+              }
             }}
           />
         ))}
       </div>
       {menu && (
-        <div className="ctx-overlay" onMouseDown={() => setMenu(null)} onContextMenu={(e) => e.preventDefault()}>
-          <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <ContextMenu x={menu.x} y={menu.y} label="Canvas actions" onClose={() => setMenu(null)}>
             {menu.kind === "node" ? (
               <>
                 <button className="ctx-item" onClick={() => { setMenu(null); duplicateSelection(); }}>
@@ -640,11 +865,19 @@ export function CanvasView({ doc, onOpenFile, onOpenUrl, resolveImage, onChange 
                 Add card here
               </button>
             )}
-          </div>
-        </div>
+          </ContextMenu>
       )}
     </div>
   );
+}
+
+/** What a screen reader hears for a card. */
+function nodeLabel(n: CanvasNode): string {
+  const clip = (t: string) => (t.length > 80 ? `${t.slice(0, 80)}…` : t);
+  if (n.type === "text") return `Text: ${clip(n.text.split("\n").find((l) => l.trim())?.replace(/^#+\s*/, "").trim() ?? "empty")}`;
+  if (n.type === "file") return `${IMAGE_EXT.test(n.file) ? "Image" : "Note"}: ${n.file.split("/").pop() ?? n.file}`;
+  if (n.type === "link") return `Link: ${n.url}`;
+  return `Group${n.label ? `: ${n.label}` : ""}`;
 }
 
 function CanvasNodeView({
@@ -660,7 +893,9 @@ function CanvasNodeView({
   onStartResize,
   onStartEdge,
   onBeginEdit,
+  onEscapeEdit,
   onCommitText,
+  a11y,
 }: {
   node: CanvasNode;
   editable: boolean;
@@ -674,7 +909,9 @@ function CanvasNodeView({
   onStartResize: (e: React.PointerEvent) => void;
   onStartEdge: (e: React.PointerEvent, side: Side) => void;
   onBeginEdit: () => void;
+  onEscapeEdit: () => void;
   onCommitText: (text: string) => void;
+  a11y: React.HTMLAttributes<HTMLDivElement>;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const accent = canvasColor(node.color, node.type === "group" ? "var(--border)" : "var(--accent)");
@@ -733,8 +970,12 @@ function CanvasNodeView({
 
   if (node.type === "group") {
     return (
-      <div className="canvas-node canvas-group" style={style} {...dragProps}>
-        {node.label && <div className="canvas-group-label">{node.label}</div>}
+      <div className="canvas-node canvas-group" style={style} {...dragProps} {...a11y}>
+        {node.label && (
+          <div className="canvas-group-label" title={node.label}>
+            {node.label}
+          </div>
+        )}
         {handles}
       </div>
     );
@@ -742,8 +983,8 @@ function CanvasNodeView({
   if (node.type === "file") {
     if (IMAGE_EXT.test(node.file)) {
       return (
-        <div className="canvas-node canvas-file-image" style={style} {...dragProps}>
-          <div className="canvas-node-content" ref={ref} />
+        <div className="canvas-node canvas-file-image" style={style} {...dragProps} {...a11y}>
+          <div className="canvas-node-content" ref={ref} onClick={(e) => openCardLink(e, onOpenUrl)} />
           {handles}
         </div>
       );
@@ -754,6 +995,7 @@ function CanvasNodeView({
         className="canvas-node canvas-file"
         style={style}
         {...dragProps}
+        {...a11y}
         onDoubleClick={(e) => (e.stopPropagation(), onOpenFile(node.file, node.subpath))}
         title={node.file}
       >
@@ -769,6 +1011,7 @@ function CanvasNodeView({
         className="canvas-node canvas-link"
         style={style}
         {...dragProps}
+        {...a11y}
         onDoubleClick={(e) => (e.stopPropagation(), onOpenUrl(node.url))}
         title={node.url}
       >
@@ -791,6 +1034,7 @@ function CanvasNodeView({
           onKeyDown={(e) => {
             if (e.key === "Escape") {
               e.preventDefault();
+              onEscapeEdit();
               e.currentTarget.blur();
             }
           }}
@@ -804,9 +1048,10 @@ function CanvasNodeView({
       className="canvas-node canvas-text"
       style={style}
       {...dragProps}
+      {...a11y}
       onDoubleClick={(e) => (e.stopPropagation(), onBeginEdit())}
     >
-      <div className="canvas-node-content reading-view" ref={ref} />
+      <div className="canvas-node-content reading-view" ref={ref} onClick={(e) => openCardLink(e, onOpenUrl)} />
       {handles}
     </div>
   );

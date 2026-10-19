@@ -5,7 +5,7 @@ import { test, expect } from "@playwright/test";
 // in bases.test.ts, this guards the UI wiring).
 test("base editor exposes a working Group by control", async ({ page }) => {
   await page.goto("/app-harness.html");
-  await page.locator(".tree-row.attachment", { hasText: "Notes.base" }).click();
+  await page.locator(".tree-row.attachment", { hasText: "Notes" }).click();
   await page.getByRole("button", { name: "✎ Edit" }).click();
   const editor = page.locator(".base-editor");
   await expect(editor).toBeVisible();
@@ -21,7 +21,7 @@ test("filter builder: add conditions that persist through a re-parse", async ({ 
     Object.keys(localStorage).filter((k) => k.includes("workspace")).forEach((k) => localStorage.removeItem(k));
   });
   await page.reload();
-  await page.locator(".tree-row.attachment", { hasText: "Notes.base" }).click();
+  await page.locator(".tree-row.attachment", { hasText: "Notes" }).click();
   await page.getByRole("button", { name: "\u270e Edit" }).click();
   const fs = page.locator(".base-editor-section", { hasText: "Filter" });
   await fs.locator(".base-filter-add").click();
@@ -50,7 +50,7 @@ test("formula authoring: add a formula, persist it, use it as a column", async (
     Object.keys(localStorage).filter((k) => k.includes("workspace")).forEach((k) => localStorage.removeItem(k));
   });
   await page.reload();
-  await page.locator(".tree-row.attachment", { hasText: "Notes.base" }).click();
+  await page.locator(".tree-row.attachment", { hasText: "Notes" }).click();
   await page.locator("button").filter({ hasText: "Edit" }).first().click();
   const f = page.locator(".base-editor-section", { hasText: "Formulas" });
   await f.getByRole("button", { name: "+ Add formula" }).click();
@@ -76,7 +76,7 @@ test("formula editor: expression autocomplete + live validation", async ({ page 
     Object.keys(localStorage).filter((k) => k.includes("workspace")).forEach((k) => localStorage.removeItem(k));
   });
   await page.reload();
-  await page.locator(".tree-row.attachment", { hasText: "Notes.base" }).click();
+  await page.locator(".tree-row.attachment", { hasText: "Notes" }).click();
   await page.locator("button").filter({ hasText: "Edit" }).first().click();
   const f = page.locator(".base-editor-section", { hasText: "Formulas" });
   await f.getByRole("button", { name: "+ Add formula" }).click();

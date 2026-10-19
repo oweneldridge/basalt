@@ -14,10 +14,10 @@ concurrency:
 jobs:
   frontend:
     name: Frontend (typecheck + tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -29,10 +29,10 @@ jobs:
 
   e2e:
     name: E2E (full-app UI, mocked backend)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -41,7 +41,7 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run e2e (drives real App against mocked Tauri IPC)
         run: npm run test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
@@ -50,9 +50,9 @@ jobs:
 
   rust:
     name: Rust (clippy + build)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Linux WebKit / Tauri deps
         run: |
           sudo apt-get update
@@ -66,11 +66,8 @@ jobs:
         with:
           components: clippy
       - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
+      # The whole workspace: the core and the web server as well as the app.
       - name: Clippy (deny warnings)
-        working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Cargo test
-        working-directory: src-tauri
-        run: cargo test
+        run: cargo test --workspace
