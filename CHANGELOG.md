@@ -12,8 +12,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   blocks render in Live Preview and Reading view (read-only for now).
 - Bases `this`, the file a base is shown for: the embedding note, or the base
   itself when opened directly.
-- Bases `file.backlinks`, `file.embeds`, and `median()`/`stddev()` on lists, plus
-  a Stddev summary.
+- Bases `file.backlinks`, `file.embeds`, and `median()`/`stddev()` on lists,
+  plus a Stddev summary.
 - Images from the web (`https:`) load in the desktop app. A "Load remote
   images" setting turns them off: they show as placeholders, and the page adds
   a Content Security Policy so the browser itself refuses any remote image or
@@ -260,12 +260,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A vault rescan, Reload, or a slow read in another pane no longer reverts text
   or raises a "Changed on disk" against your own save, nor does a save whose
   reply arrives after the file watcher has seen it land, and a slow read can't
-  put back text older than your last save. Stacked columns follow
-  external edits and edits made in other panes, even ones that put back text
-  typed earlier or that land in a column you typed in before, and opening the
-  same note elsewhere over a slow link no longer reverts the column; a column
-  whose note failed to load, or never answered, tries again. A rename or folder move whose reply is slow
-  no longer raises a false "Changed on disk" on the notes being moved.
+  put back text older than your last save. Stacked columns follow external
+  edits and edits made in other panes, even ones that put back text typed
+  earlier or that land in a column you typed in before, and opening the same
+  note elsewhere over a slow link no longer reverts the column; a column whose
+  note failed to load, or never answered, tries again. A rename or folder move
+  whose reply is slow no longer raises a false "Changed on disk" on the notes
+  being moved.
 - Saves are compare-and-swap: if the file changed since Basalt last read it
   (another tab or device, Obsidian, iCloud), you get "Changed on disk" instead
   of a silent overwrite. Saves to one note, canvas or base run one at a time.
@@ -311,10 +312,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   waits for the first to finish fixing links, so renaming a note back right
   away leaves every link right, and a rename queued behind it follows the note
   if it moved; a new title keeps the note in the folder it was moved to, and a
-  note dragged to a folder keeps a new title still being applied.
-  Renaming a note shown in a stacked column keeps the text being typed there
-  and its caret, and renaming a note opened from a search hit no longer sends
-  the caret back to that line. Escape in the inline title cancels the rename, and after
+  note dragged to a folder keeps a new title still being applied. Renaming a
+  note shown in a stacked column keeps the text being typed there and its
+  caret, and renaming a note opened from a search hit no longer sends the caret
+  back to that line. Escape in the inline title cancels the rename, and after
   renaming from the file tree, focus is on the renamed note.
 - A rename or folder move fixes links in notes being typed into inside their
   open editors, so typing in progress, even straight through the end of the
@@ -326,13 +327,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the caret stays where it was, even when lines above and below it changed.
 - After "Keep mine" writes back a note deleted elsewhere, later edits save
   normally, and focus returns to the editor after Keep mine or Reload.
-- A note created or renamed while the vault was being re-read keeps saving:
-  the app reads again instead of taking a listing that predates the change. A save to a
-  note that was renamed or deleted elsewhere raises "Changed on disk" instead
-  of bringing the old file back.
+- A note created or renamed while the vault was being re-read keeps saving: the
+  app reads again instead of taking a listing that predates the change. A save
+  to a note that was renamed or deleted elsewhere raises "Changed on disk"
+  instead of bringing the old file back.
 - Renaming a note rewrites links inside properties, and table-escaped
-  `[[Note\|alias]]` links. Text inside a `|` or `>` block scalar is left alone, as
-  Obsidian doesn't treat it as a link.
+  `[[Note\|alias]]` links. Text inside a `|` or `>` block scalar is left alone,
+  as Obsidian doesn't treat it as a link.
 - Links resolve in Obsidian's order (the linking note's folder first, then the
   shortest path), so a rename updates the same links Obsidian would. Folder
   moves leave links to notes that didn't move alone.
@@ -613,9 +614,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nothing there: it moves no folder of the same name, tells that vault's
   plugins nothing, and shows no error or notice. It goes on if that vault
   doesn't open, and Link all then goes back over its notes as usual. Make a
-  copy, Delete folder and a pasted image don't hold a switch, but once the next
-  vault is open they make, delete and show nothing there either, and go on if
-  it doesn't open. The vault's plugins stop before it goes, so they write
+  copy and Delete folder don't hold a switch, but once the next vault is open
+  they make, delete and show nothing there either, and go on if it doesn't
+  open. An image pasted just before a switch is saved in the old vault first,
+  with its embed in the note. One that takes longer than the switch waits is
+  saved only if the next vault doesn't open; otherwise its placeholder link
+  stays in the note. The vault's plugins stop before it goes, so they write
   nothing into the next one, one turned off just before included, and an
   `onunload` that never finishes is cut off after 3 seconds. A plugin stopped
   before its `onload` finished adds no commands, icons or timers after. A
@@ -637,30 +641,29 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   saved is lost.
 - Renames and moves write links as Obsidian 1.14 does, checked against it by
   hand: a relative link to the note's own folder or below has no `./`, a
-  `[text](<path>)` link keeps its angle brackets, and a canvas keeps
-  Obsidian's layout (one line per card) instead of being reformatted. A
-  relative link keeps its `./` when the bare path would open another note
-  (a note at the vault root with that path), for renames, moves and links
-  picked from the suggestions alike. An angled link whose new path has a `#`
-  or something like `%41` in it is written encoded, so it still opens the
-  same file. Saving a canvas keeps the order of its top-level keys, a
-  `__proto__` key included. Any object or array in it that holds another,
-  even an empty one, gets an entry per line, as Obsidian 1.14 saves it, and
-  everything else stays on one line. A dragged card is saved last, as
-  Obsidian saves the card it brings to the front, and groups first, so after
-  a group is dragged its cards are still on top. A group moved, resized or
-  duplicated is also saved, and drawn, before any smaller group wholly inside
-  it, so it never covers one it holds; a group only partly over another keeps
-  its place. Moving a group, by mouse or arrow keys, moves the cards and
-  groups wholly inside it, as in Obsidian: what was inside when the drag, or
-  a run of arrow-key presses, began, not what it passes over. Nodes of a
-  kind Basalt can't show move with their group too, with their fields kept. A click that moves the
-  pointer a pixel or two, or a drag that ends where it began, doesn't move or
-  save anything. A group's `background` is kept as the file had it. Keys
-  stay where the file had them, but for a card's position, size and colour
-  and a connection's sides, ends, colour and label, which go last in
-  Obsidian's order. Default ends (none at the start, an arrow at the end)
-  are left out.
+  `[text](<path>)` link keeps its angle brackets, and a canvas keeps Obsidian's
+  layout (one line per card) instead of being reformatted. A relative link
+  keeps its `./` when the bare path would open another note (a note at the
+  vault root with that path), for renames, moves and links picked from the
+  suggestions alike. An angled link whose new path has a `#` or something like
+  `%41` in it is written encoded, so it still opens the same file. Saving a
+  canvas keeps the order of its top-level keys, a `__proto__` key included. Any
+  object or array in it that holds another, even an empty one, gets an entry
+  per line, as Obsidian 1.14 saves it, and everything else stays on one line. A
+  dragged card is saved last, as Obsidian saves the card it brings to the
+  front, and groups first, so after a group is dragged its cards are still on
+  top. A group moved, resized or duplicated is also saved, and drawn, before
+  any smaller group wholly inside it, so it never covers one it holds; a group
+  only partly over another keeps its place. Moving a group, by mouse or arrow
+  keys, moves the cards and groups wholly inside it, as in Obsidian: what was
+  inside when the drag, or a run of arrow-key presses, began, not what it
+  passes over. Nodes of a kind Basalt can't show move with their group too,
+  with their fields kept. A click that moves the pointer a pixel or two, or a
+  drag that ends where it began, doesn't move or save anything. A group's
+  `background` is kept as the file had it. Keys stay where the file had them,
+  but for a card's position, size and colour and a connection's sides, ends,
+  colour and label, which go last in Obsidian's order. Default ends (none at
+  the start, an arrow at the end) are left out.
 - Canvas drags work by touch and pen. A finger dragging a card, panning or
   drawing a connection is no longer taken over by the browser, and a finger
   drags a card from anywhere on it, a wide code block included. A second
